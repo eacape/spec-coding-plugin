@@ -1,0 +1,224 @@
+package com.eacape.speccodingplugin.spec
+
+/**
+ * Spec 文档验证器
+ * 负责验证各阶段文档的完整性和正确性
+ */
+object SpecValidator {
+
+    /**
+     * 验证 Spec 文档
+     */
+    fun validate(document: SpecDocument): ValidationResult {
+        return when (document.phase) {
+            SpecPhase.SPECIFY -> validateRequirements(document)
+            SpecPhase.DESIGN -> validateDesign(document)
+            SpecPhase.IMPLEMENT -> validateImplementation(document)
+        }
+    }
+
+    /**
+     * 验证需求文档（Specify 阶段）
+     */
+    private fun validateRequirements(document: SpecDocument): ValidationResult {
+        val errors = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
+        val suggestions = mutableListOf<String>()
+
+        val content = document.content
+
+        // 检查必需章节
+        val requiredSections = listOf(
+            "## 功能需求" to "Functional Requirements",
+            "## 非功能需求" to "Non-Functional Requirements",
+            "## 用户故事" to "User Stories"
+        )
+
+        requiredSections.forEach { (chinese, english) ->
+            if (!content.contains(chinese) && !content.contains(english)) {
+                errors.add("缺少必需章节: $chinese ($english)")
+            }
+        }
+
+        // 检查内容长度
+        if (content.length < 200) {
+            warnings.add("需求文档内容过短（${content.length} 字符），建议补充更多细节")
+        }
+
+        // 检查是否包含用户故事
+        if (!content.contains("作为") && !content.contains("As a")) {
+            warnings.add("建议添加用户故事（As a... I want... So that...）")
+        }
+
+        // 检查是否包含验收标准
+        if (!content.contains("验收标准") && !content.contains("Acceptance Criteria")) {
+            suggestions.add("建议添加验收标准以明确需求边界")
+        }
+
+        // 检查是否有模糊表述
+        val vagueTerms = listOf("可能", "也许", "大概", "应该会", "maybe", "probably")
+        vagueTerms.forEach { term ->
+            if (content.contains(term, ignoreCase = true)) {
+                warnings.add("发现模糊表述: '$term'，建议使用更明确的语言")
+            }
+        }
+
+        return ValidationResult(
+            valid = errors.isEmpty(),
+            errors = errors,
+            warnings = warnings,
+            suggestions = suggestions
+        )
+    }
+
+    /**
+     * 验证设计文档（Design 阶段）
+     */
+    private fun validateDesign(document: SpecDocument): ValidationResult {
+        val errors = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
+        val suggestions = mutableListOf<String>()
+
+        val content = document.content
+
+        // 检查必需章节
+        val requiredSections = listOf(
+            "## 架构设计" to "Architecture Design",
+            "## 技术选型" to "Technology Stack",
+            "## 数据模型" to "Data Model"
+        )
+
+        requiredSections.forEach { (chinese, english) ->
+            if (!content.contains(chinese) && !content.contains(english)) {
+                errors.add("缺少必需章节: $chinese ($english)")
+            }
+        }
+
+        // 检查内容长度
+        if (content.length < 300) {
+            warnings.add("设计文档内容过短（${content.length} 字符），建议补充更多技术细节")
+        }
+
+        // 检查是否包含架构图
+        if (!content.contains("```") && !content.contains("图")) {
+            suggestions.add("建议添加架构图或流程图以更清晰地展示设计")
+        }
+
+        // 检查是否包含 API 设计
+        if (!content.contains("API") && !content.contains("接口")) {
+            suggestions.add("建议添加 API 设计或接口定义")
+        }
+
+        // 检查是否考虑了非功能需求
+        val nfrKeywords = listOf("性能", "安全", "可扩展", "可维护", "performance", "security", "scalability")
+        val hasNFR = nfrKeywords.any { content.contains(it, ignoreCase = true) }
+        if (!hasNFR) {
+            warnings.add("建议考虑非功能需求（性能、安全、可扩展性等）")
+        }
+
+        return ValidationResult(
+            valid = errors.isEmpty(),
+            errors = errors,
+            warnings = warnings,
+            suggestions = suggestions
+        )
+    }
+
+    /**
+     * 验证实现文档（Implement 阶段）
+     */
+    private fun validateImplementation(document: SpecDocument): ValidationResult {
+        val errors = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
+        val suggestions = mutableListOf<String>()
+
+        val content = document.content
+
+        // 检查必需章节
+        val requiredSections = listOf(
+            "## 任务列表" to "Task List",
+            "## 实现步骤" to "Implementation Steps"
+        )
+
+        requiredSections.forEach { (chinese, english) ->
+            if (!content.contains(chinese) && !content.contains(english)) {
+                errors.add("缺少必需章节: $chinese ($english)")
+            }
+        }
+
+        // 检查是否包含任务
+        val taskPatterns = listOf(
+            Regex("- \\[ \\]"),  // Markdown checkbox
+            Regex("\\d+\\."),    // Numbered list
+            Regex("Task \\d+", RegexOption.IGNORE_CASE)
+        )
+
+        val hasTasks = taskPatterns.any { it.containsMatchIn(content) }
+        if (!hasTasks) {
+            errors.add("未找到任务列表，请添加具体的实现任务")
+        }
+
+        // 检查任务数量
+        val taskCount = Regex("- \\[ \\]").findAll(content).count()
+        if (taskCount < 3) {
+            warnings.add("任务数量较少（$taskCount 个），建议将任务拆分得更细")
+        }
+
+        // 检查是否包含测试计划
+        if (!content.contains("测试") && !content.contains("test", ignoreCase = true)) {
+            warnings.add("建议添加测试计划或测试用例")
+        }
+
+        // 检查是否包含时间估算
+        if (!content.contains("时间") && !content.contains("工时") && !content.contains("hour", ignoreCase = true)) {
+            suggestions.add("建议为每个任务添加时间估算")
+        }
+
+        // 检查是否包含优先级
+        if (!content.contains("优先级") && !content.contains("priority", ignoreCase = true)) {
+            suggestions.add("建议为任务标记优先级（P0/P1/P2）")
+        }
+
+        return ValidationResult(
+            valid = errors.isEmpty(),
+            errors = errors,
+            warnings = warnings,
+            suggestions = suggestions
+        )
+    }
+
+    /**
+     * 验证阶段转换
+     * 检查是否可以从当前阶段进入下一阶段
+     */
+    fun validatePhaseTransition(
+        currentPhase: SpecPhase,
+        currentDocument: SpecDocument?,
+        nextPhase: SpecPhase
+    ): ValidationResult {
+        val errors = mutableListOf<String>()
+
+        // 检查阶段顺序
+        if (currentPhase.next() != nextPhase) {
+            errors.add("无效的阶段转换: ${currentPhase.displayName} -> ${nextPhase.displayName}")
+        }
+
+        // 检查当前阶段文档是否存在
+        if (currentDocument == null) {
+            errors.add("当前阶段（${currentPhase.displayName}）没有文档，无法进入下一阶段")
+        }
+
+        // 检查当前阶段文档是否验证通过
+        currentDocument?.validationResult?.let { validation ->
+            if (!validation.valid) {
+                errors.add("当前阶段文档验证未通过，请先修复错误")
+                errors.addAll(validation.errors)
+            }
+        }
+
+        return ValidationResult(
+            valid = errors.isEmpty(),
+            errors = errors
+        )
+    }
+}

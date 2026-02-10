@@ -1,0 +1,53 @@
+package com.eacape.speccodingplugin.engine
+
+/**
+ * Claude Code CLI 引擎适配
+ */
+class ClaudeCodeEngine(
+    cliPath: String,
+) : CliEngine(
+    id = "claude-code",
+    displayName = "Claude Code CLI",
+    capabilities = setOf(
+        EngineCapability.CODE_GENERATION,
+        EngineCapability.CODE_REVIEW,
+        EngineCapability.REFACTOR,
+        EngineCapability.TEST_GENERATION,
+        EngineCapability.BUG_FIX,
+        EngineCapability.EXPLANATION,
+    ),
+    cliPath = cliPath,
+) {
+
+    override fun buildCommandArgs(
+        request: EngineRequest
+    ): List<String> {
+        val args = mutableListOf<String>()
+        args.add("--print")
+        args.add("--output-format")
+        args.add("text")
+        args.add(request.prompt)
+        return args
+    }
+
+    override fun parseStreamLine(
+        line: String
+    ): EngineChunk? {
+        if (line.isBlank()) return null
+        return EngineChunk(delta = line + "\n")
+    }
+
+    override suspend fun getVersion(): String? {
+        return try {
+            val process = ProcessBuilder(
+                listOf("claude", "--version")
+            ).redirectErrorStream(true).start()
+            val output = process.inputStream
+                .bufferedReader().readText().trim()
+            process.waitFor()
+            output
+        } catch (e: Exception) {
+            null
+        }
+    }
+}

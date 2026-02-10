@@ -1,0 +1,61 @@
+<idea-plugin>
+    <id>com.eacape.speccodingplugin</id>
+    <name>Spec Coding Plugin</name>
+    <vendor email="team@eacape.com" url="https://eacape.com">Eacape</vendor>
+
+    <description><![CDATA[
+        Spec-driven AI coding workflow for JetBrains IDEs.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <resource-bundle>messages.SpecCodingBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+                id="Spec Coding"
+                factoryClass="com.eacape.speccodingplugin.ui.ChatToolWindowFactory"
+                anchor="right"
+                canCloseContents="false"/>
+
+        <!-- Application-level Services -->
+        <applicationService serviceImplementation="com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState"/>
+        <applicationService serviceImplementation="com.eacape.speccodingplugin.prompt.GlobalPromptManager"/>
+        <applicationService serviceImplementation="com.eacape.speccodingplugin.llm.ModelRegistry"/>
+
+        <!-- Project-level Services -->
+        <projectService serviceImplementation="com.eacape.speccodingplugin.core.SpecCodingProjectService"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.core.OperationModeManager"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.prompt.PromptManager"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.skill.SkillRegistry"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.skill.SkillExecutor"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.spec.SpecEngine"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.mcp.McpHub"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.mcp.McpConfigStore"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.rollback.ChangesetStore"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.rollback.RollbackManager"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.engine.EngineManager"/>
+
+        <!-- Status Bar Widget -->
+        <statusBarWidgetFactory implementation="com.eacape.speccodingplugin.ui.ModelSelectorWidgetFactory" order="first"/>
+
+        <!-- Settings Page -->
+        <projectConfigurable
+                parentId="tools"
+                instance="com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsConfigurable"
+                id="com.eacape.speccodingplugin.settings"
+                displayName="Spec Coding"/>
+    </extensions>
+
+    <actions>
+        <group id="SpecCoding.ActionGroup" text="Spec Coding" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+
+            <action
+                    id="SpecCoding.OpenChat"
+                    class="com.eacape.speccodingplugin.ui.actions.OpenSpecCodingToolWindowAction"
+                    text="Open Spec Coding"
+                    description="Open Spec Coding tool window"/>
+        </group>
+    </actions>
+</idea-plugin>
