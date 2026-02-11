@@ -25,6 +25,8 @@ class SpecWorkflowListPanel(
 
     private val listModel = DefaultListModel<WorkflowListItem>()
     private val workflowList = JBList(listModel)
+    private val newButton = JButton("New Spec")
+    private val deleteButton = JButton("Delete")
 
     init {
         setupUI()
@@ -36,15 +38,13 @@ class SpecWorkflowListPanel(
         // 工具栏
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
         toolbar.isOpaque = false
-        val newBtn = JButton("New Spec")
-        newBtn.addActionListener { onCreateWorkflow() }
-        toolbar.add(newBtn)
+        newButton.addActionListener { onCreateWorkflow() }
+        toolbar.add(newButton)
 
-        val deleteBtn = JButton("Delete")
-        deleteBtn.addActionListener {
+        deleteButton.addActionListener {
             workflowList.selectedValue?.let { onDeleteWorkflow(it.workflowId) }
         }
-        toolbar.add(deleteBtn)
+        toolbar.add(deleteButton)
         add(toolbar, BorderLayout.NORTH)
 
         // 列表
@@ -76,6 +76,22 @@ class SpecWorkflowListPanel(
                 return
             }
         }
+    }
+
+    internal fun itemsForTest(): List<WorkflowListItem> {
+        return (0 until listModel.size()).map { listModel[it] }
+    }
+
+    internal fun selectedWorkflowIdForTest(): String? {
+        return workflowList.selectedValue?.workflowId
+    }
+
+    internal fun clickNewForTest() {
+        newButton.doClick()
+    }
+
+    internal fun clickDeleteForTest() {
+        deleteButton.doClick()
     }
 
     private class WorkflowCellRenderer : ListCellRenderer<WorkflowListItem> {

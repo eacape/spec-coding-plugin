@@ -77,6 +77,26 @@ val (command, args) = executor.parseSlashCommand("/test framework=junit")
 /review
 ```
 
+### /security-scan - 安全扫描
+按 OWASP Top 10 和插件风险做漏洞扫描，并给出修复建议。
+
+**上下文要求：** 选中的代码
+
+**示例：**
+```
+/security-scan
+```
+
+### /tdd - TDD 工作流
+按 Red-Green-Refactor 流程输出测试与实现建议。
+
+**上下文要求：** 选中的代码、测试框架配置
+
+**示例：**
+```
+/tdd
+```
+
 ### /explain - 代码解释
 解释代码逻辑和设计意图。
 

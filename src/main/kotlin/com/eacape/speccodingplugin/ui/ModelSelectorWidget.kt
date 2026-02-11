@@ -3,6 +3,10 @@ package com.eacape.speccodingplugin.ui
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
+import com.eacape.speccodingplugin.window.GlobalConfigChangedEvent
+import com.eacape.speccodingplugin.window.GlobalConfigSyncListener
+import com.eacape.speccodingplugin.window.GlobalConfigSyncService
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.ui.popup.ListPopup
@@ -23,6 +27,25 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
 
     private val modelRegistry = ModelRegistry.getInstance()
     private val settings = SpecCodingSettingsState.getInstance()
+    private val globalConfigSyncService = GlobalConfigSyncService.getInstance()
+
+    init {
+        project.messageBus.connect(this).subscribe(
+            GlobalConfigSyncListener.TOPIC,
+            object : GlobalConfigSyncListener {
+                override fun onGlobalConfigChanged(event: GlobalConfigChangedEvent) {
+                    if (project.isDisposed) {
+                        return
+                    }
+                    ApplicationManager.getApplication().invokeLater {
+                        if (!project.isDisposed) {
+                            myStatusBar?.updateWidget(ID())
+                        }
+                    }
+                }
+            }
+        )
+    }
 
     override fun ID(): String = "SpecCoding.ModelSelector"
 
@@ -123,6 +146,11 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
             "openai" -> settings.openaiModel = model.id
             "anthropic" -> settings.anthropicModel = model.id
         }
+
+        globalConfigSyncService.notifyGlobalConfigChanged(
+            sourceProject = project,
+            reason = "model-selector-widget",
+        )
 
         // 刷新状态栏显示
         myStatusBar?.updateWidget(ID())

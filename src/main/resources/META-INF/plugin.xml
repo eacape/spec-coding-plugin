@@ -22,6 +22,8 @@
         <applicationService serviceImplementation="com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState"/>
         <applicationService serviceImplementation="com.eacape.speccodingplugin.prompt.GlobalPromptManager"/>
         <applicationService serviceImplementation="com.eacape.speccodingplugin.llm.ModelRegistry"/>
+        <applicationService serviceImplementation="com.eacape.speccodingplugin.window.WindowRegistry"/>
+        <applicationService serviceImplementation="com.eacape.speccodingplugin.window.GlobalConfigSyncService"/>
 
         <!-- Project-level Services -->
         <projectService serviceImplementation="com.eacape.speccodingplugin.core.SpecCodingProjectService"/>
@@ -30,11 +32,21 @@
         <projectService serviceImplementation="com.eacape.speccodingplugin.skill.SkillRegistry"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.skill.SkillExecutor"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.spec.SpecEngine"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.session.SessionManager"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.mcp.McpHub"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.mcp.McpConfigStore"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.window.WindowStateStore"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.rollback.ChangesetStore"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.rollback.RollbackManager"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.engine.EngineManager"/>
+
+        <!-- Context Engine Services -->
+        <projectService serviceImplementation="com.eacape.speccodingplugin.context.ContextCollector"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.context.ProjectStructureScanner"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.context.RelatedFileDiscovery"/>
+
+        <!-- Completion Service -->
+        <projectService serviceImplementation="com.eacape.speccodingplugin.ui.completion.CompletionProvider"/>
 
         <!-- Status Bar Widget -->
         <statusBarWidgetFactory implementation="com.eacape.speccodingplugin.ui.ModelSelectorWidgetFactory" order="first"/>
@@ -46,6 +58,12 @@
                 id="com.eacape.speccodingplugin.settings"
                 displayName="Spec Coding"/>
     </extensions>
+
+    <projectListeners>
+        <listener
+                class="com.eacape.speccodingplugin.window.WindowRegistryProjectManagerListener"
+                topic="com.intellij.openapi.project.ProjectManagerListener"/>
+    </projectListeners>
 
     <actions>
         <group id="SpecCoding.ActionGroup" text="Spec Coding" popup="true">

@@ -154,6 +154,8 @@ data class SpecWorkflow(
     val currentPhase: SpecPhase,
     val documents: Map<SpecPhase, SpecDocument>,
     val status: WorkflowStatus,
+    val title: String = "",
+    val description: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {

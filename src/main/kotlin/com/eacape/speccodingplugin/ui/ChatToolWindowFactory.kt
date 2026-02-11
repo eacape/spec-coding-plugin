@@ -5,15 +5,21 @@ import com.eacape.speccodingplugin.ui.chat.ChangesetTimelinePanel
 import com.eacape.speccodingplugin.ui.prompt.PromptManagerPanel
 import com.eacape.speccodingplugin.ui.mcp.McpPanel
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowPanel
+import com.eacape.speccodingplugin.ui.worktree.WorktreePanel
+import com.eacape.speccodingplugin.ui.history.HistoryPanel
+import com.eacape.speccodingplugin.window.WindowStateStore
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.content.ContentFactory
+import com.intellij.ui.content.ContentManagerEvent
+import com.intellij.ui.content.ContentManagerListener
 
 class ChatToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         toolWindow.title = SpecCodingBundle.message("toolwindow.title")
+        val windowStateStore = WindowStateStore.getInstance(project)
 
         val contentFactory = ContentFactory.getInstance()
 
@@ -44,6 +50,30 @@ class ChatToolWindowFactory : ToolWindowFactory {
         val mcpContent = contentFactory.createContent(mcpPanel, "MCP", false)
         Disposer.register(mcpContent, mcpPanel)
         toolWindow.contentManager.addContent(mcpContent)
+
+        // Worktree 标签页（Worktree 管理）
+        val worktreePanel = WorktreePanel(project)
+        val worktreeContent = contentFactory.createContent(worktreePanel, "Worktree", false)
+        Disposer.register(worktreeContent, worktreePanel)
+        toolWindow.contentManager.addContent(worktreeContent)
+
+        // History 标签页（会话历史）
+        val historyPanel = HistoryPanel(project)
+        val historyContent = contentFactory.createContent(historyPanel, "History", false)
+        Disposer.register(historyContent, historyPanel)
+        toolWindow.contentManager.addContent(historyContent)
+
+        val contentManager = toolWindow.contentManager
+        contentManager.addContentManagerListener(object : ContentManagerListener {
+            override fun selectionChanged(event: ContentManagerEvent) {
+                val selectedTabTitle = event.content?.displayName ?: return
+                windowStateStore.updateSelectedTabTitle(selectedTabTitle)
+            }
+        })
+
+        val restoredTabTitle = windowStateStore.snapshot().selectedTabTitle
+        contentManager.contents.firstOrNull { it.displayName == restoredTabTitle }
+            ?.let(contentManager::setSelectedContent)
     }
 
     override fun shouldBeAvailable(project: Project): Boolean {

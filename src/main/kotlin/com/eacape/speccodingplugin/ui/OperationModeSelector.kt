@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui
 
 import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.core.OperationModeManager
+import com.eacape.speccodingplugin.window.WindowStateStore
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.components.JBLabel
@@ -16,6 +17,7 @@ import javax.swing.JPanel
 class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(FlowLayout.LEFT, 5, 0)) {
 
     private val modeManager = OperationModeManager.getInstance(project)
+    private val windowStateStore = WindowStateStore.getInstance(project)
     private val label = JBLabel("Mode:")
     private val comboBox = ComboBox(OperationMode.values())
 
@@ -29,7 +31,11 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
         add(comboBox)
 
         // 设置当前模式
-        comboBox.selectedItem = modeManager.getCurrentMode()
+        val persistedMode = windowStateStore.snapshot().operationMode
+            ?.let { runCatching { OperationMode.valueOf(it) }.getOrNull() }
+        val initialMode = persistedMode ?: modeManager.getCurrentMode()
+        modeManager.switchMode(initialMode)
+        comboBox.selectedItem = initialMode
 
         // 自定义渲染器显示模式名称和描述
         comboBox.renderer = OperationModeRenderer()
@@ -40,6 +46,7 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
             val selectedMode = comboBox.selectedItem as? OperationMode ?: return@addActionListener
             if (selectedMode != modeManager.getCurrentMode()) {
                 modeManager.switchMode(selectedMode)
+                windowStateStore.updateOperationMode(selectedMode.name)
                 onModeChanged(selectedMode)
             }
         }
@@ -65,6 +72,7 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
      */
     fun setSelectedMode(mode: OperationMode) {
         comboBox.selectedItem = mode
+        windowStateStore.updateOperationMode(mode.name)
     }
 
     /**

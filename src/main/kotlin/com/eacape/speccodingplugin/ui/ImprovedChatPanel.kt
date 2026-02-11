@@ -1,23 +1,37 @@
 package com.eacape.speccodingplugin.ui
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.context.ContextCollector
+import com.eacape.speccodingplugin.context.ContextConfig
+import com.eacape.speccodingplugin.context.ContextItem
+import com.eacape.speccodingplugin.context.ContextType
 import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.llm.LlmMessage
 import com.eacape.speccodingplugin.llm.LlmRole
 import com.eacape.speccodingplugin.prompt.PromptTemplate
+import com.eacape.speccodingplugin.session.ConversationRole
+import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.skill.SkillExecutor
 import com.eacape.speccodingplugin.skill.SkillContext
 import com.eacape.speccodingplugin.ui.chat.ChatMessagePanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagesListPanel
+import com.eacape.speccodingplugin.ui.completion.CompletionProvider
+import com.eacape.speccodingplugin.ui.completion.TriggerType
+import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
+import com.eacape.speccodingplugin.ui.input.ContextPreviewPanel
+import com.eacape.speccodingplugin.ui.input.SmartInputField
+import com.eacape.speccodingplugin.window.WindowStateStore
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
 
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
-import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +43,7 @@ import java.awt.FlowLayout
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JPanel
+import javax.swing.JScrollPane
 
 /**
  * 改进版 Chat Tool Window Panel
@@ -43,8 +58,13 @@ class ImprovedChatPanel(
     private val project: Project,
 ) : JBPanel<ImprovedChatPanel>(BorderLayout()), Disposable {
 
+    private val logger = thisLogger()
     private val projectService: SpecCodingProjectService = project.getService(SpecCodingProjectService::class.java)
+    private val sessionManager = SessionManager.getInstance(project)
+    private val windowStateStore = WindowStateStore.getInstance(project)
     private val skillExecutor: SkillExecutor = SkillExecutor.getInstance(project)
+    private val contextCollector by lazy { ContextCollector.getInstance(project) }
+    private val completionProvider by lazy { CompletionProvider.getInstance(project) }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -53,22 +73,62 @@ class ImprovedChatPanel(
     private val promptComboBox = ComboBox<PromptTemplate>()
     private val statusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
     private val messagesPanel = ChatMessagesListPanel()
-    private val inputField = JBTextField()
+    private val contextPreviewPanel = ContextPreviewPanel()
+    private lateinit var inputField: SmartInputField
     private val sendButton = JButton(SpecCodingBundle.message("toolwindow.send"))
     private val clearButton = JButton("Clear")
     private var currentAssistantPanel: ChatMessagePanel? = null
 
     // Session state
     private val conversationHistory = mutableListOf<LlmMessage>()
+    private var currentSessionId: String? = null
     private var isGenerating = false
     @Volatile
     private var _isDisposed = false
 
     init {
+        inputField = SmartInputField(
+            placeholder = SpecCodingBundle.message("toolwindow.input.placeholder"),
+            onSend = { sendCurrentInput() },
+            onTrigger = { trigger ->
+                ApplicationManager.getApplication().executeOnPooledThread {
+                    val items = completionProvider.getCompletions(trigger)
+                    ApplicationManager.getApplication().invokeLater {
+                        if (!project.isDisposed && !_isDisposed) {
+                            inputField.showCompletions(items)
+                        }
+                    }
+                }
+            },
+            onTriggerDismiss = { inputField.completionPopup.hide() },
+            onCompletionSelect = { item ->
+                item.contextItem?.let { contextPreviewPanel.addItem(it) }
+            },
+        )
+
         border = JBUI.Borders.empty(12)
         setupUI()
+        subscribeToHistoryOpenEvents()
         loadPromptTemplatesAsync()
         addSystemMessage(SpecCodingBundle.message("toolwindow.system.intro"))
+        restoreWindowStateIfNeeded()
+    }
+
+    private fun restoreWindowStateIfNeeded() {
+        val snapshot = windowStateStore.snapshot()
+        val restoredSessionId = snapshot.activeSessionId ?: return
+        loadSession(restoredSessionId)
+    }
+
+    private fun subscribeToHistoryOpenEvents() {
+        project.messageBus.connect(this).subscribe(
+            HistorySessionOpenListener.TOPIC,
+            object : HistorySessionOpenListener {
+                override fun onSessionOpenRequested(sessionId: String) {
+                    loadSession(sessionId)
+                }
+            },
+        )
     }
 
     private fun setupUI() {
@@ -114,23 +174,29 @@ class ImprovedChatPanel(
         val conversationScrollPane = messagesPanel.getScrollPane()
         conversationScrollPane.border = JBUI.Borders.emptyTop(12)
 
-        // Input area
-        val inputPanel = JPanel(BorderLayout())
-        inputPanel.isOpaque = false
-        inputPanel.border = JBUI.Borders.emptyTop(8)
-        inputField.emptyText.text = SpecCodingBundle.message("toolwindow.input.placeholder")
-        inputPanel.add(inputField, BorderLayout.CENTER)
-        inputPanel.add(sendButton, BorderLayout.EAST)
+        // Input area with context preview
+        val inputRow = JPanel(BorderLayout())
+        inputRow.isOpaque = false
+        val inputScroll = JScrollPane(inputField)
+        inputScroll.border = JBUI.Borders.empty()
+        inputRow.add(inputScroll, BorderLayout.CENTER)
+        inputRow.add(sendButton, BorderLayout.EAST)
 
         sendButton.addActionListener { sendCurrentInput() }
-        inputField.addActionListener { sendCurrentInput() }
+
+        val bottomPanel = JPanel()
+        bottomPanel.layout = BoxLayout(bottomPanel, BoxLayout.Y_AXIS)
+        bottomPanel.isOpaque = false
+        bottomPanel.border = JBUI.Borders.emptyTop(8)
+        bottomPanel.add(contextPreviewPanel)
+        bottomPanel.add(inputRow)
 
         // Layout
         val content = JPanel(BorderLayout())
         content.isOpaque = false
         content.add(headerPanel, BorderLayout.NORTH)
         content.add(conversationScrollPane, BorderLayout.CENTER)
-        content.add(inputPanel, BorderLayout.SOUTH)
+        content.add(bottomPanel, BorderLayout.SOUTH)
 
         add(content, BorderLayout.CENTER)
     }
@@ -165,10 +231,17 @@ class ImprovedChatPanel(
         }
 
         val providerId = providerComboBox.selectedItem as? String
+        val sessionId = ensureActiveSession(input, providerId) ?: return
+
+        // Collect context: explicit items from preview + auto-collected editor context
+        val explicitItems = loadExplicitItemContents(contextPreviewPanel.getItems())
+        val contextSnapshot = contextCollector.collectForItems(explicitItems)
+        contextPreviewPanel.clear()
 
         // Add user message to history
         val userMessage = LlmMessage(LlmRole.USER, input)
         conversationHistory.add(userMessage)
+        persistMessage(sessionId, ConversationRole.USER, input)
 
         appendUserMessage(input)
         inputField.text = ""
@@ -180,7 +253,11 @@ class ImprovedChatPanel(
             try {
                 val assistantContent = StringBuilder()
 
-                projectService.chat(providerId = providerId, userInput = input) { chunk ->
+                projectService.chat(
+                    providerId = providerId,
+                    userInput = input,
+                    contextSnapshot = contextSnapshot,
+                ) { chunk ->
                     ApplicationManager.getApplication().invokeLater {
                         if (project.isDisposed || _isDisposed) {
                             return@invokeLater
@@ -199,6 +276,7 @@ class ImprovedChatPanel(
                 // Add assistant message to history
                 val assistantMessage = LlmMessage(LlmRole.ASSISTANT, assistantContent.toString())
                 conversationHistory.add(assistantMessage)
+                persistMessage(sessionId, ConversationRole.ASSISTANT, assistantMessage.content)
 
             } catch (error: Throwable) {
                 ApplicationManager.getApplication().invokeLater {
@@ -221,8 +299,14 @@ class ImprovedChatPanel(
     }
 
     private fun handleSlashCommand(command: String) {
+        val providerId = providerComboBox.selectedItem as? String
+        val sessionId = ensureActiveSession(command, providerId)
+
         inputField.text = ""
         appendUserMessage(command)
+        if (sessionId != null) {
+            persistMessage(sessionId, ConversationRole.USER, command)
+        }
 
         setSendingState(true)
 
@@ -245,6 +329,9 @@ class ImprovedChatPanel(
                             val panel = addAssistantMessage()
                             panel.appendContent(result.output)
                             panel.finishMessage()
+                            if (sessionId != null) {
+                                persistMessage(sessionId, ConversationRole.ASSISTANT, result.output)
+                            }
                         }
                         is com.eacape.speccodingplugin.skill.SkillExecutionResult.Failure -> {
                             addErrorMessage(result.error)
@@ -271,9 +358,149 @@ class ImprovedChatPanel(
 
     private fun clearConversation() {
         conversationHistory.clear()
+        currentSessionId = null
+        windowStateStore.updateActiveSessionId(null)
         messagesPanel.clearAll()
+        contextPreviewPanel.clear()
         currentAssistantPanel = null
-        addSystemMessage("Conversation cleared.")
+        addSystemMessage(SpecCodingBundle.message("toolwindow.system.cleared"))
+    }
+
+    private fun loadSession(sessionId: String) {
+        if (sessionId.isBlank() || project.isDisposed || _isDisposed) {
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val session = sessionManager.getSession(sessionId)
+            val messages = sessionManager.listMessages(sessionId, limit = 1000)
+
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed || _isDisposed) {
+                    return@invokeLater
+                }
+                if (session == null) {
+                    windowStateStore.updateActiveSessionId(null)
+                    addErrorMessage(SpecCodingBundle.message("toolwindow.error.session.notFound", sessionId))
+                    return@invokeLater
+                }
+
+                restoreSessionMessages(messages)
+                currentSessionId = session.id
+                windowStateStore.updateActiveSessionId(session.id)
+                statusLabel.text = SpecCodingBundle.message("toolwindow.status.session.loaded", session.title)
+            }
+        }
+    }
+
+    private fun restoreSessionMessages(messages: List<com.eacape.speccodingplugin.session.ConversationMessage>) {
+        conversationHistory.clear()
+        messagesPanel.clearAll()
+        contextPreviewPanel.clear()
+        currentAssistantPanel = null
+
+        for (message in messages) {
+            when (message.role) {
+                ConversationRole.USER -> {
+                    appendUserMessage(message.content)
+                    conversationHistory.add(LlmMessage(LlmRole.USER, message.content))
+                }
+
+                ConversationRole.ASSISTANT -> {
+                    val panel = ChatMessagePanel(
+                        ChatMessagePanel.MessageRole.ASSISTANT,
+                        message.content,
+                        onDelete = ::handleDeleteMessage,
+                        onRegenerate = ::handleRegenerateMessage,
+                    )
+                    panel.finishMessage()
+                    messagesPanel.addMessage(panel)
+                    conversationHistory.add(LlmMessage(LlmRole.ASSISTANT, message.content))
+                }
+
+                ConversationRole.SYSTEM -> {
+                    addSystemMessage(message.content)
+                    conversationHistory.add(LlmMessage(LlmRole.SYSTEM, message.content))
+                }
+
+                ConversationRole.TOOL -> {
+                    val panel = ChatMessagePanel(
+                        ChatMessagePanel.MessageRole.SYSTEM,
+                        "[Tool] ${message.content}",
+                    )
+                    panel.finishMessage()
+                    messagesPanel.addMessage(panel)
+                }
+            }
+        }
+
+        if (messages.isEmpty()) {
+            addSystemMessage(SpecCodingBundle.message("toolwindow.system.emptySessionLoaded"))
+        }
+        messagesPanel.scrollToBottom()
+    }
+
+    private fun ensureActiveSession(firstUserInput: String, providerId: String?): String? {
+        currentSessionId?.let { return it }
+
+        val title = firstUserInput.lines()
+            .firstOrNull()
+            .orEmpty()
+            .trim()
+            .ifBlank { "New Session" }
+            .take(80)
+
+        val created = sessionManager.createSession(
+            title = title,
+            modelProvider = providerId,
+        )
+
+        return created.fold(
+            onSuccess = { session ->
+                currentSessionId = session.id
+                windowStateStore.updateActiveSessionId(session.id)
+                session.id
+            },
+            onFailure = { error ->
+                logger.warn("Failed to create session", error)
+                ApplicationManager.getApplication().invokeLater {
+                    if (!project.isDisposed && !_isDisposed) {
+                        addErrorMessage(
+                            SpecCodingBundle.message(
+                                "toolwindow.error.session.createFailed",
+                                error.message ?: "unknown",
+                            )
+                        )
+                    }
+                }
+                null
+            },
+        )
+    }
+
+    private fun persistMessage(sessionId: String, role: ConversationRole, content: String) {
+        val result = sessionManager.addMessage(
+            sessionId = sessionId,
+            role = role,
+            content = content,
+        )
+        if (result.isFailure) {
+            logger.warn("Failed to persist message for session: $sessionId", result.exceptionOrNull())
+        }
+    }
+
+    private fun loadExplicitItemContents(items: List<ContextItem>): List<ContextItem> {
+        return items.map { item ->
+            if (item.content.isNotBlank() || item.filePath == null) {
+                return@map item
+            }
+            val vf = LocalFileSystem.getInstance().findFileByPath(item.filePath)
+                ?: return@map item
+            val content = ReadAction.compute<String, Throwable> {
+                String(vf.contentsToByteArray(), Charsets.UTF_8)
+            }
+            item.copy(content = content, tokenEstimate = content.length / 4)
+        }
     }
 
     private fun appendUserMessage(content: String) {
@@ -372,6 +599,9 @@ class ImprovedChatPanel(
                 }
                 val assistantMessage = LlmMessage(LlmRole.ASSISTANT, assistantContent.toString())
                 conversationHistory.add(assistantMessage)
+                currentSessionId?.let { sessionId ->
+                    persistMessage(sessionId, ConversationRole.ASSISTANT, assistantMessage.content)
+                }
             } catch (error: Throwable) {
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {

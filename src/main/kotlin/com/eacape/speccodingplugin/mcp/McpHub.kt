@@ -29,18 +29,28 @@ interface McpHubListener {
  * 管理多个 MCP Server 的生命周期
  */
 @Service(Service.Level.PROJECT)
-class McpHub(private val project: Project) : Disposable {
+class McpHub internal constructor(
+    private val project: Project,
+    private val scope: CoroutineScope,
+    private val configStoreProvider: () -> McpConfigStore,
+    private val clientFactory: (McpServer, CoroutineScope) -> McpClientAdapter,
+    private val toolRegistry: McpToolRegistry
+) : Disposable {
+    constructor(project: Project) : this(
+        project = project,
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        configStoreProvider = { McpConfigStore.getInstance(project) },
+        clientFactory = { server, clientScope -> RealMcpClientAdapter(McpClient(server, clientScope)) },
+        toolRegistry = McpToolRegistry()
+    )
+
     private val logger = thisLogger()
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // Server 实例映射
     private val servers = ConcurrentHashMap<String, McpServer>()
 
     // Client 实例映射
-    private val clients = ConcurrentHashMap<String, McpClient>()
-
-    // 工具注册表
-    private val toolRegistry = McpToolRegistry()
+    private val clients = ConcurrentHashMap<String, McpClientAdapter>()
 
     /**
      * 注册 Server 配置
@@ -95,20 +105,37 @@ class McpHub(private val project: Project) : Disposable {
             // 安全校验
             McpSecurityValidator.validateBeforeStart(server.config).getOrThrow()
 
-            // 创建客户端
-            val client = McpClient(server, scope)
-            clients[serverId] = client
+            // 启动中状态
+            server.status = ServerStatus.STARTING
+            server.error = null
+            notifyStatusChanged(serverId, ServerStatus.STARTING)
 
-            // 启动 Server
-            client.start().getOrThrow()
+            try {
+                // 创建客户端
+                val client = clientFactory(server, scope)
+                clients[serverId] = client
 
-            // 发现工具
-            discoverTools(serverId)
+                // 启动 Server
+                client.start().getOrThrow()
 
-            // 通知状态变更
-            notifyStatusChanged(serverId, ServerStatus.RUNNING)
+                // 发现工具
+                discoverTools(serverId)
 
-            logger.info("Started MCP server: ${server.config.name}")
+                // 成功状态
+                server.status = ServerStatus.RUNNING
+                server.error = null
+                notifyStatusChanged(serverId, ServerStatus.RUNNING)
+
+                logger.info("Started MCP server: ${server.config.name}")
+            } catch (e: Exception) {
+                clients.remove(serverId)?.stop()
+
+                server.status = ServerStatus.ERROR
+                server.error = e.message
+                notifyStatusChanged(serverId, ServerStatus.ERROR)
+
+                throw e
+            }
         }
     }
 
@@ -124,7 +151,10 @@ class McpHub(private val project: Project) : Disposable {
             }
 
             // 更新状态
-            servers[serverId]?.status = ServerStatus.STOPPED
+            servers[serverId]?.apply {
+                status = ServerStatus.STOPPED
+                error = null
+            }
 
             // 清除工具注册
             toolRegistry.clearServerTools(serverId)
@@ -150,6 +180,7 @@ class McpHub(private val project: Project) : Disposable {
      */
     private suspend fun discoverTools(serverId: String) {
         val client = clients[serverId] ?: return
+        val server = servers[serverId] ?: return
 
         try {
             val tools = client.listTools().getOrThrow()
@@ -159,7 +190,11 @@ class McpHub(private val project: Project) : Disposable {
             // 通知工具发现
             notifyToolsDiscovered(serverId, tools)
         } catch (e: Exception) {
+            server.status = ServerStatus.ERROR
+            server.error = e.message
+            notifyStatusChanged(serverId, ServerStatus.ERROR)
             logger.warn("Failed to discover tools from server: $serverId", e)
+            throw e
         }
     }
 
@@ -256,7 +291,7 @@ class McpHub(private val project: Project) : Disposable {
      * 从持久化存储加载配置
      */
     fun loadPersistedConfigs() {
-        val configStore = McpConfigStore.getInstance(project)
+        val configStore = configStoreProvider()
         val configs = configStore.getAll()
         for (config in configs) {
             if (!servers.containsKey(config.id)) {
@@ -320,6 +355,32 @@ class McpHub(private val project: Project) : Disposable {
     companion object {
         fun getInstance(project: Project): McpHub = project.service()
     }
+}
+
+internal interface McpClientAdapter {
+    suspend fun start(): Result<Unit>
+    suspend fun listTools(): Result<List<McpTool>>
+    suspend fun callTool(toolName: String, arguments: Map<String, Any>): Result<ToolCallResult>
+    fun stop()
+    fun isRunning(): Boolean
+}
+
+private class RealMcpClientAdapter(
+    private val delegate: McpClient
+) : McpClientAdapter {
+    override suspend fun start(): Result<Unit> = delegate.start()
+
+    override suspend fun listTools(): Result<List<McpTool>> = delegate.listTools()
+
+    override suspend fun callTool(toolName: String, arguments: Map<String, Any>): Result<ToolCallResult> {
+        return delegate.callTool(toolName, arguments)
+    }
+
+    override fun stop() {
+        delegate.stop()
+    }
+
+    override fun isRunning(): Boolean = delegate.isRunning()
 }
 
 /**

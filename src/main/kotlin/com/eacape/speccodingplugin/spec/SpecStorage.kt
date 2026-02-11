@@ -206,6 +206,8 @@ class SpecStorage(private val project: Project) {
     private fun formatWorkflowMetadata(workflow: SpecWorkflow): String {
         return buildString {
             appendLine("id: ${workflow.id}")
+            appendLine("title: ${workflow.title}")
+            appendLine("description: ${workflow.description.replace("\n", " ")}")
             appendLine("currentPhase: ${workflow.currentPhase.name}")
             appendLine("status: ${workflow.status.name}")
             appendLine("createdAt: ${workflow.createdAt}")
@@ -226,6 +228,8 @@ class SpecStorage(private val project: Project) {
         val lines = metadata.lines()
         var currentPhase = SpecPhase.SPECIFY
         var status = WorkflowStatus.IN_PROGRESS
+        var title = workflowId
+        var description = ""
         var createdAt = System.currentTimeMillis()
         var updatedAt = System.currentTimeMillis()
 
@@ -235,6 +239,12 @@ class SpecStorage(private val project: Project) {
                 trimmed.startsWith("currentPhase:") -> {
                     val value = trimmed.substringAfter(":").trim()
                     currentPhase = runCatching { SpecPhase.valueOf(value) }.getOrDefault(SpecPhase.SPECIFY)
+                }
+                trimmed.startsWith("title:") -> {
+                    title = trimmed.substringAfter(":").trim().ifBlank { workflowId }
+                }
+                trimmed.startsWith("description:") -> {
+                    description = trimmed.substringAfter(":").trim()
                 }
                 trimmed.startsWith("status:") -> {
                     val value = trimmed.substringAfter(":").trim()
@@ -262,6 +272,8 @@ class SpecStorage(private val project: Project) {
             currentPhase = currentPhase,
             documents = documents,
             status = status,
+            title = title,
+            description = description,
             createdAt = createdAt,
             updatedAt = updatedAt
         )

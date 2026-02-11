@@ -155,6 +155,56 @@ class SkillRegistry(private val project: Project) {
                 tags = listOf("built-in", "code-quality", "security"),
             ),
             Skill(
+                id = "security-scan",
+                name = "Security Scan",
+                description = "Scan code for vulnerabilities with fix suggestions",
+                slashCommand = "security-scan",
+                promptTemplate = """
+                    Please perform a focused security scan on the following code:
+
+                    {{selected_code}}
+
+                    Analyze for:
+                    1. OWASP Top 10 risks (injection, auth, data exposure, etc.)
+                    2. Input validation and output encoding issues
+                    3. Sensitive data handling and logging leaks
+                    4. Dependency or API misuse that could be exploited
+                    5. JetBrains plugin-specific risks (unsafe file/path/process operations)
+
+                    Output format:
+                    - Findings with severity (Critical/High/Medium/Low)
+                    - Evidence with exact code snippets
+                    - Recommended fixes with concrete code changes
+                """.trimIndent(),
+                contextRequirements = listOf(ContextRequirement.SELECTED_CODE),
+                tags = listOf("built-in", "security", "owasp"),
+            ),
+            Skill(
+                id = "tdd-workflow",
+                name = "TDD Workflow",
+                description = "Drive implementation with red-green-refactor cycle",
+                slashCommand = "tdd",
+                promptTemplate = """
+                    Please apply TDD (Red-Green-Refactor) to the following code/task:
+
+                    {{selected_code}}
+
+                    Follow this workflow:
+                    1. Define test cases and write failing tests first (Red)
+                    2. Implement minimal code to pass tests (Green)
+                    3. Refactor while keeping tests green (Refactor)
+                    4. List edge cases and missing assertions
+                    5. Report final coverage focus and next test ideas
+
+                    Return runnable test code and implementation changes.
+                """.trimIndent(),
+                contextRequirements = listOf(
+                    ContextRequirement.SELECTED_CODE,
+                    ContextRequirement.TEST_FRAMEWORK_CONFIG,
+                ),
+                tags = listOf("built-in", "testing", "tdd"),
+            ),
+            Skill(
                 id = "explain",
                 name = "Explain Code",
                 description = "Explain code logic and design intent",

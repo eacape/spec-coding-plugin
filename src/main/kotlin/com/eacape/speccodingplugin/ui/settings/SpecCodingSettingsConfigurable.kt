@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.settings
 
 import com.eacape.speccodingplugin.llm.AnthropicProvider
 import com.eacape.speccodingplugin.llm.OpenAiProvider
+import com.eacape.speccodingplugin.window.GlobalConfigSyncService
 import com.intellij.openapi.options.Configurable
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -27,6 +28,7 @@ import javax.swing.JPanel
 class SpecCodingSettingsConfigurable : Configurable {
 
     private val settings = SpecCodingSettingsState.getInstance()
+    private val globalConfigSyncService = GlobalConfigSyncService.getInstance()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // OpenAI 配置
@@ -193,6 +195,11 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         // 保存操作模式
         settings.defaultOperationMode = defaultModeField.text
+
+        globalConfigSyncService.notifyGlobalConfigChanged(
+            sourceProject = null,
+            reason = "settings-configurable-apply",
+        )
     }
 
     override fun reset() {

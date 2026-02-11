@@ -17,8 +17,19 @@ import java.util.UUID
 class SpecEngine(private val project: Project) {
     private val logger = thisLogger()
     private val storage = SpecStorage.getInstance(project)
-    private val llmRouter = LlmRouter()
-    private val generator = SpecGenerator(llmRouter)
+    private val generator = SpecGenerator(LlmRouter())
+
+    internal constructor(
+        project: Project,
+        storage: SpecStorage,
+        generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult
+    ) : this(project) {
+        this.storageDelegate = storage
+        this.generationHandler = generationHandler
+    }
+
+    private var storageDelegate: SpecStorage = storage
+    private var generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult = generator::generate
 
     // 当前活跃的工作流
     private val activeWorkflows = mutableMapOf<String, SpecWorkflow>()
@@ -33,11 +44,13 @@ class SpecEngine(private val project: Project) {
                 id = workflowId,
                 currentPhase = SpecPhase.SPECIFY,
                 documents = emptyMap(),
-                status = WorkflowStatus.IN_PROGRESS
+                status = WorkflowStatus.IN_PROGRESS,
+                title = title,
+                description = description,
             )
 
             activeWorkflows[workflowId] = workflow
-            storage.saveWorkflow(workflow).getOrThrow()
+            storageDelegate.saveWorkflow(workflow).getOrThrow()
 
             logger.info("Created workflow: $workflowId")
             workflow
@@ -53,7 +66,7 @@ class SpecEngine(private val project: Project) {
             activeWorkflows[workflowId]?.let { return@runCatching it }
 
             // 从存储加载
-            val workflow = storage.loadWorkflow(workflowId).getOrThrow()
+            val workflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
             activeWorkflows[workflowId] = workflow
             workflow
         }
@@ -63,7 +76,7 @@ class SpecEngine(private val project: Project) {
      * 列出所有工作流
      */
     fun listWorkflows(): List<String> {
-        return storage.listWorkflows()
+        return storageDelegate.listWorkflows()
     }
 
     /**
@@ -95,14 +108,14 @@ class SpecEngine(private val project: Project) {
             emit(SpecGenerationProgress.Generating(workflow.currentPhase, 0.3))
 
             // 生成文档
-            val result = generator.generate(request)
+            val result = generationHandler(request)
 
             when (result) {
                 is SpecGenerationResult.Success -> {
                     emit(SpecGenerationProgress.Generating(workflow.currentPhase, 0.7))
 
                     // 保存文档
-                    storage.saveDocument(workflowId, result.document).getOrThrow()
+                    storageDelegate.saveDocument(workflowId, result.document).getOrThrow()
 
                     // 更新工作流
                     val updatedWorkflow = workflow.copy(
@@ -110,21 +123,21 @@ class SpecEngine(private val project: Project) {
                         updatedAt = System.currentTimeMillis()
                     )
                     activeWorkflows[workflowId] = updatedWorkflow
-                    storage.saveWorkflow(updatedWorkflow).getOrThrow()
+                    storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
                     emit(SpecGenerationProgress.Completed(result.document))
                 }
 
                 is SpecGenerationResult.ValidationFailed -> {
                     // 保存文档（即使验证失败）
-                    storage.saveDocument(workflowId, result.document).getOrThrow()
+                    storageDelegate.saveDocument(workflowId, result.document).getOrThrow()
 
                     val updatedWorkflow = workflow.copy(
                         documents = workflow.documents + (workflow.currentPhase to result.document),
                         updatedAt = System.currentTimeMillis()
                     )
                     activeWorkflows[workflowId] = updatedWorkflow
-                    storage.saveWorkflow(updatedWorkflow).getOrThrow()
+                    storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
                     emit(SpecGenerationProgress.ValidationFailed(result.document, result.validation))
                 }
@@ -174,7 +187,7 @@ class SpecEngine(private val project: Project) {
             )
 
             activeWorkflows[workflowId] = updatedWorkflow
-            storage.saveWorkflow(updatedWorkflow).getOrThrow()
+            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
             logger.info("Workflow $workflowId proceeded to ${nextPhase.displayName}")
             updatedWorkflow
@@ -202,7 +215,7 @@ class SpecEngine(private val project: Project) {
             )
 
             activeWorkflows[workflowId] = updatedWorkflow
-            storage.saveWorkflow(updatedWorkflow).getOrThrow()
+            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
             logger.info("Workflow $workflowId went back to ${previousPhase.displayName}")
             updatedWorkflow
@@ -234,7 +247,7 @@ class SpecEngine(private val project: Project) {
             )
 
             activeWorkflows[workflowId] = updatedWorkflow
-            storage.saveWorkflow(updatedWorkflow).getOrThrow()
+            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
             logger.info("Workflow $workflowId completed")
             updatedWorkflow
@@ -255,7 +268,7 @@ class SpecEngine(private val project: Project) {
             )
 
             activeWorkflows[workflowId] = updatedWorkflow
-            storage.saveWorkflow(updatedWorkflow).getOrThrow()
+            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
             logger.info("Workflow $workflowId paused")
             updatedWorkflow
@@ -280,7 +293,7 @@ class SpecEngine(private val project: Project) {
             )
 
             activeWorkflows[workflowId] = updatedWorkflow
-            storage.saveWorkflow(updatedWorkflow).getOrThrow()
+            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
             logger.info("Workflow $workflowId resumed")
             updatedWorkflow
@@ -293,7 +306,7 @@ class SpecEngine(private val project: Project) {
     fun deleteWorkflow(workflowId: String): Result<Unit> {
         return runCatching {
             activeWorkflows.remove(workflowId)
-            storage.deleteWorkflow(workflowId).getOrThrow()
+            storageDelegate.deleteWorkflow(workflowId).getOrThrow()
             logger.info("Workflow $workflowId deleted")
         }
     }

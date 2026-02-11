@@ -130,13 +130,14 @@ class SpecDetailPanel(
             return
         }
         rebuildTree(workflow)
-        updateButtonStates(workflow)
         // 自动选中当前阶段
         selectedPhase = workflow.currentPhase
+        updateButtonStates(workflow)
         showDocumentPreview(workflow.currentPhase)
     }
 
     fun showEmpty() {
+        selectedPhase = null
         treeRoot.removeAllChildren()
         treeModel.reload()
         previewArea.text = ""
@@ -203,6 +204,26 @@ class SpecDetailPanel(
         completeButton.isEnabled = false
         pauseResumeButton.isEnabled = false
         openEditorButton.isEnabled = false
+    }
+
+    internal fun currentPreviewTextForTest(): String {
+        return previewArea.text
+    }
+
+    internal fun currentValidationTextForTest(): String {
+        return validationLabel.text
+    }
+
+    internal fun buttonStatesForTest(): Map<String, Any> {
+        return mapOf(
+            "generateEnabled" to generateButton.isEnabled,
+            "nextEnabled" to nextPhaseButton.isEnabled,
+            "goBackEnabled" to goBackButton.isEnabled,
+            "completeEnabled" to completeButton.isEnabled,
+            "pauseResumeEnabled" to pauseResumeButton.isEnabled,
+            "pauseResumeText" to pauseResumeButton.text,
+            "openEditorEnabled" to openEditorButton.isEnabled,
+        )
     }
 
     private data class PhaseNode(val phase: SpecPhase, val document: SpecDocument?) {

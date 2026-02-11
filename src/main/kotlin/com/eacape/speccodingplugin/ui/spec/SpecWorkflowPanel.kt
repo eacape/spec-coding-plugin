@@ -1,6 +1,10 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.*
+import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
+import com.eacape.speccodingplugin.worktree.WorktreeManager
+import com.eacape.speccodingplugin.worktree.WorktreeStatus
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
@@ -24,6 +28,7 @@ class SpecWorkflowPanel(
 
     private val logger = thisLogger()
     private val specEngine = SpecEngine.getInstance(project)
+    private val worktreeManager = WorktreeManager.getInstance(project)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Volatile
@@ -33,6 +38,8 @@ class SpecWorkflowPanel(
     private val listPanel: SpecWorkflowListPanel
     private val detailPanel: SpecDetailPanel
     private val statusLabel = JBLabel("")
+    private val createWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.createWorktree"))
+    private val mergeWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.mergeWorktree"))
 
     private var selectedWorkflowId: String? = null
     private var currentWorkflow: SpecWorkflow? = null
@@ -67,6 +74,12 @@ class SpecWorkflowPanel(
         val refreshBtn = JButton("Refresh")
         refreshBtn.addActionListener { refreshWorkflows() }
         toolbar.add(refreshBtn)
+        createWorktreeButton.isEnabled = false
+        mergeWorktreeButton.isEnabled = false
+        createWorktreeButton.addActionListener { onCreateWorktree() }
+        mergeWorktreeButton.addActionListener { onMergeWorktree() }
+        toolbar.add(createWorktreeButton)
+        toolbar.add(mergeWorktreeButton)
         toolbar.add(statusLabel)
         add(toolbar, BorderLayout.NORTH)
 
@@ -89,7 +102,7 @@ class SpecWorkflowPanel(
                 specEngine.loadWorkflow(id).getOrNull()?.let { wf ->
                     SpecWorkflowListPanel.WorkflowListItem(
                         workflowId = wf.id,
-                        title = wf.id,
+                        title = wf.title.ifBlank { wf.id },
                         currentPhase = wf.currentPhase,
                         status = wf.status,
                         updatedAt = wf.updatedAt
@@ -112,9 +125,13 @@ class SpecWorkflowPanel(
                 if (wf != null) {
                     phaseIndicator.updatePhase(wf)
                     detailPanel.updateWorkflow(wf)
+                    createWorktreeButton.isEnabled = true
+                    mergeWorktreeButton.isEnabled = true
                 } else {
                     phaseIndicator.reset()
                     detailPanel.showEmpty()
+                    createWorktreeButton.isEnabled = false
+                    mergeWorktreeButton.isEnabled = false
                 }
             }
         }
@@ -148,8 +165,86 @@ class SpecWorkflowPanel(
                     currentWorkflow = null
                     phaseIndicator.reset()
                     detailPanel.showEmpty()
+                    createWorktreeButton.isEnabled = false
+                    mergeWorktreeButton.isEnabled = false
                 }
                 refreshWorkflows()
+            }
+        }
+    }
+
+    private fun onCreateWorktree() {
+        val workflow = currentWorkflow
+        if (workflow == null) {
+            statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.selectFirst")
+            return
+        }
+
+        val dialog = NewWorktreeDialog(
+            specTaskId = workflow.id,
+            specTitle = workflow.title.ifBlank { workflow.id },
+        )
+        if (!dialog.showAndGet()) {
+            return
+        }
+
+        val specTaskId = dialog.resultSpecTaskId ?: workflow.id
+        val shortName = dialog.resultShortName ?: return
+        val baseBranch = dialog.resultBaseBranch ?: "main"
+
+        scope.launch(Dispatchers.IO) {
+            val created = worktreeManager.createWorktree(specTaskId, shortName, baseBranch)
+            created.onSuccess { binding ->
+                val switched = worktreeManager.switchWorktree(binding.id)
+                invokeLaterSafe {
+                    if (switched.isSuccess) {
+                        statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.created", binding.branchName)
+                    } else {
+                        val message = switched.exceptionOrNull()?.message ?: "unknown"
+                        statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.switchFailed", message)
+                    }
+                }
+            }.onFailure { error ->
+                invokeLaterSafe {
+                    statusLabel.text = SpecCodingBundle.message(
+                        "spec.workflow.worktree.createFailed",
+                        error.message ?: "unknown",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun onMergeWorktree() {
+        val workflow = currentWorkflow
+        if (workflow == null) {
+            statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.selectFirst")
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val binding = worktreeManager.listBindings(includeInactive = true)
+                .firstOrNull { it.specTaskId == workflow.id && it.status == WorktreeStatus.ACTIVE }
+                ?: worktreeManager.listBindings(includeInactive = true)
+                    .firstOrNull { it.specTaskId == workflow.id }
+
+            if (binding == null) {
+                invokeLaterSafe {
+                    statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.noBinding")
+                }
+                return@launch
+            }
+
+            val mergeResult = worktreeManager.mergeWorktree(binding.id, binding.baseBranch)
+            invokeLaterSafe {
+                mergeResult.onSuccess {
+                    statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.merged", it.targetBranch)
+                }.onFailure { error ->
+                    statusLabel.text = SpecCodingBundle.message(
+                        "spec.workflow.worktree.mergeFailed",
+                        error.message ?: "unknown",
+                    )
+                }
             }
         }
     }

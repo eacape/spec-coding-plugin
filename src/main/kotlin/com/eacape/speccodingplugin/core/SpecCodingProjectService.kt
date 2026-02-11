@@ -1,5 +1,8 @@
 package com.eacape.speccodingplugin.core
 
+import com.eacape.speccodingplugin.context.ContextFormatter
+import com.eacape.speccodingplugin.context.ContextItem
+import com.eacape.speccodingplugin.context.ContextSnapshot
 import com.eacape.speccodingplugin.llm.LlmChunk
 import com.eacape.speccodingplugin.llm.LlmMessage
 import com.eacape.speccodingplugin.llm.LlmRequest
@@ -29,23 +32,36 @@ class SpecCodingProjectService(private val project: Project) {
     suspend fun chat(
         providerId: String?,
         userInput: String,
+        contextSnapshot: ContextSnapshot? = null,
         onChunk: suspend (LlmChunk) -> Unit,
     ): LlmResponse {
-        val request = LlmRequest(
-            messages = listOf(
-                LlmMessage(
-                    role = LlmRole.SYSTEM,
-                    content = promptManager.renderActivePrompt(
-                        runtimeVariables = mapOf(
-                            "project_name" to project.name,
-                            "provider" to providerId.orEmpty(),
-                        ),
+        val messages = mutableListOf<LlmMessage>()
+
+        // 1. System prompt
+        messages.add(
+            LlmMessage(
+                role = LlmRole.SYSTEM,
+                content = promptManager.renderActivePrompt(
+                    runtimeVariables = mapOf(
+                        "project_name" to project.name,
+                        "provider" to providerId.orEmpty(),
                     ),
                 ),
-                LlmMessage(role = LlmRole.USER, content = userInput),
             ),
-            model = null,
         )
+
+        // 2. Context as second system message (if present)
+        if (contextSnapshot != null && contextSnapshot.items.isNotEmpty()) {
+            val contextText = ContextFormatter.format(contextSnapshot)
+            if (contextText.isNotBlank()) {
+                messages.add(LlmMessage(role = LlmRole.SYSTEM, content = contextText))
+            }
+        }
+
+        // 3. User message
+        messages.add(LlmMessage(role = LlmRole.USER, content = userInput))
+
+        val request = LlmRequest(messages = messages, model = null)
         return llmRouter.stream(providerId = providerId, request = request, onChunk = onChunk)
     }
 }
