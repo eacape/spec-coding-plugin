@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.chat
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.rollback.Changeset
 import com.eacape.speccodingplugin.rollback.ChangesetStore
 import com.eacape.speccodingplugin.rollback.FileChange
@@ -31,6 +32,9 @@ class ChangesetTimelinePanel(
     private val rollbackManager = RollbackManager.getInstance(project)
     private val timelineContainer = JPanel()
     private val statusLabel = JBLabel("")
+    private val titleLabel = JBLabel()
+    private val refreshButton = JButton()
+    private val clearButton = JButton()
     private val formatter = DateTimeFormatter
         .ofPattern("HH:mm:ss")
         .withZone(ZoneId.systemDefault())
@@ -46,19 +50,16 @@ class ChangesetTimelinePanel(
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
         toolbar.isOpaque = false
 
-        val titleLabel = JBLabel("Change Timeline")
         titleLabel.font = titleLabel.font.deriveFont(
             java.awt.Font.BOLD, 13f
         )
         toolbar.add(titleLabel)
 
-        val refreshBtn = JButton("Refresh")
-        refreshBtn.addActionListener { refresh() }
-        toolbar.add(refreshBtn)
+        refreshButton.addActionListener { refresh() }
+        toolbar.add(refreshButton)
 
-        val clearBtn = JButton("Clear All")
-        clearBtn.addActionListener { clearAll() }
-        toolbar.add(clearBtn)
+        clearButton.addActionListener { clearAll() }
+        toolbar.add(clearButton)
 
         toolbar.add(statusLabel)
 
@@ -74,6 +75,8 @@ class ChangesetTimelinePanel(
 
         add(toolbar, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
+
+        refreshLocalizedTexts()
     }
 
     /**
@@ -84,7 +87,7 @@ class ChangesetTimelinePanel(
         timelineContainer.removeAll()
 
         if (changesets.isEmpty()) {
-            val emptyLabel = JBLabel("No changes recorded yet.")
+            val emptyLabel = JBLabel(SpecCodingBundle.message("changeset.timeline.empty"))
             emptyLabel.foreground = JBColor.GRAY
             emptyLabel.border = JBUI.Borders.empty(16)
             timelineContainer.add(emptyLabel)
@@ -96,7 +99,7 @@ class ChangesetTimelinePanel(
             }
         }
 
-        statusLabel.text = "${changesets.size} changeset(s)"
+        statusLabel.text = SpecCodingBundle.message("changeset.timeline.count", changesets.size)
         statusLabel.foreground = JBColor.GRAY
 
         timelineContainer.revalidate()
@@ -150,7 +153,7 @@ class ChangesetTimelinePanel(
         }
         if (changeset.changes.size > 5) {
             val moreLabel = JBLabel(
-                "... and ${changeset.changes.size - 5} more"
+                SpecCodingBundle.message("changeset.timeline.more", changeset.changes.size - 5)
             )
             moreLabel.foreground = JBColor.GRAY
             moreLabel.font = moreLabel.font.deriveFont(11f)
@@ -162,13 +165,13 @@ class ChangesetTimelinePanel(
         actions.isOpaque = false
         actions.border = JBUI.Borders.emptyTop(6)
 
-        val rollbackBtn = JButton("Rollback")
+        val rollbackBtn = JButton(SpecCodingBundle.message("changeset.timeline.rollback"))
         rollbackBtn.addActionListener {
             performRollback(changeset.id)
         }
         actions.add(rollbackBtn)
 
-        val deleteBtn = JButton("Remove")
+        val deleteBtn = JButton(SpecCodingBundle.message("changeset.timeline.remove"))
         deleteBtn.addActionListener {
             store.delete(changeset.id)
             refresh()
@@ -200,13 +203,13 @@ class ChangesetTimelinePanel(
     ): String {
         val parts = mutableListOf<String>()
         if (stats.createdFiles > 0) {
-            parts.add("+${stats.createdFiles} created")
+            parts.add(SpecCodingBundle.message("changeset.timeline.stats.created", stats.createdFiles))
         }
         if (stats.modifiedFiles > 0) {
-            parts.add("~${stats.modifiedFiles} modified")
+            parts.add(SpecCodingBundle.message("changeset.timeline.stats.modified", stats.modifiedFiles))
         }
         if (stats.deletedFiles > 0) {
-            parts.add("-${stats.deletedFiles} deleted")
+            parts.add(SpecCodingBundle.message("changeset.timeline.stats.deleted", stats.deletedFiles))
         }
         return parts.joinToString("  ")
     }
@@ -263,6 +266,12 @@ class ChangesetTimelinePanel(
     private fun clearAll() {
         store.clear()
         refresh()
+    }
+
+    private fun refreshLocalizedTexts() {
+        titleLabel.text = SpecCodingBundle.message("changeset.timeline.title")
+        refreshButton.text = SpecCodingBundle.message("changeset.timeline.refresh")
+        clearButton.text = SpecCodingBundle.message("changeset.timeline.clearAll")
     }
 
     companion object {

@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.prompt
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.prompt.PromptScope
 import com.eacape.speccodingplugin.prompt.PromptTemplate
 import com.intellij.openapi.ui.DialogWrapper
@@ -38,7 +39,11 @@ class PromptEditorDialog(
         private set
 
     init {
-        title = if (existing != null) "Edit Prompt Template" else "New Prompt Template"
+        title = if (existing != null) {
+            SpecCodingBundle.message("prompt.editor.title.edit")
+        } else {
+            SpecCodingBundle.message("prompt.editor.title.new")
+        }
         init()
         loadExisting()
     }
@@ -81,16 +86,16 @@ class PromptEditorDialog(
         panel.border = JBUI.Borders.emptyBottom(8)
 
         // ID 行
-        val idRow = createLabeledRow("ID:", idField)
-        idField.emptyText.text = "e.g. my-custom-prompt"
+        val idRow = createLabeledRow(SpecCodingBundle.message("prompt.editor.field.id"), idField)
+        idField.emptyText.text = SpecCodingBundle.message("prompt.editor.placeholder.id")
 
         // Name 行
-        val nameRow = createLabeledRow("Name:", nameField)
-        nameField.emptyText.text = "e.g. My Custom Prompt"
+        val nameRow = createLabeledRow(SpecCodingBundle.message("prompt.editor.field.name"), nameField)
+        nameField.emptyText.text = SpecCodingBundle.message("prompt.editor.placeholder.name")
 
         // Tags 行
-        val tagsRow = createLabeledRow("Tags:", tagsField)
-        tagsField.emptyText.text = "e.g. coding, review (comma separated)"
+        val tagsRow = createLabeledRow(SpecCodingBundle.message("prompt.editor.field.tags"), tagsField)
+        tagsField.emptyText.text = SpecCodingBundle.message("prompt.editor.placeholder.tags")
 
         panel.add(idRow)
         panel.add(nameRow)
@@ -118,7 +123,7 @@ class PromptEditorDialog(
         val panel = JPanel(BorderLayout())
         panel.isOpaque = false
 
-        val editorLabel = JBLabel("Content:")
+        val editorLabel = JBLabel(SpecCodingBundle.message("prompt.editor.field.content"))
         editorLabel.border = JBUI.Borders.emptyBottom(4)
 
         // 配置编辑器
@@ -143,8 +148,7 @@ class PromptEditorDialog(
 
         // 提示文字
         val hintLabel = JBLabel(
-            "Use {{variable_name}} for variables. " +
-            "Built-in: {{project_name}}, {{project_path}}"
+            SpecCodingBundle.message("prompt.editor.hint")
         )
         hintLabel.foreground = JBColor.GRAY
         hintLabel.font = hintLabel.font.deriveFont(11f)
@@ -194,31 +198,34 @@ class PromptEditorDialog(
             val text = contentPane.text
             val vars = PromptSyntaxHighlighter.extractVariables(text)
             variablesLabel.text = if (vars.isNotEmpty()) {
-                "Variables: ${vars.joinToString(", ") { "{{$it}}" }}"
+                SpecCodingBundle.message(
+                    "prompt.editor.variables.detected",
+                    vars.joinToString(", ") { "{{$it}}" }
+                )
             } else {
-                "No variables detected"
+                SpecCodingBundle.message("prompt.editor.variables.none")
             }
 
             // 更新字符计数
-            previewLabel.text = "${text.length} characters"
+            previewLabel.text = SpecCodingBundle.message("prompt.editor.characters", text.length)
         }
     }
 
     override fun doValidate(): ValidationInfo? {
         if (idField.text.isBlank()) {
-            return ValidationInfo("ID is required", idField)
+            return ValidationInfo(SpecCodingBundle.message("prompt.editor.validation.idRequired"), idField)
         }
         if (!idField.text.matches(Regex("^[a-zA-Z0-9_-]+$"))) {
             return ValidationInfo(
-                "ID can only contain letters, numbers, hyphens and underscores",
+                SpecCodingBundle.message("prompt.editor.validation.idFormat"),
                 idField
             )
         }
         if (nameField.text.isBlank()) {
-            return ValidationInfo("Name is required", nameField)
+            return ValidationInfo(SpecCodingBundle.message("prompt.editor.validation.nameRequired"), nameField)
         }
         if (contentPane.text.isBlank()) {
-            return ValidationInfo("Content is required")
+            return ValidationInfo(SpecCodingBundle.message("prompt.editor.validation.contentRequired"))
         }
         return null
     }

@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.ui.mcp
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
+import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.mcp.*
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
@@ -34,6 +36,9 @@ class McpPanel(
 
     private val statusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
     private val refreshBtn = JButton(SpecCodingBundle.message("mcp.server.refresh"))
+    private val titleLabel = JBLabel(SpecCodingBundle.message("mcp.panel.title"))
+
+    private var selectedServerId: String? = null
 
     private val serverListPanel = McpServerListPanel(
         onServerSelected = ::onServerSelected,
@@ -60,7 +65,6 @@ class McpPanel(
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
         toolbar.isOpaque = false
         toolbar.border = JBUI.Borders.emptyBottom(4)
-        val titleLabel = JBLabel(SpecCodingBundle.message("mcp.panel.title"))
         titleLabel.font = titleLabel.font.deriveFont(java.awt.Font.BOLD, 13f)
         toolbar.add(titleLabel)
         toolbar.add(refreshBtn)
@@ -94,6 +98,17 @@ class McpPanel(
                 }
             }
         )
+
+        project.messageBus.connect(this).subscribe(
+            LocaleChangedListener.TOPIC,
+            object : LocaleChangedListener {
+                override fun onLocaleChanged(event: LocaleChangedEvent) {
+                    invokeLaterSafe {
+                        refreshLocalizedTexts()
+                    }
+                }
+            }
+        )
     }
 
     private fun loadServers() {
@@ -114,12 +129,22 @@ class McpPanel(
             )
         }
         serverListPanel.updateServers(items)
-        statusLabel.text = "${servers.size} server(s)"
+        statusLabel.text = SpecCodingBundle.message("mcp.server.count", servers.size)
+    }
+
+    private fun refreshLocalizedTexts() {
+        titleLabel.text = SpecCodingBundle.message("mcp.panel.title")
+        refreshBtn.text = SpecCodingBundle.message("mcp.server.refresh")
+        serverListPanel.refreshLocalizedTexts()
+        val servers = mcpHub.getAllServers()
+        statusLabel.text = SpecCodingBundle.message("mcp.server.count", servers.size)
+        selectedServerId?.let(::onServerSelected)
     }
 
     // --- 回调方法 ---
 
     private fun onServerSelected(serverId: String) {
+        selectedServerId = serverId
         val server = mcpHub.getServer(serverId) ?: return
         val tools = mcpHub.getServerTools(serverId)
         serverDetailPanel.updateServer(server, tools)
@@ -148,6 +173,9 @@ class McpPanel(
     }
 
     private fun onDeleteServer(serverId: String) {
+        if (selectedServerId == serverId) {
+            selectedServerId = null
+        }
         mcpHub.stopServer(serverId)
         mcpHub.unregisterServer(serverId)
         mcpConfigStore.delete(serverId)
@@ -160,7 +188,8 @@ class McpPanel(
             val result = mcpHub.startServer(serverId)
             invokeLaterSafe {
                 if (result.isFailure) {
-                    statusLabel.text = result.exceptionOrNull()?.message ?: "Start failed"
+                    statusLabel.text = result.exceptionOrNull()?.message
+                        ?: SpecCodingBundle.message("mcp.server.startFailed")
                 }
                 refreshServers()
                 onServerSelected(serverId)

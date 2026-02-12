@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
+import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.spec.*
 import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
@@ -28,6 +30,7 @@ class SpecWorkflowPanel(
 
     private val logger = thisLogger()
     private val specEngine = SpecEngine.getInstance(project)
+    private val specDeltaService = SpecDeltaService.getInstance(project)
     private val worktreeManager = WorktreeManager.getInstance(project)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -40,6 +43,8 @@ class SpecWorkflowPanel(
     private val statusLabel = JBLabel("")
     private val createWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.createWorktree"))
     private val mergeWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.mergeWorktree"))
+    private val deltaButton = JButton(SpecCodingBundle.message("spec.workflow.delta"))
+    private val refreshButton = JButton(SpecCodingBundle.message("spec.workflow.refresh"))
 
     private var selectedWorkflowId: String? = null
     private var currentWorkflow: SpecWorkflow? = null
@@ -63,6 +68,7 @@ class SpecWorkflowPanel(
         )
 
         setupUI()
+        subscribeToLocaleEvents()
         refreshWorkflows()
     }
 
@@ -71,15 +77,17 @@ class SpecWorkflowPanel(
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
         toolbar.isOpaque = false
         toolbar.border = JBUI.Borders.emptyBottom(8)
-        val refreshBtn = JButton("Refresh")
-        refreshBtn.addActionListener { refreshWorkflows() }
-        toolbar.add(refreshBtn)
+        refreshButton.addActionListener { refreshWorkflows() }
+        toolbar.add(refreshButton)
         createWorktreeButton.isEnabled = false
         mergeWorktreeButton.isEnabled = false
+        deltaButton.isEnabled = false
         createWorktreeButton.addActionListener { onCreateWorktree() }
         mergeWorktreeButton.addActionListener { onMergeWorktree() }
+        deltaButton.addActionListener { onShowDelta() }
         toolbar.add(createWorktreeButton)
         toolbar.add(mergeWorktreeButton)
+        toolbar.add(deltaButton)
         toolbar.add(statusLabel)
         add(toolbar, BorderLayout.NORTH)
 
@@ -111,7 +119,7 @@ class SpecWorkflowPanel(
             }
             invokeLaterSafe {
                 listPanel.updateWorkflows(items)
-                statusLabel.text = "${items.size} workflow(s)"
+                statusLabel.text = SpecCodingBundle.message("spec.workflow.status.count", items.size)
             }
         }
     }
@@ -127,11 +135,13 @@ class SpecWorkflowPanel(
                     detailPanel.updateWorkflow(wf)
                     createWorktreeButton.isEnabled = true
                     mergeWorktreeButton.isEnabled = true
+                    deltaButton.isEnabled = true
                 } else {
                     phaseIndicator.reset()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
+                    deltaButton.isEnabled = false
                 }
             }
         }
@@ -167,6 +177,7 @@ class SpecWorkflowPanel(
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
+                    deltaButton.isEnabled = false
                 }
                 refreshWorkflows()
             }
@@ -200,7 +211,7 @@ class SpecWorkflowPanel(
                     if (switched.isSuccess) {
                         statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.created", binding.branchName)
                     } else {
-                        val message = switched.exceptionOrNull()?.message ?: "unknown"
+                        val message = switched.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown")
                         statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.switchFailed", message)
                     }
                 }
@@ -208,7 +219,7 @@ class SpecWorkflowPanel(
                 invokeLaterSafe {
                     statusLabel.text = SpecCodingBundle.message(
                         "spec.workflow.worktree.createFailed",
-                        error.message ?: "unknown",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
                     )
                 }
             }
@@ -242,7 +253,7 @@ class SpecWorkflowPanel(
                 }.onFailure { error ->
                     statusLabel.text = SpecCodingBundle.message(
                         "spec.workflow.worktree.mergeFailed",
-                        error.message ?: "unknown",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
                     )
                 }
             }
@@ -266,7 +277,71 @@ class SpecWorkflowPanel(
                             reloadCurrentWorkflow()
                         }
                         is SpecGenerationProgress.Failed ->
-                            statusLabel.text = "Error: ${progress.error}"
+                            statusLabel.text = SpecCodingBundle.message("spec.workflow.error", progress.error)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun onShowDelta() {
+        val targetWorkflow = currentWorkflow
+        if (targetWorkflow == null) {
+            statusLabel.text = SpecCodingBundle.message("spec.delta.error.noCurrentWorkflow")
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val candidateWorkflows = specEngine.listWorkflows()
+                .filter { it != targetWorkflow.id }
+                .mapNotNull { workflowId ->
+                    specEngine.loadWorkflow(workflowId).getOrNull()?.let { workflow ->
+                        SpecBaselineSelectDialog.WorkflowOption(
+                            workflowId = workflow.id,
+                            title = workflow.title.ifBlank { workflow.id },
+                            description = workflow.description,
+                        )
+                    }
+                }
+
+            if (candidateWorkflows.isEmpty()) {
+                invokeLaterSafe {
+                    statusLabel.text = SpecCodingBundle.message("spec.delta.emptyCandidates")
+                }
+                return@launch
+            }
+
+            invokeLaterSafe {
+                val selectDialog = SpecBaselineSelectDialog(
+                    workflowOptions = candidateWorkflows,
+                    currentWorkflowId = targetWorkflow.id,
+                )
+                if (!selectDialog.showAndGet()) {
+                    return@invokeLaterSafe
+                }
+
+                val baselineWorkflowId = selectDialog.selectedBaselineWorkflowId
+                if (baselineWorkflowId.isNullOrBlank()) {
+                    statusLabel.text = SpecCodingBundle.message("spec.delta.selectBaseline.required")
+                    return@invokeLaterSafe
+                }
+
+                scope.launch(Dispatchers.IO) {
+                    val result = specDeltaService.compareByWorkflowId(
+                        baselineWorkflowId = baselineWorkflowId,
+                        targetWorkflowId = targetWorkflow.id,
+                    )
+
+                    invokeLaterSafe {
+                        result.onSuccess { delta ->
+                            SpecDeltaDialog(delta).show()
+                            statusLabel.text = SpecCodingBundle.message("spec.delta.generated")
+                        }.onFailure { error ->
+                            statusLabel.text = SpecCodingBundle.message(
+                                "spec.workflow.error",
+                                error.message ?: SpecCodingBundle.message("common.unknown"),
+                            )
+                        }
                     }
                 }
             }
@@ -279,7 +354,12 @@ class SpecWorkflowPanel(
             specEngine.proceedToNextPhase(wfId).onSuccess {
                 invokeLaterSafe { reloadCurrentWorkflow() }
             }.onFailure { e ->
-                invokeLaterSafe { statusLabel.text = "Error: ${e.message}" }
+                invokeLaterSafe {
+                    statusLabel.text = SpecCodingBundle.message(
+                        "spec.workflow.error",
+                        e.message ?: SpecCodingBundle.message("common.unknown")
+                    )
+                }
             }
         }
     }
@@ -290,9 +370,35 @@ class SpecWorkflowPanel(
             specEngine.goBackToPreviousPhase(wfId).onSuccess {
                 invokeLaterSafe { reloadCurrentWorkflow() }
             }.onFailure { e ->
-                invokeLaterSafe { statusLabel.text = "Error: ${e.message}" }
+                invokeLaterSafe {
+                    statusLabel.text = SpecCodingBundle.message(
+                        "spec.workflow.error",
+                        e.message ?: SpecCodingBundle.message("common.unknown")
+                    )
+                }
             }
         }
+    }
+
+    private fun subscribeToLocaleEvents() {
+        project.messageBus.connect(this).subscribe(
+            LocaleChangedListener.TOPIC,
+            object : LocaleChangedListener {
+                override fun onLocaleChanged(event: LocaleChangedEvent) {
+                    invokeLaterSafe {
+                        refreshLocalizedTexts()
+                    }
+                }
+            },
+        )
+    }
+
+    private fun refreshLocalizedTexts() {
+        refreshButton.text = SpecCodingBundle.message("spec.workflow.refresh")
+        createWorktreeButton.text = SpecCodingBundle.message("spec.workflow.createWorktree")
+        mergeWorktreeButton.text = SpecCodingBundle.message("spec.workflow.mergeWorktree")
+        deltaButton.text = SpecCodingBundle.message("spec.workflow.delta")
+        statusLabel.text = SpecCodingBundle.message("spec.workflow.status.ready")
     }
 
     private fun onComplete() {

@@ -68,6 +68,24 @@
 3. 选择 `build/distributions/spec-coding-plugin-*.zip`
 4. 重启 IDE
 
+### CI 覆盖率报告查看（Phase 3）
+
+项目已接入 `phase3Coverage` CI 门禁（GitHub Actions）。
+
+补充：同一分支重复提交时，workflow 会自动取消旧任务（`concurrency + cancel-in-progress`），只保留最新一次运行。
+
+1. 打开 GitHub 仓库的 **Actions** 页面，进入 `Phase 3 Coverage Gate` 工作流运行记录。
+2. 在页面底部 **Artifacts** 下载 `phase3-kover-report`。
+3. 解压后查看：
+   - `report.xml`（机器可读，适合自动分析）
+   - `html/index.html`（可视化明细报告）
+
+本地也可执行同款命令：
+
+```bash
+./gradlew phase3Coverage
+```
+
 ---
 
 ## 📚 功能概览

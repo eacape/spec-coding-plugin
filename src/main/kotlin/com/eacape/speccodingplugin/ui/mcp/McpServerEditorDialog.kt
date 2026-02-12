@@ -79,19 +79,19 @@ class McpServerEditorDialog(
         panel.isOpaque = false
 
         // ID
-        idField.emptyText.text = "e.g. my-mcp-server"
+        idField.emptyText.text = SpecCodingBundle.message("mcp.dialog.placeholder.id")
         panel.add(createRow(SpecCodingBundle.message("mcp.dialog.field.id"), idField))
 
         // Name
-        nameField.emptyText.text = "e.g. My MCP Server"
+        nameField.emptyText.text = SpecCodingBundle.message("mcp.dialog.placeholder.name")
         panel.add(createRow(SpecCodingBundle.message("mcp.dialog.field.name"), nameField))
 
         // Command
-        commandField.emptyText.text = "e.g. npx or /usr/local/bin/my-server"
+        commandField.emptyText.text = SpecCodingBundle.message("mcp.dialog.placeholder.command")
         panel.add(createRow(SpecCodingBundle.message("mcp.dialog.field.command"), commandField))
 
         // Args
-        argsField.emptyText.text = "e.g. -y, @modelcontextprotocol/server-filesystem"
+        argsField.emptyText.text = SpecCodingBundle.message("mcp.dialog.placeholder.args")
         panel.add(createRow(SpecCodingBundle.message("mcp.dialog.field.args"), argsField))
 
         // Transport

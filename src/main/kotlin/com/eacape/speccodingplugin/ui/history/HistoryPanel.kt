@@ -1,10 +1,14 @@
 package com.eacape.speccodingplugin.ui.history
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.session.ConversationMessage
+import com.eacape.speccodingplugin.session.ConversationSession
 import com.eacape.speccodingplugin.session.SessionFilter
 import com.eacape.speccodingplugin.session.SessionExportFormat
 import com.eacape.speccodingplugin.session.SessionExporter
 import com.eacape.speccodingplugin.session.SessionManager
+import com.eacape.speccodingplugin.session.SessionExportResult
+import com.eacape.speccodingplugin.session.SessionSummary
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.thisLogger
@@ -26,6 +30,27 @@ import javax.swing.JSplitPane
 
 class HistoryPanel(
     private val project: Project,
+    private val searchSessions: (query: String, filter: SessionFilter, limit: Int) -> List<SessionSummary> = { query, filter, limit ->
+        SessionManager.getInstance(project).searchSessions(query = query, filter = filter, limit = limit)
+    },
+    private val listMessages: (sessionId: String, limit: Int) -> List<ConversationMessage> = { sessionId, limit ->
+        SessionManager.getInstance(project).listMessages(sessionId, limit)
+    },
+    private val deleteSession: (sessionId: String) -> Result<Unit> = { sessionId ->
+        SessionManager.getInstance(project).deleteSession(sessionId)
+    },
+    private val getSession: (sessionId: String) -> ConversationSession? = { sessionId ->
+        SessionManager.getInstance(project).getSession(sessionId)
+    },
+    private val exportSession: (
+        exportDir: Path,
+        session: ConversationSession,
+        messages: List<ConversationMessage>,
+        format: SessionExportFormat,
+    ) -> Result<SessionExportResult> = { exportDir, session, messages, format ->
+        SessionExporter.exportSession(exportDir, session, messages, format)
+    },
+    private val runSynchronously: Boolean = false,
 ) : JPanel(BorderLayout()), Disposable {
 
     private val logger = thisLogger()
@@ -33,8 +58,6 @@ class HistoryPanel(
 
     @Volatile
     private var isDisposed = false
-
-    private val sessionManager = SessionManager.getInstance(project)
 
     private val searchField = JBTextField()
     private val filterCombo = JComboBox(SessionFilter.entries.toTypedArray())
@@ -86,12 +109,8 @@ class HistoryPanel(
         val query = searchField.text
         val filter = filterCombo.selectedItem as? SessionFilter ?: SessionFilter.ALL
 
-        scope.launch(Dispatchers.IO) {
-            val sessions = sessionManager.searchSessions(
-                query = query,
-                filter = filter,
-                limit = 200,
-            )
+        runBackground {
+            val sessions = searchSessions(query, filter, 200)
             invokeLaterSafe {
                 listPanel.updateSessions(sessions)
                 statusLabel.text = SpecCodingBundle.message("history.status.count", sessions.size)
@@ -109,8 +128,8 @@ class HistoryPanel(
 
     private fun onSessionSelected(sessionId: String) {
         selectedSessionId = sessionId
-        scope.launch(Dispatchers.IO) {
-            val messages = sessionManager.listMessages(sessionId, limit = 500)
+        runBackground {
+            val messages = listMessages(sessionId, 500)
             invokeLaterSafe {
                 detailPanel.showMessages(messages)
             }
@@ -125,8 +144,8 @@ class HistoryPanel(
     }
 
     private fun onDeleteSession(sessionId: String) {
-        scope.launch(Dispatchers.IO) {
-            val result = sessionManager.deleteSession(sessionId)
+        runBackground {
+            val result = deleteSession(sessionId)
             invokeLaterSafe {
                 result.onSuccess {
                     if (selectedSessionId == sessionId) {
@@ -138,7 +157,7 @@ class HistoryPanel(
                     logger.warn("Failed to delete session: $sessionId", error)
                     statusLabel.text = SpecCodingBundle.message(
                         "history.status.deleteFailed",
-                        error.message ?: "unknown",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
                     )
                 }
             }
@@ -146,19 +165,14 @@ class HistoryPanel(
     }
 
     private fun onExportSession(sessionId: String, format: SessionExportFormat) {
-        scope.launch(Dispatchers.IO) {
+        runBackground {
             runCatching {
-                val session = sessionManager.getSession(sessionId)
+                val session = getSession(sessionId)
                     ?: error("Session not found: $sessionId")
-                val messages = sessionManager.listMessages(sessionId, limit = 5000)
+                val messages = listMessages(sessionId, 5000)
 
                 val exportDir = resolveExportDir()
-                SessionExporter.exportSession(
-                    exportDir = exportDir,
-                    session = session,
-                    messages = messages,
-                    format = format,
-                ).getOrThrow()
+                exportSession(exportDir, session, messages, format).getOrThrow()
             }.onSuccess { result ->
                 invokeLaterSafe {
                     statusLabel.text = SpecCodingBundle.message(
@@ -172,7 +186,7 @@ class HistoryPanel(
                 invokeLaterSafe {
                     statusLabel.text = SpecCodingBundle.message(
                         "history.status.exportFailed",
-                        error.message ?: "unknown",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
                     )
                 }
             }
@@ -186,12 +200,62 @@ class HistoryPanel(
     }
 
     private fun invokeLaterSafe(action: () -> Unit) {
+        if (runSynchronously) {
+            if (!isDisposed && !project.isDisposed) {
+                action()
+            }
+            return
+        }
+
         if (isDisposed) return
         invokeLater {
             if (!isDisposed && !project.isDisposed) {
                 action()
             }
         }
+    }
+
+    private fun runBackground(task: () -> Unit) {
+        if (runSynchronously) {
+            task()
+            return
+        }
+        scope.launch(Dispatchers.IO) { task() }
+    }
+
+    internal fun setSearchQueryForTest(query: String) {
+        searchField.text = query
+    }
+
+    internal fun setFilterForTest(filter: SessionFilter) {
+        filterCombo.selectedItem = filter
+    }
+
+    internal fun statusTextForTest(): String = statusLabel.text
+
+    internal fun selectedSessionIdForTest(): String? = selectedSessionId
+
+    internal fun sessionsForTest(): List<SessionSummary> = listPanel.sessionsForTest()
+
+    internal fun detailTextForTest(): String = detailPanel.displayedTextForTest()
+
+    internal fun isDetailEmptyForTest(): Boolean = detailPanel.isShowingEmptyForTest()
+
+    internal fun selectSessionForTest(sessionId: String?) {
+        listPanel.setSelectedSession(sessionId)
+        selectedSessionId = sessionId
+    }
+
+    internal fun clickOpenForTest() {
+        listPanel.clickOpenForTest()
+    }
+
+    internal fun clickDeleteForTest() {
+        listPanel.clickDeleteForTest()
+    }
+
+    internal fun clickExportForTest() {
+        listPanel.clickExportForTest()
     }
 
     override fun dispose() {

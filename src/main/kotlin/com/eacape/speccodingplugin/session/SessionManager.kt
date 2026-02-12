@@ -10,6 +10,7 @@ import java.nio.file.Paths
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.ResultSet
+import java.sql.SQLException
 import java.util.UUID
 
 @Service(Service.Level.PROJECT)
@@ -407,11 +408,23 @@ class SessionManager internal constructor(
     }
 
     private fun openConnection(): Connection {
+        ensureSqliteDriverLoaded()
         val jdbcUrl = requireNotNull(jdbcUrl()) { "Project base path is not available" }
         return connectionProvider(jdbcUrl).apply {
             createStatement().use { statement ->
                 statement.execute("PRAGMA foreign_keys = ON")
             }
+        }
+    }
+
+    private fun ensureSqliteDriverLoaded() {
+        runCatching {
+            Class.forName("org.sqlite.JDBC", true, SessionManager::class.java.classLoader)
+        }.getOrElse { error ->
+            throw SQLException(
+                "SQLite JDBC driver is not available in plugin runtime",
+                error,
+            )
         }
     }
 

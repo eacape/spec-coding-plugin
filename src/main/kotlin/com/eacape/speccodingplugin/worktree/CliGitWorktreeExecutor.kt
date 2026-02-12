@@ -6,7 +6,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 
-class CliGitWorktreeExecutor : GitWorktreeExecutor {
+class CliGitWorktreeExecutor(
+    private val processRunner: (repoPath: String, command: List<String>) -> ProcessExecutionResult = ::defaultProcessRunner,
+) : GitWorktreeExecutor {
     private val logger = thisLogger()
 
     override fun addWorktree(
@@ -45,24 +47,36 @@ class CliGitWorktreeExecutor : GitWorktreeExecutor {
             withContext(Dispatchers.IO) {
                 runCatching {
                     val command = listOf("git") + args
-                    val process = ProcessBuilder(command)
-                        .directory(File(repoPath))
-                        .redirectErrorStream(true)
-                        .start()
-
-                    val output = process.inputStream.bufferedReader().use { it.readText() }
-                    val exitCode = process.waitFor()
-                    if (exitCode != 0) {
+                    val result = processRunner(repoPath, command)
+                    if (result.exitCode != 0) {
                         throw IllegalStateException(
-                            "Git command failed (${command.joinToString(" ")}): ${output.trim()}"
+                            "Git command failed (${command.joinToString(" ")}): ${result.output.trim()}"
                         )
                     }
 
-                    output
+                    result.output
                 }.onFailure { e ->
                     logger.warn("Git command execution failed: ${args.joinToString(" ")}", e)
                 }
             }
+        }
+    }
+
+    data class ProcessExecutionResult(
+        val exitCode: Int,
+        val output: String,
+    )
+
+    companion object {
+        private fun defaultProcessRunner(repoPath: String, command: List<String>): ProcessExecutionResult {
+            val process = ProcessBuilder(command)
+                .directory(File(repoPath))
+                .redirectErrorStream(true)
+                .start()
+
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            val exitCode = process.waitFor()
+            return ProcessExecutionResult(exitCode = exitCode, output = output)
         }
     }
 }

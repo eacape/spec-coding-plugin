@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
@@ -25,7 +26,7 @@ class SpecDetailPanel(
     private val onOpenInEditor: (SpecPhase) -> Unit
 ) : JPanel(BorderLayout()) {
 
-    private val treeRoot = DefaultMutableTreeNode("Documents")
+    private val treeRoot = DefaultMutableTreeNode(SpecCodingBundle.message("spec.detail.documents"))
     private val treeModel = DefaultTreeModel(treeRoot)
     private val documentTree = JTree(treeModel)
 
@@ -33,12 +34,12 @@ class SpecDetailPanel(
     private val validationLabel = JBLabel("")
     private val inputArea = JBTextArea(3, 40)
 
-    private val generateButton = JButton("Generate")
-    private val nextPhaseButton = JButton("Next Phase")
-    private val goBackButton = JButton("Go Back")
-    private val completeButton = JButton("Complete")
-    private val pauseResumeButton = JButton("Pause")
-    private val openEditorButton = JButton("Open in Editor")
+    private val generateButton = JButton(SpecCodingBundle.message("spec.detail.generate"))
+    private val nextPhaseButton = JButton(SpecCodingBundle.message("spec.detail.nextPhase"))
+    private val goBackButton = JButton(SpecCodingBundle.message("spec.detail.goBack"))
+    private val completeButton = JButton(SpecCodingBundle.message("spec.detail.complete"))
+    private val pauseResumeButton = JButton(SpecCodingBundle.message("spec.detail.pause"))
+    private val openEditorButton = JButton(SpecCodingBundle.message("spec.detail.openInEditor"))
 
     private var currentWorkflow: SpecWorkflow? = null
     private var selectedPhase: SpecPhase? = null
@@ -82,7 +83,7 @@ class SpecDetailPanel(
 
         inputArea.lineWrap = true
         inputArea.wrapStyleWord = true
-        inputArea.emptyText.setText("Describe your requirements...")
+        inputArea.emptyText.setText(SpecCodingBundle.message("spec.detail.input.placeholder"))
         val inputScroll = JBScrollPane(inputArea)
         inputScroll.preferredSize = java.awt.Dimension(0, JBUI.scale(80))
         bottomPanel.add(inputScroll, BorderLayout.CENTER)
@@ -141,13 +142,13 @@ class SpecDetailPanel(
         treeRoot.removeAllChildren()
         treeModel.reload()
         previewArea.text = ""
-        validationLabel.text = "Select a workflow to view details"
+        validationLabel.text = SpecCodingBundle.message("spec.detail.noWorkflow")
         disableAllButtons()
     }
 
     fun showGenerating(progress: Double) {
         val pct = (progress * 100).toInt()
-        validationLabel.text = "Generating... $pct%"
+        validationLabel.text = SpecCodingBundle.message("spec.detail.generating.percent", pct)
         generateButton.isEnabled = false
     }
 
@@ -169,17 +170,21 @@ class SpecDetailPanel(
             previewArea.caretPosition = 0
             val vr = doc.validationResult
             if (vr != null) {
-                validationLabel.text = if (vr.valid) "Validation: PASSED" else "Validation: FAILED"
+                validationLabel.text = if (vr.valid) {
+                    SpecCodingBundle.message("spec.detail.validation.passed")
+                } else {
+                    SpecCodingBundle.message("spec.detail.validation.failed")
+                }
                 validationLabel.foreground = if (vr.valid)
                     JBColor(java.awt.Color(76, 175, 80), java.awt.Color(76, 175, 80))
                 else
                     JBColor(java.awt.Color(244, 67, 54), java.awt.Color(239, 83, 80))
             } else {
-                validationLabel.text = "No validation result"
+                validationLabel.text = SpecCodingBundle.message("spec.detail.validation.none")
                 validationLabel.foreground = JBColor.GRAY
             }
         } else {
-            previewArea.text = "(No document generated yet for ${phase.displayName})"
+            previewArea.text = SpecCodingBundle.message("spec.detail.noDocumentForPhase", phase.displayName)
             validationLabel.text = ""
         }
     }
@@ -193,7 +198,11 @@ class SpecDetailPanel(
                 && workflow.getDocument(SpecPhase.IMPLEMENT)?.validationResult?.valid == true
                 && inProgress
         pauseResumeButton.isEnabled = true
-        pauseResumeButton.text = if (workflow.status == WorkflowStatus.PAUSED) "Resume" else "Pause"
+        pauseResumeButton.text = if (workflow.status == WorkflowStatus.PAUSED) {
+            SpecCodingBundle.message("spec.detail.resume")
+        } else {
+            SpecCodingBundle.message("spec.detail.pause")
+        }
         openEditorButton.isEnabled = selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
     }
 

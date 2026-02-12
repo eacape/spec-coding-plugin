@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.intellij.ui.JBColor
@@ -25,8 +26,8 @@ class SpecWorkflowListPanel(
 
     private val listModel = DefaultListModel<WorkflowListItem>()
     private val workflowList = JBList(listModel)
-    private val newButton = JButton("New Spec")
-    private val deleteButton = JButton("Delete")
+    private val newButton = JButton(SpecCodingBundle.message("spec.workflow.new"))
+    private val deleteButton = JButton(SpecCodingBundle.message("spec.workflow.delete"))
 
     init {
         setupUI()

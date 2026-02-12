@@ -41,5 +41,8 @@ class HistoryDetailPanel : javax.swing.JPanel(BorderLayout()) {
         revalidate()
         repaint()
     }
-}
 
+    internal fun displayedTextForTest(): String = messageArea.text
+
+    internal fun isShowingEmptyForTest(): Boolean = components.contains(emptyLabel)
+}

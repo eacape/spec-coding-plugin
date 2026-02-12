@@ -159,6 +159,38 @@ class WorktreeManagerTest {
     }
 
     @Test
+    fun `worktree lifecycle should support create switch merge and cleanup flow`() {
+        val first = manager.createWorktree("SPEC-100", "flow-a", "main").getOrThrow()
+        val second = manager.createWorktree("SPEC-101", "flow-b", "main").getOrThrow()
+        assertEquals(second.id, manager.getActiveWorktree()?.id)
+
+        manager.switchWorktree(first.id).getOrThrow()
+        assertEquals(first.id, manager.getActiveWorktree()?.id)
+
+        gitExecutor.mergeOutcome = Result.success(
+            GitMergeOutcome(hasConflicts = false, statusDescription = "MERGED")
+        )
+        val merged = manager.mergeWorktree(first.id, "main").getOrThrow()
+        assertFalse(merged.hasConflicts)
+        assertEquals(WorktreeStatus.MERGED, manager.getBinding(first.id)?.status)
+
+        manager.cleanupWorktree(first.id, force = true).getOrThrow()
+        assertEquals(WorktreeStatus.REMOVED, manager.getBinding(first.id)?.status)
+        assertEquals(null, manager.getActiveWorktree())
+
+        manager.switchWorktree(second.id).getOrThrow()
+        assertEquals(second.id, manager.getActiveWorktree()?.id)
+
+        assertEquals(2, projectOpener.openCalls.size)
+        assertEquals(first.worktreePath, projectOpener.openCalls[0])
+        assertEquals(second.worktreePath, projectOpener.openCalls[1])
+
+        val activeOnly = manager.listBindings(includeInactive = false)
+        assertEquals(1, activeOnly.size)
+        assertEquals(second.id, activeOnly.first().id)
+    }
+
+    @Test
     fun `normalizeSegment should normalize unsupported characters`() {
         assertEquals("spec-123-abc", manager.normalizeSegment("  SPEC@123 ABC  "))
         assertEquals("a-b-c", manager.normalizeSegment("A@@B@@C"))

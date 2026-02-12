@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.components.JBLabel
@@ -25,7 +26,7 @@ class NewSpecWorkflowDialog : DialogWrapper(true) {
 
     init {
         init()
-        title = "New Spec Workflow"
+        title = SpecCodingBundle.message("spec.dialog.newWorkflow.title")
     }
 
     override fun createCenterPanel(): JComponent {
@@ -33,7 +34,7 @@ class NewSpecWorkflowDialog : DialogWrapper(true) {
         panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
         panel.border = JBUI.Borders.empty(8)
 
-        val titleLabel = JBLabel("Title:")
+        val titleLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.title"))
         titleLabel.alignmentX = JComponent.LEFT_ALIGNMENT
         panel.add(titleLabel)
         panel.add(javax.swing.Box.createVerticalStrut(4))
@@ -43,7 +44,7 @@ class NewSpecWorkflowDialog : DialogWrapper(true) {
         panel.add(titleField)
         panel.add(javax.swing.Box.createVerticalStrut(12))
 
-        val descLabel = JBLabel("Description:")
+        val descLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.description"))
         descLabel.alignmentX = JComponent.LEFT_ALIGNMENT
         panel.add(descLabel)
         panel.add(javax.swing.Box.createVerticalStrut(4))
@@ -60,7 +61,7 @@ class NewSpecWorkflowDialog : DialogWrapper(true) {
 
     override fun doValidate(): ValidationInfo? {
         if (titleField.text.isNullOrBlank()) {
-            return ValidationInfo("Title is required", titleField)
+            return ValidationInfo(SpecCodingBundle.message("spec.dialog.validation.titleRequired"), titleField)
         }
         return null
     }

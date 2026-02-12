@@ -159,11 +159,23 @@ class HistorySessionListPanel(
             if (value != null) {
                 titleLabel.text = value.title
                 val bindingText = when {
-                    !value.worktreeId.isNullOrBlank() -> "WT:${value.worktreeId}"
-                    !value.specTaskId.isNullOrBlank() -> "Spec:${value.specTaskId}"
-                    else -> "General"
+                    !value.worktreeId.isNullOrBlank() -> SpecCodingBundle.message(
+                        "history.binding.worktree",
+                        value.worktreeId,
+                    )
+
+                    !value.specTaskId.isNullOrBlank() -> SpecCodingBundle.message(
+                        "history.binding.spec",
+                        value.specTaskId,
+                    )
+
+                    else -> SpecCodingBundle.message("history.binding.general")
                 }
-                detailLabel.text = "$bindingText | ${value.messageCount} msg"
+                detailLabel.text = SpecCodingBundle.message(
+                    "history.binding.detail",
+                    bindingText,
+                    value.messageCount,
+                )
             }
 
             panel.background = if (isSelected) list.selectionBackground else list.background

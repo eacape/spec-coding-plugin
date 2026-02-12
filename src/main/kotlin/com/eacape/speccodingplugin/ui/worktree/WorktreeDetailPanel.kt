@@ -24,6 +24,7 @@ class WorktreeDetailPanel : JPanel(BorderLayout()) {
     private val pathLabel = JBLabel()
     private val updatedAtLabel = JBLabel()
     private val errorArea = JBTextArea()
+    private var currentItem: WorktreeListItem? = null
 
     init {
         border = JBUI.Borders.empty(8)
@@ -31,6 +32,7 @@ class WorktreeDetailPanel : JPanel(BorderLayout()) {
     }
 
     fun updateWorktree(item: WorktreeListItem) {
+        currentItem = item
         removeAll()
 
         val content = JPanel().apply {
@@ -38,14 +40,24 @@ class WorktreeDetailPanel : JPanel(BorderLayout()) {
             isOpaque = false
         }
 
-        specTaskIdLabel.text = "${SpecCodingBundle.message("worktree.detail.specTaskId")}: ${item.specTaskId}"
+        specTaskIdLabel.text = SpecCodingBundle.message("worktree.detail.specTaskIdValue", item.specTaskId)
         specTaskIdLabel.font = specTaskIdLabel.font.deriveFont(Font.BOLD, 14f)
-        specTitleLabel.text = "${SpecCodingBundle.message("worktree.detail.specTitle")}: ${item.specTitle}"
-        statusLabel.text = "${SpecCodingBundle.message("worktree.detail.status")}: ${item.status.name}${if (item.isActive) " (${SpecCodingBundle.message("worktree.detail.active")})" else ""}"
-        branchLabel.text = "${SpecCodingBundle.message("worktree.detail.branch")}: ${item.branchName}"
-        baseBranchLabel.text = "${SpecCodingBundle.message("worktree.detail.baseBranch")}: ${item.baseBranch}"
-        pathLabel.text = "${SpecCodingBundle.message("worktree.detail.path")}: ${item.worktreePath}"
-        updatedAtLabel.text = "${SpecCodingBundle.message("worktree.detail.updatedAt")}: ${item.updatedAt}"
+        specTitleLabel.text = SpecCodingBundle.message("worktree.detail.specTitleValue", item.specTitle)
+        val statusText = when (item.status) {
+            com.eacape.speccodingplugin.worktree.WorktreeStatus.ACTIVE -> SpecCodingBundle.message("worktree.status.active")
+            com.eacape.speccodingplugin.worktree.WorktreeStatus.MERGED -> SpecCodingBundle.message("worktree.status.merged")
+            com.eacape.speccodingplugin.worktree.WorktreeStatus.REMOVED -> SpecCodingBundle.message("worktree.status.removed")
+            com.eacape.speccodingplugin.worktree.WorktreeStatus.ERROR -> SpecCodingBundle.message("worktree.status.error")
+        }
+        statusLabel.text = if (item.isActive) {
+            SpecCodingBundle.message("worktree.detail.statusValue.active", statusText, SpecCodingBundle.message("worktree.detail.active"))
+        } else {
+            SpecCodingBundle.message("worktree.detail.statusValue", statusText)
+        }
+        branchLabel.text = SpecCodingBundle.message("worktree.detail.branchValue", item.branchName)
+        baseBranchLabel.text = SpecCodingBundle.message("worktree.detail.baseBranchValue", item.baseBranch)
+        pathLabel.text = SpecCodingBundle.message("worktree.detail.pathValue", item.worktreePath)
+        updatedAtLabel.text = SpecCodingBundle.message("worktree.detail.updatedAtValue", item.updatedAt)
 
         content.add(specTaskIdLabel)
         content.add(Box.createVerticalStrut(4))
@@ -82,10 +94,23 @@ class WorktreeDetailPanel : JPanel(BorderLayout()) {
     }
 
     fun showEmpty() {
+        currentItem = null
         removeAll()
         add(emptyLabel, BorderLayout.CENTER)
         revalidate()
         repaint()
     }
-}
 
+    fun refreshLocalizedTexts() {
+        emptyLabel.text = SpecCodingBundle.message("worktree.empty.select")
+        currentItem?.let(::updateWorktree)
+    }
+
+    internal fun displayedSpecTaskIdForTest(): String = specTaskIdLabel.text
+
+    internal fun displayedStatusForTest(): String = statusLabel.text
+
+    internal fun displayedLastErrorForTest(): String = errorArea.text
+
+    internal fun isShowingEmptyForTest(): Boolean = components.contains(emptyLabel)
+}

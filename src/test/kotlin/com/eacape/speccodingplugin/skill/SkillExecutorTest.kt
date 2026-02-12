@@ -87,6 +87,32 @@ class SkillExecutorTest {
     }
 
     @Test
+    fun `executeFromCommand parses inline args from command`() {
+        val skill = Skill(
+            id = "tdd-workflow",
+            name = "TDD Workflow",
+            description = "Drive implementation with red-green-refactor cycle",
+            slashCommand = "tdd",
+            promptTemplate = "Implement with {{framework}} for {{selected_code}}",
+            contextRequirements = listOf(ContextRequirement.SELECTED_CODE),
+            tags = listOf("built-in", "testing", "tdd"),
+        )
+        every { registry.getSkillByCommand("tdd") } returns skill
+
+        val result = runBlocking {
+            executor.executeFromCommand(
+                command = "/tdd framework=junit5",
+                context = SkillContext(selectedCode = "fun sum(a:Int,b:Int)=a+b"),
+            )
+        }
+
+        assertTrue(result is SkillExecutionResult.Success)
+        val success = result as SkillExecutionResult.Success
+        assertTrue(success.output.contains("junit5"))
+        assertTrue(success.output.contains("fun sum(a:Int,b:Int)=a+b"))
+    }
+
+    @Test
     fun `executeFromCommand fails when required selected code is missing`() {
         val skill = Skill(
             id = "security-scan",
@@ -107,5 +133,75 @@ class SkillExecutorTest {
         val failure = result as SkillExecutionResult.Failure
         assertTrue(failure.error.contains("requires selected code"))
     }
-}
 
+    @Test
+    fun `parsePipelineStages supports pipe and arrow syntax`() {
+        val pipe = executor.parsePipelineStages("/pipeline /review | /refactor | test")
+        assertEquals(listOf("/review", "/refactor", "/test"), pipe)
+
+        val arrow = executor.parsePipelineStages("/pipeline review -> /test")
+        assertEquals(listOf("/review", "/test"), arrow)
+
+        val invalid = executor.parsePipelineStages("/pipeline   ")
+        assertNull(invalid)
+    }
+
+    @Test
+    fun `executePipelineFromCommand should chain outputs across steps`() {
+        val review = Skill(
+            id = "review",
+            name = "Review",
+            description = "review",
+            slashCommand = "review",
+            promptTemplate = "R({{selected_code}})",
+        )
+        val refactor = Skill(
+            id = "refactor",
+            name = "Refactor",
+            description = "refactor",
+            slashCommand = "refactor",
+            promptTemplate = "F({{selected_code}})",
+        )
+        every { registry.getSkillByCommand("review") } returns review
+        every { registry.getSkillByCommand("refactor") } returns refactor
+
+        val result = runBlocking {
+            executor.executePipelineFromCommand(
+                "/pipeline /review | /refactor",
+                SkillContext(selectedCode = "CODE")
+            )
+        }
+
+        assertTrue(result is SkillExecutionResult.Success)
+        val success = result as SkillExecutionResult.Success
+        assertTrue(success.output.contains("[Step 1] /review"))
+        assertTrue(success.output.contains("R(CODE)"))
+        assertTrue(success.output.contains("[Step 2] /refactor"))
+        assertTrue(success.output.contains("F(R(CODE))"))
+        assertEquals("true", success.metadata["pipeline"])
+        assertEquals("2", success.metadata["pipeline_steps"])
+    }
+
+    @Test
+    fun `executePipelineFromCommand should fail on unknown stage`() {
+        every { registry.getSkillByCommand("review") } returns Skill(
+            id = "review",
+            name = "Review",
+            description = "review",
+            slashCommand = "review",
+            promptTemplate = "R({{selected_code}})",
+        )
+        every { registry.getSkillByCommand("unknown") } returns null
+
+        val result = runBlocking {
+            executor.executePipelineFromCommand(
+                "/pipeline /review | /unknown",
+                SkillContext(selectedCode = "CODE")
+            )
+        }
+
+        assertTrue(result is SkillExecutionResult.Failure)
+        val failure = result as SkillExecutionResult.Failure
+        assertTrue(failure.error.contains("Pipeline failed at step 2"))
+    }
+}

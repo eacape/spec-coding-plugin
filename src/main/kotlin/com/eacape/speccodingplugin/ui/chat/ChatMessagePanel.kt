@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.chat
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -111,7 +112,7 @@ class ChatMessagePanel(
 
         // 代码块复制按钮
         codeBlocks.forEachIndexed { index, code ->
-            val copyBtn = JButton("Copy #${index + 1}")
+            val copyBtn = JButton(SpecCodingBundle.message("chat.message.copy.index", index + 1))
             copyBtn.addActionListener {
                 val clipboard = Toolkit.getDefaultToolkit().systemClipboard
                 clipboard.setContents(StringSelection(code), null)
@@ -120,7 +121,7 @@ class ChatMessagePanel(
         }
 
         // 复制全文按钮
-        val copyAllBtn = JButton("Copy All")
+        val copyAllBtn = JButton(SpecCodingBundle.message("chat.message.copy.all"))
         copyAllBtn.addActionListener {
             val clipboard = Toolkit.getDefaultToolkit().systemClipboard
             clipboard.setContents(StringSelection(contentBuilder.toString()), null)
@@ -129,14 +130,14 @@ class ChatMessagePanel(
 
         // 重新生成按钮（仅 Assistant 消息）
         if (role == MessageRole.ASSISTANT && onRegenerate != null) {
-            val regenBtn = JButton("Regenerate")
+            val regenBtn = JButton(SpecCodingBundle.message("chat.message.regenerate"))
             regenBtn.addActionListener { onRegenerate.invoke(this) }
             buttonPanel.add(regenBtn)
         }
 
         // 删除按钮（User 和 Assistant 消息）
         if ((role == MessageRole.USER || role == MessageRole.ASSISTANT) && onDelete != null) {
-            val deleteBtn = JButton("Delete")
+            val deleteBtn = JButton(SpecCodingBundle.message("chat.message.delete"))
             deleteBtn.addActionListener { onDelete.invoke(this) }
             buttonPanel.add(deleteBtn)
         }
@@ -161,10 +162,10 @@ class ChatMessagePanel(
     }
 
     private fun getRoleText(): String = when (role) {
-        MessageRole.USER -> "You"
-        MessageRole.ASSISTANT -> "Assistant"
-        MessageRole.SYSTEM -> "System"
-        MessageRole.ERROR -> "Error"
+        MessageRole.USER -> SpecCodingBundle.message("toolwindow.message.user")
+        MessageRole.ASSISTANT -> SpecCodingBundle.message("toolwindow.message.assistant")
+        MessageRole.SYSTEM -> SpecCodingBundle.message("toolwindow.message.system")
+        MessageRole.ERROR -> SpecCodingBundle.message("toolwindow.message.error")
     }
 
     private fun getRoleColor(): java.awt.Color = when (role) {

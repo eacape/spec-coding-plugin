@@ -18,6 +18,11 @@
                 anchor="right"
                 canCloseContents="false"/>
 
+        <notificationGroup
+                id="SpecCoding.Notifications"
+                displayType="BALLOON"
+                isLogByDefault="true"/>
+
         <!-- Application-level Services -->
         <applicationService serviceImplementation="com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState"/>
         <applicationService serviceImplementation="com.eacape.speccodingplugin.prompt.GlobalPromptManager"/>
@@ -32,13 +37,18 @@
         <projectService serviceImplementation="com.eacape.speccodingplugin.skill.SkillRegistry"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.skill.SkillExecutor"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.spec.SpecEngine"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.spec.SpecDeltaService"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.session.SessionManager"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.mcp.McpHub"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.mcp.McpConfigStore"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.window.WindowStateStore"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.window.WindowSessionIsolationService"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.rollback.ChangesetStore"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.rollback.RollbackManager"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.engine.EngineManager"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookConfigStore"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookExecutor"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookManager"/>
 
         <!-- Context Engine Services -->
         <projectService serviceImplementation="com.eacape.speccodingplugin.context.ContextCollector"/>
@@ -63,17 +73,24 @@
         <listener
                 class="com.eacape.speccodingplugin.window.WindowRegistryProjectManagerListener"
                 topic="com.intellij.openapi.project.ProjectManagerListener"/>
+        <listener
+                class="com.eacape.speccodingplugin.hook.HookProjectManagerListener"
+                topic="com.intellij.openapi.project.ProjectManagerListener"/>
     </projectListeners>
 
-    <actions>
-        <group id="SpecCoding.ActionGroup" text="Spec Coding" popup="true">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
+    <applicationListeners>
+        <listener
+                class="com.eacape.speccodingplugin.hook.HookFileSaveListener"
+                topic="com.intellij.openapi.fileEditor.FileDocumentManagerListener"/>
+    </applicationListeners>
 
-            <action
-                    id="SpecCoding.OpenChat"
-                    class="com.eacape.speccodingplugin.ui.actions.OpenSpecCodingToolWindowAction"
-                    text="Open Spec Coding"
-                    description="Open Spec Coding tool window"/>
-        </group>
+    <actions>
+        <action
+                id="SpecCoding.OpenChat"
+                class="com.eacape.speccodingplugin.ui.actions.OpenSpecCodingToolWindowAction"
+                text="%action.open.toolwindow.text"
+                description="%action.open.toolwindow.description">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
     </actions>
 </idea-plugin>

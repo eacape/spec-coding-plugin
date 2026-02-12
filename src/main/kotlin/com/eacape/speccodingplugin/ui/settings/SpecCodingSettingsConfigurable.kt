@@ -1,14 +1,19 @@
 package com.eacape.speccodingplugin.ui.settings
 
+import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.i18n.InterfaceLanguage
+import com.eacape.speccodingplugin.i18n.LocaleManager
 import com.eacape.speccodingplugin.llm.AnthropicProvider
 import com.eacape.speccodingplugin.llm.OpenAiProvider
 import com.eacape.speccodingplugin.window.GlobalConfigSyncService
 import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +34,7 @@ class SpecCodingSettingsConfigurable : Configurable {
 
     private val settings = SpecCodingSettingsState.getInstance()
     private val globalConfigSyncService = GlobalConfigSyncService.getInstance()
+    private val localeManager = LocaleManager.getInstance()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // OpenAI 配置
@@ -64,11 +70,18 @@ class SpecCodingSettingsConfigurable : Configurable {
     // 操作模式
     private val defaultModeField = JBTextField()
 
-    override fun getDisplayName(): String = "Spec Coding"
+    // 语言设置
+    private val interfaceLanguageCombo = ComboBox(InterfaceLanguage.entries.toTypedArray())
+
+    override fun getDisplayName(): String = SpecCodingBundle.message("settings.displayName")
 
     override fun createComponent(): JComponent {
         // 加载当前配置
         reset()
+
+        interfaceLanguageCombo.renderer = InterfaceLanguageCellRenderer.create()
+        openaiTestButton.text = SpecCodingBundle.message("settings.test.button")
+        anthropicTestButton.text = SpecCodingBundle.message("settings.test.button")
 
         // 设置验证连接按钮事件
         openaiTestButton.addActionListener { testOpenAiConnection() }
@@ -87,36 +100,37 @@ class SpecCodingSettingsConfigurable : Configurable {
         anthropicTestPanel.add(anthropicTestResult)
 
         return FormBuilder.createFormBuilder()
-            .addComponent(JBLabel("<html><b>OpenAI Configuration</b></html>"))
-            .addLabeledComponent("API Key:", openaiKeyField)
-            .addLabeledComponent("Base URL:", openaiBaseUrlField)
-            .addLabeledComponent("Default Model:", openaiModelField)
+            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.openai")}</b></html>"))
+            .addLabeledComponent(SpecCodingBundle.message("settings.openai.apiKey"), openaiKeyField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.openai.baseUrl"), openaiBaseUrlField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.openai.defaultModel"), openaiModelField)
             .addComponent(openaiTestPanel)
             .addVerticalGap(10)
-            .addComponent(JBLabel("<html><b>Anthropic Configuration</b></html>"))
-            .addLabeledComponent("API Key:", anthropicKeyField)
-            .addLabeledComponent("Base URL:", anthropicBaseUrlField)
-            .addLabeledComponent("Default Model:", anthropicModelField)
+            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.anthropic")}</b></html>"))
+            .addLabeledComponent(SpecCodingBundle.message("settings.anthropic.apiKey"), anthropicKeyField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.anthropic.baseUrl"), anthropicBaseUrlField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.anthropic.defaultModel"), anthropicModelField)
             .addComponent(anthropicTestPanel)
             .addVerticalGap(10)
-            .addComponent(JBLabel("<html><b>General Settings</b></html>"))
-            .addLabeledComponent("Default Provider:", defaultProviderField)
+            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.general")}</b></html>"))
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.interfaceLanguage"), interfaceLanguageCombo)
             .addVerticalGap(10)
-            .addComponent(JBLabel("<html><b>Proxy Settings</b></html>"))
-            .addComponent(useProxyCheckBox)
-            .addLabeledComponent("Proxy Host:", proxyHostField)
-            .addLabeledComponent("Proxy Port:", proxyPortField)
+            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.proxy")}</b></html>"))
+            .addComponent(useProxyCheckBox.apply { text = SpecCodingBundle.message("settings.proxy.use") })
+            .addLabeledComponent(SpecCodingBundle.message("settings.proxy.host"), proxyHostField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.proxy.port"), proxyPortField)
             .addVerticalGap(10)
-            .addComponent(JBLabel("<html><b>Other Settings</b></html>"))
-            .addComponent(autoSaveCheckBox)
-            .addLabeledComponent("Max History Size:", maxHistorySizeField)
+            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.other")}</b></html>"))
+            .addComponent(autoSaveCheckBox.apply { text = SpecCodingBundle.message("settings.other.autoSave") })
+            .addLabeledComponent(SpecCodingBundle.message("settings.other.maxHistorySize"), maxHistorySizeField)
             .addVerticalGap(10)
-            .addComponent(JBLabel("<html><b>Engine Paths</b></html>"))
-            .addLabeledComponent("Codex CLI Path:", codexCliPathField)
-            .addLabeledComponent("Claude Code CLI Path:", claudeCodeCliPathField)
+            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.engine")}</b></html>"))
+            .addLabeledComponent(SpecCodingBundle.message("settings.engine.codexPath"), codexCliPathField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.engine.claudePath"), claudeCodeCliPathField)
             .addVerticalGap(10)
-            .addComponent(JBLabel("<html><b>Operation Mode</b></html>"))
-            .addLabeledComponent("Default Mode (DEFAULT/PLAN/AGENT/AUTO):", defaultModeField)
+            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.operationMode")}</b></html>"))
+            .addLabeledComponent(SpecCodingBundle.message("settings.operationMode.defaultMode"), defaultModeField)
             .addComponentFillVertically(JPanel(), 0)
             .panel.apply {
                 border = JBUI.Borders.empty(10)
@@ -134,6 +148,7 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         // 检查默认提供者
         if (defaultProviderField.text != settings.defaultProvider) return true
+        if ((interfaceLanguageCombo.selectedItem as? InterfaceLanguage)?.code != settings.interfaceLanguage) return true
 
         // 检查代理设置
         if (useProxyCheckBox.isSelected != settings.useProxy) return true
@@ -179,6 +194,8 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         // 保存默认提供者
         settings.defaultProvider = defaultProviderField.text
+        val selectedLanguage = (interfaceLanguageCombo.selectedItem as? InterfaceLanguage) ?: InterfaceLanguage.AUTO
+        val localeChanged = localeManager.setLanguage(selectedLanguage, reason = "settings-configurable-apply")
 
         // 保存代理设置
         settings.useProxy = useProxyCheckBox.isSelected
@@ -198,7 +215,7 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         globalConfigSyncService.notifyGlobalConfigChanged(
             sourceProject = null,
-            reason = "settings-configurable-apply",
+            reason = if (localeChanged != null) "settings-configurable-apply-with-locale" else "settings-configurable-apply",
         )
     }
 
@@ -221,6 +238,7 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         // 加载默认提供者
         defaultProviderField.text = settings.defaultProvider
+        interfaceLanguageCombo.selectedItem = InterfaceLanguage.fromCode(settings.interfaceLanguage)
 
         // 加载代理设置
         useProxyCheckBox.isSelected = settings.useProxy
@@ -246,13 +264,13 @@ class SpecCodingSettingsConfigurable : Configurable {
     private fun testOpenAiConnection() {
         val apiKey = String(openaiKeyField.password).trim()
         if (apiKey.isBlank()) {
-            openaiTestResult.text = "Please enter an API Key first"
+            openaiTestResult.text = SpecCodingBundle.message("settings.test.enterApiKey")
             openaiTestResult.foreground = JBColor.RED
             return
         }
 
         openaiTestButton.isEnabled = false
-        openaiTestResult.text = "Testing..."
+        openaiTestResult.text = SpecCodingBundle.message("settings.test.testing")
         openaiTestResult.foreground = JBColor.GRAY
 
         val baseUrl = openaiBaseUrlField.text.trim().ifBlank { "https://api.openai.com/v1" }
@@ -262,10 +280,10 @@ class SpecCodingSettingsConfigurable : Configurable {
             val status = provider.healthCheck()
             javax.swing.SwingUtilities.invokeLater {
                 if (status.healthy) {
-                    openaiTestResult.text = "Connected successfully"
+                    openaiTestResult.text = SpecCodingBundle.message("settings.test.connected")
                     openaiTestResult.foreground = JBColor.GREEN.darker()
                 } else {
-                    openaiTestResult.text = status.message ?: "Connection failed"
+                    openaiTestResult.text = status.message ?: SpecCodingBundle.message("settings.test.connectionFailed")
                     openaiTestResult.foreground = JBColor.RED
                 }
                 openaiTestButton.isEnabled = true
@@ -277,13 +295,13 @@ class SpecCodingSettingsConfigurable : Configurable {
     private fun testAnthropicConnection() {
         val apiKey = String(anthropicKeyField.password).trim()
         if (apiKey.isBlank()) {
-            anthropicTestResult.text = "Please enter an API Key first"
+            anthropicTestResult.text = SpecCodingBundle.message("settings.test.enterApiKey")
             anthropicTestResult.foreground = JBColor.RED
             return
         }
 
         anthropicTestButton.isEnabled = false
-        anthropicTestResult.text = "Testing..."
+        anthropicTestResult.text = SpecCodingBundle.message("settings.test.testing")
         anthropicTestResult.foreground = JBColor.GRAY
 
         val baseUrl = anthropicBaseUrlField.text.trim().ifBlank { "https://api.anthropic.com/v1" }
@@ -294,14 +312,23 @@ class SpecCodingSettingsConfigurable : Configurable {
             val status = provider.healthCheck()
             javax.swing.SwingUtilities.invokeLater {
                 if (status.healthy) {
-                    anthropicTestResult.text = "Connected successfully"
+                    anthropicTestResult.text = SpecCodingBundle.message("settings.test.connected")
                     anthropicTestResult.foreground = JBColor.GREEN.darker()
                 } else {
-                    anthropicTestResult.text = status.message ?: "Connection failed"
+                    anthropicTestResult.text = status.message ?: SpecCodingBundle.message("settings.test.connectionFailed")
                     anthropicTestResult.foreground = JBColor.RED
                 }
                 anthropicTestButton.isEnabled = true
                 provider.close()
+            }
+        }
+    }
+
+    private object InterfaceLanguageCellRenderer {
+        fun create(): SimpleListCellRenderer<InterfaceLanguage> {
+            return SimpleListCellRenderer.create<InterfaceLanguage> { label, value, _ ->
+                val text = value?.let { SpecCodingBundle.messageOrDefault(it.labelKey, it.code) } ?: ""
+                label.text = text
             }
         }
     }

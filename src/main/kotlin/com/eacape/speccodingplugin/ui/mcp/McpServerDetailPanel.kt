@@ -131,7 +131,7 @@ class McpServerDetailPanel(
     fun updateServer(server: McpServer, tools: List<McpTool>) {
         currentServerId = server.config.id
         serverNameLabel.text = server.config.name
-        commandLabel.text = "Command: ${server.config.command}"
+        commandLabel.text = SpecCodingBundle.message("mcp.server.command", server.config.command)
         updateStatusLabel(server.status)
         updateButtonStates(server.status, server.config.trusted)
 
@@ -169,7 +169,7 @@ class McpServerDetailPanel(
             ServerStatus.ERROR -> SpecCodingBundle.message("mcp.server.status.error") to
                     JBColor(Color(244, 67, 54), Color(239, 83, 80))
         }
-        statusLabel.text = "Status: $text"
+        statusLabel.text = SpecCodingBundle.message("mcp.server.status.label", text)
         statusLabel.foreground = color
     }
 
@@ -192,12 +192,12 @@ class McpServerDetailPanel(
             return
         }
         val sb = StringBuilder()
-        sb.appendLine("Name: ${tool.name}")
+        sb.appendLine(SpecCodingBundle.message("mcp.tool.detail.name", tool.name))
         if (tool.description != null) {
-            sb.appendLine("Description: ${tool.description}")
+            sb.appendLine(SpecCodingBundle.message("mcp.tool.detail.description", tool.description))
         }
         sb.appendLine()
-        sb.appendLine("Input Schema:")
+        sb.appendLine(SpecCodingBundle.message("mcp.tool.detail.inputSchema"))
         try {
             sb.appendLine(prettyJson.encodeToString(
                 JsonElement.serializer(), tool.inputSchema

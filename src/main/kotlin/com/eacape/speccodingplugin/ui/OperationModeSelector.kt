@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.core.OperationModeManager
 import com.eacape.speccodingplugin.window.WindowStateStore
@@ -18,7 +19,7 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
 
     private val modeManager = OperationModeManager.getInstance(project)
     private val windowStateStore = WindowStateStore.getInstance(project)
-    private val label = JBLabel("Mode:")
+    private val label = JBLabel(SpecCodingBundle.message("operation.mode.label"))
     private val comboBox = ComboBox(OperationMode.values())
 
     init {

@@ -5,6 +5,11 @@ import com.eacape.speccodingplugin.context.ContextCollector
 import com.eacape.speccodingplugin.context.ContextConfig
 import com.eacape.speccodingplugin.context.ContextItem
 import com.eacape.speccodingplugin.context.ContextType
+import com.eacape.speccodingplugin.core.Operation
+import com.eacape.speccodingplugin.core.OperationMode
+import com.eacape.speccodingplugin.core.OperationModeManager
+import com.eacape.speccodingplugin.core.OperationRequest
+import com.eacape.speccodingplugin.core.OperationResult
 import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.llm.LlmMessage
 import com.eacape.speccodingplugin.llm.LlmRole
@@ -20,7 +25,9 @@ import com.eacape.speccodingplugin.ui.completion.TriggerType
 import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
 import com.eacape.speccodingplugin.ui.input.ContextPreviewPanel
 import com.eacape.speccodingplugin.ui.input.SmartInputField
-import com.eacape.speccodingplugin.window.WindowStateStore
+import com.eacape.speccodingplugin.window.WindowSessionIsolationService
+import com.eacape.speccodingplugin.i18n.LocaleChangedListener
+import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
@@ -61,10 +68,12 @@ class ImprovedChatPanel(
     private val logger = thisLogger()
     private val projectService: SpecCodingProjectService = project.getService(SpecCodingProjectService::class.java)
     private val sessionManager = SessionManager.getInstance(project)
-    private val windowStateStore = WindowStateStore.getInstance(project)
+    private val sessionIsolationService = WindowSessionIsolationService.getInstance(project)
+    private val modeManager = OperationModeManager.getInstance(project)
     private val skillExecutor: SkillExecutor = SkillExecutor.getInstance(project)
     private val contextCollector by lazy { ContextCollector.getInstance(project) }
     private val completionProvider by lazy { CompletionProvider.getInstance(project) }
+    private val operationModeSelector = OperationModeSelector(project)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -73,10 +82,10 @@ class ImprovedChatPanel(
     private val promptComboBox = ComboBox<PromptTemplate>()
     private val statusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
     private val messagesPanel = ChatMessagesListPanel()
-    private val contextPreviewPanel = ContextPreviewPanel()
+    private val contextPreviewPanel = ContextPreviewPanel(project)
     private lateinit var inputField: SmartInputField
     private val sendButton = JButton(SpecCodingBundle.message("toolwindow.send"))
-    private val clearButton = JButton("Clear")
+    private val clearButton = JButton(SpecCodingBundle.message("toolwindow.clear"))
     private var currentAssistantPanel: ChatMessagePanel? = null
 
     // Session state
@@ -109,14 +118,14 @@ class ImprovedChatPanel(
         border = JBUI.Borders.empty(12)
         setupUI()
         subscribeToHistoryOpenEvents()
+        subscribeToLocaleEvents()
         loadPromptTemplatesAsync()
         addSystemMessage(SpecCodingBundle.message("toolwindow.system.intro"))
         restoreWindowStateIfNeeded()
     }
 
     private fun restoreWindowStateIfNeeded() {
-        val snapshot = windowStateStore.snapshot()
-        val restoredSessionId = snapshot.activeSessionId ?: return
+        val restoredSessionId = sessionIsolationService.restorePersistedSessionId() ?: return
         loadSession(restoredSessionId)
     }
 
@@ -129,6 +138,30 @@ class ImprovedChatPanel(
                 }
             },
         )
+    }
+
+    private fun subscribeToLocaleEvents() {
+        project.messageBus.connect(this).subscribe(
+            LocaleChangedListener.TOPIC,
+            object : LocaleChangedListener {
+                override fun onLocaleChanged(event: LocaleChangedEvent) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) return@invokeLater
+                        refreshLocalizedTexts()
+                    }
+                }
+            },
+        )
+    }
+
+    private fun refreshLocalizedTexts() {
+        sendButton.text = SpecCodingBundle.message("toolwindow.send")
+        clearButton.text = SpecCodingBundle.message("toolwindow.clear")
+        statusLabel.text = if (isGenerating) {
+            SpecCodingBundle.message("toolwindow.status.generating")
+        } else {
+            SpecCodingBundle.message("toolwindow.status.ready")
+        }
     }
 
     private fun setupUI() {
@@ -148,6 +181,7 @@ class ImprovedChatPanel(
         providerPanel.add(providerComboBox)
         providerPanel.add(JBLabel(SpecCodingBundle.message("toolwindow.prompt.label")))
         providerPanel.add(promptComboBox)
+        providerPanel.add(operationModeSelector)
         providerPanel.add(clearButton)
         statusLabel.foreground = JBColor.GRAY
         providerPanel.add(statusLabel)
@@ -231,7 +265,7 @@ class ImprovedChatPanel(
         }
 
         val providerId = providerComboBox.selectedItem as? String
-        val sessionId = ensureActiveSession(input, providerId) ?: return
+        val sessionId = ensureActiveSession(input, providerId)
 
         // Collect context: explicit items from preview + auto-collected editor context
         val explicitItems = loadExplicitItemContents(contextPreviewPanel.getItems())
@@ -241,7 +275,9 @@ class ImprovedChatPanel(
         // Add user message to history
         val userMessage = LlmMessage(LlmRole.USER, input)
         conversationHistory.add(userMessage)
-        persistMessage(sessionId, ConversationRole.USER, input)
+        if (sessionId != null) {
+            persistMessage(sessionId, ConversationRole.USER, input)
+        }
 
         appendUserMessage(input)
         inputField.text = ""
@@ -276,7 +312,9 @@ class ImprovedChatPanel(
                 // Add assistant message to history
                 val assistantMessage = LlmMessage(LlmRole.ASSISTANT, assistantContent.toString())
                 conversationHistory.add(assistantMessage)
-                persistMessage(sessionId, ConversationRole.ASSISTANT, assistantMessage.content)
+                if (sessionId != null) {
+                    persistMessage(sessionId, ConversationRole.ASSISTANT, assistantMessage.content)
+                }
 
             } catch (error: Throwable) {
                 ApplicationManager.getApplication().invokeLater {
@@ -299,6 +337,24 @@ class ImprovedChatPanel(
     }
 
     private fun handleSlashCommand(command: String) {
+        val trimmedCommand = command.trim()
+        if (trimmedCommand == "/skills") {
+            showAvailableSkills()
+            return
+        }
+        if (trimmedCommand.startsWith("/pipeline")) {
+            handlePipelineCommand(trimmedCommand)
+            return
+        }
+        if (handleModeCommand(trimmedCommand)) {
+            return
+        }
+
+        val operation = mapSlashCommandToOperation(trimmedCommand)
+        if (operation != null && !checkOperationPermission(operation, trimmedCommand)) {
+            return
+        }
+
         val providerId = providerComboBox.selectedItem as? String
         val sessionId = ensureActiveSession(command, providerId)
 
@@ -312,9 +368,17 @@ class ImprovedChatPanel(
 
         scope.launch {
             try {
+                val autoContext = contextCollector.collectContext()
+                val selectedCode = autoContext.items
+                    .firstOrNull { it.type == ContextType.SELECTED_CODE }
+                    ?.content
+                val currentFile = autoContext.items
+                    .firstOrNull { it.type == ContextType.CURRENT_FILE }
+                    ?.filePath
+
                 val context = SkillContext(
-                    selectedCode = null,
-                    currentFile = null
+                    selectedCode = selectedCode,
+                    currentFile = currentFile,
                 )
 
                 val result = skillExecutor.executeFromCommand(command, context)
@@ -343,7 +407,7 @@ class ImprovedChatPanel(
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
-                    addErrorMessage(error.message ?: "Unknown error")
+                    addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
                 }
             } finally {
                 ApplicationManager.getApplication().invokeLater {
@@ -356,10 +420,194 @@ class ImprovedChatPanel(
         }
     }
 
+    private fun handlePipelineCommand(command: String) {
+        val operation = Operation.WRITE_FILE
+        if (!checkOperationPermission(operation, command)) {
+            return
+        }
+
+        val parsedStages = skillExecutor.parsePipelineStages(command)
+        if (parsedStages.isNullOrEmpty()) {
+            addErrorMessage(SpecCodingBundle.message("toolwindow.pipeline.invalid"))
+            return
+        }
+
+        val providerId = providerComboBox.selectedItem as? String
+        val sessionId = ensureActiveSession(command, providerId)
+
+        inputField.text = ""
+        appendUserMessage(command)
+        if (sessionId != null) {
+            persistMessage(sessionId, ConversationRole.USER, command)
+        }
+
+        setSendingState(true)
+
+        scope.launch {
+            try {
+                val autoContext = contextCollector.collectContext()
+                val selectedCode = autoContext.items
+                    .firstOrNull { it.type == ContextType.SELECTED_CODE }
+                    ?.content
+                val currentFile = autoContext.items
+                    .firstOrNull { it.type == ContextType.CURRENT_FILE }
+                    ?.filePath
+
+                val context = SkillContext(
+                    selectedCode = selectedCode,
+                    currentFile = currentFile,
+                )
+
+                val result = skillExecutor.executePipelineFromCommand(command, context)
+
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || _isDisposed) {
+                        return@invokeLater
+                    }
+
+                    when (result) {
+                        is com.eacape.speccodingplugin.skill.SkillExecutionResult.Success -> {
+                            val panel = addAssistantMessage()
+                            panel.appendContent(result.output)
+                            panel.finishMessage()
+                            if (sessionId != null) {
+                                persistMessage(sessionId, ConversationRole.ASSISTANT, result.output)
+                            }
+                        }
+
+                        is com.eacape.speccodingplugin.skill.SkillExecutionResult.Failure -> {
+                            addErrorMessage(result.error)
+                        }
+                    }
+                }
+            } catch (error: Throwable) {
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || _isDisposed) {
+                        return@invokeLater
+                    }
+                    addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
+                }
+            } finally {
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || _isDisposed) {
+                        return@invokeLater
+                    }
+                    setSendingState(false)
+                }
+            }
+        }
+    }
+
+    private fun showAvailableSkills() {
+        val skills = skillExecutor.listAvailableSkills()
+        val lines = buildString {
+            appendLine(SpecCodingBundle.message("toolwindow.skill.available.header", skills.size))
+            skills.forEach { skill ->
+                appendLine(
+                    SpecCodingBundle.message(
+                        "toolwindow.skill.available.item",
+                        skill.slashCommand,
+                        skill.description,
+                    )
+                )
+            }
+        }.trimEnd()
+        addSystemMessage(lines)
+    }
+
+    private fun handleModeCommand(command: String): Boolean {
+        if (!command.startsWith("/mode")) {
+            return false
+        }
+
+        val tokens = command.removePrefix("/").split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.size == 1) {
+            addSystemMessage(
+                SpecCodingBundle.message(
+                    "toolwindow.mode.current",
+                    modeManager.getCurrentMode().displayName,
+                )
+            )
+            return true
+        }
+
+        val requestedMode = tokens[1].uppercase()
+        val mode = OperationMode.entries.firstOrNull { it.name == requestedMode }
+        if (mode == null) {
+            addErrorMessage(SpecCodingBundle.message("toolwindow.mode.invalid", tokens[1]))
+            return true
+        }
+
+        modeManager.switchMode(mode)
+        operationModeSelector.setSelectedMode(mode)
+        addSystemMessage(SpecCodingBundle.message("toolwindow.mode.switched", mode.displayName))
+        return true
+    }
+
+    private fun mapSlashCommandToOperation(command: String): Operation? {
+        val normalized = command
+            .removePrefix("/")
+            .trim()
+            .split(Regex("\\s+"), limit = 2)
+            .firstOrNull()
+            ?.lowercase()
+            ?: return null
+
+        return when (normalized) {
+            "review", "explain", "skills" -> Operation.ANALYZE_CODE
+            "refactor", "test", "fix", "pipeline" -> Operation.WRITE_FILE
+            else -> null
+        }
+    }
+
+    private fun checkOperationPermission(operation: Operation, command: String): Boolean {
+        val request = OperationRequest(
+            operation = operation,
+            description = "Slash command: $command",
+            details = mapOf("command" to command),
+        )
+
+        return when (val result = modeManager.checkOperation(request)) {
+            is OperationResult.Allowed -> true
+            is OperationResult.Denied -> {
+                addErrorMessage(
+                    SpecCodingBundle.message(
+                        "toolwindow.mode.operation.denied",
+                        modeManager.getCurrentMode().displayName,
+                        result.reason,
+                    )
+                )
+                false
+            }
+
+            is OperationResult.RequiresConfirmation -> {
+                val confirmed = command.split(Regex("\\s+")).any { it.equals("--confirm", ignoreCase = true) }
+                if (confirmed) {
+                    addSystemMessage(
+                        SpecCodingBundle.message(
+                            "toolwindow.mode.confirmation.accepted",
+                            operation.name,
+                        )
+                    )
+                    true
+                } else {
+                    addErrorMessage(
+                        SpecCodingBundle.message(
+                            "toolwindow.mode.confirmation.required",
+                            modeManager.getCurrentMode().displayName,
+                            operation.name,
+                        )
+                    )
+                    false
+                }
+            }
+        }
+    }
+
     private fun clearConversation() {
         conversationHistory.clear()
         currentSessionId = null
-        windowStateStore.updateActiveSessionId(null)
+        sessionIsolationService.clearActiveSession()
         messagesPanel.clearAll()
         contextPreviewPanel.clear()
         currentAssistantPanel = null
@@ -380,14 +628,15 @@ class ImprovedChatPanel(
                     return@invokeLater
                 }
                 if (session == null) {
-                    windowStateStore.updateActiveSessionId(null)
+                    currentSessionId = null
+                    sessionIsolationService.clearActiveSession()
                     addErrorMessage(SpecCodingBundle.message("toolwindow.error.session.notFound", sessionId))
                     return@invokeLater
                 }
 
                 restoreSessionMessages(messages)
                 currentSessionId = session.id
-                windowStateStore.updateActiveSessionId(session.id)
+                sessionIsolationService.activateSession(session.id)
                 statusLabel.text = SpecCodingBundle.message("toolwindow.status.session.loaded", session.title)
             }
         }
@@ -442,6 +691,10 @@ class ImprovedChatPanel(
 
     private fun ensureActiveSession(firstUserInput: String, providerId: String?): String? {
         currentSessionId?.let { return it }
+        sessionIsolationService.activeSessionId()?.let {
+            currentSessionId = it
+            return it
+        }
 
         val title = firstUserInput.lines()
             .firstOrNull()
@@ -458,7 +711,7 @@ class ImprovedChatPanel(
         return created.fold(
             onSuccess = { session ->
                 currentSessionId = session.id
-                windowStateStore.updateActiveSessionId(session.id)
+                sessionIsolationService.activateSession(session.id)
                 session.id
             },
             onFailure = { error ->
@@ -467,8 +720,8 @@ class ImprovedChatPanel(
                     if (!project.isDisposed && !_isDisposed) {
                         addErrorMessage(
                             SpecCodingBundle.message(
-                                "toolwindow.error.session.createFailed",
-                                error.message ?: "unknown",
+                                "toolwindow.error.session.createFailed.fallback",
+                                error.message ?: SpecCodingBundle.message("common.unknown"),
                             )
                         )
                     }
@@ -607,7 +860,7 @@ class ImprovedChatPanel(
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
-                    addErrorMessage(error.message ?: "Unknown error")
+                    addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
                 }
             } finally {
                 ApplicationManager.getApplication().invokeLater {

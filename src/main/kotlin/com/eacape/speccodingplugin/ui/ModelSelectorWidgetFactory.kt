@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.StatusBar
 import com.intellij.openapi.wm.StatusBarWidget
@@ -11,7 +12,7 @@ import com.intellij.openapi.wm.StatusBarWidgetFactory
 class ModelSelectorWidgetFactory : StatusBarWidgetFactory {
     override fun getId(): String = ModelSelectorWidget.ID
 
-    override fun getDisplayName(): String = "Spec Coding Model Selector"
+    override fun getDisplayName(): String = SpecCodingBundle.message("statusbar.modelSelector.displayName")
 
     override fun isAvailable(project: Project): Boolean = true
 

@@ -42,6 +42,7 @@ data class GlobalConfigSnapshot(
     val codexCliPath: String,
     val claudeCodeCliPath: String,
     val defaultOperationMode: String,
+    val interfaceLanguage: String,
 )
 
 @Service(Service.Level.APP)
@@ -76,6 +77,7 @@ class GlobalConfigSyncService internal constructor(
             codexCliPath = settings.codexCliPath,
             claudeCodeCliPath = settings.claudeCodeCliPath,
             defaultOperationMode = settings.defaultOperationMode,
+            interfaceLanguage = settings.interfaceLanguage,
         )
     }
 
@@ -107,4 +109,3 @@ class GlobalConfigSyncService internal constructor(
         fun getInstance(): GlobalConfigSyncService = service()
     }
 }
-

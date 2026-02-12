@@ -82,6 +82,14 @@ class WorktreeListPanel(
         }
     }
 
+    fun refreshLocalizedTexts() {
+        createButton.text = SpecCodingBundle.message("worktree.action.create")
+        switchButton.text = SpecCodingBundle.message("worktree.action.switch")
+        mergeButton.text = SpecCodingBundle.message("worktree.action.merge")
+        cleanupButton.text = SpecCodingBundle.message("worktree.action.cleanup")
+        worktreeList.repaint()
+    }
+
     fun setSelectedWorktree(worktreeId: String?) {
         if (worktreeId == null) {
             worktreeList.clearSelection()
@@ -159,9 +167,19 @@ class WorktreeListPanel(
             cellHasFocus: Boolean,
         ): Component {
             if (value != null) {
-                val activeMarker = if (value.isActive) " *" else ""
+                val activeMarker = if (value.isActive) {
+                    SpecCodingBundle.message("worktree.list.activeMarker")
+                } else {
+                    ""
+                }
+                val statusText = when (value.status) {
+                    WorktreeStatus.ACTIVE -> SpecCodingBundle.message("worktree.status.active")
+                    WorktreeStatus.MERGED -> SpecCodingBundle.message("worktree.status.merged")
+                    WorktreeStatus.REMOVED -> SpecCodingBundle.message("worktree.status.removed")
+                    WorktreeStatus.ERROR -> SpecCodingBundle.message("worktree.status.error")
+                }
                 titleLabel.text = "${value.specTaskId}$activeMarker"
-                detailLabel.text = "${value.status.name} | ${value.branchName}"
+                detailLabel.text = SpecCodingBundle.message("worktree.list.detail", statusText, value.branchName)
                 detailLabel.foreground = statusColor(value.status)
             }
 
@@ -180,4 +198,3 @@ class WorktreeListPanel(
         }
     }
 }
-

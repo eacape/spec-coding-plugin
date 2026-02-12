@@ -19,7 +19,7 @@ class NewWorktreeDialog(
 
     private val specTaskIdField = JBTextField(specTaskId.orEmpty())
     private val shortNameField = JBTextField()
-    private val baseBranchField = JBTextField("main")
+    private val baseBranchField = JBTextField(DEFAULT_BASE_BRANCH)
 
     var resultSpecTaskId: String? = null
         private set
@@ -52,31 +52,37 @@ class NewWorktreeDialog(
     }
 
     override fun doValidate(): ValidationInfo? {
-        if (specTaskIdField.text.isNullOrBlank()) {
-            return ValidationInfo(
-                SpecCodingBundle.message("worktree.dialog.validation.specTaskIdRequired"),
-                specTaskIdField,
-            )
+        return when (validateInput(readInput())) {
+            NewWorktreeValidationError.SPEC_TASK_ID_REQUIRED -> {
+                ValidationInfo(
+                    SpecCodingBundle.message("worktree.dialog.validation.specTaskIdRequired"),
+                    specTaskIdField,
+                )
+            }
+
+            NewWorktreeValidationError.SHORT_NAME_REQUIRED -> {
+                ValidationInfo(
+                    SpecCodingBundle.message("worktree.dialog.validation.shortNameRequired"),
+                    shortNameField,
+                )
+            }
+
+            NewWorktreeValidationError.BASE_BRANCH_REQUIRED -> {
+                ValidationInfo(
+                    SpecCodingBundle.message("worktree.dialog.validation.baseBranchRequired"),
+                    baseBranchField,
+                )
+            }
+
+            null -> null
         }
-        if (shortNameField.text.isNullOrBlank()) {
-            return ValidationInfo(
-                SpecCodingBundle.message("worktree.dialog.validation.shortNameRequired"),
-                shortNameField,
-            )
-        }
-        if (baseBranchField.text.isNullOrBlank()) {
-            return ValidationInfo(
-                SpecCodingBundle.message("worktree.dialog.validation.baseBranchRequired"),
-                baseBranchField,
-            )
-        }
-        return null
     }
 
     override fun doOKAction() {
-        resultSpecTaskId = specTaskIdField.text.trim()
-        resultShortName = shortNameField.text.trim()
-        resultBaseBranch = baseBranchField.text.trim()
+        val normalized = normalizeInput(readInput())
+        resultSpecTaskId = normalized.specTaskId
+        resultShortName = normalized.shortName
+        resultBaseBranch = normalized.baseBranch
         super.doOKAction()
     }
 
@@ -96,5 +102,49 @@ class NewWorktreeDialog(
         })
         return panel
     }
+
+    private fun readInput(): NewWorktreeInput {
+        return NewWorktreeInput(
+            specTaskId = specTaskIdField.text.orEmpty(),
+            shortName = shortNameField.text.orEmpty(),
+            baseBranch = baseBranchField.text.orEmpty(),
+        )
+    }
+
+    companion object {
+        internal const val DEFAULT_BASE_BRANCH: String = "main"
+
+        internal fun validateInput(input: NewWorktreeInput): NewWorktreeValidationError? {
+            if (input.specTaskId.isBlank()) {
+                return NewWorktreeValidationError.SPEC_TASK_ID_REQUIRED
+            }
+            if (input.shortName.isBlank()) {
+                return NewWorktreeValidationError.SHORT_NAME_REQUIRED
+            }
+            if (input.baseBranch.isBlank()) {
+                return NewWorktreeValidationError.BASE_BRANCH_REQUIRED
+            }
+            return null
+        }
+
+        internal fun normalizeInput(input: NewWorktreeInput): NewWorktreeInput {
+            return NewWorktreeInput(
+                specTaskId = input.specTaskId.trim(),
+                shortName = input.shortName.trim(),
+                baseBranch = input.baseBranch.trim(),
+            )
+        }
+    }
 }
 
+internal data class NewWorktreeInput(
+    val specTaskId: String,
+    val shortName: String,
+    val baseBranch: String,
+)
+
+internal enum class NewWorktreeValidationError {
+    SPEC_TASK_ID_REQUIRED,
+    SHORT_NAME_REQUIRED,
+    BASE_BRANCH_REQUIRED,
+}

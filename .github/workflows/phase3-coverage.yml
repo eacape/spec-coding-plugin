@@ -1,0 +1,82 @@
+name: Phase 3 Coverage Gate
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase3-coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phase3-coverage-quick:
+    if: github.event_name == 'pull_request'
+    name: Phase 3 Coverage Quick (PR)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    concurrency:
+      group: phase3-coverage-quick-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Run Phase 3 quick coverage verify
+        shell: pwsh
+        env:
+          GRADLE_OPTS: -Dkotlin.compiler.execution.strategy=in-process
+          KOTLIN_DAEMON_CLIENT_ALIVE_PATH: ${{ github.workspace }}\.tmp\kotlin-daemon-client-alive.txt
+        run: |
+          New-Item -ItemType Directory -Force .tmp | Out-Null
+          .\gradlew.bat phase3CoverageVerify --no-daemon --no-configuration-cache --stacktrace
+
+  phase3-coverage:
+    if: github.event_name != 'pull_request'
+    name: Phase 3 Coverage (Full)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    concurrency:
+      group: phase3-coverage-full-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Run Phase 3 coverage gate
+        shell: pwsh
+        env:
+          GRADLE_OPTS: -Dkotlin.compiler.execution.strategy=in-process
+          KOTLIN_DAEMON_CLIENT_ALIVE_PATH: ${{ github.workspace }}\.tmp\kotlin-daemon-client-alive.txt
+        run: |
+          New-Item -ItemType Directory -Force .tmp | Out-Null
+          .\gradlew.bat phase3Coverage --no-daemon --no-configuration-cache --stacktrace
+
+      - name: Upload Kover reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase3-kover-report
+          path: |
+            build/reports/kover/report.xml
+            build/reports/kover/html/**
+          if-no-files-found: warn

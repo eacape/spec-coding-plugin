@@ -1,5 +1,8 @@
 package com.eacape.speccodingplugin.ui
 
+import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
+import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
@@ -30,18 +33,21 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
     private val globalConfigSyncService = GlobalConfigSyncService.getInstance()
 
     init {
-        project.messageBus.connect(this).subscribe(
+        val connection = project.messageBus.connect(this)
+        connection.subscribe(
             GlobalConfigSyncListener.TOPIC,
             object : GlobalConfigSyncListener {
                 override fun onGlobalConfigChanged(event: GlobalConfigChangedEvent) {
-                    if (project.isDisposed) {
-                        return
-                    }
-                    ApplicationManager.getApplication().invokeLater {
-                        if (!project.isDisposed) {
-                            myStatusBar?.updateWidget(ID())
-                        }
-                    }
+                    updateWidgetSafely()
+                }
+            }
+        )
+
+        connection.subscribe(
+            LocaleChangedListener.TOPIC,
+            object : LocaleChangedListener {
+                override fun onLocaleChanged(event: LocaleChangedEvent) {
+                    updateWidgetSafely()
                 }
             }
         )
@@ -54,18 +60,23 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
     override fun getTooltipText(): String {
         val currentModel = getCurrentModel()
         return if (currentModel != null) {
-            "Current Model: ${currentModel.name} (${currentModel.provider})\nContext: ${currentModel.contextWindow} tokens\nClick to change"
+            SpecCodingBundle.message(
+                "statusbar.modelSelector.tooltip.current",
+                currentModel.name,
+                providerDisplayName(currentModel.provider),
+                currentModel.contextWindow,
+            )
         } else {
-            "No model selected. Click to select a model."
+            SpecCodingBundle.message("statusbar.modelSelector.tooltip.none")
         }
     }
 
     override fun getSelectedValue(): String {
         val currentModel = getCurrentModel()
         return if (currentModel != null) {
-            "🤖 ${currentModel.name}"
+            SpecCodingBundle.message("statusbar.modelSelector.selected.current", currentModel.name)
         } else {
-            "🤖 No Model"
+            SpecCodingBundle.message("statusbar.modelSelector.selected.none")
         }
     }
 
@@ -87,14 +98,16 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
      */
     private fun createModelSelectionPopup(): ListPopup {
         val modelsByProvider = modelRegistry.getModelsByProvider()
-        val currentProvider = settings.defaultProvider
 
         // 创建分组步骤
-        val providerStep = object : BaseListPopupStep<String>("Select Provider", modelsByProvider.keys.toList()) {
+        val providerStep = object : BaseListPopupStep<String>(
+            SpecCodingBundle.message("statusbar.modelSelector.popup.selectProvider"),
+            modelsByProvider.keys.toList(),
+        ) {
             override fun getTextFor(value: String): String {
                 return when (value) {
-                    "openai" -> "OpenAI"
-                    "anthropic" -> "Anthropic"
+                    "openai" -> SpecCodingBundle.message("statusbar.modelSelector.provider.openai")
+                    "anthropic" -> SpecCodingBundle.message("statusbar.modelSelector.provider.anthropic")
                     else -> value.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
                 }
             }
@@ -119,7 +132,10 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
      * 创建模型选择步骤
      */
     private fun createModelSelectionStep(provider: String, models: List<ModelInfo>): PopupStep<ModelInfo> {
-        return object : BaseListPopupStep<ModelInfo>("Select Model", models) {
+        return object : BaseListPopupStep<ModelInfo>(
+            SpecCodingBundle.message("statusbar.modelSelector.popup.selectModel"),
+            models,
+        ) {
             override fun getTextFor(value: ModelInfo): String {
                 val current = if (isCurrentModel(value)) " ✓" else ""
                 return "${value.name}$current"
@@ -154,6 +170,25 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
 
         // 刷新状态栏显示
         myStatusBar?.updateWidget(ID())
+    }
+
+    private fun providerDisplayName(provider: String): String {
+        return when (provider) {
+            "openai" -> SpecCodingBundle.message("statusbar.modelSelector.provider.openai")
+            "anthropic" -> SpecCodingBundle.message("statusbar.modelSelector.provider.anthropic")
+            else -> provider.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+        }
+    }
+
+    private fun updateWidgetSafely() {
+        if (project.isDisposed) {
+            return
+        }
+        ApplicationManager.getApplication().invokeLater {
+            if (!project.isDisposed) {
+                myStatusBar?.updateWidget(ID())
+            }
+        }
     }
 
     /**

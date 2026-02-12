@@ -47,6 +47,9 @@ class SpecCodingSettingsState : PersistentStateComponent<SpecCodingSettingsState
     // 默认操作模式
     var defaultOperationMode: String = "DEFAULT"
 
+    // 界面语言偏好（AUTO / ENGLISH / ZH_CN）
+    var interfaceLanguage: String = "AUTO"
+
     override fun getState(): SpecCodingSettingsState = this
 
     override fun loadState(state: SpecCodingSettingsState) {

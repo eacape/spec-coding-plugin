@@ -1,7 +1,12 @@
 package com.eacape.speccodingplugin.ui.prompt
 
+import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
+import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.prompt.PromptManager
 import com.eacape.speccodingplugin.prompt.PromptTemplate
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -21,20 +26,23 @@ import javax.swing.ListSelectionModel
  */
 class PromptManagerPanel(
     private val project: Project,
-) : JPanel(BorderLayout()) {
+) : JPanel(BorderLayout()), Disposable {
 
     private val promptManager = PromptManager.getInstance(project)
     private val listModel = DefaultListModel<PromptTemplate>()
     private val promptList = JBList(listModel)
 
-    private val newBtn = JButton("New")
-    private val editBtn = JButton("Edit")
-    private val deleteBtn = JButton("Delete")
+    private val titleLabel = JBLabel()
+    private val newBtn = JButton()
+    private val editBtn = JButton()
+    private val deleteBtn = JButton()
     private val activeLabel = JBLabel("")
 
     init {
         border = JBUI.Borders.empty(8)
         setupUI()
+        subscribeToLocaleEvents()
+        refreshLocalizedTexts()
         refresh()
     }
 
@@ -43,7 +51,6 @@ class PromptManagerPanel(
         val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
         toolbar.isOpaque = false
 
-        val titleLabel = JBLabel("Prompt Templates")
         titleLabel.font = titleLabel.font.deriveFont(
             java.awt.Font.BOLD, 13f
         )
@@ -87,12 +94,34 @@ class PromptManagerPanel(
         listModel.clear()
         templates.forEach { listModel.addElement(it) }
 
-        activeLabel.text = "Active: ${
-            templates.firstOrNull { it.id == activeId }?.name
-                ?: activeId
-        } (${templates.size} templates)"
+        val activeName = templates.firstOrNull { it.id == activeId }?.name
+            ?: activeId
+            ?: SpecCodingBundle.message("prompt.manager.active.none")
+        activeLabel.text = SpecCodingBundle.message("prompt.manager.active", activeName, templates.size)
 
         updateButtonStates()
+    }
+
+    private fun refreshLocalizedTexts() {
+        titleLabel.text = SpecCodingBundle.message("prompt.manager.title")
+        newBtn.text = SpecCodingBundle.message("prompt.manager.new")
+        editBtn.text = SpecCodingBundle.message("prompt.manager.edit")
+        deleteBtn.text = SpecCodingBundle.message("prompt.manager.delete")
+    }
+
+    private fun subscribeToLocaleEvents() {
+        project.messageBus.connect(this).subscribe(
+            LocaleChangedListener.TOPIC,
+            object : LocaleChangedListener {
+                override fun onLocaleChanged(event: LocaleChangedEvent) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed) return@invokeLater
+                        refreshLocalizedTexts()
+                        refresh()
+                    }
+                }
+            },
+        )
     }
 
     private fun updateButtonStates() {
@@ -128,5 +157,8 @@ class PromptManagerPanel(
         }
         promptManager.deleteTemplate(selected.id)
         refresh()
+    }
+
+    override fun dispose() {
     }
 }

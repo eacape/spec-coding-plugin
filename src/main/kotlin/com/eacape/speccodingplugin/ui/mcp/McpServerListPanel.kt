@@ -32,6 +32,8 @@ class McpServerListPanel(
     private val emptyLabel = JBLabel(
         SpecCodingBundle.message("mcp.server.empty")
     )
+    private val addBtn = JButton(SpecCodingBundle.message("mcp.server.add"))
+    private val deleteBtn = JButton(SpecCodingBundle.message("mcp.server.delete"))
 
     init {
         border = JBUI.Borders.empty(4)
@@ -44,10 +46,8 @@ class McpServerListPanel(
         toolbar.isOpaque = false
         toolbar.border = JBUI.Borders.emptyBottom(4)
 
-        val addBtn = JButton(SpecCodingBundle.message("mcp.server.add"))
         addBtn.addActionListener { onAddServer() }
 
-        val deleteBtn = JButton(SpecCodingBundle.message("mcp.server.delete"))
         deleteBtn.isEnabled = false
         deleteBtn.addActionListener {
             serverList.selectedValue?.let {
@@ -103,6 +103,12 @@ class McpServerListPanel(
         }
     }
 
+    fun refreshLocalizedTexts() {
+        addBtn.text = SpecCodingBundle.message("mcp.server.add")
+        deleteBtn.text = SpecCodingBundle.message("mcp.server.delete")
+        serverList.repaint()
+    }
+
     private class ServerCellRenderer : ListCellRenderer<ServerListItem> {
         private val panel = JPanel(BorderLayout(8, 2))
         private val nameLabel = JBLabel()
@@ -138,7 +144,13 @@ class McpServerListPanel(
         ): Component {
             if (value != null) {
                 nameLabel.text = value.name
-                infoLabel.text = "${value.status.name} | ${value.toolCount} tools"
+                val statusText = when (value.status) {
+                    ServerStatus.RUNNING -> SpecCodingBundle.message("mcp.server.status.running")
+                    ServerStatus.STOPPED -> SpecCodingBundle.message("mcp.server.status.stopped")
+                    ServerStatus.STARTING -> SpecCodingBundle.message("mcp.server.status.starting")
+                    ServerStatus.ERROR -> SpecCodingBundle.message("mcp.server.status.error")
+                }
+                infoLabel.text = SpecCodingBundle.message("mcp.server.list.info", statusText, value.toolCount)
                 statusDot.background = getStatusColor(value.status)
             }
             panel.background = if (isSelected) {

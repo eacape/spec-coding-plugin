@@ -53,19 +53,85 @@ class SkillExecutor(private val project: Project) {
         context: SkillContext,
         arguments: Map<String, String> = emptyMap()
     ): SkillExecutionResult {
-        val normalizedCommand = command.trim().removePrefix("/")
+        val parsed = parseSlashCommand(command)
+        val normalizedCommand = parsed?.first ?: command.trim().removePrefix("/")
+        val mergedArguments = parsed?.second.orEmpty() + arguments
 
         val skill = registry.getSkillByCommand(normalizedCommand)
             ?: return SkillExecutionResult.Failure("Unknown skill command: /$normalizedCommand")
 
         val request = SkillExecutionRequest(
             skill = skill,
-            arguments = arguments,
+            arguments = mergedArguments,
             context = context
         )
 
         return execute(request)
     }
+
+    /**
+     * 执行 Skill Pipeline（多技能串联）
+     * 示例：/pipeline /review | /refactor | /test
+     */
+    suspend fun executePipelineFromCommand(
+        pipelineCommand: String,
+        context: SkillContext,
+    ): SkillExecutionResult {
+        val stageCommands = parsePipelineStages(pipelineCommand)
+            ?: return SkillExecutionResult.Failure(
+                "Invalid pipeline command. Usage: /pipeline /skillA | /skillB",
+            )
+
+        var currentContext = context
+        var previousOutput: String? = null
+        val stageOutputs = mutableListOf<Pair<String, String>>()
+
+        for ((index, stageCommand) in stageCommands.withIndex()) {
+            val stageContext = currentContext.copy(
+                selectedCode = previousOutput ?: currentContext.selectedCode,
+                additionalContext = currentContext.additionalContext + mapOf(
+                    "pipeline_step" to (index + 1).toString(),
+                    "pipeline_previous_output" to (previousOutput ?: ""),
+                ),
+            )
+
+            val result = executeFromCommand(stageCommand, stageContext)
+            when (result) {
+                is SkillExecutionResult.Success -> {
+                    stageOutputs += stageCommand to result.output
+                    previousOutput = result.output
+                    currentContext = stageContext
+                }
+
+                is SkillExecutionResult.Failure -> {
+                    return SkillExecutionResult.Failure(
+                        error = "Pipeline failed at step ${index + 1} ($stageCommand): ${result.error}",
+                        cause = result.cause,
+                    )
+                }
+            }
+        }
+
+        val mergedOutput = buildString {
+            appendLine("Pipeline completed (${stageOutputs.size} steps):")
+            stageOutputs.forEachIndexed { index, (stageCommand, output) ->
+                appendLine()
+                appendLine("[Step ${index + 1}] $stageCommand")
+                appendLine(output)
+            }
+        }.trimEnd()
+
+        return SkillExecutionResult.Success(
+            output = mergedOutput,
+            metadata = mapOf(
+                "pipeline" to "true",
+                "pipeline_steps" to stageOutputs.size.toString(),
+                "last_command" to stageOutputs.lastOrNull()?.first.orEmpty(),
+            ),
+        )
+    }
+
+    fun listAvailableSkills(): List<Skill> = registry.listSkills()
 
     /**
      * 解析斜杠命令（格式：/skill-name [args]）
@@ -97,6 +163,32 @@ class SkillExecutor(private val project: Project) {
         }
 
         return command to arguments
+    }
+
+    fun parsePipelineStages(input: String): List<String>? {
+        val trimmed = input.trim()
+        if (!trimmed.startsWith("/pipeline")) {
+            return null
+        }
+
+        val stagesPart = trimmed.removePrefix("/pipeline").trim()
+        if (stagesPart.isBlank()) {
+            return null
+        }
+
+        val stages = stagesPart
+            .split(Regex("\\s*(?:\\||->)\\s*"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .map { stage ->
+                if (stage.startsWith("/")) {
+                    stage
+                } else {
+                    "/$stage"
+                }
+            }
+
+        return stages.takeIf { it.isNotEmpty() }
     }
 
     /**

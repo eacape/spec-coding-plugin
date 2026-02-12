@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.prompt
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.prompt.PromptTemplate
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
@@ -33,7 +34,8 @@ class PromptListCellRenderer : ListCellRenderer<PromptTemplate> {
         nameLabel.font = nameLabel.font.deriveFont(13f)
 
         // 作用域标签
-        val scopeLabel = JLabel("[${value.scope.name}]")
+        val scopeName = SpecCodingBundle.messageOrDefault("prompt.scope.${value.scope.name.lowercase()}", value.scope.name)
+        val scopeLabel = JLabel("[$scopeName]")
         scopeLabel.font = scopeLabel.font.deriveFont(10f)
         scopeLabel.foreground = JBColor.GRAY
 

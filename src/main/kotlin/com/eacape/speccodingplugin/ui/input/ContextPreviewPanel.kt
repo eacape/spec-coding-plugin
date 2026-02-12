@@ -1,6 +1,11 @@
 package com.eacape.speccodingplugin.ui.input
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.context.ContextItem
+import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
+import com.eacape.speccodingplugin.i18n.LocaleChangedListener
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.FlowLayout
@@ -13,8 +18,9 @@ import javax.swing.JPanel
  * 水平流式布局的 "chips"，每个 chip 代表一个 ContextItem
  */
 class ContextPreviewPanel(
+    project: Project,
     private val onRemove: (ContextItem) -> Unit = {},
-) : JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)) {
+) : JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)), Disposable {
 
     private val items = mutableListOf<ContextItem>()
     private val tokenLabel = JLabel()
@@ -25,6 +31,15 @@ class ContextPreviewPanel(
         isVisible = false
         tokenLabel.foreground = JBColor.GRAY
         tokenLabel.font = JBUI.Fonts.smallFont()
+
+        project.messageBus.connect(this).subscribe(
+            LocaleChangedListener.TOPIC,
+            object : LocaleChangedListener {
+                override fun onLocaleChanged(event: LocaleChangedEvent) {
+                    rebuildUI()
+                }
+            },
+        )
     }
 
     fun addItem(item: ContextItem) {
@@ -65,7 +80,7 @@ class ContextPreviewPanel(
 
         // Token estimate summary
         val totalTokens = items.sumOf { it.tokenEstimate }
-        tokenLabel.text = "~${totalTokens} tokens"
+        tokenLabel.text = SpecCodingBundle.message("context.tokens", totalTokens)
         add(tokenLabel)
 
         revalidate()
@@ -82,11 +97,12 @@ class ContextPreviewPanel(
         label.font = JBUI.Fonts.smallFont()
         chip.add(label)
 
-        val closeBtn = JButton("x")
+        val closeBtn = JButton(SpecCodingBundle.message("context.chip.remove"))
         closeBtn.font = JBUI.Fonts.smallFont()
         closeBtn.isBorderPainted = false
         closeBtn.isContentAreaFilled = false
         closeBtn.margin = JBUI.emptyInsets()
+        closeBtn.toolTipText = SpecCodingBundle.message("context.chip.removeTooltip")
         closeBtn.addActionListener {
             removeItem(item)
             onRemove(item)
@@ -95,4 +111,6 @@ class ContextPreviewPanel(
 
         return chip
     }
+
+    override fun dispose() = Unit
 }
