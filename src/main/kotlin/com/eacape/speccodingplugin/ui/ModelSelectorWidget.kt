@@ -137,7 +137,11 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
             models,
         ) {
             override fun getTextFor(value: ModelInfo): String {
-                val current = if (isCurrentModel(value)) " ✓" else ""
+                val current = if (isCurrentModel(value)) {
+                    SpecCodingBundle.message("statusbar.modelSelector.item.currentSuffix")
+                } else {
+                    ""
+                }
                 return "${value.name}$current"
             }
 

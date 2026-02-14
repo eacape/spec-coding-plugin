@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.context.CodeGraphRenderer
+import com.eacape.speccodingplugin.context.CodeGraphService
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.spec.*
@@ -20,6 +22,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import java.awt.BorderLayout
 import java.awt.FlowLayout
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JSplitPane
@@ -31,6 +36,7 @@ class SpecWorkflowPanel(
     private val logger = thisLogger()
     private val specEngine = SpecEngine.getInstance(project)
     private val specDeltaService = SpecDeltaService.getInstance(project)
+    private val codeGraphService = CodeGraphService.getInstance(project)
     private val worktreeManager = WorktreeManager.getInstance(project)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -44,6 +50,8 @@ class SpecWorkflowPanel(
     private val createWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.createWorktree"))
     private val mergeWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.mergeWorktree"))
     private val deltaButton = JButton(SpecCodingBundle.message("spec.workflow.delta"))
+    private val codeGraphButton = JButton(SpecCodingBundle.message("spec.workflow.codeGraph"))
+    private val archiveButton = JButton(SpecCodingBundle.message("spec.workflow.archive"))
     private val refreshButton = JButton(SpecCodingBundle.message("spec.workflow.refresh"))
 
     private var selectedWorkflowId: String? = null
@@ -64,7 +72,8 @@ class SpecWorkflowPanel(
             onGoBack = ::onGoBack,
             onComplete = ::onComplete,
             onPauseResume = ::onPauseResume,
-            onOpenInEditor = ::onOpenInEditor
+            onOpenInEditor = ::onOpenInEditor,
+            onShowHistoryDiff = ::onShowHistoryDiff,
         )
 
         setupUI()
@@ -82,12 +91,18 @@ class SpecWorkflowPanel(
         createWorktreeButton.isEnabled = false
         mergeWorktreeButton.isEnabled = false
         deltaButton.isEnabled = false
+        codeGraphButton.isEnabled = true
+        archiveButton.isEnabled = false
         createWorktreeButton.addActionListener { onCreateWorktree() }
         mergeWorktreeButton.addActionListener { onMergeWorktree() }
         deltaButton.addActionListener { onShowDelta() }
+        codeGraphButton.addActionListener { onShowCodeGraph() }
+        archiveButton.addActionListener { onArchiveWorkflow() }
         toolbar.add(createWorktreeButton)
         toolbar.add(mergeWorktreeButton)
         toolbar.add(deltaButton)
+        toolbar.add(codeGraphButton)
+        toolbar.add(archiveButton)
         toolbar.add(statusLabel)
         add(toolbar, BorderLayout.NORTH)
 
@@ -136,12 +151,14 @@ class SpecWorkflowPanel(
                     createWorktreeButton.isEnabled = true
                     mergeWorktreeButton.isEnabled = true
                     deltaButton.isEnabled = true
+                    archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
                 } else {
                     phaseIndicator.reset()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
                     deltaButton.isEnabled = false
+                    archiveButton.isEnabled = false
                 }
             }
         }
@@ -178,6 +195,7 @@ class SpecWorkflowPanel(
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
                     deltaButton.isEnabled = false
+                    archiveButton.isEnabled = false
                 }
                 refreshWorkflows()
             }
@@ -334,7 +352,17 @@ class SpecWorkflowPanel(
 
                     invokeLaterSafe {
                         result.onSuccess { delta ->
-                            SpecDeltaDialog(delta).show()
+                            SpecDeltaDialog(
+                                project = project,
+                                delta = delta,
+                                onOpenHistoryDiff = { phase ->
+                                    onShowHistoryDiffForWorkflow(
+                                        workflowId = targetWorkflow.id,
+                                        phase = phase,
+                                        currentDoc = targetWorkflow.documents[phase],
+                                    )
+                                },
+                            ).show()
                             statusLabel.text = SpecCodingBundle.message("spec.delta.generated")
                         }.onFailure { error ->
                             statusLabel.text = SpecCodingBundle.message(
@@ -343,6 +371,72 @@ class SpecWorkflowPanel(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private fun onArchiveWorkflow() {
+        val workflow = currentWorkflow
+        if (workflow == null) {
+            statusLabel.text = SpecCodingBundle.message("spec.workflow.archive.selectFirst")
+            return
+        }
+        if (workflow.status != WorkflowStatus.COMPLETED) {
+            statusLabel.text = SpecCodingBundle.message("spec.workflow.archive.onlyCompleted")
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val result = specEngine.archiveWorkflow(workflow.id)
+            invokeLaterSafe {
+                result.onSuccess {
+                    if (selectedWorkflowId == workflow.id) {
+                        selectedWorkflowId = null
+                        currentWorkflow = null
+                        phaseIndicator.reset()
+                        detailPanel.showEmpty()
+                        createWorktreeButton.isEnabled = false
+                        mergeWorktreeButton.isEnabled = false
+                        deltaButton.isEnabled = false
+                        archiveButton.isEnabled = false
+                    }
+                    refreshWorkflows()
+                    statusLabel.text = SpecCodingBundle.message("spec.workflow.archive.done", workflow.id)
+                }.onFailure { error ->
+                    statusLabel.text = SpecCodingBundle.message(
+                        "spec.workflow.archive.failed",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun onShowCodeGraph() {
+        statusLabel.text = SpecCodingBundle.message("code.graph.status.generating")
+        scope.launch(Dispatchers.Default) {
+            val result = codeGraphService.buildFromActiveEditor()
+            invokeLaterSafe {
+                result.onSuccess { snapshot ->
+                    if (snapshot.edges.isEmpty()) {
+                        statusLabel.text = SpecCodingBundle.message("code.graph.status.empty")
+                        return@onSuccess
+                    }
+
+                    val summary = CodeGraphRenderer.renderSummary(snapshot)
+                    val mermaid = CodeGraphRenderer.renderMermaid(snapshot)
+                    CodeGraphDialog(summary = summary, mermaid = mermaid).show()
+                    statusLabel.text = SpecCodingBundle.message(
+                        "code.graph.status.generated",
+                        snapshot.nodes.size,
+                        snapshot.edges.size,
+                    )
+                }.onFailure { error ->
+                    statusLabel.text = SpecCodingBundle.message(
+                        "code.graph.status.failed",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
+                    )
                 }
             }
         }
@@ -398,6 +492,8 @@ class SpecWorkflowPanel(
         createWorktreeButton.text = SpecCodingBundle.message("spec.workflow.createWorktree")
         mergeWorktreeButton.text = SpecCodingBundle.message("spec.workflow.mergeWorktree")
         deltaButton.text = SpecCodingBundle.message("spec.workflow.delta")
+        codeGraphButton.text = SpecCodingBundle.message("spec.workflow.codeGraph")
+        archiveButton.text = SpecCodingBundle.message("spec.workflow.archive")
         statusLabel.text = SpecCodingBundle.message("spec.workflow.status.ready")
     }
 
@@ -440,6 +536,86 @@ class SpecWorkflowPanel(
         }
     }
 
+    private fun onShowHistoryDiff(phase: SpecPhase) {
+        val workflow = currentWorkflow ?: return
+        onShowHistoryDiffForWorkflow(
+            workflowId = workflow.id,
+            phase = phase,
+            currentDoc = workflow.documents[phase],
+        )
+    }
+
+    private fun onShowHistoryDiffForWorkflow(
+        workflowId: String,
+        phase: SpecPhase,
+        currentDoc: SpecDocument?,
+    ) {
+        if (currentDoc == null) {
+            statusLabel.text = SpecCodingBundle.message("spec.history.noCurrentDocument")
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val history = specEngine.listDocumentHistory(workflowId, phase)
+            val snapshots = history.mapNotNull { entry ->
+                specEngine.loadDocumentSnapshot(workflowId, phase, entry.snapshotId).getOrNull()?.let { snapshotDoc ->
+                    SpecHistoryDiffDialog.SnapshotVersion(
+                        snapshotId = entry.snapshotId,
+                        createdAt = entry.createdAt,
+                        document = snapshotDoc,
+                    )
+                }
+            }
+
+            invokeLaterSafe {
+                if (snapshots.isEmpty()) {
+                    statusLabel.text = SpecCodingBundle.message("spec.history.noSnapshot")
+                    return@invokeLaterSafe
+                }
+
+                SpecHistoryDiffDialog(
+                    phase = phase,
+                    currentDocument = currentDoc,
+                    snapshots = snapshots,
+                    onDeleteSnapshot = { snapshot ->
+                        specEngine.deleteDocumentSnapshot(workflowId, phase, snapshot.snapshotId).isSuccess
+                    },
+                    onPruneSnapshots = { keepLatest ->
+                        specEngine.pruneDocumentHistory(workflowId, phase, keepLatest).getOrElse { -1 }
+                    },
+                    onExportSummary = { content ->
+                        exportHistoryDiffSummary(workflowId, phase, content)
+                    },
+                ).show()
+
+                statusLabel.text = SpecCodingBundle.message(
+                    "spec.history.diff.opened",
+                    phase.displayName,
+                    snapshots.size,
+                )
+            }
+        }
+    }
+
+    private fun exportHistoryDiffSummary(
+        workflowId: String,
+        phase: SpecPhase,
+        content: String,
+    ): Result<String> {
+        return runCatching {
+            val basePath = project.basePath
+                ?: throw IllegalStateException(SpecCodingBundle.message("history.error.projectBasePathUnavailable"))
+            val exportDir = Path.of(basePath, ".spec-coding", "exports")
+            Files.createDirectories(exportDir)
+
+            val safeWorkflowId = workflowId.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            val fileName = "spec-history-diff-${safeWorkflowId}-${phase.name.lowercase()}-${System.currentTimeMillis()}.md"
+            val target = exportDir.resolve(fileName)
+            Files.writeString(target, content, StandardCharsets.UTF_8)
+            fileName
+        }
+    }
+
     private fun reloadCurrentWorkflow() {
         val wfId = selectedWorkflowId ?: return
         scope.launch(Dispatchers.IO) {
@@ -449,6 +625,9 @@ class SpecWorkflowPanel(
                 if (wf != null) {
                     phaseIndicator.updatePhase(wf)
                     detailPanel.updateWorkflow(wf)
+                    archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
+                } else {
+                    archiveButton.isEnabled = false
                 }
             }
         }

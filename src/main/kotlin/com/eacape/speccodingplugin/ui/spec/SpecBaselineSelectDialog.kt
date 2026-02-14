@@ -27,7 +27,7 @@ class SpecBaselineSelectDialog(
         val description: String,
     ) {
         override fun toString(): String {
-            return "$title ($workflowId)"
+            return SpecCodingBundle.message("spec.delta.workflow.option", title, workflowId)
         }
     }
 

@@ -131,7 +131,7 @@ class SpecWorkflowListPanel(
             dot.foreground = JBColor.GRAY
             statusPanel.add(dot)
 
-            val statusLabel = JLabel(value.status.name)
+            val statusLabel = JLabel(localizeStatus(value.status))
             statusLabel.foreground = getStatusColor(value.status)
             statusLabel.font = statusLabel.font.deriveFont(Font.PLAIN, 11f)
             statusPanel.add(statusLabel)
@@ -145,6 +145,13 @@ class SpecWorkflowListPanel(
             WorkflowStatus.PAUSED -> JBColor(Color(255, 152, 0), Color(255, 167, 38))
             WorkflowStatus.COMPLETED -> JBColor(Color(76, 175, 80), Color(76, 175, 80))
             WorkflowStatus.FAILED -> JBColor(Color(244, 67, 54), Color(239, 83, 80))
+        }
+
+        private fun localizeStatus(status: WorkflowStatus): String = when (status) {
+            WorkflowStatus.IN_PROGRESS -> SpecCodingBundle.message("spec.workflow.status.inProgress")
+            WorkflowStatus.PAUSED -> SpecCodingBundle.message("spec.workflow.status.paused")
+            WorkflowStatus.COMPLETED -> SpecCodingBundle.message("spec.workflow.status.completed")
+            WorkflowStatus.FAILED -> SpecCodingBundle.message("spec.workflow.status.failed")
         }
     }
 }

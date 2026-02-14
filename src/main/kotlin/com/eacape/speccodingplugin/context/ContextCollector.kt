@@ -9,6 +9,18 @@ import com.intellij.openapi.project.Project
  */
 @Service(Service.Level.PROJECT)
 class ContextCollector(private val project: Project) {
+    private var codeGraphSnapshotProvider: () -> Result<CodeGraphSnapshot> = {
+        runCatching {
+            CodeGraphService.getInstance(project).buildFromActiveEditor().getOrThrow()
+        }
+    }
+
+    internal constructor(
+        project: Project,
+        codeGraphSnapshotProvider: () -> Result<CodeGraphSnapshot>,
+    ) : this(project) {
+        this.codeGraphSnapshotProvider = codeGraphSnapshotProvider
+    }
 
     /**
      * 自动收集编辑器上下文
@@ -34,7 +46,10 @@ class ContextCollector(private val project: Project) {
             }
         }
 
-        return ContextTrimmer.trim(items, config.tokenBudget)
+        return ContextTrimmer.trim(
+            applyGraphAwarePrioritization(items, config),
+            config.tokenBudget,
+        )
     }
 
     /**
@@ -44,13 +59,16 @@ class ContextCollector(private val project: Project) {
         explicitItems: List<ContextItem>,
         config: ContextConfig = ContextConfig(),
     ): ContextSnapshot {
-        val autoSnapshot = collectContext(config)
+        val autoSnapshot = collectContext(config.copy(preferGraphRelatedContext = false))
         val allItems = explicitItems + autoSnapshot.items
 
         // 去重：相同 filePath + type 只保留显式引用
         val deduped = deduplicateItems(allItems)
 
-        return ContextTrimmer.trim(deduped, config.tokenBudget)
+        return ContextTrimmer.trim(
+            applyGraphAwarePrioritization(deduped, config),
+            config.tokenBudget,
+        )
     }
 
     private fun deduplicateItems(items: List<ContextItem>): List<ContextItem> {
@@ -59,6 +77,17 @@ class ContextCollector(private val project: Project) {
             val key = "${item.type}:${item.filePath ?: item.label}"
             seen.add(key)
         }
+    }
+
+    private fun applyGraphAwarePrioritization(
+        items: List<ContextItem>,
+        config: ContextConfig,
+    ): List<ContextItem> {
+        if (!config.preferGraphRelatedContext || items.isEmpty()) {
+            return items
+        }
+        val graph = codeGraphSnapshotProvider().getOrNull() ?: return items
+        return ContextGraphPrioritizer.prioritize(items, graph)
     }
 
     companion object {

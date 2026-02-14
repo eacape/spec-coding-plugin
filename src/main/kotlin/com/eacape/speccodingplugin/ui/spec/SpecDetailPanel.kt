@@ -23,7 +23,8 @@ class SpecDetailPanel(
     private val onGoBack: () -> Unit,
     private val onComplete: () -> Unit,
     private val onPauseResume: () -> Unit,
-    private val onOpenInEditor: (SpecPhase) -> Unit
+    private val onOpenInEditor: (SpecPhase) -> Unit,
+    private val onShowHistoryDiff: (SpecPhase) -> Unit,
 ) : JPanel(BorderLayout()) {
 
     private val treeRoot = DefaultMutableTreeNode(SpecCodingBundle.message("spec.detail.documents"))
@@ -40,6 +41,7 @@ class SpecDetailPanel(
     private val completeButton = JButton(SpecCodingBundle.message("spec.detail.complete"))
     private val pauseResumeButton = JButton(SpecCodingBundle.message("spec.detail.pause"))
     private val openEditorButton = JButton(SpecCodingBundle.message("spec.detail.openInEditor"))
+    private val historyDiffButton = JButton(SpecCodingBundle.message("spec.detail.historyDiff"))
 
     private var currentWorkflow: SpecWorkflow? = null
     private var selectedPhase: SpecPhase? = null
@@ -113,6 +115,9 @@ class SpecDetailPanel(
         openEditorButton.addActionListener {
             selectedPhase?.let { onOpenInEditor(it) }
         }
+        historyDiffButton.addActionListener {
+            selectedPhase?.let { onShowHistoryDiff(it) }
+        }
 
         panel.add(generateButton)
         panel.add(nextPhaseButton)
@@ -120,6 +125,7 @@ class SpecDetailPanel(
         panel.add(completeButton)
         panel.add(pauseResumeButton)
         panel.add(openEditorButton)
+        panel.add(historyDiffButton)
 
         disableAllButtons()
     }
@@ -204,6 +210,7 @@ class SpecDetailPanel(
             SpecCodingBundle.message("spec.detail.pause")
         }
         openEditorButton.isEnabled = selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
+        historyDiffButton.isEnabled = selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
     }
 
     private fun disableAllButtons() {
@@ -213,6 +220,7 @@ class SpecDetailPanel(
         completeButton.isEnabled = false
         pauseResumeButton.isEnabled = false
         openEditorButton.isEnabled = false
+        historyDiffButton.isEnabled = false
     }
 
     internal fun currentPreviewTextForTest(): String {
@@ -232,17 +240,22 @@ class SpecDetailPanel(
             "pauseResumeEnabled" to pauseResumeButton.isEnabled,
             "pauseResumeText" to pauseResumeButton.text,
             "openEditorEnabled" to openEditorButton.isEnabled,
+            "historyDiffEnabled" to historyDiffButton.isEnabled,
         )
     }
 
     private data class PhaseNode(val phase: SpecPhase, val document: SpecDocument?) {
         override fun toString(): String {
             val status = when {
-                document?.validationResult?.valid == true -> "[done]"
-                document != null -> "[draft]"
+                document?.validationResult?.valid == true -> SpecCodingBundle.message("spec.detail.tree.status.done")
+                document != null -> SpecCodingBundle.message("spec.detail.tree.status.draft")
                 else -> ""
             }
-            return "${phase.displayName}: ${phase.outputFileName} $status"
+            return if (status.isBlank()) {
+                SpecCodingBundle.message("spec.detail.tree.node.noStatus", phase.displayName, phase.outputFileName)
+            } else {
+                SpecCodingBundle.message("spec.detail.tree.node.withStatus", phase.displayName, phase.outputFileName, status)
+            }
         }
     }
 }

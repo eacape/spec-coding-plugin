@@ -41,26 +41,26 @@ class SpecCodingSettingsConfigurable : Configurable {
     private val openaiKeyField = JBPasswordField()
     private val openaiBaseUrlField = JBTextField()
     private val openaiModelField = JBTextField()
-    private val openaiTestButton = JButton("Test Connection")
+    private val openaiTestButton = JButton()
     private val openaiTestResult = JBLabel("")
 
     // Anthropic 配置
     private val anthropicKeyField = JBPasswordField()
     private val anthropicBaseUrlField = JBTextField()
     private val anthropicModelField = JBTextField()
-    private val anthropicTestButton = JButton("Test Connection")
+    private val anthropicTestButton = JButton()
     private val anthropicTestResult = JBLabel("")
 
     // 默认提供者
     private val defaultProviderField = JBTextField()
 
     // 代理设置
-    private val useProxyCheckBox = JBCheckBox("Use Proxy")
+    private val useProxyCheckBox = JBCheckBox()
     private val proxyHostField = JBTextField()
     private val proxyPortField = JBTextField()
 
     // 其他设置
-    private val autoSaveCheckBox = JBCheckBox("Auto-save conversations")
+    private val autoSaveCheckBox = JBCheckBox()
     private val maxHistorySizeField = JBTextField()
 
     // 引擎路径
@@ -72,6 +72,12 @@ class SpecCodingSettingsConfigurable : Configurable {
 
     // 语言设置
     private val interfaceLanguageCombo = ComboBox(InterfaceLanguage.entries.toTypedArray())
+
+    // 团队 Prompt 同步
+    private val teamPromptRepoUrlField = JBTextField()
+    private val teamPromptRepoBranchField = JBTextField()
+    private val teamSkillRepoUrlField = JBTextField()
+    private val teamSkillRepoBranchField = JBTextField()
 
     override fun getDisplayName(): String = SpecCodingBundle.message("settings.displayName")
 
@@ -116,6 +122,12 @@ class SpecCodingSettingsConfigurable : Configurable {
             .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderField)
             .addLabeledComponent(SpecCodingBundle.message("settings.general.interfaceLanguage"), interfaceLanguageCombo)
             .addVerticalGap(10)
+            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.teamSync")}</b></html>"))
+            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.promptRepoUrl"), teamPromptRepoUrlField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.promptBranch"), teamPromptRepoBranchField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.skillRepoUrl"), teamSkillRepoUrlField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.skillBranch"), teamSkillRepoBranchField)
+            .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.proxy")}</b></html>"))
             .addComponent(useProxyCheckBox.apply { text = SpecCodingBundle.message("settings.proxy.use") })
             .addLabeledComponent(SpecCodingBundle.message("settings.proxy.host"), proxyHostField)
@@ -149,6 +161,10 @@ class SpecCodingSettingsConfigurable : Configurable {
         // 检查默认提供者
         if (defaultProviderField.text != settings.defaultProvider) return true
         if ((interfaceLanguageCombo.selectedItem as? InterfaceLanguage)?.code != settings.interfaceLanguage) return true
+        if (teamPromptRepoUrlField.text != settings.teamPromptRepoUrl) return true
+        if (teamPromptRepoBranchField.text != settings.teamPromptRepoBranch) return true
+        if (teamSkillRepoUrlField.text != settings.teamSkillRepoUrl) return true
+        if (teamSkillRepoBranchField.text != settings.teamSkillRepoBranch) return true
 
         // 检查代理设置
         if (useProxyCheckBox.isSelected != settings.useProxy) return true
@@ -196,6 +212,10 @@ class SpecCodingSettingsConfigurable : Configurable {
         settings.defaultProvider = defaultProviderField.text
         val selectedLanguage = (interfaceLanguageCombo.selectedItem as? InterfaceLanguage) ?: InterfaceLanguage.AUTO
         val localeChanged = localeManager.setLanguage(selectedLanguage, reason = "settings-configurable-apply")
+        settings.teamPromptRepoUrl = teamPromptRepoUrlField.text.trim()
+        settings.teamPromptRepoBranch = teamPromptRepoBranchField.text.trim().ifBlank { "main" }
+        settings.teamSkillRepoUrl = teamSkillRepoUrlField.text.trim()
+        settings.teamSkillRepoBranch = teamSkillRepoBranchField.text.trim().ifBlank { "main" }
 
         // 保存代理设置
         settings.useProxy = useProxyCheckBox.isSelected
@@ -239,6 +259,10 @@ class SpecCodingSettingsConfigurable : Configurable {
         // 加载默认提供者
         defaultProviderField.text = settings.defaultProvider
         interfaceLanguageCombo.selectedItem = InterfaceLanguage.fromCode(settings.interfaceLanguage)
+        teamPromptRepoUrlField.text = settings.teamPromptRepoUrl
+        teamPromptRepoBranchField.text = settings.teamPromptRepoBranch
+        teamSkillRepoUrlField.text = settings.teamSkillRepoUrl
+        teamSkillRepoBranchField.text = settings.teamSkillRepoBranch
 
         // 加载代理设置
         useProxyCheckBox.isSelected = settings.useProxy

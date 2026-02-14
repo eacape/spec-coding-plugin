@@ -234,7 +234,7 @@ class McpServerDetailPanel(
                 nameLabel.text = value.name
                 val desc = value.description ?: ""
                 descLabel.text = if (desc.length > 80) {
-                    desc.take(80) + "..."
+                    desc.take(80) + SpecCodingBundle.message("mcp.tool.detail.truncatedSuffix")
                 } else {
                     desc
                 }

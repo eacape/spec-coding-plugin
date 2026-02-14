@@ -3,6 +3,8 @@ package com.eacape.speccodingplugin.ui.history
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.session.ConversationMessage
 import com.eacape.speccodingplugin.session.ConversationSession
+import com.eacape.speccodingplugin.session.SessionBranchComparison
+import com.eacape.speccodingplugin.session.SessionContextSnapshot
 import com.eacape.speccodingplugin.session.SessionFilter
 import com.eacape.speccodingplugin.session.SessionExportFormat
 import com.eacape.speccodingplugin.session.SessionExporter
@@ -42,6 +44,26 @@ class HistoryPanel(
     private val getSession: (sessionId: String) -> ConversationSession? = { sessionId ->
         SessionManager.getInstance(project).getSession(sessionId)
     },
+    private val saveContextSnapshot: (
+        sessionId: String,
+        messageId: String?,
+        title: String?,
+        metadataJson: String?,
+    ) -> Result<SessionContextSnapshot> = { sessionId, messageId, title, metadataJson ->
+        SessionManager.getInstance(project).saveContextSnapshot(sessionId, messageId, title, metadataJson)
+    },
+    private val continueFromSnapshot: (snapshotId: String, branchName: String?) -> Result<ConversationSession> = { snapshotId, branchName ->
+        SessionManager.getInstance(project).continueFromSnapshot(snapshotId, branchName)
+    },
+    private val forkSession: (sourceSessionId: String, fromMessageId: String?, branchName: String?) -> Result<ConversationSession> = { sourceSessionId, fromMessageId, branchName ->
+        SessionManager.getInstance(project).forkSession(sourceSessionId, fromMessageId, branchName)
+    },
+    private val compareSessions: (leftSessionId: String, rightSessionId: String) -> Result<SessionBranchComparison> = { leftSessionId, rightSessionId ->
+        SessionManager.getInstance(project).compareSessions(leftSessionId, rightSessionId)
+    },
+    private val listChildSessions: (parentSessionId: String, limit: Int) -> List<ConversationSession> = { parentSessionId, limit ->
+        SessionManager.getInstance(project).listChildSessions(parentSessionId, limit)
+    },
     private val exportSession: (
         exportDir: Path,
         session: ConversationSession,
@@ -66,8 +88,11 @@ class HistoryPanel(
     private val listPanel = HistorySessionListPanel(
         onSessionSelected = ::onSessionSelected,
         onOpenSession = ::onOpenSession,
+        onContinueSession = ::onContinueSession,
         onExportSession = ::onExportSession,
         onDeleteSession = ::onDeleteSession,
+        onBranchSession = ::onBranchSession,
+        onCompareSession = ::onCompareSession,
     )
     private val detailPanel = HistoryDetailPanel()
 
@@ -129,7 +154,8 @@ class HistoryPanel(
     private fun onSessionSelected(sessionId: String) {
         selectedSessionId = sessionId
         runBackground {
-            val messages = listMessages(sessionId, 500)
+            val messages = listMessages(sessionId, SESSION_MESSAGES_FETCH_LIMIT)
+                .takeLast(SESSION_MESSAGES_RENDER_LIMIT)
             invokeLaterSafe {
                 detailPanel.showMessages(messages)
             }
@@ -164,11 +190,87 @@ class HistoryPanel(
         }
     }
 
+    private fun onBranchSession(sessionId: String) {
+        runBackground {
+            val result = forkSession(sessionId, null, null)
+            invokeLaterSafe {
+                result.onSuccess { branched ->
+                    selectedSessionId = branched.id
+                    refreshSessions()
+                    statusLabel.text = SpecCodingBundle.message("history.status.branchCreated", branched.title)
+                }.onFailure { error ->
+                    logger.warn("Failed to branch session: $sessionId", error)
+                    statusLabel.text = SpecCodingBundle.message(
+                        "history.status.branchFailed",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun onContinueSession(sessionId: String) {
+        runBackground {
+            runCatching {
+                val snapshot = saveContextSnapshot(sessionId, null, null, null).getOrThrow()
+                continueFromSnapshot(snapshot.id, null).getOrThrow()
+            }.onSuccess { continued ->
+                invokeLaterSafe {
+                    selectedSessionId = continued.id
+                    refreshSessions()
+                    project.messageBus.syncPublisher(HistorySessionOpenListener.TOPIC)
+                        .onSessionOpenRequested(continued.id)
+                    statusLabel.text = SpecCodingBundle.message("history.status.continued", continued.title)
+                }
+            }.onFailure { error ->
+                logger.warn("Failed to continue session from snapshot: $sessionId", error)
+                invokeLaterSafe {
+                    statusLabel.text = SpecCodingBundle.message(
+                        "history.status.continueFailed",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun onCompareSession(sessionId: String) {
+        runBackground {
+            runCatching {
+                val base = getSession(sessionId)
+                    ?: error(SpecCodingBundle.message("history.error.sessionNotFound", sessionId))
+                val target = findComparableSession(base)
+                    ?: error(SpecCodingBundle.message("history.compare.noTarget"))
+
+                compareSessions(base.id, target.id).getOrThrow() to target
+            }.onSuccess { (comparison, target) ->
+                invokeLaterSafe {
+                    detailPanel.showText(renderComparisonText(comparison, target))
+                    statusLabel.text = SpecCodingBundle.message(
+                        "history.status.compare",
+                        target.title,
+                        comparison.commonPrefixCount,
+                        comparison.leftOnlyCount,
+                        comparison.rightOnlyCount,
+                    )
+                }
+            }.onFailure { error ->
+                logger.warn("Failed to compare session: $sessionId", error)
+                invokeLaterSafe {
+                    statusLabel.text = SpecCodingBundle.message(
+                        "history.status.compareFailed",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
+                    )
+                }
+            }
+        }
+    }
+
     private fun onExportSession(sessionId: String, format: SessionExportFormat) {
         runBackground {
             runCatching {
                 val session = getSession(sessionId)
-                    ?: error("Session not found: $sessionId")
+                    ?: error(SpecCodingBundle.message("history.error.sessionNotFound", sessionId))
                 val messages = listMessages(sessionId, 5000)
 
                 val exportDir = resolveExportDir()
@@ -195,8 +297,42 @@ class HistoryPanel(
 
     private fun resolveExportDir(): Path {
         val basePath = project.basePath
-            ?: error("Project base path is not available")
+            ?: error(SpecCodingBundle.message("history.error.projectBasePathUnavailable"))
         return Path.of(basePath, ".spec-coding", "exports")
+    }
+
+    private fun findComparableSession(base: ConversationSession): ConversationSession? {
+        val parentId = base.parentSessionId
+        if (!parentId.isNullOrBlank()) {
+            return getSession(parentId)
+        }
+        return listChildSessions(base.id, 1).firstOrNull()
+    }
+
+    private fun renderComparisonText(comparison: SessionBranchComparison, target: ConversationSession): String {
+        val currentPreview = comparison.leftPreview ?: SpecCodingBundle.message("common.unknown")
+        val targetPreview = comparison.rightPreview ?: SpecCodingBundle.message("common.unknown")
+        return buildString {
+            appendLine(
+                SpecCodingBundle.message(
+                    "history.compare.detail.header",
+                    comparison.leftSessionId,
+                    target.id,
+                )
+            )
+            appendLine()
+            appendLine(
+                SpecCodingBundle.message(
+                    "history.compare.detail.summary",
+                    comparison.commonPrefixCount,
+                    comparison.leftOnlyCount,
+                    comparison.rightOnlyCount,
+                )
+            )
+            appendLine()
+            appendLine(SpecCodingBundle.message("history.compare.detail.preview.current", currentPreview))
+            appendLine(SpecCodingBundle.message("history.compare.detail.preview.target", targetPreview))
+        }
     }
 
     private fun invokeLaterSafe(action: () -> Unit) {
@@ -250,6 +386,18 @@ class HistoryPanel(
         listPanel.clickOpenForTest()
     }
 
+    internal fun clickBranchForTest() {
+        listPanel.clickBranchForTest()
+    }
+
+    internal fun clickContinueForTest() {
+        listPanel.clickContinueForTest()
+    }
+
+    internal fun clickCompareForTest() {
+        listPanel.clickCompareForTest()
+    }
+
     internal fun clickDeleteForTest() {
         listPanel.clickDeleteForTest()
     }
@@ -261,5 +409,10 @@ class HistoryPanel(
     override fun dispose() {
         isDisposed = true
         scope.cancel()
+    }
+
+    companion object {
+        private const val SESSION_MESSAGES_FETCH_LIMIT = 5000
+        private const val SESSION_MESSAGES_RENDER_LIMIT = 600
     }
 }

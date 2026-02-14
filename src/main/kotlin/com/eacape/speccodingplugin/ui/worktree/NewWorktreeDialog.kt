@@ -31,7 +31,7 @@ class NewWorktreeDialog(
     init {
         title = SpecCodingBundle.message("worktree.dialog.new.title")
         if (!specTitle.isNullOrBlank()) {
-            setTitle("${SpecCodingBundle.message("worktree.dialog.new.title")} - $specTitle")
+            setTitle(SpecCodingBundle.message("worktree.dialog.new.title.withSpec", specTitle))
         }
         init()
     }

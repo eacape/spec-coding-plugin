@@ -45,4 +45,5 @@ data class ContextConfig(
     val includeContainingScope: Boolean = true,
     val includeImportDependencies: Boolean = false,
     val includeProjectStructure: Boolean = false,
+    val preferGraphRelatedContext: Boolean = true,
 )

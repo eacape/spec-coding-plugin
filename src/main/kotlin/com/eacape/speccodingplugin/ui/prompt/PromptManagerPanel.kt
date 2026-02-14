@@ -5,14 +5,22 @@ import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.prompt.PromptManager
 import com.eacape.speccodingplugin.prompt.PromptTemplate
+import com.eacape.speccodingplugin.prompt.TeamPromptSyncService
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.DefaultListModel
@@ -29,6 +37,8 @@ class PromptManagerPanel(
 ) : JPanel(BorderLayout()), Disposable {
 
     private val promptManager = PromptManager.getInstance(project)
+    private val teamPromptSyncService = TeamPromptSyncService.getInstance(project)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val listModel = DefaultListModel<PromptTemplate>()
     private val promptList = JBList(listModel)
 
@@ -36,7 +46,12 @@ class PromptManagerPanel(
     private val newBtn = JButton()
     private val editBtn = JButton()
     private val deleteBtn = JButton()
+    private val teamPullBtn = JButton()
+    private val teamPushBtn = JButton()
     private val activeLabel = JBLabel("")
+
+    @Volatile
+    private var isDisposed = false
 
     init {
         border = JBUI.Borders.empty(8)
@@ -58,6 +73,8 @@ class PromptManagerPanel(
         toolbar.add(newBtn)
         toolbar.add(editBtn)
         toolbar.add(deleteBtn)
+        toolbar.add(teamPullBtn)
+        toolbar.add(teamPushBtn)
 
         // 列表
         promptList.selectionMode =
@@ -79,6 +96,8 @@ class PromptManagerPanel(
         newBtn.addActionListener { onNew() }
         editBtn.addActionListener { onEdit() }
         deleteBtn.addActionListener { onDelete() }
+        teamPullBtn.addActionListener { onPullTeam() }
+        teamPushBtn.addActionListener { onPushTeam() }
 
         add(toolbar, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
@@ -107,6 +126,8 @@ class PromptManagerPanel(
         newBtn.text = SpecCodingBundle.message("prompt.manager.new")
         editBtn.text = SpecCodingBundle.message("prompt.manager.edit")
         deleteBtn.text = SpecCodingBundle.message("prompt.manager.delete")
+        teamPullBtn.text = SpecCodingBundle.message("prompt.manager.teamPull")
+        teamPushBtn.text = SpecCodingBundle.message("prompt.manager.teamPush")
     }
 
     private fun subscribeToLocaleEvents() {
@@ -114,8 +135,7 @@ class PromptManagerPanel(
             LocaleChangedListener.TOPIC,
             object : LocaleChangedListener {
                 override fun onLocaleChanged(event: LocaleChangedEvent) {
-                    ApplicationManager.getApplication().invokeLater {
-                        if (project.isDisposed) return@invokeLater
+                    invokeLaterSafe {
                         refreshLocalizedTexts()
                         refresh()
                     }
@@ -159,6 +179,100 @@ class PromptManagerPanel(
         refresh()
     }
 
+    private fun onPullTeam() {
+        runBackground {
+            teamPromptSyncService.pullFromTeamRepo()
+                .onSuccess { result ->
+                    invokeLaterSafe {
+                        refresh()
+                        notifyUser(
+                            SpecCodingBundle.message(
+                                "prompt.teamSync.pull.success",
+                                result.syncedFiles,
+                                result.branch,
+                            ),
+                            NotificationType.INFORMATION,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    invokeLaterSafe {
+                        notifyUser(
+                            SpecCodingBundle.message(
+                                "prompt.teamSync.pull.failed",
+                                error.message ?: SpecCodingBundle.message("prompt.teamSync.error.generic"),
+                            ),
+                            NotificationType.ERROR,
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun onPushTeam() {
+        runBackground {
+            teamPromptSyncService.pushToTeamRepo()
+                .onSuccess { result ->
+                    invokeLaterSafe {
+                        if (result.noChanges) {
+                            notifyUser(
+                                SpecCodingBundle.message("prompt.teamSync.push.noChanges", result.branch),
+                                NotificationType.INFORMATION,
+                            )
+                        } else {
+                            notifyUser(
+                                SpecCodingBundle.message(
+                                    "prompt.teamSync.push.success",
+                                    result.syncedFiles,
+                                    result.branch,
+                                    result.commitId ?: SpecCodingBundle.message("common.unknown"),
+                                ),
+                                NotificationType.INFORMATION,
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    invokeLaterSafe {
+                        notifyUser(
+                            SpecCodingBundle.message(
+                                "prompt.teamSync.push.failed",
+                                error.message ?: SpecCodingBundle.message("prompt.teamSync.error.generic"),
+                            ),
+                            NotificationType.ERROR,
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun notifyUser(message: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("SpecCoding.Notifications")
+            .createNotification(message, type)
+            .notify(project)
+    }
+
+    private fun invokeLaterSafe(action: () -> Unit) {
+        if (isDisposed) {
+            return
+        }
+        ApplicationManager.getApplication().invokeLater {
+            if (!isDisposed && !project.isDisposed) {
+                action()
+            }
+        }
+    }
+
+    private fun runBackground(task: () -> Unit) {
+        if (isDisposed) {
+            return
+        }
+        scope.launch(Dispatchers.IO) { task() }
+    }
+
     override fun dispose() {
+        isDisposed = true
+        scope.cancel()
     }
 }

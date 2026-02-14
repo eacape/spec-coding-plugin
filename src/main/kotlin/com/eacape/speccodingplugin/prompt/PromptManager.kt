@@ -154,6 +154,17 @@ class PromptManager(private val project: Project) {
     }
 
     /**
+     * 强制从磁盘重新加载项目级提示词目录。
+     */
+    fun reloadFromDisk() {
+        synchronized(lock) {
+            val fromDisk = loadCatalogSafely()
+            catalog = normalizeCatalog(fromDisk)
+            loaded = true
+        }
+    }
+
+    /**
      * 渲染当前活跃的提示词（应用三层继承和变量插值）
      */
     fun renderActivePrompt(runtimeVariables: Map<String, String> = emptyMap()): String {

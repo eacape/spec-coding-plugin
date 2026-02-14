@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.history
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.session.ConversationMessage
 import com.eacape.speccodingplugin.session.ConversationRole
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -18,8 +19,18 @@ class HistoryDetailPanelTest {
             )
         )
 
-        assertTrue(panel.displayedTextForTest().contains("[USER] hello"))
-        assertTrue(panel.displayedTextForTest().contains("[ASSISTANT] world"))
+        val userEntry = SpecCodingBundle.message(
+            "history.detail.message.entry",
+            SpecCodingBundle.message("history.detail.role.user"),
+            "hello",
+        )
+        val assistantEntry = SpecCodingBundle.message(
+            "history.detail.message.entry",
+            SpecCodingBundle.message("history.detail.role.assistant"),
+            "world",
+        )
+        assertTrue(panel.displayedTextForTest().contains(userEntry))
+        assertTrue(panel.displayedTextForTest().contains(assistantEntry))
         assertTrue(!panel.isShowingEmptyForTest())
     }
 
@@ -31,6 +42,26 @@ class HistoryDetailPanelTest {
 
         panel.showEmpty()
         assertTrue(panel.isShowingEmptyForTest())
+    }
+
+    @Test
+    fun `showMessages should keep latest window when message count is large`() {
+        val panel = HistoryDetailPanel()
+        val messages = (1..305).map { idx ->
+            message(
+                sessionId = "s-3",
+                id = "m-$idx",
+                role = ConversationRole.USER,
+                content = "payload-%04d".format(idx),
+            )
+        }
+
+        panel.showMessages(messages)
+
+        val truncatedNotice = SpecCodingBundle.message("history.detail.truncated", 300, 305)
+        assertTrue(panel.displayedTextForTest().contains(truncatedNotice))
+        assertTrue(panel.displayedTextForTest().contains("payload-0305"))
+        assertTrue(!panel.displayedTextForTest().contains("payload-0001"))
     }
 
     private fun message(

@@ -10,7 +10,9 @@ import javax.swing.SwingUtilities
  * 消息列表面板
  * 管理多条 ChatMessagePanel 的容器
  */
-class ChatMessagesListPanel : JPanel() {
+class ChatMessagesListPanel(
+    private val maxVisibleMessages: Int = DEFAULT_MAX_VISIBLE_MESSAGES,
+) : JPanel() {
 
     private val messages = mutableListOf<ChatMessagePanel>()
     private val scrollPane: JBScrollPane
@@ -32,6 +34,7 @@ class ChatMessagesListPanel : JPanel() {
     fun addMessage(panel: ChatMessagePanel): ChatMessagePanel {
         messages.add(panel)
         add(panel)
+        trimIfNeeded()
         revalidate()
         scrollToBottom()
         return panel
@@ -80,5 +83,20 @@ class ChatMessagesListPanel : JPanel() {
             val bar = scrollPane.verticalScrollBar
             bar.value = bar.maximum
         }
+    }
+
+    private fun trimIfNeeded() {
+        if (messages.size <= maxVisibleMessages) {
+            return
+        }
+        val overflow = messages.size - maxVisibleMessages
+        repeat(overflow) {
+            val removed = messages.removeAt(0)
+            remove(removed)
+        }
+    }
+
+    companion object {
+        private const val DEFAULT_MAX_VISIBLE_MESSAGES = 240
     }
 }

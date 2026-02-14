@@ -134,6 +134,84 @@ class ContextCollectorTest {
         assertEquals("explicit-content", snapshot.items.first().content)
     }
 
+    @Test
+    fun `collectForItems should prefer graph related item when graph trimming enabled`() {
+        every { EditorContextProvider.getSelectedCodeContext(project) } returns null
+        every { EditorContextProvider.getContainingScopeContext(project) } returns null
+        every { EditorContextProvider.getCurrentFileContext(project) } returns null
+
+        val collector = ContextCollector(project) { Result.success(codeGraphSnapshot()) }
+        val unrelated = ContextItem(
+            type = ContextType.REFERENCED_FILE,
+            label = "Other.kt",
+            content = "other",
+            filePath = "/repo/src/Other.kt",
+            priority = 70,
+            tokenEstimate = 50,
+        )
+        val related = ContextItem(
+            type = ContextType.REFERENCED_FILE,
+            label = "Service.kt",
+            content = "service",
+            filePath = "/repo/src/Service.kt",
+            priority = 10,
+            tokenEstimate = 50,
+        )
+
+        val snapshot = collector.collectForItems(
+            explicitItems = listOf(unrelated, related),
+            config = ContextConfig(
+                tokenBudget = 50,
+                includeSelectedCode = false,
+                includeContainingScope = false,
+                includeCurrentFile = false,
+                preferGraphRelatedContext = true,
+            ),
+        )
+
+        assertEquals(1, snapshot.items.size)
+        assertEquals("Service.kt", snapshot.items.first().label)
+    }
+
+    @Test
+    fun `collectForItems should keep priority order when graph trimming disabled`() {
+        every { EditorContextProvider.getSelectedCodeContext(project) } returns null
+        every { EditorContextProvider.getContainingScopeContext(project) } returns null
+        every { EditorContextProvider.getCurrentFileContext(project) } returns null
+
+        val collector = ContextCollector(project) { Result.success(codeGraphSnapshot()) }
+        val unrelated = ContextItem(
+            type = ContextType.REFERENCED_FILE,
+            label = "Other.kt",
+            content = "other",
+            filePath = "/repo/src/Other.kt",
+            priority = 70,
+            tokenEstimate = 50,
+        )
+        val related = ContextItem(
+            type = ContextType.REFERENCED_FILE,
+            label = "Service.kt",
+            content = "service",
+            filePath = "/repo/src/Service.kt",
+            priority = 10,
+            tokenEstimate = 50,
+        )
+
+        val snapshot = collector.collectForItems(
+            explicitItems = listOf(unrelated, related),
+            config = ContextConfig(
+                tokenBudget = 50,
+                includeSelectedCode = false,
+                includeContainingScope = false,
+                includeCurrentFile = false,
+                preferGraphRelatedContext = false,
+            ),
+        )
+
+        assertEquals(1, snapshot.items.size)
+        assertEquals("Other.kt", snapshot.items.first().label)
+    }
+
     private fun makeItem(
         type: ContextType,
         label: String,
@@ -147,6 +225,32 @@ class ContextCollectorTest {
             filePath = "/tmp/$label",
             priority = priority,
             tokenEstimate = tokenEstimate,
+        )
+    }
+
+    private fun codeGraphSnapshot(): CodeGraphSnapshot {
+        return CodeGraphSnapshot(
+            generatedAt = 1L,
+            rootFilePath = "/repo/src/Main.kt",
+            rootFileName = "Main.kt",
+            nodes = listOf(
+                CodeGraphNode("file:/repo/src/Main.kt", "Main.kt", CodeGraphNodeType.FILE),
+                CodeGraphNode("file:/repo/src/Service.kt", "Service.kt", CodeGraphNodeType.FILE),
+                CodeGraphNode("symbol:main@10", "main", CodeGraphNodeType.SYMBOL),
+                CodeGraphNode("symbol:run@20", "run", CodeGraphNodeType.SYMBOL),
+            ),
+            edges = listOf(
+                CodeGraphEdge(
+                    fromId = "file:/repo/src/Main.kt",
+                    toId = "file:/repo/src/Service.kt",
+                    type = CodeGraphEdgeType.DEPENDS_ON,
+                ),
+                CodeGraphEdge(
+                    fromId = "symbol:main@10",
+                    toId = "symbol:run@20",
+                    type = CodeGraphEdgeType.CALLS,
+                ),
+            ),
         )
     }
 }

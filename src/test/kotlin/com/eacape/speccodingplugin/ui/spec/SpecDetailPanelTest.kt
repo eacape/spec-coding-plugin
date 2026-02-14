@@ -29,6 +29,7 @@ class SpecDetailPanelTest {
         assertFalse(states["completeEnabled"] as Boolean)
         assertFalse(states["pauseResumeEnabled"] as Boolean)
         assertFalse(states["openEditorEnabled"] as Boolean)
+        assertFalse(states["historyDiffEnabled"] as Boolean)
     }
 
     @Test
@@ -69,6 +70,7 @@ class SpecDetailPanelTest {
         assertTrue(states["pauseResumeEnabled"] as Boolean)
         assertEquals("Pause", states["pauseResumeText"])
         assertTrue(states["openEditorEnabled"] as Boolean)
+        assertTrue(states["historyDiffEnabled"] as Boolean)
     }
 
     @Test
@@ -128,6 +130,7 @@ class SpecDetailPanelTest {
         assertFalse(states["completeEnabled"] as Boolean)
         assertTrue(states["pauseResumeEnabled"] as Boolean)
         assertEquals("Resume", states["pauseResumeText"])
+        assertTrue(states["historyDiffEnabled"] as Boolean)
     }
 
     private fun createPanel(): SpecDetailPanel {
@@ -138,6 +141,7 @@ class SpecDetailPanelTest {
             onComplete = {},
             onPauseResume = {},
             onOpenInEditor = {},
+            onShowHistoryDiff = {},
         )
     }
 

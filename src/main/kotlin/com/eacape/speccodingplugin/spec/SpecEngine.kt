@@ -79,6 +79,37 @@ class SpecEngine(private val project: Project) {
         return storageDelegate.listWorkflows()
     }
 
+    fun listDocumentHistory(
+        workflowId: String,
+        phase: SpecPhase,
+    ): List<SpecDocumentHistoryEntry> {
+        return storageDelegate.listDocumentHistory(workflowId, phase)
+    }
+
+    fun loadDocumentSnapshot(
+        workflowId: String,
+        phase: SpecPhase,
+        snapshotId: String,
+    ): Result<SpecDocument> {
+        return storageDelegate.loadDocumentSnapshot(workflowId, phase, snapshotId)
+    }
+
+    fun deleteDocumentSnapshot(
+        workflowId: String,
+        phase: SpecPhase,
+        snapshotId: String,
+    ): Result<Unit> {
+        return storageDelegate.deleteDocumentSnapshot(workflowId, phase, snapshotId)
+    }
+
+    fun pruneDocumentHistory(
+        workflowId: String,
+        phase: SpecPhase,
+        keepLatest: Int,
+    ): Result<Int> {
+        return storageDelegate.pruneDocumentHistory(workflowId, phase, keepLatest)
+    }
+
     /**
      * 生成当前阶段的文档
      */
@@ -308,6 +339,22 @@ class SpecEngine(private val project: Project) {
             activeWorkflows.remove(workflowId)
             storageDelegate.deleteWorkflow(workflowId).getOrThrow()
             logger.info("Workflow $workflowId deleted")
+        }
+    }
+
+    fun archiveWorkflow(workflowId: String): Result<SpecArchiveResult> {
+        return runCatching {
+            val workflow = activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+
+            if (workflow.status != WorkflowStatus.COMPLETED) {
+                throw IllegalStateException("Only completed workflow can be archived")
+            }
+
+            val result = storageDelegate.archiveWorkflow(workflow).getOrThrow()
+            activeWorkflows.remove(workflowId)
+            logger.info("Workflow $workflowId archived to ${result.archivePath}")
+            result
         }
     }
 

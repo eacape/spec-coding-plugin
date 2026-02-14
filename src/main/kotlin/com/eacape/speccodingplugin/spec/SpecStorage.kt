@@ -3,9 +3,12 @@ package com.eacape.speccodingplugin.spec
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import java.nio.charset.StandardCharsets
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -29,9 +32,120 @@ class SpecStorage(private val project: Project) {
             val content = formatDocument(document)
 
             Files.writeString(filePath, content, StandardCharsets.UTF_8)
+            val snapshotId = saveDocumentSnapshot(workflowId, document, content)
+            appendAuditEntry(
+                eventType = SpecAuditEventType.DOCUMENT_SAVED,
+                workflowId = workflowId,
+                details = mapOf(
+                    "phase" to document.phase.name,
+                    "snapshotId" to snapshotId,
+                    "file" to document.phase.outputFileName,
+                ),
+            )
             logger.info("Saved ${document.phase} document to $filePath")
 
             filePath
+        }
+    }
+
+    fun listDocumentHistory(
+        workflowId: String,
+        phase: SpecPhase,
+    ): List<SpecDocumentHistoryEntry> {
+        val historyDir = getHistoryDirectory(workflowId, phase)
+        if (!Files.exists(historyDir)) {
+            return emptyList()
+        }
+
+        return Files.list(historyDir).use { stream ->
+            val entries = mutableListOf<SpecDocumentHistoryEntry>()
+            stream.forEach { path ->
+                if (!Files.isRegularFile(path)) {
+                    return@forEach
+                }
+                val name = path.fileName.toString()
+                if (!name.endsWith(".md")) {
+                    return@forEach
+                }
+                val snapshotId = name.removeSuffix(".md")
+                val createdAt = snapshotId.toLongOrNull() ?: return@forEach
+                entries.add(
+                    SpecDocumentHistoryEntry(
+                        snapshotId = snapshotId,
+                        phase = phase,
+                        createdAt = createdAt,
+                    )
+                )
+            }
+            entries.sortedByDescending { it.createdAt }
+        }
+    }
+
+    fun loadDocumentSnapshot(
+        workflowId: String,
+        phase: SpecPhase,
+        snapshotId: String,
+    ): Result<SpecDocument> {
+        return runCatching {
+            val snapshotPath = getHistoryDirectory(workflowId, phase).resolve("$snapshotId.md")
+            if (!Files.exists(snapshotPath)) {
+                throw IllegalStateException("Document snapshot not found: $snapshotPath")
+            }
+
+            val content = Files.readString(snapshotPath, StandardCharsets.UTF_8)
+            parseDocument(workflowId, phase, content)
+        }
+    }
+
+    fun deleteDocumentSnapshot(
+        workflowId: String,
+        phase: SpecPhase,
+        snapshotId: String,
+    ): Result<Unit> {
+        return runCatching {
+            val snapshotPath = getHistoryDirectory(workflowId, phase).resolve("$snapshotId.md")
+            if (!Files.exists(snapshotPath)) {
+                throw IllegalStateException("Document snapshot not found: $snapshotPath")
+            }
+            Files.delete(snapshotPath)
+            cleanupIfEmpty(getHistoryDirectory(workflowId, phase))
+            appendAuditEntry(
+                eventType = SpecAuditEventType.SNAPSHOT_DELETED,
+                workflowId = workflowId,
+                details = mapOf(
+                    "phase" to phase.name,
+                    "snapshotId" to snapshotId,
+                ),
+            )
+        }
+    }
+
+    fun pruneDocumentHistory(
+        workflowId: String,
+        phase: SpecPhase,
+        keepLatest: Int,
+    ): Result<Int> {
+        return runCatching {
+            require(keepLatest >= 0) { "keepLatest must be >= 0" }
+            val history = listDocumentHistory(workflowId, phase)
+            val toDelete = history.drop(keepLatest)
+            toDelete.forEach { entry ->
+                val path = getHistoryDirectory(workflowId, phase).resolve("${entry.snapshotId}.md")
+                if (Files.exists(path)) {
+                    Files.delete(path)
+                }
+            }
+            cleanupIfEmpty(getHistoryDirectory(workflowId, phase))
+            appendAuditEntry(
+                eventType = SpecAuditEventType.HISTORY_PRUNED,
+                workflowId = workflowId,
+                details = mapOf(
+                    "phase" to phase.name,
+                    "keepLatest" to keepLatest.toString(),
+                    "pruned" to toDelete.size.toString(),
+                ),
+            )
+            toDelete.size
         }
     }
 
@@ -64,6 +178,14 @@ class SpecStorage(private val project: Project) {
             val metadata = formatWorkflowMetadata(workflow)
 
             Files.writeString(metadataPath, metadata, StandardCharsets.UTF_8)
+            appendAuditEntry(
+                eventType = SpecAuditEventType.WORKFLOW_SAVED,
+                workflowId = workflow.id,
+                details = mapOf(
+                    "status" to workflow.status.name,
+                    "phase" to workflow.currentPhase.name,
+                ),
+            )
             logger.info("Saved workflow metadata to $metadataPath")
 
             metadataPath
@@ -117,8 +239,53 @@ class SpecStorage(private val project: Project) {
                 Files.walk(workflowDir)
                     .sorted(Comparator.reverseOrder())
                     .forEach { Files.delete(it) }
+                appendAuditEntry(
+                    eventType = SpecAuditEventType.WORKFLOW_DELETED,
+                    workflowId = workflowId,
+                )
                 logger.info("Deleted workflow: $workflowId")
             }
+        }
+    }
+
+    fun archiveWorkflow(workflow: SpecWorkflow): Result<SpecArchiveResult> {
+        return runCatching {
+            require(workflow.status == WorkflowStatus.COMPLETED) {
+                "Only completed workflow can be archived: ${workflow.id}"
+            }
+
+            val workflowDir = getWorkflowDirectory(workflow.id)
+            if (!Files.exists(workflowDir)) {
+                throw IllegalStateException("Workflow not found for archive: ${workflow.id}")
+            }
+
+            val archiveRoot = getArchiveDirectory()
+            Files.createDirectories(archiveRoot)
+            val archiveId = "${workflow.id}-${System.currentTimeMillis()}"
+            val archivePath = archiveRoot.resolve(archiveId)
+            try {
+                Files.move(workflowDir, archivePath, StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(workflowDir, archivePath)
+            }
+
+            appendAuditEntry(
+                eventType = SpecAuditEventType.WORKFLOW_ARCHIVED,
+                workflowId = workflow.id,
+                details = mapOf(
+                    "archiveId" to archiveId,
+                    "status" to workflow.status.name,
+                    "phase" to workflow.currentPhase.name,
+                    "title" to workflow.title,
+                ),
+            )
+
+            SpecArchiveResult(
+                workflowId = workflow.id,
+                archiveId = archiveId,
+                archivePath = archivePath,
+                auditLogPath = getAuditLogPath(),
+            )
         }
     }
 
@@ -129,14 +296,31 @@ class SpecStorage(private val project: Project) {
         return getSpecsDirectory().resolve(workflowId)
     }
 
+    private fun getHistoryDirectory(workflowId: String, phase: SpecPhase): Path {
+        return getWorkflowDirectory(workflowId)
+            .resolve(".history")
+            .resolve(phase.name.lowercase())
+    }
+
+    private fun getArchiveDirectory(): Path {
+        return getSpecCodingDirectory().resolve("spec-archive")
+    }
+
+    private fun getAuditLogPath(): Path {
+        return getSpecCodingDirectory().resolve("spec-audit.log")
+    }
+
     /**
      * 获取 Specs 根目录
      */
     private fun getSpecsDirectory(): Path {
+        return getSpecCodingDirectory().resolve("specs")
+    }
+
+    private fun getSpecCodingDirectory(): Path {
         val basePath = project.basePath ?: throw IllegalStateException("Project base path is null")
         return Paths.get(basePath)
             .resolve(".spec-coding")
-            .resolve("specs")
     }
 
     /**
@@ -287,6 +471,65 @@ class SpecStorage(private val project: Project) {
         val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
             .withZone(ZoneId.systemDefault())
         return formatter.format(instant)
+    }
+
+    private fun saveDocumentSnapshot(
+        workflowId: String,
+        document: SpecDocument,
+        formattedContent: String,
+    ): String {
+        val historyDir = getHistoryDirectory(workflowId, document.phase)
+        Files.createDirectories(historyDir)
+        val snapshotId = System.currentTimeMillis().toString()
+        val snapshotPath = historyDir.resolve("$snapshotId.md")
+        Files.writeString(snapshotPath, formattedContent, StandardCharsets.UTF_8)
+        return snapshotId
+    }
+
+    private fun cleanupIfEmpty(directory: Path) {
+        if (!Files.exists(directory)) {
+            return
+        }
+        Files.list(directory).use { stream ->
+            if (!stream.findAny().isPresent) {
+                Files.delete(directory)
+            }
+        }
+    }
+
+    private fun appendAuditEntry(
+        eventType: SpecAuditEventType,
+        workflowId: String,
+        details: Map<String, String> = emptyMap(),
+    ) {
+        try {
+            val auditLogPath = getAuditLogPath()
+            Files.createDirectories(auditLogPath.parent)
+
+            val detailPayload = details.entries
+                .sortedBy { it.key }
+                .joinToString(";") { (key, value) ->
+                    "${sanitizeAuditValue(key)}=${sanitizeAuditValue(value)}"
+                }
+            val line = "${System.currentTimeMillis()}|${eventType.name}|${sanitizeAuditValue(workflowId)}|$detailPayload\n"
+            Files.writeString(
+                auditLogPath,
+                line,
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND,
+            )
+        } catch (e: Exception) {
+            logger.warn("Failed to append spec audit log entry", e)
+        }
+    }
+
+    private fun sanitizeAuditValue(raw: String): String {
+        return raw
+            .replace("\r", " ")
+            .replace("\n", " ")
+            .replace("|", "/")
+            .trim()
     }
 
     companion object {

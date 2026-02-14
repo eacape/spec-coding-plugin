@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.completion
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.context.ContextItem
 import com.eacape.speccodingplugin.context.ContextType
 import com.eacape.speccodingplugin.prompt.PromptManager
@@ -96,7 +97,7 @@ class CompletionProviderTest {
         assertEquals(1, completions.size)
         assertEquals("Design Plan", completions[0].displayText)
         assertEquals("design content", completions[0].insertText)
-        assertEquals("prompt template", completions[0].description)
+        assertEquals(SpecCodingBundle.message("completion.template.description.prompt"), completions[0].description)
     }
 
     @Test

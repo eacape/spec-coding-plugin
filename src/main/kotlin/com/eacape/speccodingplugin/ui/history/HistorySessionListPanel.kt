@@ -23,13 +23,19 @@ import javax.swing.ListSelectionModel
 class HistorySessionListPanel(
     private val onSessionSelected: (String) -> Unit,
     private val onOpenSession: (String) -> Unit,
+    private val onContinueSession: (String) -> Unit,
     private val onExportSession: (String, SessionExportFormat) -> Unit,
     private val onDeleteSession: (String) -> Unit,
+    private val onBranchSession: (String) -> Unit,
+    private val onCompareSession: (String) -> Unit,
 ) : JPanel(BorderLayout()) {
 
     private val listModel = DefaultListModel<SessionSummary>()
     private val sessionList = JBList(listModel)
     private val openButton = JButton(SpecCodingBundle.message("history.action.open"))
+    private val continueButton = JButton(SpecCodingBundle.message("history.action.continue"))
+    private val branchButton = JButton(SpecCodingBundle.message("history.action.branch"))
+    private val compareButton = JButton(SpecCodingBundle.message("history.action.compare"))
     private val exportFormatCombo = JComboBox(SessionExportFormat.entries.toTypedArray())
     private val exportButton = JButton(SpecCodingBundle.message("history.action.export"))
     private val deleteButton = JButton(SpecCodingBundle.message("history.action.delete"))
@@ -46,6 +52,9 @@ class HistorySessionListPanel(
         }
 
         openButton.addActionListener { selectedSessionId()?.let(onOpenSession) }
+        continueButton.addActionListener { selectedSessionId()?.let(onContinueSession) }
+        branchButton.addActionListener { selectedSessionId()?.let(onBranchSession) }
+        compareButton.addActionListener { selectedSessionId()?.let(onCompareSession) }
         exportButton.addActionListener {
             val sessionId = selectedSessionId() ?: return@addActionListener
             val format = exportFormatCombo.selectedItem as? SessionExportFormat ?: SessionExportFormat.MARKDOWN
@@ -54,6 +63,9 @@ class HistorySessionListPanel(
         deleteButton.addActionListener { selectedSessionId()?.let(onDeleteSession) }
 
         toolbar.add(openButton)
+        toolbar.add(continueButton)
+        toolbar.add(branchButton)
+        toolbar.add(compareButton)
         toolbar.add(exportFormatCombo)
         toolbar.add(exportButton)
         toolbar.add(deleteButton)
@@ -73,13 +85,8 @@ class HistorySessionListPanel(
     }
 
     fun updateSessions(items: List<SessionSummary>) {
-        val selectedId = selectedSessionId()
         listModel.clear()
         items.forEach(listModel::addElement)
-
-        if (selectedId != null) {
-            setSelectedSession(selectedId)
-        }
 
         if (sessionList.selectedValue == null) {
             updateButtonStates()
@@ -109,6 +116,9 @@ class HistorySessionListPanel(
     internal fun buttonStatesForTest(): Map<String, Boolean> {
         return mapOf(
             "openEnabled" to openButton.isEnabled,
+            "continueEnabled" to continueButton.isEnabled,
+            "branchEnabled" to branchButton.isEnabled,
+            "compareEnabled" to compareButton.isEnabled,
             "exportEnabled" to exportButton.isEnabled,
             "deleteEnabled" to deleteButton.isEnabled,
         )
@@ -122,6 +132,18 @@ class HistorySessionListPanel(
         deleteButton.doClick()
     }
 
+    internal fun clickContinueForTest() {
+        continueButton.doClick()
+    }
+
+    internal fun clickBranchForTest() {
+        branchButton.doClick()
+    }
+
+    internal fun clickCompareForTest() {
+        compareButton.doClick()
+    }
+
     internal fun clickExportForTest() {
         exportButton.doClick()
     }
@@ -131,6 +153,9 @@ class HistorySessionListPanel(
     private fun updateButtonStates() {
         val hasSelection = selectedSessionId() != null
         openButton.isEnabled = hasSelection
+        continueButton.isEnabled = hasSelection
+        branchButton.isEnabled = hasSelection
+        compareButton.isEnabled = hasSelection
         exportButton.isEnabled = hasSelection
         deleteButton.isEnabled = hasSelection
     }
@@ -162,6 +187,11 @@ class HistorySessionListPanel(
                     !value.worktreeId.isNullOrBlank() -> SpecCodingBundle.message(
                         "history.binding.worktree",
                         value.worktreeId,
+                    )
+
+                    !value.branchName.isNullOrBlank() -> SpecCodingBundle.message(
+                        "history.binding.branch",
+                        value.branchName,
                     )
 
                     !value.specTaskId.isNullOrBlank() -> SpecCodingBundle.message(

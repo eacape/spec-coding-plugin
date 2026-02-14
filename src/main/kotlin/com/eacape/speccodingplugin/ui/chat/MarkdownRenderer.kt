@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.chat
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.intellij.ui.JBColor
 import java.awt.Color
 import java.awt.Font
@@ -97,7 +98,11 @@ object MarkdownRenderer {
             val langAttrs = SimpleAttributeSet()
             StyleConstants.setFontSize(langAttrs, 11)
             StyleConstants.setForeground(langAttrs, JBColor.GRAY)
-            doc.insertString(doc.length, "[$language]\n", langAttrs)
+            doc.insertString(
+                doc.length,
+                SpecCodingBundle.message("chat.markdown.code.languageTag", language) + "\n",
+                langAttrs,
+            )
         }
 
         // 代码内容

@@ -203,4 +203,111 @@ class SessionManagerTest {
         assertEquals(1, searched.size)
         assertEquals(session.id, searched.first().id)
     }
+
+    @Test
+    fun `forkSession should create branch with copied prefix messages`() {
+        val source = manager.createSession(title = "Root session").getOrThrow()
+        val first = manager.addMessage(source.id, ConversationRole.USER, "msg-1").getOrThrow()
+        val second = manager.addMessage(source.id, ConversationRole.ASSISTANT, "msg-2").getOrThrow()
+        manager.addMessage(source.id, ConversationRole.USER, "msg-3").getOrThrow()
+
+        val forked = manager.forkSession(
+            sourceSessionId = source.id,
+            fromMessageId = second.id,
+            branchName = "proposal-b",
+        ).getOrThrow()
+
+        assertEquals(source.id, forked.parentSessionId)
+        assertEquals(second.id, forked.branchFromMessageId)
+        assertEquals("proposal-b", forked.branchName)
+
+        val forkedMessages = manager.listMessages(forked.id)
+        assertEquals(2, forkedMessages.size)
+        assertEquals(first.content, forkedMessages[0].content)
+        assertEquals(second.content, forkedMessages[1].content)
+
+        val children = manager.listChildSessions(source.id)
+        assertEquals(1, children.size)
+        assertEquals(forked.id, children.first().id)
+    }
+
+    @Test
+    fun `compareSessions should report common prefix and unique tails`() {
+        val left = manager.createSession(title = "Left branch").getOrThrow()
+        val right = manager.createSession(title = "Right branch").getOrThrow()
+
+        manager.addMessage(left.id, ConversationRole.USER, "same-1").getOrThrow()
+        manager.addMessage(left.id, ConversationRole.ASSISTANT, "same-2").getOrThrow()
+        manager.addMessage(left.id, ConversationRole.USER, "left-only").getOrThrow()
+
+        manager.addMessage(right.id, ConversationRole.USER, "same-1").getOrThrow()
+        manager.addMessage(right.id, ConversationRole.ASSISTANT, "same-2").getOrThrow()
+        manager.addMessage(right.id, ConversationRole.USER, "right-only").getOrThrow()
+
+        val comparison = manager.compareSessions(left.id, right.id).getOrThrow()
+
+        assertEquals(2, comparison.commonPrefixCount)
+        assertEquals(1, comparison.leftOnlyCount)
+        assertEquals(1, comparison.rightOnlyCount)
+        assertEquals("left-only", comparison.leftPreview)
+        assertEquals("right-only", comparison.rightPreview)
+    }
+
+    @Test
+    fun `saveContextSnapshot should persist selected checkpoint`() {
+        val source = manager.createSession(title = "Snapshot Source").getOrThrow()
+        manager.addMessage(source.id, ConversationRole.USER, "msg-1").getOrThrow()
+        val second = manager.addMessage(source.id, ConversationRole.ASSISTANT, "msg-2").getOrThrow()
+        manager.addMessage(source.id, ConversationRole.USER, "msg-3").getOrThrow()
+
+        val snapshot = manager.saveContextSnapshot(
+            sessionId = source.id,
+            messageId = second.id,
+            title = "checkpoint-a",
+            metadataJson = "{\"stage\":\"design\"}",
+        ).getOrThrow()
+
+        assertEquals(source.id, snapshot.sessionId)
+        assertEquals(second.id, snapshot.messageId)
+        assertEquals("checkpoint-a", snapshot.title)
+        assertEquals(2, snapshot.messageCount)
+        assertEquals("{\"stage\":\"design\"}", snapshot.metadataJson)
+
+        val listed = manager.listContextSnapshots(source.id, limit = 20)
+        assertEquals(1, listed.size)
+        assertEquals(snapshot.id, listed.first().id)
+    }
+
+    @Test
+    fun `continueFromSnapshot should create continued session with copied context`() {
+        val source = manager.createSession(title = "Continuation Source").getOrThrow()
+        val first = manager.addMessage(source.id, ConversationRole.USER, "ctx-1").getOrThrow()
+        val second = manager.addMessage(source.id, ConversationRole.ASSISTANT, "ctx-2").getOrThrow()
+        manager.addMessage(source.id, ConversationRole.USER, "ctx-3").getOrThrow()
+        val snapshot = manager.saveContextSnapshot(source.id, second.id).getOrThrow()
+
+        val continued = manager.continueFromSnapshot(snapshot.id, branchName = "resume-plan-a").getOrThrow()
+
+        assertEquals(source.id, continued.parentSessionId)
+        assertEquals(second.id, continued.branchFromMessageId)
+        assertEquals("resume-plan-a", continued.branchName)
+        assertTrue(continued.title.contains("[continue]"))
+
+        val messages = manager.listMessages(continued.id)
+        assertEquals(2, messages.size)
+        assertEquals(first.content, messages[0].content)
+        assertEquals(second.content, messages[1].content)
+    }
+
+    @Test
+    fun `searchSessions should match branch name`() {
+        val source = manager.createSession(title = "Root").getOrThrow()
+        manager.addMessage(source.id, ConversationRole.USER, "base").getOrThrow()
+        manager.forkSession(source.id, branchName = "proposal-a").getOrThrow()
+
+        val results = manager.searchSessions(query = "proposal-a", limit = 20)
+
+        assertEquals(1, results.size)
+        assertEquals("proposal-a", results.first().branchName)
+    }
 }

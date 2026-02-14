@@ -274,7 +274,7 @@ class ImprovedChatPanel(
 
         // Add user message to history
         val userMessage = LlmMessage(LlmRole.USER, input)
-        conversationHistory.add(userMessage)
+        appendToConversationHistory(userMessage)
         if (sessionId != null) {
             persistMessage(sessionId, ConversationRole.USER, input)
         }
@@ -311,7 +311,7 @@ class ImprovedChatPanel(
 
                 // Add assistant message to history
                 val assistantMessage = LlmMessage(LlmRole.ASSISTANT, assistantContent.toString())
-                conversationHistory.add(assistantMessage)
+                appendToConversationHistory(assistantMessage)
                 if (sessionId != null) {
                     persistMessage(sessionId, ConversationRole.ASSISTANT, assistantMessage.content)
                 }
@@ -621,7 +621,9 @@ class ImprovedChatPanel(
 
         scope.launch(Dispatchers.IO) {
             val session = sessionManager.getSession(sessionId)
-            val messages = sessionManager.listMessages(sessionId, limit = 1000)
+            val messages = sessionManager
+                .listMessages(sessionId, limit = SESSION_LOAD_FETCH_LIMIT)
+                .takeLast(MAX_RESTORED_MESSAGES)
 
             ApplicationManager.getApplication().invokeLater {
                 if (project.isDisposed || _isDisposed) {
@@ -652,7 +654,7 @@ class ImprovedChatPanel(
             when (message.role) {
                 ConversationRole.USER -> {
                     appendUserMessage(message.content)
-                    conversationHistory.add(LlmMessage(LlmRole.USER, message.content))
+                    appendToConversationHistory(LlmMessage(LlmRole.USER, message.content))
                 }
 
                 ConversationRole.ASSISTANT -> {
@@ -664,18 +666,18 @@ class ImprovedChatPanel(
                     )
                     panel.finishMessage()
                     messagesPanel.addMessage(panel)
-                    conversationHistory.add(LlmMessage(LlmRole.ASSISTANT, message.content))
+                    appendToConversationHistory(LlmMessage(LlmRole.ASSISTANT, message.content))
                 }
 
                 ConversationRole.SYSTEM -> {
                     addSystemMessage(message.content)
-                    conversationHistory.add(LlmMessage(LlmRole.SYSTEM, message.content))
+                    appendToConversationHistory(LlmMessage(LlmRole.SYSTEM, message.content))
                 }
 
                 ConversationRole.TOOL -> {
                     val panel = ChatMessagePanel(
                         ChatMessagePanel.MessageRole.SYSTEM,
-                        "[Tool] ${message.content}",
+                        SpecCodingBundle.message("toolwindow.message.tool.entry", message.content),
                     )
                     panel.finishMessage()
                     messagesPanel.addMessage(panel)
@@ -700,7 +702,7 @@ class ImprovedChatPanel(
             .firstOrNull()
             .orEmpty()
             .trim()
-            .ifBlank { "New Session" }
+            .ifBlank { SpecCodingBundle.message("toolwindow.session.defaultTitle") }
             .take(80)
 
         val created = sessionManager.createSession(
@@ -851,7 +853,7 @@ class ImprovedChatPanel(
                     }
                 }
                 val assistantMessage = LlmMessage(LlmRole.ASSISTANT, assistantContent.toString())
-                conversationHistory.add(assistantMessage)
+                appendToConversationHistory(assistantMessage)
                 currentSessionId?.let { sessionId ->
                     persistMessage(sessionId, ConversationRole.ASSISTANT, assistantMessage.content)
                 }
@@ -882,12 +884,33 @@ class ImprovedChatPanel(
                 ChatMessagePanel.MessageRole.SYSTEM -> LlmRole.SYSTEM
                 ChatMessagePanel.MessageRole.ERROR -> continue
             }
-            conversationHistory.add(LlmMessage(role, panel.getContent()))
+            appendToConversationHistory(LlmMessage(role, panel.getContent()))
+        }
+    }
+
+    private fun appendToConversationHistory(message: LlmMessage) {
+        conversationHistory.add(message)
+        trimConversationHistoryIfNeeded()
+    }
+
+    private fun trimConversationHistoryIfNeeded() {
+        if (conversationHistory.size <= MAX_CONVERSATION_HISTORY) {
+            return
+        }
+        val overflow = conversationHistory.size - MAX_CONVERSATION_HISTORY
+        repeat(overflow) {
+            conversationHistory.removeAt(0)
         }
     }
 
     override fun dispose() {
         _isDisposed = true
         scope.cancel()
+    }
+
+    companion object {
+        private const val MAX_CONVERSATION_HISTORY = 240
+        private const val MAX_RESTORED_MESSAGES = 240
+        private const val SESSION_LOAD_FETCH_LIMIT = 5000
     }
 }

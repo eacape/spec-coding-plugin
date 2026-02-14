@@ -110,6 +110,19 @@ class SkillRegistry(private val project: Project) {
         }
     }
 
+    /**
+     * 强制从磁盘重新加载技能定义（内置 + 自定义）。
+     */
+    fun reloadFromDisk() {
+        synchronized(lock) {
+            skills.clear()
+            loaded = false
+            loadBuiltinSkills()
+            loadCustomSkills()
+            loaded = true
+        }
+    }
+
     private fun ensureLoaded() {
         if (loaded) {
             return

@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.completion
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.context.ContextItem
 import com.eacape.speccodingplugin.context.ContextType
 import com.eacape.speccodingplugin.prompt.PromptManager
@@ -81,7 +82,7 @@ class CompletionProvider internal constructor(
                 CompletionItem(
                     displayText = name,
                     insertText = "#$name",
-                    description = "class",
+                    description = SpecCodingBundle.message("completion.symbol.description.class"),
                 ),
             )
         }
@@ -99,7 +100,7 @@ class CompletionProvider internal constructor(
                 CompletionItem(
                     displayText = template.name,
                     insertText = template.content,
-                    description = "prompt template",
+                    description = SpecCodingBundle.message("completion.template.description.prompt"),
                 )
             }
     }

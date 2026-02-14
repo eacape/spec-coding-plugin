@@ -43,6 +43,10 @@ data class GlobalConfigSnapshot(
     val claudeCodeCliPath: String,
     val defaultOperationMode: String,
     val interfaceLanguage: String,
+    val teamPromptRepoUrl: String,
+    val teamPromptRepoBranch: String,
+    val teamSkillRepoUrl: String,
+    val teamSkillRepoBranch: String,
 )
 
 @Service(Service.Level.APP)
@@ -78,6 +82,10 @@ class GlobalConfigSyncService internal constructor(
             claudeCodeCliPath = settings.claudeCodeCliPath,
             defaultOperationMode = settings.defaultOperationMode,
             interfaceLanguage = settings.interfaceLanguage,
+            teamPromptRepoUrl = settings.teamPromptRepoUrl,
+            teamPromptRepoBranch = settings.teamPromptRepoBranch,
+            teamSkillRepoUrl = settings.teamSkillRepoUrl,
+            teamSkillRepoBranch = settings.teamSkillRepoBranch,
         )
     }
 

@@ -182,6 +182,13 @@ enabled: true
 
 ---
 
+## 🏪 Marketplace 发布准备
+
+- 元数据与素材规范：`marketplace/README.md`
+- 截图采集说明：`marketplace/assets/screenshots/README.md`
+
+---
+
 ## 📂 项目结构
 
 ```

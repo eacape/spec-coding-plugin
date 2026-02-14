@@ -101,7 +101,25 @@ intellijPlatform {
     pluginConfiguration {
         name = providers.gradleProperty("pluginName").get()
         version = providers.gradleProperty("pluginVersion").get()
-        description = "Spec-driven AI coding workflow plugin for JetBrains IDEs."
+        description = """
+            Spec-driven AI coding workflow for JetBrains IDEs.
+            <p>
+            Plan, implement, and audit AI-assisted changes with structured spec workflows and editor-aware context.
+            </p>
+            <ul>
+              <li>Spec workflow: Specify -> Design -> Implement, with history and delta comparison.</li>
+              <li>Code graph + smart context trimming for more precise prompt grounding.</li>
+              <li>Editor gutter icons and inline hints for AI changes and Spec associations.</li>
+              <li>Hook automation, skill pipeline, and rollback-oriented change timeline.</li>
+            </ul>
+        """.trimIndent()
+        changeNotes = """
+            <ul>
+              <li>Added code graph visualization and graph-aware context trimming.</li>
+              <li>Added editor gutter icons and inline hints for AI/Spec insights.</li>
+              <li>Added spec archive audit trail and improved delta/history workflows.</li>
+            </ul>
+        """.trimIndent()
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild").get()

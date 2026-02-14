@@ -237,7 +237,7 @@ class ChangesetTimelinePanel(
         val fileName = change.filePath
             .substringAfterLast("/")
             .substringAfterLast("\\")
-        val label = JBLabel("  $icon $fileName")
+        val label = JBLabel(SpecCodingBundle.message("changeset.timeline.file.entry", icon, fileName))
         label.foreground = color
         label.font = label.font.deriveFont(11f)
         return label

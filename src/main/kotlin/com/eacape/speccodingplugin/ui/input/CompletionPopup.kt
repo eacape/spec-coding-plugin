@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.input
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.ui.completion.CompletionItem
 import com.intellij.openapi.ui.popup.JBPopup
 import com.intellij.openapi.ui.popup.JBPopupFactory
@@ -93,7 +94,10 @@ private class CompletionCellRenderer : ColoredListCellRenderer<CompletionItem>()
         icon = value.icon
         append(value.displayText, SimpleTextAttributes.REGULAR_ATTRIBUTES)
         if (value.description.isNotBlank()) {
-            append("  ${value.description}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            append(
+                SpecCodingBundle.message("input.completion.item.description", value.description),
+                SimpleTextAttributes.GRAYED_ATTRIBUTES,
+            )
         }
     }
 }

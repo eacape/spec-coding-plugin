@@ -35,7 +35,7 @@ class PromptListCellRenderer : ListCellRenderer<PromptTemplate> {
 
         // 作用域标签
         val scopeName = SpecCodingBundle.messageOrDefault("prompt.scope.${value.scope.name.lowercase()}", value.scope.name)
-        val scopeLabel = JLabel("[$scopeName]")
+        val scopeLabel = JLabel(SpecCodingBundle.message("prompt.scope.label", scopeName))
         scopeLabel.font = scopeLabel.font.deriveFont(10f)
         scopeLabel.foreground = JBColor.GRAY
 

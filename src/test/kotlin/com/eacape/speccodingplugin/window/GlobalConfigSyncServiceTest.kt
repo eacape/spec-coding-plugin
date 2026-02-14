@@ -40,6 +40,10 @@ class GlobalConfigSyncServiceTest {
             codexCliPath = "codex"
             claudeCodeCliPath = "claude"
             defaultOperationMode = "AGENT"
+            teamPromptRepoUrl = "https://example.com/team-prompts.git"
+            teamPromptRepoBranch = "main"
+            teamSkillRepoUrl = "https://example.com/team-skills.git"
+            teamSkillRepoBranch = "main"
         }
 
         windowRegistry = mockk(relaxed = true)
@@ -70,6 +74,8 @@ class GlobalConfigSyncServiceTest {
         assertEquals("openai", event.snapshot.defaultProvider)
         assertEquals("gpt-4o", event.snapshot.openaiModel)
         assertTrue(event.snapshot.useProxy)
+        assertEquals("https://example.com/team-prompts.git", event.snapshot.teamPromptRepoUrl)
+        assertEquals("https://example.com/team-skills.git", event.snapshot.teamSkillRepoUrl)
 
         verify(exactly = 1) {
             listener.onGlobalConfigChanged(match {
@@ -80,4 +86,3 @@ class GlobalConfigSyncServiceTest {
         }
     }
 }
-

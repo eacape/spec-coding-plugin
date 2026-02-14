@@ -50,6 +50,14 @@ class SpecCodingSettingsState : PersistentStateComponent<SpecCodingSettingsState
     // 界面语言偏好（AUTO / ENGLISH / ZH_CN）
     var interfaceLanguage: String = "AUTO"
 
+    // 团队 Prompt 同步配置
+    var teamPromptRepoUrl: String = ""
+    var teamPromptRepoBranch: String = "main"
+
+    // 团队 Skill 同步配置
+    var teamSkillRepoUrl: String = ""
+    var teamSkillRepoBranch: String = "main"
+
     override fun getState(): SpecCodingSettingsState = this
 
     override fun loadState(state: SpecCodingSettingsState) {

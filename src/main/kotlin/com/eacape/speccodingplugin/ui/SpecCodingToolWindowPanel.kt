@@ -169,7 +169,12 @@ class SpecCodingToolWindowPanel(
     }
 
     private fun appendAssistantPrefix() {
-        conversationArea.append("${SpecCodingBundle.message("toolwindow.message.assistant")}: ")
+        conversationArea.append(
+            SpecCodingBundle.message(
+                "toolwindow.message.prefix",
+                SpecCodingBundle.message("toolwindow.message.assistant"),
+            ),
+        )
         scrollConversationToBottom()
     }
 
@@ -187,7 +192,8 @@ class SpecCodingToolWindowPanel(
     }
 
     private fun appendRoleMessage(role: String, content: String) {
-        conversationArea.append("$role: $content\n\n")
+        conversationArea.append(SpecCodingBundle.message("toolwindow.message.entry", role, content))
+        conversationArea.append("\n\n")
         scrollConversationToBottom()
     }
 

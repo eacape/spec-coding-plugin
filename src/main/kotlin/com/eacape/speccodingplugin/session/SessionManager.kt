@@ -38,6 +38,9 @@ class SessionManager internal constructor(
         specTaskId: String? = null,
         worktreeId: String? = null,
         modelProvider: String? = null,
+        parentSessionId: String? = null,
+        branchFromMessageId: String? = null,
+        branchName: String? = null,
     ): Result<ConversationSession> {
         return runCatching {
             val normalizedTitle = title.trim()
@@ -50,6 +53,9 @@ class SessionManager internal constructor(
                 specTaskId = specTaskId?.trim()?.ifBlank { null },
                 worktreeId = worktreeId?.trim()?.ifBlank { null },
                 modelProvider = modelProvider?.trim()?.ifBlank { null },
+                parentSessionId = parentSessionId?.trim()?.ifBlank { null },
+                branchFromMessageId = branchFromMessageId?.trim()?.ifBlank { null },
+                branchName = branchName?.trim()?.ifBlank { null },
                 createdAt = now,
                 updatedAt = now,
             )
@@ -57,8 +63,12 @@ class SessionManager internal constructor(
             withConnection { connection ->
                 connection.prepareStatement(
                     """
-                    INSERT INTO sessions(id, title, spec_task_id, worktree_id, model_provider, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO sessions(
+                        id, title, spec_task_id, worktree_id, model_provider,
+                        parent_session_id, branch_from_message_id, branch_name,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent(),
                 ).use { statement ->
                     statement.setString(1, session.id)
@@ -66,8 +76,11 @@ class SessionManager internal constructor(
                     statement.setString(3, session.specTaskId)
                     statement.setString(4, session.worktreeId)
                     statement.setString(5, session.modelProvider)
-                    statement.setLong(6, session.createdAt)
-                    statement.setLong(7, session.updatedAt)
+                    statement.setString(6, session.parentSessionId)
+                    statement.setString(7, session.branchFromMessageId)
+                    statement.setString(8, session.branchName)
+                    statement.setLong(9, session.createdAt)
+                    statement.setLong(10, session.updatedAt)
                     statement.executeUpdate()
                 }
             }
@@ -123,7 +136,10 @@ class SessionManager internal constructor(
         return withConnection { connection ->
             connection.prepareStatement(
                 """
-                SELECT id, title, spec_task_id, worktree_id, model_provider, created_at, updated_at
+                SELECT
+                    id, title, spec_task_id, worktree_id, model_provider,
+                    parent_session_id, branch_from_message_id, branch_name,
+                    created_at, updated_at
                 FROM sessions
                 WHERE id = ?
                 """.trimIndent(),
@@ -145,7 +161,10 @@ class SessionManager internal constructor(
         return withConnection { connection ->
             connection.prepareStatement(
                 """
-                SELECT id, title, spec_task_id, worktree_id, model_provider, created_at, updated_at
+                SELECT
+                    id, title, spec_task_id, worktree_id, model_provider,
+                    parent_session_id, branch_from_message_id, branch_name,
+                    created_at, updated_at
                 FROM sessions
                 ORDER BY updated_at DESC
                 LIMIT ?
@@ -280,6 +299,8 @@ class SessionManager internal constructor(
                     s.spec_task_id,
                     s.worktree_id,
                     s.model_provider,
+                    s.parent_session_id,
+                    s.branch_name,
                     s.updated_at,
                     COUNT(m.id) AS message_count
                 FROM sessions s
@@ -295,7 +316,7 @@ class SessionManager internal constructor(
             }
 
             if (hasQuery) {
-                conditions += "(s.title LIKE ? OR s.id LIKE ? OR s.spec_task_id LIKE ? OR s.worktree_id LIKE ?)"
+                conditions += "(s.title LIKE ? OR s.id LIKE ? OR s.spec_task_id LIKE ? OR s.worktree_id LIKE ? OR s.branch_name LIKE ?)"
             }
 
             if (conditions.isNotEmpty()) {
@@ -310,7 +331,7 @@ class SessionManager internal constructor(
                 var index = 1
                 if (hasQuery) {
                     val pattern = "%$normalizedQuery%"
-                    repeat(4) {
+                    repeat(5) {
                         statement.setString(index, pattern)
                         index += 1
                     }
@@ -325,6 +346,286 @@ class SessionManager internal constructor(
                     }
                 }
             }
+        }
+    }
+
+    fun listChildSessions(parentSessionId: String, limit: Int = 100): List<ConversationSession> {
+        val normalizedParentId = parentSessionId.trim()
+        if (normalizedParentId.isBlank()) {
+            return emptyList()
+        }
+
+        val normalizedLimit = limit.coerceAtLeast(1)
+        return withConnection { connection ->
+            connection.prepareStatement(
+                """
+                SELECT
+                    id, title, spec_task_id, worktree_id, model_provider,
+                    parent_session_id, branch_from_message_id, branch_name,
+                    created_at, updated_at
+                FROM sessions
+                WHERE parent_session_id = ?
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, normalizedParentId)
+                statement.setInt(2, normalizedLimit)
+                statement.executeQuery().use { resultSet ->
+                    buildList {
+                        while (resultSet.next()) {
+                            add(resultSet.toSession())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun forkSession(
+        sourceSessionId: String,
+        fromMessageId: String? = null,
+        branchName: String? = null,
+    ): Result<ConversationSession> {
+        return runCatching {
+            val normalizedSourceId = sourceSessionId.trim()
+            require(normalizedSourceId.isNotBlank()) { "Source session id cannot be blank" }
+
+            val source = getSession(normalizedSourceId)
+                ?: throw IllegalArgumentException("Session not found: $normalizedSourceId")
+            val sourceMessages = listMessages(normalizedSourceId, 5000)
+
+            val normalizedMessageId = fromMessageId?.trim()?.ifBlank { null }
+            val copyUntilExclusive = if (normalizedMessageId == null) {
+                sourceMessages.size
+            } else {
+                val index = sourceMessages.indexOfFirst { message -> message.id == normalizedMessageId }
+                require(index >= 0) { "Message not found in source session: $normalizedMessageId" }
+                index + 1
+            }
+
+            val normalizedBranchName = branchName?.trim()?.ifBlank { null }
+            val effectiveBranchName = normalizedBranchName ?: "branch-${clock()}"
+            val targetMessageId = normalizedMessageId ?: sourceMessages.lastOrNull()?.id
+            val branchTitle = "${source.title} [$effectiveBranchName]"
+
+            val forked = createSession(
+                title = branchTitle,
+                specTaskId = source.specTaskId,
+                worktreeId = source.worktreeId,
+                modelProvider = source.modelProvider,
+                parentSessionId = source.id,
+                branchFromMessageId = targetMessageId,
+                branchName = effectiveBranchName,
+            ).getOrThrow()
+
+            sourceMessages.take(copyUntilExclusive).forEach { message ->
+                addMessage(
+                    sessionId = forked.id,
+                    role = message.role,
+                    content = message.content,
+                    tokenCount = message.tokenCount,
+                    metadataJson = message.metadataJson,
+                ).getOrThrow()
+            }
+
+            getSession(forked.id) ?: forked
+        }
+    }
+
+    fun compareSessions(
+        leftSessionId: String,
+        rightSessionId: String,
+        previewLength: Int = 120,
+    ): Result<SessionBranchComparison> {
+        return runCatching {
+            val leftId = leftSessionId.trim()
+            val rightId = rightSessionId.trim()
+            require(leftId.isNotBlank()) { "Left session id cannot be blank" }
+            require(rightId.isNotBlank()) { "Right session id cannot be blank" }
+            require(previewLength > 0) { "previewLength must be positive" }
+
+            val leftMessages = listMessages(leftId, 5000)
+            val rightMessages = listMessages(rightId, 5000)
+
+            var commonPrefix = 0
+            val minSize = minOf(leftMessages.size, rightMessages.size)
+            while (commonPrefix < minSize && messagesEquivalent(leftMessages[commonPrefix], rightMessages[commonPrefix])) {
+                commonPrefix += 1
+            }
+
+            val leftOnly = leftMessages.size - commonPrefix
+            val rightOnly = rightMessages.size - commonPrefix
+            val leftPreview = leftMessages.getOrNull(commonPrefix)?.content?.trim()?.take(previewLength)
+            val rightPreview = rightMessages.getOrNull(commonPrefix)?.content?.trim()?.take(previewLength)
+
+            SessionBranchComparison(
+                leftSessionId = leftId,
+                rightSessionId = rightId,
+                commonPrefixCount = commonPrefix,
+                leftOnlyCount = leftOnly,
+                rightOnlyCount = rightOnly,
+                leftPreview = leftPreview,
+                rightPreview = rightPreview,
+            )
+        }
+    }
+
+    fun saveContextSnapshot(
+        sessionId: String,
+        messageId: String? = null,
+        title: String? = null,
+        metadataJson: String? = null,
+    ): Result<SessionContextSnapshot> {
+        return runCatching {
+            val normalizedSessionId = sessionId.trim()
+            require(normalizedSessionId.isNotBlank()) { "Session id cannot be blank" }
+
+            val session = getSession(normalizedSessionId)
+                ?: throw IllegalArgumentException("Session not found: $normalizedSessionId")
+            val messages = listMessages(normalizedSessionId, 5000)
+            val normalizedMessageId = messageId?.trim()?.ifBlank { null }
+
+            val includedCount = if (normalizedMessageId == null) {
+                messages.size
+            } else {
+                val index = messages.indexOfFirst { message -> message.id == normalizedMessageId }
+                require(index >= 0) { "Message not found in source session: $normalizedMessageId" }
+                index + 1
+            }
+
+            val effectiveMessageId = if (includedCount > 0) {
+                messages[includedCount - 1].id
+            } else {
+                null
+            }
+            val derivedTitle = if (includedCount > 0) {
+                messages[includedCount - 1].content
+                    .lineSequence()
+                    .firstOrNull()
+                    ?.trim()
+                    ?.ifBlank { null }
+            } else {
+                null
+            }
+            val normalizedTitle = title?.trim()?.ifBlank { null } ?: derivedTitle ?: session.title
+            val now = clock()
+            val snapshot = SessionContextSnapshot(
+                id = idGenerator(),
+                sessionId = normalizedSessionId,
+                messageId = effectiveMessageId,
+                title = normalizedTitle.take(120),
+                messageCount = includedCount,
+                metadataJson = metadataJson?.trim()?.ifBlank { null },
+                createdAt = now,
+            )
+
+            withConnection { connection ->
+                connection.prepareStatement(
+                    """
+                    INSERT INTO session_context_snapshots(
+                        id, session_id, message_id, snapshot_title, message_count, metadata_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """.trimIndent(),
+                ).use { statement ->
+                    statement.setString(1, snapshot.id)
+                    statement.setString(2, snapshot.sessionId)
+                    statement.setString(3, snapshot.messageId)
+                    statement.setString(4, snapshot.title)
+                    statement.setInt(5, snapshot.messageCount)
+                    statement.setString(6, snapshot.metadataJson)
+                    statement.setLong(7, snapshot.createdAt)
+                    statement.executeUpdate()
+                }
+            }
+            snapshot
+        }
+    }
+
+    fun listContextSnapshots(sessionId: String? = null, limit: Int = 100): List<SessionContextSnapshot> {
+        val normalizedSessionId = sessionId?.trim()?.ifBlank { null }
+        val normalizedLimit = limit.coerceAtLeast(1)
+
+        return withConnection { connection ->
+            val sql = buildString {
+                append(
+                    """
+                    SELECT id, session_id, message_id, snapshot_title, message_count, metadata_json, created_at
+                    FROM session_context_snapshots
+                    """.trimIndent()
+                )
+                if (normalizedSessionId != null) {
+                    append(" WHERE session_id = ?")
+                }
+                append(" ORDER BY created_at DESC")
+                append(" LIMIT ?")
+            }
+
+            connection.prepareStatement(sql).use { statement ->
+                var index = 1
+                if (normalizedSessionId != null) {
+                    statement.setString(index, normalizedSessionId)
+                    index += 1
+                }
+                statement.setInt(index, normalizedLimit)
+
+                statement.executeQuery().use { resultSet ->
+                    buildList {
+                        while (resultSet.next()) {
+                            add(resultSet.toContextSnapshot())
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun continueFromSnapshot(
+        snapshotId: String,
+        branchName: String? = null,
+    ): Result<ConversationSession> {
+        return runCatching {
+            val normalizedSnapshotId = snapshotId.trim()
+            require(normalizedSnapshotId.isNotBlank()) { "Snapshot id cannot be blank" }
+
+            val snapshot = getContextSnapshot(normalizedSnapshotId)
+                ?: throw IllegalArgumentException("Context snapshot not found: $normalizedSnapshotId")
+            val source = getSession(snapshot.sessionId)
+                ?: throw IllegalArgumentException("Session not found: ${snapshot.sessionId}")
+            val sourceMessages = listMessages(source.id, 5000)
+            val copyUntilExclusive = if (snapshot.messageId == null) {
+                snapshot.messageCount.coerceAtMost(sourceMessages.size)
+            } else {
+                val index = sourceMessages.indexOfFirst { message -> message.id == snapshot.messageId }
+                require(index >= 0) { "Message not found in source session: ${snapshot.messageId}" }
+                index + 1
+            }
+
+            val normalizedBranchName = branchName?.trim()?.ifBlank { null }
+            val effectiveBranchName = normalizedBranchName ?: "continue-${clock()}"
+            val continuedTitle = "${source.title} [continue]"
+            val continued = createSession(
+                title = continuedTitle,
+                specTaskId = source.specTaskId,
+                worktreeId = source.worktreeId,
+                modelProvider = source.modelProvider,
+                parentSessionId = source.id,
+                branchFromMessageId = snapshot.messageId,
+                branchName = effectiveBranchName,
+            ).getOrThrow()
+
+            sourceMessages.take(copyUntilExclusive).forEach { message ->
+                addMessage(
+                    sessionId = continued.id,
+                    role = message.role,
+                    content = message.content,
+                    tokenCount = message.tokenCount,
+                    metadataJson = message.metadataJson,
+                ).getOrThrow()
+            }
+
+            getSession(continued.id) ?: continued
         }
     }
 
@@ -377,9 +678,13 @@ class SessionManager internal constructor(
         connection.autoCommit = false
         try {
             pendingMigrations.forEach { migration ->
-                migration.statements.forEach { sql ->
-                    connection.createStatement().use { statement ->
-                        statement.execute(sql)
+                if (migration.version == 3) {
+                    runSessionBranchMigration(connection)
+                } else {
+                    migration.statements.forEach { sql ->
+                        connection.createStatement().use { statement ->
+                            statement.execute(sql)
+                        }
                     }
                 }
                 connection.prepareStatement(
@@ -441,6 +746,32 @@ class SessionManager internal constructor(
             .resolve("conversations.db")
     }
 
+    private fun getContextSnapshot(snapshotId: String): SessionContextSnapshot? {
+        val normalizedSnapshotId = snapshotId.trim()
+        if (normalizedSnapshotId.isBlank()) {
+            return null
+        }
+
+        return withConnection { connection ->
+            connection.prepareStatement(
+                """
+                SELECT id, session_id, message_id, snapshot_title, message_count, metadata_json, created_at
+                FROM session_context_snapshots
+                WHERE id = ?
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, normalizedSnapshotId)
+                statement.executeQuery().use { resultSet ->
+                    if (!resultSet.next()) {
+                        null
+                    } else {
+                        resultSet.toContextSnapshot()
+                    }
+                }
+            }
+        }
+    }
+
     private fun ResultSet.toSession(): ConversationSession {
         return ConversationSession(
             id = getString("id"),
@@ -448,6 +779,9 @@ class SessionManager internal constructor(
             specTaskId = getString("spec_task_id"),
             worktreeId = getString("worktree_id"),
             modelProvider = getString("model_provider"),
+            parentSessionId = getString("parent_session_id"),
+            branchFromMessageId = getString("branch_from_message_id"),
+            branchName = getString("branch_name"),
             createdAt = getLong("created_at"),
             updatedAt = getLong("updated_at"),
         )
@@ -468,6 +802,18 @@ class SessionManager internal constructor(
         )
     }
 
+    private fun ResultSet.toContextSnapshot(): SessionContextSnapshot {
+        return SessionContextSnapshot(
+            id = getString("id"),
+            sessionId = getString("session_id"),
+            messageId = getString("message_id"),
+            title = getString("snapshot_title"),
+            messageCount = getInt("message_count"),
+            metadataJson = getString("metadata_json"),
+            createdAt = getLong("created_at"),
+        )
+    }
+
     private fun ResultSet.toSummary(): SessionSummary {
         return SessionSummary(
             id = getString("id"),
@@ -475,9 +821,49 @@ class SessionManager internal constructor(
             specTaskId = getString("spec_task_id"),
             worktreeId = getString("worktree_id"),
             modelProvider = getString("model_provider"),
+            parentSessionId = getString("parent_session_id"),
+            branchName = getString("branch_name"),
             messageCount = getInt("message_count"),
             updatedAt = getLong("updated_at"),
         )
+    }
+
+    private fun messagesEquivalent(left: ConversationMessage, right: ConversationMessage): Boolean {
+        return left.role == right.role && left.content.trim() == right.content.trim()
+    }
+
+    private fun hasColumn(connection: Connection, tableName: String, columnName: String): Boolean {
+        connection.prepareStatement("PRAGMA table_info($tableName)").use { statement ->
+            statement.executeQuery().use { resultSet ->
+                while (resultSet.next()) {
+                    if (resultSet.getString("name").equals(columnName, ignoreCase = true)) {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    private fun runSessionBranchMigration(connection: Connection) {
+        if (!hasColumn(connection, "sessions", "parent_session_id")) {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT")
+            }
+        }
+        if (!hasColumn(connection, "sessions", "branch_from_message_id")) {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE sessions ADD COLUMN branch_from_message_id TEXT")
+            }
+        }
+        if (!hasColumn(connection, "sessions", "branch_name")) {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE sessions ADD COLUMN branch_name TEXT")
+            }
+        }
+        connection.createStatement().use { statement ->
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent_session_id ON sessions(parent_session_id)")
+        }
     }
 
     private data class SessionMigration(
@@ -612,6 +998,28 @@ class SessionManager internal constructor(
                         WHERE session_id = new.session_id;
                     END
                     """.trimIndent(),
+                ),
+            ),
+            SessionMigration(
+                version = 3,
+                statements = emptyList(),
+            ),
+            SessionMigration(
+                version = 4,
+                statements = listOf(
+                    """
+                    CREATE TABLE IF NOT EXISTS session_context_snapshots(
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        message_id TEXT,
+                        snapshot_title TEXT NOT NULL,
+                        message_count INTEGER NOT NULL DEFAULT 0,
+                        metadata_json TEXT,
+                        created_at INTEGER NOT NULL,
+                        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                    "CREATE INDEX IF NOT EXISTS idx_context_snapshots_session_created_at ON session_context_snapshots(session_id, created_at DESC)",
                 ),
             ),
         )
