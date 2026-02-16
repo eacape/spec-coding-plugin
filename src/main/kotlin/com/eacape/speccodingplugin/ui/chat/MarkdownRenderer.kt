@@ -108,7 +108,7 @@ object MarkdownRenderer {
         // 代码内容
         val codeAttrs = SimpleAttributeSet()
         StyleConstants.setFontFamily(codeAttrs, "JetBrains Mono")
-        StyleConstants.setFontSize(codeAttrs, 12)
+        StyleConstants.setFontSize(codeAttrs, 11)
         StyleConstants.setBackground(codeAttrs, JBColor(BLOCK_CODE_BG_LIGHT, BLOCK_CODE_BG_DARK))
         StyleConstants.setForeground(codeAttrs, JBColor(Color(50, 50, 50), Color(212, 212, 212)))
         doc.insertString(doc.length, code, codeAttrs)
@@ -141,7 +141,7 @@ object MarkdownRenderer {
 
         val bulletAttrs = SimpleAttributeSet()
         StyleConstants.setFontFamily(bulletAttrs, Font.SANS_SERIF)
-        StyleConstants.setFontSize(bulletAttrs, 13)
+        StyleConstants.setFontSize(bulletAttrs, 12)
 
         val trimmed = line.trimStart()
         val bullet = if (ordered) {
@@ -183,20 +183,20 @@ object MarkdownRenderer {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setBold(attrs, true)
                     StyleConstants.setFontFamily(attrs, Font.SANS_SERIF)
-                    StyleConstants.setFontSize(attrs, 13)
+                    StyleConstants.setFontSize(attrs, 12)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.Italic -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setItalic(attrs, true)
                     StyleConstants.setFontFamily(attrs, Font.SANS_SERIF)
-                    StyleConstants.setFontSize(attrs, 13)
+                    StyleConstants.setFontSize(attrs, 12)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.InlineCode -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setFontFamily(attrs, "JetBrains Mono")
-                    StyleConstants.setFontSize(attrs, 12)
+                    StyleConstants.setFontSize(attrs, 11)
                     StyleConstants.setBackground(attrs, JBColor(CODE_BG_LIGHT, CODE_BG_DARK))
                     StyleConstants.setForeground(attrs, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
                     doc.insertString(doc.length, token.text, attrs)
@@ -204,7 +204,7 @@ object MarkdownRenderer {
                 is InlineToken.Plain -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setFontFamily(attrs, Font.SANS_SERIF)
-                    StyleConstants.setFontSize(attrs, 13)
+                    StyleConstants.setFontSize(attrs, 12)
                     doc.insertString(doc.length, token.text, attrs)
                 }
             }

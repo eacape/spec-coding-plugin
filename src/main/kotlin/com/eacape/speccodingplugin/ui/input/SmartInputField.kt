@@ -5,11 +5,15 @@ import com.eacape.speccodingplugin.ui.completion.TriggerParser
 import com.eacape.speccodingplugin.ui.completion.TriggerParseResult
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
+import java.awt.event.ActionEvent
+import java.awt.event.InputEvent
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.event.KeyEvent
-import java.awt.event.KeyListener
+import javax.swing.AbstractAction
+import javax.swing.JComponent
+import javax.swing.KeyStroke
 import javax.swing.JTextArea
 import javax.swing.Timer
 import javax.swing.event.DocumentEvent
@@ -39,55 +43,89 @@ class SmartInputField(
         border = JBUI.Borders.empty(6, 8)
         font = JBUI.Fonts.label()
 
-        setupKeyListener()
+        setupKeyBindings()
         setupDocumentListener()
     }
 
-    private fun setupKeyListener() {
-        addKeyListener(object : KeyListener {
-            override fun keyTyped(e: KeyEvent) {}
-            override fun keyReleased(e: KeyEvent) {}
+    private fun setupKeyBindings() {
+        val inputMap = getInputMap(JComponent.WHEN_FOCUSED)
+        val actionMap = actionMap
 
-            override fun keyPressed(e: KeyEvent) {
-                when {
-                    // Escape: dismiss popup
-                    e.keyCode == KeyEvent.VK_ESCAPE && completionPopup.isVisible -> {
-                        completionPopup.hide()
-                        onTriggerDismiss()
-                        e.consume()
-                    }
-                    // Up arrow: navigate popup
-                    e.keyCode == KeyEvent.VK_UP && completionPopup.isVisible -> {
-                        completionPopup.moveUp()
-                        e.consume()
-                    }
-                    // Down arrow: navigate popup
-                    e.keyCode == KeyEvent.VK_DOWN && completionPopup.isVisible -> {
-                        completionPopup.moveDown()
-                        e.consume()
-                    }
-                    // Enter: confirm popup selection or send
-                    e.keyCode == KeyEvent.VK_ENTER && !e.isShiftDown -> {
-                        if (completionPopup.isVisible) {
-                            if (completionPopup.confirmSelection()) {
-                                e.consume()
-                            }
-                        } else {
-                            e.consume()
-                            val input = text.trim()
-                            if (input.isNotBlank()) {
-                                onSend(input)
-                            }
-                        }
-                    }
-                    // Tab: confirm popup selection
-                    e.keyCode == KeyEvent.VK_TAB && completionPopup.isVisible -> {
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), ACTION_SEND)
+        actionMap.put(
+            ACTION_SEND,
+            object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) {
+                    if (completionPopup.isVisible) {
                         completionPopup.confirmSelection()
-                        e.consume()
+                        return
+                    }
+                    val input = text.trim()
+                    if (input.isNotBlank()) {
+                        onSend(input)
                     }
                 }
-            }
-        })
+            },
+        )
+
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.SHIFT_DOWN_MASK), ACTION_NEWLINE)
+        actionMap.put(
+            ACTION_NEWLINE,
+            object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) {
+                    replaceSelection("\n")
+                }
+            },
+        )
+
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), ACTION_DISMISS_COMPLETION)
+        actionMap.put(
+            ACTION_DISMISS_COMPLETION,
+            object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) {
+                    if (completionPopup.isVisible) {
+                        completionPopup.hide()
+                        onTriggerDismiss()
+                    }
+                }
+            },
+        )
+
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), ACTION_COMPLETION_UP)
+        actionMap.put(
+            ACTION_COMPLETION_UP,
+            object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) {
+                    if (completionPopup.isVisible) {
+                        completionPopup.moveUp()
+                    }
+                }
+            },
+        )
+
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), ACTION_COMPLETION_DOWN)
+        actionMap.put(
+            ACTION_COMPLETION_DOWN,
+            object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) {
+                    if (completionPopup.isVisible) {
+                        completionPopup.moveDown()
+                    }
+                }
+            },
+        )
+
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_TAB, 0), ACTION_COMPLETION_CONFIRM)
+        actionMap.put(
+            ACTION_COMPLETION_CONFIRM,
+            object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) {
+                    if (completionPopup.isVisible) {
+                        completionPopup.confirmSelection()
+                    }
+                }
+            },
+        )
     }
 
     private fun setupDocumentListener() {
@@ -164,5 +202,14 @@ class SmartInputField(
             val y = insets.top + fm.ascent
             g2.drawString(placeholder, x, y)
         }
+    }
+
+    companion object {
+        private const val ACTION_SEND = "specCoding.send"
+        private const val ACTION_NEWLINE = "specCoding.newline"
+        private const val ACTION_DISMISS_COMPLETION = "specCoding.dismissCompletion"
+        private const val ACTION_COMPLETION_UP = "specCoding.completionUp"
+        private const val ACTION_COMPLETION_DOWN = "specCoding.completionDown"
+        private const val ACTION_COMPLETION_CONFIRM = "specCoding.completionConfirm"
     }
 }

@@ -45,9 +45,8 @@ class MultiWindowAcceptanceTest {
         every { messageBus.syncPublisher(any<Topic<GlobalConfigSyncListener>>()) } returns listener
 
         val settings = SpecCodingSettingsState().apply {
-            defaultProvider = "openai"
-            openaiModel = "gpt-4o"
-            anthropicModel = "claude-opus-4-20250514"
+            defaultProvider = "claude_cli"
+            selectedCliModel = "claude-sonnet-4-20250514"
         }
 
         val windowRegistry = mockk<WindowRegistry>(relaxed = true)
@@ -72,18 +71,18 @@ class MultiWindowAcceptanceTest {
             reason = "window-a-update",
         )
         assertEquals("window-a", firstEvent.sourceWindowId)
-        assertEquals("openai", firstEvent.snapshot.defaultProvider)
+        assertEquals("claude_cli", firstEvent.snapshot.defaultProvider)
 
-        settings.defaultProvider = "anthropic"
-        settings.anthropicModel = "claude-3-5-sonnet"
+        settings.defaultProvider = "codex_cli"
+        settings.selectedCliModel = "codex-mini"
 
         val secondEvent = service.notifyGlobalConfigChanged(
             sourceProject = windowBProject,
             reason = "window-b-update",
         )
         assertEquals("window-b", secondEvent.sourceWindowId)
-        assertEquals("anthropic", secondEvent.snapshot.defaultProvider)
-        assertEquals("claude-3-5-sonnet", secondEvent.snapshot.anthropicModel)
+        assertEquals("codex_cli", secondEvent.snapshot.defaultProvider)
+        assertEquals("codex-mini", secondEvent.snapshot.selectedCliModel)
 
         verify(exactly = 2) { listener.onGlobalConfigChanged(any()) }
     }

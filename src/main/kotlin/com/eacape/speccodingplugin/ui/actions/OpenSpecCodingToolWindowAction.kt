@@ -9,7 +9,8 @@ import com.intellij.openapi.wm.ToolWindowManager
 class OpenSpecCodingToolWindowAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Spec Coding")
+        val toolWindowId = SpecCodingBundle.message("toolwindow.title")
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(toolWindowId)
         toolWindow?.show()
     }
 

@@ -18,18 +18,10 @@ import com.intellij.util.xmlb.XmlSerializerUtil
 class SpecCodingSettingsState : PersistentStateComponent<SpecCodingSettingsState> {
 
     // 默认 LLM 提供者
-    var defaultProvider: String = "mock"
+    var defaultProvider: String = "claude-cli"
 
-    // 默认模型
-    var defaultModel: String = "gpt-4o"
-
-    // OpenAI 配置
-    var openaiBaseUrl: String = "https://api.openai.com/v1"
-    var openaiModel: String = "gpt-4o"
-
-    // Anthropic 配置
-    var anthropicBaseUrl: String = "https://api.anthropic.com/v1"
-    var anthropicModel: String = "claude-opus-4-20250514"
+    // 当前选中的 CLI 模型 ID
+    var selectedCliModel: String = ""
 
     // 代理设置
     var useProxy: Boolean = false

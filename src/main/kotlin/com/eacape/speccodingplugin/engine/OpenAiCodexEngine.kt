@@ -22,18 +22,24 @@ class OpenAiCodexEngine(
     override fun buildCommandArgs(request: EngineRequest): List<String> {
         val args = mutableListOf<String>()
 
-        args.add("--prompt")
-        args.add(request.prompt)
+        // Modern Codex CLI runs non-interactive requests via `codex exec [PROMPT]`.
+        args.add("exec")
+        // Plugin can be used from Welcome/default workspaces that are not git repos.
+        args.add("--skip-git-repo-check")
+
+        request.options["model"]?.let {
+            args.add("--model")
+            args.add(it)
+        }
 
         request.context.workingDirectory?.let {
-            args.add("--cwd")
+            args.add("--cd")
             args.add(it)
         }
 
-        request.context.currentFile?.let {
-            args.add("--file")
-            args.add(it)
-        }
+        // Ensure prompt text is always treated as positional input, not flags.
+        args.add("--")
+        args.add(request.prompt)
 
         return args
     }
@@ -45,12 +51,17 @@ class OpenAiCodexEngine(
 
     override suspend fun getVersion(): String? {
         return try {
-            val process = ProcessBuilder(listOf("codex", "--version"))
+            val command = if (System.getProperty("os.name").lowercase().contains("win")) {
+                listOf("cmd", "/c", cliPath, "--version")
+            } else {
+                listOf(cliPath, "--version")
+            }
+            val process = ProcessBuilder(command)
                 .redirectErrorStream(true)
                 .start()
             val output = process.inputStream.bufferedReader().readText().trim()
             process.waitFor()
-            output
+            if (process.exitValue() == 0) output else null
         } catch (e: Exception) {
             null
         }

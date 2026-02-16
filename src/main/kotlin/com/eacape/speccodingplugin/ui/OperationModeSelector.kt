@@ -6,8 +6,10 @@ import com.eacape.speccodingplugin.core.OperationModeManager
 import com.eacape.speccodingplugin.window.WindowStateStore
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
-import java.awt.BorderLayout
+import com.intellij.util.ui.JBUI
+import java.awt.Color
 import java.awt.FlowLayout
 import javax.swing.JPanel
 
@@ -15,7 +17,7 @@ import javax.swing.JPanel
  * 操作模式选择器面板
  * 显示当前操作模式并允许用户切换
  */
-class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(FlowLayout.LEFT, 5, 0)) {
+class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(FlowLayout.LEFT, 2, 0)) {
 
     private val modeManager = OperationModeManager.getInstance(project)
     private val windowStateStore = WindowStateStore.getInstance(project)
@@ -28,6 +30,18 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
     }
 
     private fun setupUI() {
+        label.text = label.text.trim().trimEnd(':', '：')
+        label.font = JBUI.Fonts.smallFont()
+        comboBox.font = JBUI.Fonts.smallFont()
+        comboBox.minimumSize = JBUI.size(96, 18)
+        comboBox.preferredSize = JBUI.size(106, 18)
+        comboBox.putClientProperty("JComponent.roundRect", false)
+        comboBox.putClientProperty("JComboBox.isBorderless", true)
+        comboBox.putClientProperty("ComboBox.isBorderless", true)
+        comboBox.putClientProperty("JComponent.outline", null)
+        comboBox.background = JBColor(Color(248, 250, 252), Color(46, 50, 56))
+        comboBox.border = JBUI.Borders.empty(0)
+        comboBox.isOpaque = false
         add(label)
         add(comboBox)
 
@@ -98,8 +112,8 @@ private class OperationModeRenderer : javax.swing.DefaultListCellRenderer() {
         val component = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
 
         if (value is OperationMode) {
-            text = "${getModeIcon(value)} ${value.displayName}"
-            toolTipText = value.description
+            text = "${getModeIcon(value)} ${value.displayName.lowercase()}"
+            toolTipText = value.description.lowercase()
         }
 
         return component

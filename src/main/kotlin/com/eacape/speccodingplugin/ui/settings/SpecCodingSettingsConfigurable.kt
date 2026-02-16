@@ -1,16 +1,19 @@
 package com.eacape.speccodingplugin.ui.settings
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.i18n.InterfaceLanguage
 import com.eacape.speccodingplugin.i18n.LocaleManager
-import com.eacape.speccodingplugin.llm.AnthropicProvider
-import com.eacape.speccodingplugin.llm.OpenAiProvider
+import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
+import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
+import com.eacape.speccodingplugin.llm.LlmRouter
+import com.eacape.speccodingplugin.llm.ModelInfo
+import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.window.GlobalConfigSyncService
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.SimpleListCellRenderer
@@ -37,22 +40,9 @@ class SpecCodingSettingsConfigurable : Configurable {
     private val localeManager = LocaleManager.getInstance()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    // OpenAI 配置
-    private val openaiKeyField = JBPasswordField()
-    private val openaiBaseUrlField = JBTextField()
-    private val openaiModelField = JBTextField()
-    private val openaiTestButton = JButton()
-    private val openaiTestResult = JBLabel("")
-
-    // Anthropic 配置
-    private val anthropicKeyField = JBPasswordField()
-    private val anthropicBaseUrlField = JBTextField()
-    private val anthropicModelField = JBTextField()
-    private val anthropicTestButton = JButton()
-    private val anthropicTestResult = JBLabel("")
-
-    // 默认提供者
-    private val defaultProviderField = JBTextField()
+    // 默认提供者 & 模型
+    private val defaultProviderCombo = ComboBox<String>()
+    private val defaultModelCombo = ComboBox<ModelInfo>()
 
     // 代理设置
     private val useProxyCheckBox = JBCheckBox()
@@ -66,6 +56,11 @@ class SpecCodingSettingsConfigurable : Configurable {
     // 引擎路径
     private val codexCliPathField = JBTextField()
     private val claudeCodeCliPathField = JBTextField()
+
+    // CLI 探测
+    private val detectCliButton = JButton()
+    private val claudeCliStatusLabel = JBLabel("")
+    private val codexCliStatusLabel = JBLabel("")
 
     // 操作模式
     private val defaultModeField = JBTextField()
@@ -82,44 +77,53 @@ class SpecCodingSettingsConfigurable : Configurable {
     override fun getDisplayName(): String = SpecCodingBundle.message("settings.displayName")
 
     override fun createComponent(): JComponent {
-        // 加载当前配置
         reset()
 
+        // Provider ComboBox
+        val router = LlmRouter.getInstance()
+        defaultProviderCombo.removeAllItems()
+        router.availableUiProviders().forEach { defaultProviderCombo.addItem(it) }
+        defaultProviderCombo.renderer = SimpleListCellRenderer.create<String> { label, value, _ ->
+            label.text = when (value) {
+                ClaudeCliLlmProvider.ID -> SpecCodingBundle.message("statusbar.modelSelector.provider.claudeCli")
+                CodexCliLlmProvider.ID -> SpecCodingBundle.message("statusbar.modelSelector.provider.codexCli")
+                else -> value ?: ""
+            }
+        }
+        defaultProviderCombo.selectedItem = settings.defaultProvider
+        defaultProviderCombo.addActionListener { refreshModelCombo() }
+
+        // Model ComboBox
+        defaultModelCombo.renderer = SimpleListCellRenderer.create<ModelInfo> { label, value, _ ->
+            label.text = value?.name ?: ""
+        }
+        refreshModelCombo()
+
+        // CLI 路径 placeholder 提示
+        claudeCodeCliPathField.emptyText.text = SpecCodingBundle.message("settings.cli.claudePath.placeholder")
+        codexCliPathField.emptyText.text = SpecCodingBundle.message("settings.cli.codexPath.placeholder")
+
         interfaceLanguageCombo.renderer = InterfaceLanguageCellRenderer.create()
-        openaiTestButton.text = SpecCodingBundle.message("settings.test.button")
-        anthropicTestButton.text = SpecCodingBundle.message("settings.test.button")
+        detectCliButton.text = SpecCodingBundle.message("settings.cli.detectButton")
+        detectCliButton.addActionListener { detectCliTools() }
 
-        // 设置验证连接按钮事件
-        openaiTestButton.addActionListener { testOpenAiConnection() }
-        anthropicTestButton.addActionListener { testAnthropicConnection() }
+        updateCliStatusLabels()
 
-        // OpenAI 测试连接行
-        val openaiTestPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
-        openaiTestPanel.isOpaque = false
-        openaiTestPanel.add(openaiTestButton)
-        openaiTestPanel.add(openaiTestResult)
-
-        // Anthropic 测试连接行
-        val anthropicTestPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
-        anthropicTestPanel.isOpaque = false
-        anthropicTestPanel.add(anthropicTestButton)
-        anthropicTestPanel.add(anthropicTestResult)
+        val cliDetectPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
+        cliDetectPanel.isOpaque = false
+        cliDetectPanel.add(detectCliButton)
 
         return FormBuilder.createFormBuilder()
-            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.openai")}</b></html>"))
-            .addLabeledComponent(SpecCodingBundle.message("settings.openai.apiKey"), openaiKeyField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.openai.baseUrl"), openaiBaseUrlField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.openai.defaultModel"), openaiModelField)
-            .addComponent(openaiTestPanel)
-            .addVerticalGap(10)
-            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.anthropic")}</b></html>"))
-            .addLabeledComponent(SpecCodingBundle.message("settings.anthropic.apiKey"), anthropicKeyField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.anthropic.baseUrl"), anthropicBaseUrlField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.anthropic.defaultModel"), anthropicModelField)
-            .addComponent(anthropicTestPanel)
+            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.cliTools")}</b></html>"))
+            .addLabeledComponent(SpecCodingBundle.message("settings.engine.claudePath"), claudeCodeCliPathField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.engine.codexPath"), codexCliPathField)
+            .addComponent(cliDetectPanel)
+            .addLabeledComponent("Claude CLI:", claudeCliStatusLabel)
+            .addLabeledComponent("Codex CLI:", codexCliStatusLabel)
             .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.general")}</b></html>"))
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderCombo)
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultModel"), defaultModelCombo)
             .addLabeledComponent(SpecCodingBundle.message("settings.general.interfaceLanguage"), interfaceLanguageCombo)
             .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.teamSync")}</b></html>"))
@@ -137,10 +141,6 @@ class SpecCodingSettingsConfigurable : Configurable {
             .addComponent(autoSaveCheckBox.apply { text = SpecCodingBundle.message("settings.other.autoSave") })
             .addLabeledComponent(SpecCodingBundle.message("settings.other.maxHistorySize"), maxHistorySizeField)
             .addVerticalGap(10)
-            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.engine")}</b></html>"))
-            .addLabeledComponent(SpecCodingBundle.message("settings.engine.codexPath"), codexCliPathField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.engine.claudePath"), claudeCodeCliPathField)
-            .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.operationMode")}</b></html>"))
             .addLabeledComponent(SpecCodingBundle.message("settings.operationMode.defaultMode"), defaultModeField)
             .addComponentFillVertically(JPanel(), 0)
@@ -150,66 +150,28 @@ class SpecCodingSettingsConfigurable : Configurable {
     }
 
     override fun isModified(): Boolean {
-        // 检查 OpenAI 配置
-        if (openaiBaseUrlField.text != settings.openaiBaseUrl) return true
-        if (openaiModelField.text != settings.openaiModel) return true
-
-        // 检查 Anthropic 配置
-        if (anthropicBaseUrlField.text != settings.anthropicBaseUrl) return true
-        if (anthropicModelField.text != settings.anthropicModel) return true
-
-        // 检查默认提供者
-        if (defaultProviderField.text != settings.defaultProvider) return true
+        if ((defaultProviderCombo.selectedItem as? String) != settings.defaultProvider) return true
+        val selectedModelId = (defaultModelCombo.selectedItem as? ModelInfo)?.id ?: ""
+        if (selectedModelId != settings.selectedCliModel) return true
         if ((interfaceLanguageCombo.selectedItem as? InterfaceLanguage)?.code != settings.interfaceLanguage) return true
         if (teamPromptRepoUrlField.text != settings.teamPromptRepoUrl) return true
         if (teamPromptRepoBranchField.text != settings.teamPromptRepoBranch) return true
         if (teamSkillRepoUrlField.text != settings.teamSkillRepoUrl) return true
         if (teamSkillRepoBranchField.text != settings.teamSkillRepoBranch) return true
-
-        // 检查代理设置
         if (useProxyCheckBox.isSelected != settings.useProxy) return true
         if (proxyHostField.text != settings.proxyHost) return true
         if (proxyPortField.text != settings.proxyPort.toString()) return true
-
-        // 检查其他设置
         if (autoSaveCheckBox.isSelected != settings.autoSaveConversation) return true
         if (maxHistorySizeField.text != settings.maxHistorySize.toString()) return true
-
-        // 检查引擎路径
         if (codexCliPathField.text != settings.codexCliPath) return true
         if (claudeCodeCliPathField.text != settings.claudeCodeCliPath) return true
-
-        // 检查操作模式
         if (defaultModeField.text != settings.defaultOperationMode) return true
-
-        // 检查 API Keys
-        val currentOpenAiKey = ApiKeyManager.getOpenAiKey() ?: ""
-        val currentAnthropicKey = ApiKeyManager.getAnthropicKey() ?: ""
-        if (String(openaiKeyField.password) != currentOpenAiKey) return true
-        if (String(anthropicKeyField.password) != currentAnthropicKey) return true
-
         return false
     }
 
     override fun apply() {
-        // 保存 OpenAI 配置
-        settings.openaiBaseUrl = openaiBaseUrlField.text
-        settings.openaiModel = openaiModelField.text
-        val openaiKey = String(openaiKeyField.password)
-        if (openaiKey.isNotBlank()) {
-            ApiKeyManager.saveOpenAiKey(openaiKey)
-        }
-
-        // 保存 Anthropic 配置
-        settings.anthropicBaseUrl = anthropicBaseUrlField.text
-        settings.anthropicModel = anthropicModelField.text
-        val anthropicKey = String(anthropicKeyField.password)
-        if (anthropicKey.isNotBlank()) {
-            ApiKeyManager.saveAnthropicKey(anthropicKey)
-        }
-
-        // 保存默认提供者
-        settings.defaultProvider = defaultProviderField.text
+        settings.defaultProvider = (defaultProviderCombo.selectedItem as? String) ?: settings.defaultProvider
+        settings.selectedCliModel = (defaultModelCombo.selectedItem as? ModelInfo)?.id ?: settings.selectedCliModel
         val selectedLanguage = (interfaceLanguageCombo.selectedItem as? InterfaceLanguage) ?: InterfaceLanguage.AUTO
         val localeChanged = localeManager.setLanguage(selectedLanguage, reason = "settings-configurable-apply")
         settings.teamPromptRepoUrl = teamPromptRepoUrlField.text.trim()
@@ -217,20 +179,16 @@ class SpecCodingSettingsConfigurable : Configurable {
         settings.teamSkillRepoUrl = teamSkillRepoUrlField.text.trim()
         settings.teamSkillRepoBranch = teamSkillRepoBranchField.text.trim().ifBlank { "main" }
 
-        // 保存代理设置
         settings.useProxy = useProxyCheckBox.isSelected
         settings.proxyHost = proxyHostField.text
         settings.proxyPort = proxyPortField.text.toIntOrNull() ?: 8080
 
-        // 保存其他设置
         settings.autoSaveConversation = autoSaveCheckBox.isSelected
         settings.maxHistorySize = maxHistorySizeField.text.toIntOrNull() ?: 100
 
-        // 保存引擎路径
         settings.codexCliPath = codexCliPathField.text
         settings.claudeCodeCliPath = claudeCodeCliPathField.text
 
-        // 保存操作模式
         settings.defaultOperationMode = defaultModeField.text
 
         globalConfigSyncService.notifyGlobalConfigChanged(
@@ -240,44 +198,24 @@ class SpecCodingSettingsConfigurable : Configurable {
     }
 
     override fun reset() {
-        // 加载 OpenAI 配置
-        openaiBaseUrlField.text = settings.openaiBaseUrl
-        openaiModelField.text = settings.openaiModel
-        val openaiKey = ApiKeyManager.getOpenAiKey()
-        if (openaiKey != null) {
-            openaiKeyField.text = openaiKey
-        }
-
-        // 加载 Anthropic 配置
-        anthropicBaseUrlField.text = settings.anthropicBaseUrl
-        anthropicModelField.text = settings.anthropicModel
-        val anthropicKey = ApiKeyManager.getAnthropicKey()
-        if (anthropicKey != null) {
-            anthropicKeyField.text = anthropicKey
-        }
-
-        // 加载默认提供者
-        defaultProviderField.text = settings.defaultProvider
+        defaultProviderCombo.selectedItem = settings.defaultProvider
+        refreshModelCombo()
         interfaceLanguageCombo.selectedItem = InterfaceLanguage.fromCode(settings.interfaceLanguage)
         teamPromptRepoUrlField.text = settings.teamPromptRepoUrl
         teamPromptRepoBranchField.text = settings.teamPromptRepoBranch
         teamSkillRepoUrlField.text = settings.teamSkillRepoUrl
         teamSkillRepoBranchField.text = settings.teamSkillRepoBranch
 
-        // 加载代理设置
         useProxyCheckBox.isSelected = settings.useProxy
         proxyHostField.text = settings.proxyHost
         proxyPortField.text = settings.proxyPort.toString()
 
-        // 加载其他设置
         autoSaveCheckBox.isSelected = settings.autoSaveConversation
         maxHistorySizeField.text = settings.maxHistorySize.toString()
 
-        // 加载引擎路径
         codexCliPathField.text = settings.codexCliPath
         claudeCodeCliPathField.text = settings.claudeCodeCliPath
 
-        // 加载操作模式
         defaultModeField.text = settings.defaultOperationMode
     }
 
@@ -285,66 +223,81 @@ class SpecCodingSettingsConfigurable : Configurable {
         scope.cancel()
     }
 
-    private fun testOpenAiConnection() {
-        val apiKey = String(openaiKeyField.password).trim()
-        if (apiKey.isBlank()) {
-            openaiTestResult.text = SpecCodingBundle.message("settings.test.enterApiKey")
-            openaiTestResult.foreground = JBColor.RED
-            return
-        }
+    private fun detectCliTools() {
+        detectCliButton.isEnabled = false
+        detectCliButton.text = SpecCodingBundle.message("settings.cli.detecting")
 
-        openaiTestButton.isEnabled = false
-        openaiTestResult.text = SpecCodingBundle.message("settings.test.testing")
-        openaiTestResult.foreground = JBColor.GRAY
-
-        val baseUrl = openaiBaseUrlField.text.trim().ifBlank { "https://api.openai.com/v1" }
-        val provider = OpenAiProvider(apiKey = apiKey, baseUrl = baseUrl)
-
+        val discoveryService = CliDiscoveryService.getInstance()
         scope.launch {
-            val status = provider.healthCheck()
+            discoveryService.discoverAll()
             javax.swing.SwingUtilities.invokeLater {
-                if (status.healthy) {
-                    openaiTestResult.text = SpecCodingBundle.message("settings.test.connected")
-                    openaiTestResult.foreground = JBColor.GREEN.darker()
-                } else {
-                    openaiTestResult.text = status.message ?: SpecCodingBundle.message("settings.test.connectionFailed")
-                    openaiTestResult.foreground = JBColor.RED
+                updateCliStatusLabels()
+
+                // 探测成功后回填路径到输入框
+                if (discoveryService.claudeInfo.available && claudeCodeCliPathField.text.isBlank()) {
+                    claudeCodeCliPathField.text = discoveryService.claudeInfo.path
                 }
-                openaiTestButton.isEnabled = true
-                provider.close()
+                if (discoveryService.codexInfo.available && codexCliPathField.text.isBlank()) {
+                    codexCliPathField.text = discoveryService.codexInfo.path
+                }
+
+                // 刷新 provider combo
+                val router = LlmRouter.getInstance()
+                router.refreshProviders()
+                val currentProvider = defaultProviderCombo.selectedItem as? String
+                defaultProviderCombo.removeAllItems()
+                router.availableUiProviders().forEach { defaultProviderCombo.addItem(it) }
+                if (currentProvider != null && defaultProviderCombo.itemCount > 0) {
+                    defaultProviderCombo.selectedItem = currentProvider
+                }
+
+                // 刷新 model registry & combo
+                ModelRegistry.getInstance().refreshFromDiscovery()
+                refreshModelCombo()
+
+                detectCliButton.isEnabled = true
+                detectCliButton.text = SpecCodingBundle.message("settings.cli.detectButton")
             }
         }
     }
 
-    private fun testAnthropicConnection() {
-        val apiKey = String(anthropicKeyField.password).trim()
-        if (apiKey.isBlank()) {
-            anthropicTestResult.text = SpecCodingBundle.message("settings.test.enterApiKey")
-            anthropicTestResult.foreground = JBColor.RED
-            return
+    private fun updateCliStatusLabels() {
+        val discoveryService = CliDiscoveryService.getInstance()
+
+        val claudeInfo = discoveryService.claudeInfo
+        if (claudeInfo.available) {
+            claudeCliStatusLabel.text = SpecCodingBundle.message("settings.cli.claude.found", claudeInfo.version ?: "unknown")
+            claudeCliStatusLabel.foreground = JBColor.GREEN.darker()
+        } else {
+            claudeCliStatusLabel.text = SpecCodingBundle.message("settings.cli.claude.notFound")
+            claudeCliStatusLabel.foreground = JBColor.GRAY
         }
 
-        anthropicTestButton.isEnabled = false
-        anthropicTestResult.text = SpecCodingBundle.message("settings.test.testing")
-        anthropicTestResult.foreground = JBColor.GRAY
+        val codexInfo = discoveryService.codexInfo
+        if (codexInfo.available) {
+            codexCliStatusLabel.text = SpecCodingBundle.message("settings.cli.codex.found", codexInfo.version ?: "unknown")
+            codexCliStatusLabel.foreground = JBColor.GREEN.darker()
+        } else {
+            codexCliStatusLabel.text = SpecCodingBundle.message("settings.cli.codex.notFound")
+            codexCliStatusLabel.foreground = JBColor.GRAY
+        }
+    }
 
-        val baseUrl = anthropicBaseUrlField.text.trim().ifBlank { "https://api.anthropic.com/v1" }
-        val model = anthropicModelField.text.trim().ifBlank { "claude-opus-4-20250514" }
-        val provider = AnthropicProvider(apiKey = apiKey, baseUrl = baseUrl, defaultModel = model)
+    private fun refreshModelCombo() {
+        val selectedProvider = defaultProviderCombo.selectedItem as? String ?: return
+        val registry = ModelRegistry.getInstance()
+        val models = registry.getModelsForProvider(selectedProvider)
 
-        scope.launch {
-            val status = provider.healthCheck()
-            javax.swing.SwingUtilities.invokeLater {
-                if (status.healthy) {
-                    anthropicTestResult.text = SpecCodingBundle.message("settings.test.connected")
-                    anthropicTestResult.foreground = JBColor.GREEN.darker()
-                } else {
-                    anthropicTestResult.text = status.message ?: SpecCodingBundle.message("settings.test.connectionFailed")
-                    anthropicTestResult.foreground = JBColor.RED
-                }
-                anthropicTestButton.isEnabled = true
-                provider.close()
-            }
+        defaultModelCombo.removeAllItems()
+        models.forEach { defaultModelCombo.addItem(it) }
+
+        // 恢复之前选中的模型
+        val savedModelId = settings.selectedCliModel
+        val match = models.find { it.id == savedModelId }
+        if (match != null) {
+            defaultModelCombo.selectedItem = match
+        } else if (defaultModelCombo.itemCount > 0) {
+            defaultModelCombo.selectedIndex = 0
         }
     }
 

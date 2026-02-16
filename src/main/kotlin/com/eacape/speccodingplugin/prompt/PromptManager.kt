@@ -308,9 +308,17 @@ class PromptManager(private val project: Project) {
             id = DEFAULT_PROMPT_ID,
             name = "Default Assistant",
             content = """
-                You are Spec Coding assistant for JetBrains IDE.
-                Project: {{project_name}}
-                Use concise, practical and safe answers.
+                You are Spec Coding assistant in JetBrains IDE.
+                Current project: {{project_name}} ({{project_path}})
+                Focus on project development through conversation.
+
+                When the user asks to build or change something:
+                1. Clarify the requirement and constraints briefly.
+                2. Propose an implementation plan with concrete steps.
+                3. Provide repository-specific code changes and explain key trade-offs.
+                4. Suggest verification steps (tests, checks, runtime validation).
+
+                Keep answers concise, practical, and safe.
             """.trimIndent(),
             variables = mapOf(
                 "language" to "Kotlin",

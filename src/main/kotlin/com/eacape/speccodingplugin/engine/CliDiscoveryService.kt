@@ -1,0 +1,614 @@
+package com.eacape.speccodingplugin.engine
+
+import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.thisLogger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+
+/**
+ * CLI 工具信息
+ */
+data class CliToolInfo(
+    val available: Boolean,
+    val path: String,
+    val version: String? = null,
+    val models: List<String> = emptyList(),
+)
+
+/**
+ * CLI 自动探测服务
+ * 在后台线程探测本地已安装的 claude / codex CLI 工具
+ */
+@Service(Service.Level.APP)
+class CliDiscoveryService : com.intellij.openapi.Disposable {
+
+    private val logger = thisLogger()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    var claudeInfo: CliToolInfo = CliToolInfo(available = false, path = "claude")
+        private set
+
+    @Volatile
+    var codexInfo: CliToolInfo = CliToolInfo(available = false, path = "codex")
+        private set
+
+    @Volatile
+    var discoveryCompleted: Boolean = false
+        private set
+
+    private val listeners = mutableListOf<() -> Unit>()
+
+    init {
+        // 插件启动时自动在后台探测 CLI 工具
+        discoverAllAsync()
+    }
+
+    fun addDiscoveryListener(listener: () -> Unit) {
+        synchronized(listeners) { listeners.add(listener) }
+    }
+
+    fun removeDiscoveryListener(listener: () -> Unit) {
+        synchronized(listeners) { listeners.remove(listener) }
+    }
+
+    private fun notifyListeners() {
+        val snapshot = synchronized(listeners) { listeners.toList() }
+        snapshot.forEach { it() }
+    }
+
+    /**
+     * 异步探测所有 CLI 工具
+     */
+    fun discoverAllAsync() {
+        scope.launch {
+            discoverAll()
+        }
+    }
+
+    /**
+     * 同步探测所有 CLI 工具（需在 IO 线程调用）
+     */
+    suspend fun discoverAll() = withContext(Dispatchers.IO) {
+        try {
+            val settings = SpecCodingSettingsState.getInstance()
+
+            val claudePath = resolveCliPath(settings.claudeCodeCliPath, "claude")
+            claudeInfo = discoverClaude(claudePath)
+
+            val codexPath = resolveCliPath(settings.codexCliPath, "codex")
+            codexInfo = discoverCodex(codexPath)
+
+            discoveryCompleted = true
+            logger.info("CLI discovery completed: claude=${claudeInfo.available}(${claudeInfo.path}), codex=${codexInfo.available}(${codexInfo.path})")
+            notifyListeners()
+        } catch (e: Exception) {
+            logger.warn("CLI discovery failed", e)
+            discoveryCompleted = true
+            notifyListeners()
+        }
+    }
+
+    /**
+     * 解析 CLI 路径：
+     * - 如果用户配置了路径且是有效的可执行文件，直接使用
+     * - 如果用户配置的路径是目录，尝试在目录下查找可执行文件
+     * - 如果目录下找不到，继续在 PATH 和常见位置中查找
+     * - 如果配置的是裸命令名，在 PATH 中查找
+     */
+    private fun resolveCliPath(configuredPath: String, toolName: String): String {
+        if (configuredPath.isNotBlank()) {
+            val configFile = File(configuredPath)
+
+            // 用户配置的是可执行文件路径
+            if (configFile.isFile) {
+                return configFile.absolutePath
+            }
+
+            // 用户配置的是目录（如 C:\Users\xxx\.claude），在目录下查找可执行文件
+            if (configFile.isDirectory) {
+                val found = findExecutableInDir(configFile, toolName)
+                if (found != null) return found
+                // 目录下没找到，继续用 toolName 在 PATH 中查找
+                logger.info("No executable '$toolName' found in directory: $configuredPath, falling back to PATH")
+            }
+
+            // 配置的路径可能是裸命令名（如 "claude"），尝试在 PATH 中查找
+            if (!configuredPath.contains(File.separator) && !configuredPath.contains("/")) {
+                val found = findInPath(configuredPath)
+                if (found != null) return found
+            }
+
+            // 配置的路径无效（目录下没找到、不是文件、不是裸命令名），
+            // 不再原样返回无效路径，继续用 toolName 在 PATH 和常见位置中查找
+        }
+
+        // 在 PATH 和常见安装位置中查找
+        return findInPath(toolName)
+            ?: findInCommonLocations(toolName)
+            ?: toolName
+    }
+
+    /**
+     * 在指定目录下查找可执行文件
+     */
+    private fun findExecutableInDir(dir: File, toolName: String): String? {
+        val extensions = if (isWindows()) listOf(".exe", ".cmd", ".bat", "") else listOf("")
+        for (ext in extensions) {
+            val file = File(dir, toolName + ext)
+            if (isExecutable(file)) {
+                return file.absolutePath
+            }
+        }
+        return null
+    }
+
+    /**
+     * 探测 Claude CLI
+     */
+    private fun discoverClaude(cliPath: String): CliToolInfo {
+        val version = runCommand(cliPath, listOf("--version"))
+            ?: return CliToolInfo(available = false, path = cliPath)
+
+        val models = parseClaudeModels(cliPath)
+
+        return CliToolInfo(
+            available = true,
+            path = cliPath,
+            version = version.trim(),
+            models = models,
+        )
+    }
+
+    /**
+     * 探测 Codex CLI
+     */
+    private fun discoverCodex(cliPath: String): CliToolInfo {
+        val version = runCommand(cliPath, listOf("--version"))
+            ?: return CliToolInfo(available = false, path = cliPath)
+
+        val models = parseCodexModels(cliPath)
+
+        return CliToolInfo(
+            available = true,
+            path = cliPath,
+            version = version.trim(),
+            models = models,
+        )
+    }
+
+    /**
+     * 尝试通过 claude model list 获取模型列表
+     */
+    private fun parseClaudeModels(cliPath: String): List<String> {
+        val modelListOutputs = listOfNotNull(
+            runCommand(cliPath, listOf("model", "list"), acceptNonZeroExit = true),
+            runCommand(cliPath, listOf("models", "list"), acceptNonZeroExit = true),
+        )
+        val helpOutput = runCommand(cliPath, listOf("--help"), acceptNonZeroExit = true)
+
+        return try {
+            val fullIds = linkedSetOf<String>()
+            val aliases = linkedSetOf<String>()
+
+            modelListOutputs.forEach { output ->
+                fullIds += CLAUDE_MODEL_ID_REGEX.findAll(output).map { it.value.lowercase() }.toList()
+                aliases += CLAUDE_MODEL_ALIAS_REGEX.findAll(output).map { it.value.lowercase() }.toList()
+            }
+            helpOutput?.let { output ->
+                // Help output often contains example model IDs (e.g. one Sonnet snapshot).
+                // Treat it as alias fallback only; prefer model-list/local-package results.
+                aliases += CLAUDE_MODEL_ALIAS_REGEX.findAll(output).map { it.value.lowercase() }.toList()
+            }
+
+            // 从本地安装的 Claude CLI 包中提取模型常量（例如 IFA={opus,sonnet,haiku}）。
+            val packageModels = parseClaudeModelsFromLocalCliPackage(cliPath)
+            if (packageModels.isNotEmpty()) {
+                fullIds += packageModels
+            }
+
+            if (fullIds.isNotEmpty()) return fullIds.toList()
+            if (aliases.isNotEmpty()) return aliases.toList()
+
+            // Last resort: if nothing else is available, fall back to full IDs found in help text.
+            helpOutput
+                ?.let { CLAUDE_MODEL_ID_REGEX.findAll(it).map { match -> match.value.lowercase() }.toList() }
+                .orEmpty()
+                .distinct()
+        } catch (e: Exception) {
+            logger.info("Failed to parse claude models: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun parseClaudeModelsFromLocalCliPackage(cliPath: String): List<String> {
+        return try {
+            val candidates = mutableListOf<File>()
+            val normalizedPath = cliPath.trim().trim('"')
+            val exeFile = File(normalizedPath)
+            val parent = exeFile.parentFile
+            if (parent != null) {
+                candidates.add(File(parent, "node_modules/@anthropic-ai/claude-code/cli.js"))
+            }
+
+            val appData = System.getenv("APPDATA")
+            if (!appData.isNullOrBlank()) {
+                candidates.add(File(appData, "npm/node_modules/@anthropic-ai/claude-code/cli.js"))
+            }
+
+            val cliJs = candidates.firstOrNull { it.isFile } ?: return emptyList()
+            val content = cliJs.readText()
+
+            val canonicalMatch = CLAUDE_CANONICAL_MODEL_OBJECT_REGEX.find(content)
+            if (canonicalMatch != null) {
+                return canonicalMatch.groupValues
+                    .drop(1)
+                    .map { it.lowercase() }
+                    .distinct()
+            }
+
+            CLAUDE_MODEL_ID_REGEX.findAll(content)
+                .map { it.value.lowercase() }
+                .toList()
+                .distinct()
+        } catch (e: Exception) {
+            logger.debug("Failed to parse Claude local package models: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
+     * 尝试解析 codex 支持的模型
+     */
+    private fun parseCodexModels(cliPath: String): List<String> {
+        val modelListOutputs = listOfNotNull(
+            runCommand(cliPath, listOf("models", "list"), acceptNonZeroExit = true),
+            runCommand(cliPath, listOf("model", "list"), acceptNonZeroExit = true),
+        )
+        val helpOutputs = listOfNotNull(
+            runCommand(cliPath, listOf("--help"), acceptNonZeroExit = true),
+            runCommand(cliPath, listOf("exec", "--help"), acceptNonZeroExit = true),
+        )
+
+        return try {
+            val extracted = linkedSetOf<String>()
+
+            // 优先使用模型列表命令输出，其次使用本地 codex 数据目录中的缓存与配置。
+            modelListOutputs.forEach { output ->
+                extracted += extractCodexModels(output)
+            }
+            val codexHome = resolveCodexHomeDir()
+            extracted += parseCodexModelsFromLocalCache(codexHome)
+            extracted += parseCodexModelsFromConfig(codexHome)
+            extracted += parseCodexModelsFromSessions(codexHome)
+
+            // 命令 help 往往只含示例或文案（如 "codex-provided sandbox"），仅作为最后兜底。
+            if (extracted.isEmpty()) {
+                helpOutputs.forEach { output ->
+                    extracted += extractCodexModels(output)
+                }
+            }
+
+            extracted.toList()
+        } catch (e: Exception) {
+            logger.info("Failed to parse codex models: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun extractCodexModels(rawText: String): List<String> {
+        if (rawText.isBlank()) return emptyList()
+        val extracted = linkedSetOf<String>()
+        CODEX_MODEL_REGEX.findAll(rawText).forEach { match ->
+            val normalized = normalizeCodexModelId(match.value)
+            if (isValidCodexModelId(normalized)) {
+                extracted += normalized
+            }
+        }
+        return extracted.toList()
+    }
+
+    private fun parseCodexModelsFromLocalCache(codexHome: File): List<String> {
+        val cacheFile = File(codexHome, "models_cache.json")
+        if (!cacheFile.isFile) return emptyList()
+        return try {
+            extractCodexModels(cacheFile.readText())
+        } catch (e: Exception) {
+            logger.debug("Failed to parse Codex models cache: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun parseCodexModelsFromConfig(codexHome: File): List<String> {
+        val configFile = File(codexHome, "config.toml")
+        if (!configFile.isFile) return emptyList()
+
+        return try {
+            val extracted = linkedSetOf<String>()
+            var inMigrationSection = false
+
+            configFile.useLines { lines ->
+                lines.forEach { line ->
+                    val trimmed = line.trim()
+                    if (trimmed.isBlank() || trimmed.startsWith("#")) {
+                        return@forEach
+                    }
+
+                    if (trimmed.startsWith("[")) {
+                        inMigrationSection = trimmed.equals("[notice.model_migrations]", ignoreCase = true)
+                        return@forEach
+                    }
+
+                    CODEX_CONFIG_MODEL_ASSIGNMENT_REGEX.find(trimmed)?.groupValues?.getOrNull(1)?.let { model ->
+                        val normalized = normalizeCodexModelId(model)
+                        if (isValidCodexModelId(normalized)) {
+                            extracted += normalized
+                        }
+                    }
+
+                    if (inMigrationSection) {
+                        CODEX_CONFIG_MIGRATION_REGEX.find(trimmed)?.let { migration ->
+                            val fromModel = normalizeCodexModelId(migration.groupValues[1])
+                            val toModel = normalizeCodexModelId(migration.groupValues[2])
+                            if (isValidCodexModelId(fromModel)) extracted += fromModel
+                            if (isValidCodexModelId(toModel)) extracted += toModel
+                        }
+                    }
+                }
+            }
+
+            extracted.toList()
+        } catch (e: Exception) {
+            logger.debug("Failed to parse Codex config models: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun parseCodexModelsFromSessions(codexHome: File): List<String> {
+        val sessionsDir = File(codexHome, "sessions")
+        if (!sessionsDir.isDirectory) return emptyList()
+
+        return try {
+            val recentSessionFiles = sessionsDir.walkTopDown()
+                .maxDepth(CODEX_SESSION_MAX_DEPTH)
+                .filter { it.isFile && it.extension.equals("jsonl", ignoreCase = true) }
+                .sortedByDescending { it.lastModified() }
+                .take(CODEX_SESSION_FILES_TO_SCAN)
+                .toList()
+            if (recentSessionFiles.isEmpty()) return emptyList()
+
+            val extracted = linkedSetOf<String>()
+            recentSessionFiles.forEach { file ->
+                file.useLines { lines ->
+                    lines.take(CODEX_SESSION_LINES_PER_FILE).forEach { line ->
+                        CODEX_SESSION_MODEL_REGEX.findAll(line).forEach { match ->
+                            val normalized = normalizeCodexModelId(match.groupValues[1])
+                            if (isValidCodexModelId(normalized)) {
+                                extracted += normalized
+                            }
+                        }
+                    }
+                }
+            }
+            extracted.toList()
+        } catch (e: Exception) {
+            logger.debug("Failed to parse Codex session models: ${e.message}")
+            emptyList()
+        }
+    }
+
+    private fun resolveCodexHomeDir(): File {
+        val envHome = System.getenv("CODEX_HOME")?.trim()?.trim('"')
+        if (!envHome.isNullOrBlank()) {
+            return File(envHome)
+        }
+        val userHome = System.getProperty("user.home").orEmpty()
+        return File(userHome, ".codex")
+    }
+
+    private fun normalizeCodexModelId(value: String): String {
+        return value.trim().trim('"', '\'', ',', ';').lowercase()
+    }
+
+    private fun isValidCodexModelId(modelId: String): Boolean {
+        if (modelId.isBlank()) return false
+        if (!CODEX_MODEL_REGEX.matches(modelId)) return false
+        if (modelId in CODEX_MODEL_EXCLUDE_SET) return false
+        return true
+    }
+
+    /**
+     * 执行命令并返回 stdout，超时或失败返回 null。
+     * Windows 上通过 cmd /c 执行以支持 .cmd/.bat 脚本。
+     */
+    private fun runCommand(
+        executable: String,
+        args: List<String>,
+        timeoutSeconds: Long = 10,
+        acceptNonZeroExit: Boolean = false,
+    ): String? {
+        return try {
+            val directCommand = listOf(executable) + args
+            logger.debug("Running command: ${directCommand.joinToString(" ")}")
+            val builder = ProcessBuilder(directCommand)
+                .redirectErrorStream(true)
+            configureCommandEnvironment(builder, executable)
+            var executedCommand = directCommand
+
+            val process = try {
+                builder.start()
+            } catch (e: Exception) {
+                if (!isWindows()) {
+                    throw e
+                }
+                logger.debug("Direct command failed, fallback to cmd /c: ${e.message}")
+                val fallbackCommand = listOf("cmd", "/c", executable) + args
+                executedCommand = fallbackCommand
+                val fallbackBuilder = ProcessBuilder(fallbackCommand)
+                    .redirectErrorStream(true)
+                configureCommandEnvironment(fallbackBuilder, executable)
+                fallbackBuilder.start()
+            }
+            val outputFuture = CompletableFuture.supplyAsync {
+                process.inputStream.bufferedReader().use { it.readText() }
+            }
+            val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                process.waitFor(1, TimeUnit.SECONDS)
+                logger.debug("Command timed out: ${executedCommand.joinToString(" ")}")
+                val timedOutOutput = runCatching { outputFuture.get(1, TimeUnit.SECONDS) }.getOrNull().orEmpty()
+                return if (acceptNonZeroExit && timedOutOutput.isNotBlank()) timedOutOutput else null
+            }
+            val output = runCatching { outputFuture.get(1, TimeUnit.SECONDS) }.getOrNull().orEmpty()
+            if (process.exitValue() == 0 || (acceptNonZeroExit && output.isNotBlank())) {
+                output
+            } else {
+                logger.debug("Command exited with ${process.exitValue()}: ${executedCommand.joinToString(" ")}")
+                null
+            }
+        } catch (e: Exception) {
+            logger.debug("Command failed: $executable ${args.joinToString(" ")}: ${e.message}")
+            null
+        }
+    }
+
+    private fun configureCommandEnvironment(builder: ProcessBuilder, executable: String) {
+        if (isWindows() && executable.contains("claude", ignoreCase = true)) {
+            val env = builder.environment()
+            val configuredBash = env["CLAUDE_CODE_GIT_BASH_PATH"] ?: System.getenv("CLAUDE_CODE_GIT_BASH_PATH")
+            if (configuredBash.isNullOrBlank() || !File(configuredBash).isFile) {
+                findGitBashPath()?.let { env["CLAUDE_CODE_GIT_BASH_PATH"] = it }
+            }
+        }
+    }
+
+    /**
+     * 在 PATH 中查找可执行文件
+     */
+    private fun findInPath(name: String): String? {
+        val pathEnv = System.getenv("PATH") ?: return null
+        val extensions = if (isWindows()) {
+            listOf(".cmd", ".exe", ".bat", "")
+        } else {
+            listOf("")
+        }
+
+        for (dir in pathEnv.split(File.pathSeparator)) {
+            for (ext in extensions) {
+                val file = File(dir, name + ext)
+                if (isExecutable(file)) {
+                    return file.absolutePath
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * 在常见安装位置查找 CLI 工具（npm 全局安装等）
+     */
+    private fun findInCommonLocations(toolName: String): String? {
+        val candidates = mutableListOf<File>()
+
+        if (isWindows()) {
+            // npm 全局安装目录
+            val appData = System.getenv("APPDATA")
+            if (appData != null) {
+                candidates.add(File(appData, "npm/$toolName.cmd"))
+                candidates.add(File(appData, "npm/$toolName.exe"))
+            }
+            // nvm for Windows
+            val nvmHome = System.getenv("NVM_HOME")
+            if (nvmHome != null) {
+                candidates.add(File(nvmHome, "$toolName.cmd"))
+            }
+            // 用户 home 下的 .local/bin
+            val userHome = System.getProperty("user.home")
+            if (userHome != null) {
+                candidates.add(File(userHome, ".local/bin/$toolName.exe"))
+                candidates.add(File(userHome, ".local/bin/$toolName.cmd"))
+            }
+        } else {
+            val userHome = System.getProperty("user.home")
+            if (userHome != null) {
+                candidates.add(File(userHome, ".local/bin/$toolName"))
+                candidates.add(File(userHome, ".npm-global/bin/$toolName"))
+            }
+            candidates.add(File("/usr/local/bin/$toolName"))
+        }
+
+        return candidates.firstOrNull { isExecutable(it) }?.absolutePath
+    }
+
+    /**
+     * 判断文件是否可执行。
+     * Windows 上 .cmd/.bat 文件的 canExecute() 返回 false，需特殊处理。
+     */
+    private fun isExecutable(file: File): Boolean {
+        if (!file.isFile) return false
+        if (isWindows()) {
+            val ext = file.extension.lowercase()
+            if (ext in listOf("cmd", "bat")) return true
+        }
+        return file.canExecute()
+    }
+
+    private fun isWindows(): Boolean =
+        System.getProperty("os.name").lowercase().contains("win")
+
+    private fun findGitBashPath(): String? {
+        val candidates = listOf(
+            "C:\\Program Files\\Git\\bin\\bash.exe",
+            "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
+            "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe",
+        )
+        return candidates.firstOrNull { File(it).isFile }
+    }
+
+    override fun dispose() {
+        scope.cancel()
+    }
+
+    companion object {
+        fun getInstance(): CliDiscoveryService = service()
+        private val CLAUDE_MODEL_ID_REGEX = Regex("""\bclaude-[a-z0-9][a-z0-9.-]*\b""", RegexOption.IGNORE_CASE)
+        private val CLAUDE_MODEL_ALIAS_REGEX = Regex("""\b(sonnet|opus|haiku)\b""", RegexOption.IGNORE_CASE)
+        private val CLAUDE_CANONICAL_MODEL_OBJECT_REGEX = Regex(
+            """\{opus:"(claude-[^"]+)",sonnet:"(claude-[^"]+)",haiku:"(claude-[^"]+)"\}""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val CODEX_MODEL_REGEX = Regex(
+            """\b(o\d(?:-[a-z0-9][a-z0-9.-]*)?|gpt-[a-z0-9][a-z0-9.-]*|codex-[a-z0-9][a-z0-9.-]*)\b""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val CODEX_CONFIG_MODEL_ASSIGNMENT_REGEX = Regex(
+            "^model\\s*=\\s*\"([^\"]+)\"",
+            RegexOption.IGNORE_CASE,
+        )
+        private val CODEX_CONFIG_MIGRATION_REGEX = Regex(
+            "^\"([^\"]+)\"\\s*=\\s*\"([^\"]+)\"",
+            RegexOption.IGNORE_CASE,
+        )
+        private val CODEX_SESSION_MODEL_REGEX = Regex(
+            "\"model\"\\s*:\\s*\"([^\"]+)\"",
+            RegexOption.IGNORE_CASE,
+        )
+        private val CODEX_MODEL_EXCLUDE_SET = setOf(
+            "codex-provided",
+        )
+        private const val CODEX_SESSION_FILES_TO_SCAN = 12
+        private const val CODEX_SESSION_LINES_PER_FILE = 2000
+        private const val CODEX_SESSION_MAX_DEPTH = 8
+    }
+}

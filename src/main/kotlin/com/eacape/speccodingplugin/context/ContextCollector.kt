@@ -46,6 +46,24 @@ class ContextCollector(private val project: Project) {
             }
         }
 
+        if (config.includeImportDependencies) {
+            runCatching {
+                RelatedFileDiscovery.getInstance(project).discoverRelatedFiles()
+            }.getOrDefault(emptyList()).forEach { dependency ->
+                items.add(dependency)
+            }
+        }
+
+        if (config.includeProjectStructure) {
+            runCatching {
+                ProjectStructureScanner.getInstance(project).getProjectStructureContext()
+            }.getOrNull()?.let { structure ->
+                if (structure.content.isNotBlank()) {
+                    items.add(structure)
+                }
+            }
+        }
+
         return ContextTrimmer.trim(
             applyGraphAwarePrioritization(items, config),
             config.tokenBudget,

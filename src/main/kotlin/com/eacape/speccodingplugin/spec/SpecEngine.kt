@@ -16,20 +16,24 @@ import java.util.UUID
 @Service(Service.Level.PROJECT)
 class SpecEngine(private val project: Project) {
     private val logger = thisLogger()
-    private val storage = SpecStorage.getInstance(project)
-    private val generator = SpecGenerator(LlmRouter())
+
+    // Overridable by test constructor; lazy to avoid service lookups during construction
+    private var _storageOverride: SpecStorage? = null
+    private var _generationOverride: (suspend (SpecGenerationRequest) -> SpecGenerationResult)? = null
+
+    private val storageDelegate: SpecStorage by lazy { _storageOverride ?: SpecStorage.getInstance(project) }
+    private val generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult by lazy {
+        _generationOverride ?: SpecGenerator(LlmRouter.getInstance())::generate
+    }
 
     internal constructor(
         project: Project,
         storage: SpecStorage,
         generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult
     ) : this(project) {
-        this.storageDelegate = storage
-        this.generationHandler = generationHandler
+        this._storageOverride = storage
+        this._generationOverride = generationHandler
     }
-
-    private var storageDelegate: SpecStorage = storage
-    private var generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult = generator::generate
 
     // 当前活跃的工作流
     private val activeWorkflows = mutableMapOf<String, SpecWorkflow>()

@@ -3,7 +3,7 @@ package com.eacape.speccodingplugin.llm
 import kotlinx.coroutines.delay
 
 class MockLlmProvider : LlmProvider {
-    override val id: String = "mock"
+    override val id: String = ID
 
     override suspend fun generate(request: LlmRequest): LlmResponse {
         val prompt = request.messages.lastOrNull { it.role == LlmRole.USER }?.content.orEmpty()
@@ -38,5 +38,9 @@ class MockLlmProvider : LlmProvider {
     }
 
     private fun estimateTokens(text: String): Int = (text.length / 4).coerceAtLeast(1)
+
+    companion object {
+        const val ID = "mock"
+    }
 }
 

@@ -30,10 +30,7 @@ data class GlobalConfigChangedEvent(
 
 data class GlobalConfigSnapshot(
     val defaultProvider: String,
-    val openaiBaseUrl: String,
-    val openaiModel: String,
-    val anthropicBaseUrl: String,
-    val anthropicModel: String,
+    val selectedCliModel: String,
     val useProxy: Boolean,
     val proxyHost: String,
     val proxyPort: Int,
@@ -69,10 +66,7 @@ class GlobalConfigSyncService internal constructor(
         val settings = settingsProvider()
         return GlobalConfigSnapshot(
             defaultProvider = settings.defaultProvider,
-            openaiBaseUrl = settings.openaiBaseUrl,
-            openaiModel = settings.openaiModel,
-            anthropicBaseUrl = settings.anthropicBaseUrl,
-            anthropicModel = settings.anthropicModel,
+            selectedCliModel = settings.selectedCliModel,
             useProxy = settings.useProxy,
             proxyHost = settings.proxyHost,
             proxyPort = settings.proxyPort,

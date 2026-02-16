@@ -3,6 +3,8 @@ package com.eacape.speccodingplugin.ui
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
+import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
+import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
@@ -84,33 +86,20 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
         return Consumer { showModelSelectionPopup() }
     }
 
-    /**
-     * 显示模型选择弹窗
-     */
     private fun showModelSelectionPopup() {
         val popup = createModelSelectionPopup()
         val statusBar = WindowManager.getInstance().getStatusBar(project) ?: return
         popup.showInCenterOf(statusBar.component ?: return)
     }
 
-    /**
-     * 创建模型选择弹窗
-     */
     private fun createModelSelectionPopup(): ListPopup {
         val modelsByProvider = modelRegistry.getModelsByProvider()
 
-        // 创建分组步骤
         val providerStep = object : BaseListPopupStep<String>(
             SpecCodingBundle.message("statusbar.modelSelector.popup.selectProvider"),
             modelsByProvider.keys.toList(),
         ) {
-            override fun getTextFor(value: String): String {
-                return when (value) {
-                    "openai" -> SpecCodingBundle.message("statusbar.modelSelector.provider.openai")
-                    "anthropic" -> SpecCodingBundle.message("statusbar.modelSelector.provider.anthropic")
-                    else -> value.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-                }
-            }
+            override fun getTextFor(value: String): String = providerDisplayName(value)
 
             override fun isSpeedSearchEnabled(): Boolean = true
 
@@ -118,7 +107,6 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
                 if (finalChoice) {
                     return null
                 }
-                // 返回模型选择步骤
                 return createModelSelectionStep(selectedValue, modelsByProvider[selectedValue] ?: emptyList())
             }
 
@@ -128,9 +116,6 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
         return JBPopupFactory.getInstance().createListPopup(providerStep)
     }
 
-    /**
-     * 创建模型选择步骤
-     */
     private fun createModelSelectionStep(provider: String, models: List<ModelInfo>): PopupStep<ModelInfo> {
         return object : BaseListPopupStep<ModelInfo>(
             SpecCodingBundle.message("statusbar.modelSelector.popup.selectModel"),
@@ -156,30 +141,22 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
         }
     }
 
-    /**
-     * 选择模型
-     */
     private fun selectModel(provider: String, model: ModelInfo) {
-        // 更新设置
         settings.defaultProvider = provider
-        when (provider) {
-            "openai" -> settings.openaiModel = model.id
-            "anthropic" -> settings.anthropicModel = model.id
-        }
+        settings.selectedCliModel = model.id
 
         globalConfigSyncService.notifyGlobalConfigChanged(
             sourceProject = project,
             reason = "model-selector-widget",
         )
 
-        // 刷新状态栏显示
         myStatusBar?.updateWidget(ID())
     }
 
     private fun providerDisplayName(provider: String): String {
         return when (provider) {
-            "openai" -> SpecCodingBundle.message("statusbar.modelSelector.provider.openai")
-            "anthropic" -> SpecCodingBundle.message("statusbar.modelSelector.provider.anthropic")
+            ClaudeCliLlmProvider.ID -> SpecCodingBundle.message("statusbar.modelSelector.provider.claudeCli")
+            CodexCliLlmProvider.ID -> SpecCodingBundle.message("statusbar.modelSelector.provider.codexCli")
             else -> provider.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
         }
     }
@@ -195,25 +172,14 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
         }
     }
 
-    /**
-     * 获取当前模型
-     */
     private fun getCurrentModel(): ModelInfo? {
-        val provider = settings.defaultProvider
-        val modelId = when (provider) {
-            "openai" -> settings.openaiModel
-            "anthropic" -> settings.anthropicModel
-            else -> null
-        }
-        return modelId?.let { modelRegistry.getModel(it) }
+        val modelId = settings.selectedCliModel
+        if (modelId.isBlank()) return null
+        return modelRegistry.getModel(modelId)
     }
 
-    /**
-     * 检查是否是当前模型
-     */
     private fun isCurrentModel(model: ModelInfo): Boolean {
-        val current = getCurrentModel()
-        return current?.id == model.id
+        return getCurrentModel()?.id == model.id
     }
 
     companion object {

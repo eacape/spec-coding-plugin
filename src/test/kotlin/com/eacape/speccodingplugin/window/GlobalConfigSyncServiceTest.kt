@@ -27,11 +27,8 @@ class GlobalConfigSyncServiceTest {
         every { messageBus.syncPublisher(any<Topic<GlobalConfigSyncListener>>()) } returns listener
 
         settings = SpecCodingSettingsState().apply {
-            defaultProvider = "openai"
-            openaiBaseUrl = "https://api.openai.com/v1"
-            openaiModel = "gpt-4o"
-            anthropicBaseUrl = "https://api.anthropic.com/v1"
-            anthropicModel = "claude-opus-4-20250514"
+            defaultProvider = "claude_cli"
+            selectedCliModel = "claude-sonnet-4-20250514"
             useProxy = true
             proxyHost = "127.0.0.1"
             proxyPort = 7890
@@ -71,8 +68,8 @@ class GlobalConfigSyncServiceTest {
         assertEquals("DemoProject", event.sourceProjectName)
         assertEquals("unit-test", event.reason)
         assertEquals(123456789L, event.changedAt)
-        assertEquals("openai", event.snapshot.defaultProvider)
-        assertEquals("gpt-4o", event.snapshot.openaiModel)
+        assertEquals("claude_cli", event.snapshot.defaultProvider)
+        assertEquals("claude-sonnet-4-20250514", event.snapshot.selectedCliModel)
         assertTrue(event.snapshot.useProxy)
         assertEquals("https://example.com/team-prompts.git", event.snapshot.teamPromptRepoUrl)
         assertEquals("https://example.com/team-skills.git", event.snapshot.teamSkillRepoUrl)
@@ -81,7 +78,7 @@ class GlobalConfigSyncServiceTest {
             listener.onGlobalConfigChanged(match {
                 it.reason == "unit-test" &&
                     it.sourceWindowId == "window-1" &&
-                    it.snapshot.defaultProvider == "openai"
+                    it.snapshot.defaultProvider == "claude_cli"
             })
         }
     }

@@ -50,6 +50,38 @@ class ProjectStructureScanner(private val project: Project) {
         )
     }
 
+    /**
+     * 获取指定目录结构的上下文项（用于 @目录 引用）。
+     */
+    fun getDirectoryStructureContext(
+        directoryPath: String,
+        maxDepth: Int = 3,
+    ): ContextItem? {
+        val normalized = directoryPath.trim().ifBlank { return null }
+        val dir = LocalFileSystem.getInstance().findFileByPath(normalized) ?: return null
+        if (!dir.isDirectory) return null
+
+        val projectBase = project.basePath
+        if (projectBase != null && !dir.path.startsWith(projectBase)) {
+            return null
+        }
+
+        val sb = StringBuilder()
+        sb.appendLine(dir.name + "/")
+        buildTree(dir, sb, "", maxDepth, 0)
+
+        val content = sb.toString().trimEnd()
+        if (content.isBlank()) return null
+
+        return ContextItem(
+            type = ContextType.PROJECT_STRUCTURE,
+            label = "Dir: ${dir.name}",
+            content = content,
+            filePath = dir.path,
+            priority = 45,
+        )
+    }
+
     fun invalidateCache() {
         cachedTree = null
     }

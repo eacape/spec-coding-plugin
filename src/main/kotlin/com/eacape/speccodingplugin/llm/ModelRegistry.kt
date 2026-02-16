@@ -1,176 +1,160 @@
 package com.eacape.speccodingplugin.llm
 
+import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.thisLogger
 
 /**
- * 模型注册表 - 管理所有可用的 LLM 模型元数据
+ * 模型注册表 - 根据 CLI 探测结果动态管理可用模型
  */
 @Service
 class ModelRegistry {
+    private val logger = thisLogger()
     private val models = mutableMapOf<String, ModelInfo>()
 
     init {
-        registerDefaultModels()
+        try {
+            refreshFromDiscovery()
+        } catch (e: Exception) {
+            logger.warn("ModelRegistry init: CLI discovery unavailable, registry is empty", e)
+        }
+
+        // 监听 CLI 探测完成事件，自动刷新模型列表
+        try {
+            val discoveryService = CliDiscoveryService.getInstance()
+            discoveryService.addDiscoveryListener {
+                refreshFromDiscovery()
+                logger.info("ModelRegistry auto-refreshed after CLI discovery")
+            }
+        } catch (e: Exception) {
+            logger.warn("ModelRegistry: failed to register discovery listener", e)
+        }
     }
 
     /**
-     * 注册默认模型
+     * 从 CliDiscoveryService 刷新模型列表
      */
-    private fun registerDefaultModels() {
-        // OpenAI 模型
-        register(
-            ModelInfo(
-                id = "gpt-4o",
-                name = "GPT-4o",
-                provider = "openai",
-                contextWindow = 128000,
-                capabilities = setOf(
-                    ModelCapability.CODE_GENERATION,
-                    ModelCapability.CODE_REVIEW,
-                    ModelCapability.CHAT
-                )
-            )
-        )
+    fun refreshFromDiscovery() {
+        val discoveryService = CliDiscoveryService.getInstance()
+        models.clear()
 
-        register(
-            ModelInfo(
-                id = "gpt-4o-mini",
-                name = "GPT-4o Mini",
-                provider = "openai",
-                contextWindow = 128000,
-                capabilities = setOf(
-                    ModelCapability.CODE_GENERATION,
-                    ModelCapability.CODE_REVIEW,
-                    ModelCapability.CHAT
+        if (discoveryService.claudeInfo.available) {
+            discoveryService.claudeInfo.models.forEach { modelId ->
+                register(
+                    ModelInfo(
+                        id = modelId,
+                        name = formatModelName(modelId),
+                        provider = ClaudeCliLlmProvider.ID,
+                        contextWindow = 200_000,
+                        capabilities = setOf(
+                            ModelCapability.CODE_GENERATION,
+                            ModelCapability.CODE_REVIEW,
+                            ModelCapability.CHAT,
+                            ModelCapability.REASONING,
+                        ),
+                    )
                 )
-            )
-        )
+            }
+        }
 
-        register(
-            ModelInfo(
-                id = "o1",
-                name = "O1",
-                provider = "openai",
-                contextWindow = 200000,
-                capabilities = setOf(
-                    ModelCapability.CODE_GENERATION,
-                    ModelCapability.REASONING
+        if (discoveryService.codexInfo.available) {
+            discoveryService.codexInfo.models.forEach { modelId ->
+                register(
+                    ModelInfo(
+                        id = modelId,
+                        name = formatModelName(modelId),
+                        provider = CodexCliLlmProvider.ID,
+                        contextWindow = 200_000,
+                        capabilities = setOf(
+                            ModelCapability.CODE_GENERATION,
+                            ModelCapability.CODE_REVIEW,
+                            ModelCapability.CHAT,
+                        ),
+                    )
                 )
-            )
-        )
+            }
+        }
 
-        register(
-            ModelInfo(
-                id = "o1-mini",
-                name = "O1 Mini",
-                provider = "openai",
-                contextWindow = 128000,
-                capabilities = setOf(
-                    ModelCapability.CODE_GENERATION,
-                    ModelCapability.REASONING
-                )
-            )
-        )
-
-        // Anthropic 模型
-        register(
-            ModelInfo(
-                id = "claude-opus-4-20250514",
-                name = "Claude Opus 4",
-                provider = "anthropic",
-                contextWindow = 200000,
-                capabilities = setOf(
-                    ModelCapability.CODE_GENERATION,
-                    ModelCapability.CODE_REVIEW,
-                    ModelCapability.CHAT,
-                    ModelCapability.REASONING
-                )
-            )
-        )
-
-        register(
-            ModelInfo(
-                id = "claude-sonnet-4-20250514",
-                name = "Claude Sonnet 4",
-                provider = "anthropic",
-                contextWindow = 200000,
-                capabilities = setOf(
-                    ModelCapability.CODE_GENERATION,
-                    ModelCapability.CODE_REVIEW,
-                    ModelCapability.CHAT
-                )
-            )
-        )
-
-        register(
-            ModelInfo(
-                id = "claude-3-5-sonnet-20241022",
-                name = "Claude 3.5 Sonnet",
-                provider = "anthropic",
-                contextWindow = 200000,
-                capabilities = setOf(
-                    ModelCapability.CODE_GENERATION,
-                    ModelCapability.CODE_REVIEW,
-                    ModelCapability.CHAT
-                )
-            )
-        )
-
-        register(
-            ModelInfo(
-                id = "claude-3-5-haiku-20241022",
-                name = "Claude 3.5 Haiku",
-                provider = "anthropic",
-                contextWindow = 200000,
-                capabilities = setOf(
-                    ModelCapability.CODE_GENERATION,
-                    ModelCapability.CHAT
-                )
-            )
-        )
+        logger.info("ModelRegistry refreshed: ${models.size} models from ${getModelsByProvider().keys}")
     }
 
-    /**
-     * 注册模型
-     */
     fun register(model: ModelInfo) {
         models[model.id] = model
     }
 
-    /**
-     * 获取模型信息
-     */
-    fun getModel(id: String): ModelInfo? {
-        return models[id]
-    }
+    fun getModel(id: String): ModelInfo? = models[id]
 
-    /**
-     * 获取所有模型
-     */
-    fun getAllModels(): List<ModelInfo> {
-        return models.values.toList()
-    }
+    fun getAllModels(): List<ModelInfo> = models.values.toList()
 
-    /**
-     * 按提供者分组获取模型
-     */
-    fun getModelsByProvider(): Map<String, List<ModelInfo>> {
-        return models.values.groupBy { it.provider }
-    }
+    fun getModelsByProvider(): Map<String, List<ModelInfo>> = models.values.groupBy { it.provider }
 
-    /**
-     * 获取指定提供者的模型
-     */
-    fun getModelsForProvider(provider: String): List<ModelInfo> {
-        return models.values.filter { it.provider == provider }
-    }
+    fun getModelsForProvider(provider: String): List<ModelInfo> = models.values.filter { it.provider == provider }
 
-    /**
-     * 检查模型是否支持某个能力
-     */
     fun hasCapability(modelId: String, capability: ModelCapability): Boolean {
         return models[modelId]?.capabilities?.contains(capability) ?: false
+    }
+
+    private fun formatModelName(modelId: String): String {
+        val normalized = modelId.trim().lowercase()
+
+        return when {
+            normalized == "sonnet" -> "Claude Sonnet"
+            normalized == "opus" -> "Claude Opus"
+            normalized == "haiku" -> "Claude Haiku"
+            normalized.startsWith("claude-") -> formatClaudeName(normalized)
+            else -> normalized
+                .replace("-", " ")
+                .replace(Regex("""\d{8}$"""), "")
+                .trim()
+                .split(" ")
+                .joinToString(" ") { token ->
+                    when {
+                        token.equals("gpt", ignoreCase = true) -> "GPT"
+                        token.equals("codex", ignoreCase = true) -> "Codex"
+                        token.equals("o3", ignoreCase = true) -> "O3"
+                        token.equals("o4", ignoreCase = true) -> "O4"
+                        else -> token.replaceFirstChar { c -> c.uppercase() }
+                    }
+                }
+        }
+    }
+
+    private fun formatClaudeName(modelId: String): String {
+        val withoutDate = modelId.removeSuffixDate()
+        val parts = withoutDate.split("-")
+        if (parts.size < 2) return modelId
+
+        val family = parts[1].replaceFirstChar { it.uppercase() }
+        val sb = StringBuilder("Claude ").append(family)
+
+        if (parts.size >= 4 && parts[2].all { it.isDigit() } && parts[3].all { it.isDigit() }) {
+            sb.append(" ").append(parts[2]).append(".").append(parts[3])
+            if (parts.size > 4) {
+                sb.append(" ")
+                sb.append(parts.drop(4).joinToString(" ") { formatSuffixToken(it) })
+            }
+            return sb.toString().trim()
+        }
+
+        if (parts.size > 2) {
+            sb.append(" ")
+            sb.append(parts.drop(2).joinToString(" ") { formatSuffixToken(it) })
+        }
+
+        return sb.toString().trim()
+    }
+
+    private fun String.removeSuffixDate(): String {
+        return replace(Regex("""-\d{8}$"""), "")
+    }
+
+    private fun formatSuffixToken(token: String): String {
+        return when {
+            token.equals("1m", ignoreCase = true) -> "1M"
+            token.all { it.isDigit() } -> token
+            else -> token.replaceFirstChar { it.uppercase() }
+        }
     }
 
     companion object {
@@ -187,7 +171,7 @@ data class ModelInfo(
     val provider: String,
     val contextWindow: Int,
     val capabilities: Set<ModelCapability>,
-    val description: String? = null
+    val description: String? = null,
 )
 
 /**
@@ -199,5 +183,5 @@ enum class ModelCapability {
     CHAT,
     REASONING,
     REFACTOR,
-    TEST_GENERATION
+    TEST_GENERATION,
 }

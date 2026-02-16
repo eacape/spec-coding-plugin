@@ -128,6 +128,9 @@ class CompletionProvider internal constructor(
                     override fun visitFile(file: VirtualFile): Boolean {
                         if (results.size >= limit) return false
                         if (file.isDirectory) {
+                            if (lowerQuery.isNotBlank() && matchesQuery(file.name, lowerQuery)) {
+                                results.add(directoryToCompletionItem(file, basePath))
+                            }
                             return !isIgnoredDir(file.name)
                         }
                         if (matchesQuery(file.name, lowerQuery)) {
@@ -153,6 +156,24 @@ class CompletionProvider internal constructor(
                     content = "", // content loaded on selection
                     filePath = file.path,
                     priority = 60,
+                ),
+            )
+        }
+
+        private fun directoryToCompletionItem(dir: VirtualFile, basePath: String): CompletionItem {
+            val relativePath = dir.path.removePrefix(basePath).removePrefix("/")
+            val display = if (dir.name.endsWith("/")) dir.name else "${dir.name}/"
+            val pathText = if (relativePath.endsWith("/")) relativePath else "$relativePath/"
+            return CompletionItem(
+                displayText = display,
+                insertText = "@$pathText",
+                description = pathText,
+                contextItem = ContextItem(
+                    type = ContextType.PROJECT_STRUCTURE,
+                    label = display,
+                    content = "",
+                    filePath = dir.path,
+                    priority = 58,
                 ),
             )
         }

@@ -26,6 +26,22 @@ class ClaudeCodeEngine(
         args.add("--print")
         args.add("--output-format")
         args.add("text")
+
+        request.options["model"]?.let {
+            args.add("--model")
+            args.add(it)
+        }
+
+        request.options["system_prompt"]?.let {
+            args.add("--system-prompt")
+            args.add(it)
+        }
+
+        request.options["max_tokens"]?.let {
+            args.add("--max-tokens")
+            args.add(it)
+        }
+
         args.add(request.prompt)
         return args
     }
@@ -39,13 +55,17 @@ class ClaudeCodeEngine(
 
     override suspend fun getVersion(): String? {
         return try {
-            val process = ProcessBuilder(
-                listOf("claude", "--version")
-            ).redirectErrorStream(true).start()
+            val command = if (System.getProperty("os.name").lowercase().contains("win")) {
+                listOf("cmd", "/c", cliPath, "--version")
+            } else {
+                listOf(cliPath, "--version")
+            }
+            val process = ProcessBuilder(command)
+                .redirectErrorStream(true).start()
             val output = process.inputStream
                 .bufferedReader().readText().trim()
             process.waitFor()
-            output
+            if (process.exitValue() == 0) output else null
         } catch (e: Exception) {
             null
         }

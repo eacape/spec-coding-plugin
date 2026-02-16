@@ -10,6 +10,7 @@ import com.eacape.speccodingplugin.ui.worktree.WorktreePanel
 import com.eacape.speccodingplugin.ui.history.HistoryPanel
 import com.eacape.speccodingplugin.ui.hook.HookPanel
 import com.eacape.speccodingplugin.window.WindowStateStore
+import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
@@ -23,6 +24,12 @@ class ChatToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         toolWindow.title = SpecCodingBundle.message("toolwindow.title")
         val windowStateStore = WindowStateStore.getInstance(project)
+
+        // 在 Tool Window 标题栏添加齿轮设置按钮
+        val settingsAction = ActionManager.getInstance().getAction("SpecCoding.OpenSettings")
+        if (settingsAction != null) {
+            toolWindow.setTitleActions(listOf(settingsAction))
+        }
 
         val contentFactory = ContentFactory.getInstance()
 
@@ -107,7 +114,6 @@ class ChatToolWindowFactory : ToolWindowFactory {
     }
 
     override fun shouldBeAvailable(project: Project): Boolean {
-        // Tool Window 始终可用
         return true
     }
 }
