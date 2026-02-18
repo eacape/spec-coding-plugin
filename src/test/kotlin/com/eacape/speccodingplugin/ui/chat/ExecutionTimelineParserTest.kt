@@ -58,4 +58,36 @@ class ExecutionTimelineParserTest {
         val items = ExecutionTimelineParser.parse(content)
         assertTrue(items.isEmpty())
     }
+
+    @Test
+    fun `parse should merge lifecycle updates for same logical task`() {
+        val content = """
+            [Task] implement streaming trace running
+            [Task] implement streaming trace done
+        """.trimIndent()
+
+        val items = ExecutionTimelineParser.parse(content)
+
+        assertEquals(1, items.size)
+        assertEquals(ExecutionTimelineParser.Kind.TASK, items[0].kind)
+        assertEquals(ExecutionTimelineParser.Status.DONE, items[0].status)
+    }
+
+    @Test
+    fun `parse should detect tool and output with error status`() {
+        val content = """
+            [Tool] apply_patch src/main/kotlin/com/eacape/speccodingplugin/ui/chat/ChatMessagePanel.kt
+            [Output] gradle test failed
+            [Verify] tests failed
+        """.trimIndent()
+
+        val items = ExecutionTimelineParser.parse(content)
+
+        assertEquals(3, items.size)
+        assertEquals(ExecutionTimelineParser.Kind.TOOL, items[0].kind)
+        assertEquals(ExecutionTimelineParser.Kind.OUTPUT, items[1].kind)
+        assertEquals(ExecutionTimelineParser.Status.ERROR, items[1].status)
+        assertEquals(ExecutionTimelineParser.Kind.VERIFY, items[2].kind)
+        assertEquals(ExecutionTimelineParser.Status.ERROR, items[2].status)
+    }
 }

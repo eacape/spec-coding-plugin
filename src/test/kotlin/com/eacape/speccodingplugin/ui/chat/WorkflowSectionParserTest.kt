@@ -58,4 +58,24 @@ class WorkflowSectionParserTest {
         assertTrue(result.sections.isEmpty())
         assertEquals(content, result.remainingText)
     }
+
+    @Test
+    fun `parse should extract plain plan execute verify headings without markdown prefixes`() {
+        val content = """
+            Plan
+            - clarify requirements
+            Execute
+            - implement changes
+            Verify
+            - run tests
+        """.trimIndent()
+
+        val result = WorkflowSectionParser.parse(content)
+
+        assertEquals(3, result.sections.size)
+        assertEquals(WorkflowSectionParser.SectionKind.PLAN, result.sections[0].kind)
+        assertTrue(result.sections[0].content.contains("clarify requirements"))
+        assertEquals(WorkflowSectionParser.SectionKind.EXECUTE, result.sections[1].kind)
+        assertEquals(WorkflowSectionParser.SectionKind.VERIFY, result.sections[2].kind)
+    }
 }

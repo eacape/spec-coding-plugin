@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.llm
 
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+
 enum class LlmRole {
     SYSTEM,
     USER,
@@ -37,10 +39,10 @@ data class LlmResponse(
 data class LlmChunk(
     val delta: String,
     val isLast: Boolean = false,
+    val event: ChatStreamEvent? = null,
 )
 
 data class LlmHealthStatus(
     val healthy: Boolean,
     val message: String? = null,
 )
-

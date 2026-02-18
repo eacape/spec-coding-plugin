@@ -6,11 +6,13 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
 import java.io.File
+import java.io.InputStream
 import java.io.InputStreamReader
+import java.util.concurrent.BlockingQueue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -137,23 +139,51 @@ abstract class CliEngine(
         val (timedOut, watchdogFuture) = startTimeoutWatchdog(process, timeoutSeconds)
         try {
             runCatching { process.outputStream.close() }
-            val stderrFuture = CompletableFuture.supplyAsync {
-                process.errorStream.bufferedReader().use { it.readText() }
-            }
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-
-            var line: String?
             var emittedChunk = false
-            while (reader.readLine().also { line = it } != null) {
-                val parsed = parseStreamLine(line!!)
-                if (parsed != null) {
-                    emittedChunk = true
-                    emit(parsed)
+            val frames: BlockingQueue<StreamFrame> = LinkedBlockingQueue()
+            val stdoutDone = AtomicBoolean(false)
+            val stderrDone = AtomicBoolean(false)
+            val stderrText = StringBuilder()
+
+            val stdoutPump = startLinePump(
+                stream = process.inputStream,
+                source = StreamSource.STDOUT,
+                queue = frames,
+                done = stdoutDone,
+                stderrCollector = null,
+            )
+            val stderrPump = startLinePump(
+                stream = process.errorStream,
+                source = StreamSource.STDERR,
+                queue = frames,
+                done = stderrDone,
+                stderrCollector = stderrText,
+            )
+
+            while (true) {
+                val frame = frames.poll(STREAM_POLL_MILLIS, TimeUnit.MILLISECONDS)
+                if (frame != null) {
+                    val parsed = when (frame.source) {
+                        StreamSource.STDOUT -> parseStreamLine(frame.line)
+                        StreamSource.STDERR -> parseProgressLine(frame.line)
+                    }
+                    if (parsed != null) {
+                        emittedChunk = true
+                        emit(parsed)
+                    }
+                }
+
+                val streamDrained = stdoutDone.get() && stderrDone.get() && frames.isEmpty()
+                if (streamDrained && !process.isAlive) {
+                    break
                 }
             }
 
+            stdoutPump.join(STREAM_PUMP_JOIN_MILLIS)
+            stderrPump.join(STREAM_PUMP_JOIN_MILLIS)
+
             val exitCode = process.waitFor()
-            val stderr = runCatching { stderrFuture.get(1, TimeUnit.SECONDS) }.getOrNull().orEmpty()
+            val stderr = stderrText.toString().trim()
             if (timedOut.get()) {
                 val timeoutMessage = if (stderr.isBlank()) {
                     "CLI request timed out after $timeoutSeconds seconds"
@@ -204,6 +234,18 @@ abstract class CliEngine(
 
     /** 解析流式输出行 */
     protected abstract fun parseStreamLine(line: String): EngineChunk?
+
+    /**
+     * 解析 CLI 过程输出（通常来自 stderr）。
+     * 默认映射为 trace 事件，不写入最终 answer 文本。
+     */
+    protected open fun parseProgressLine(line: String): EngineChunk? {
+        val event = CliProgressEventParser.parseStderr(line) ?: return null
+        return EngineChunk(
+            delta = "",
+            event = event,
+        )
+    }
 
     /** 获取版本号 */
     protected abstract suspend fun getVersion(): String?
@@ -292,7 +334,67 @@ abstract class CliEngine(
         return candidates.firstOrNull { File(it).isFile }
     }
 
+    private fun startLinePump(
+        stream: InputStream,
+        source: StreamSource,
+        queue: BlockingQueue<StreamFrame>,
+        done: AtomicBoolean,
+        stderrCollector: StringBuilder?,
+    ): Thread {
+        val pump = Thread {
+            try {
+                InputStreamReader(stream).use { reader ->
+                    val buffer = StringBuilder()
+
+                    fun flush() {
+                        if (buffer.isEmpty()) return
+                        val text = buffer.toString().trimEnd()
+                        buffer.setLength(0)
+                        if (text.isBlank()) return
+                        if (stderrCollector != null) {
+                            synchronized(stderrCollector) {
+                                stderrCollector.appendLine(text)
+                            }
+                        }
+                        queue.offer(StreamFrame(source = source, line = text))
+                    }
+
+                    while (true) {
+                        val value = reader.read()
+                        if (value == -1) break
+                        val ch = value.toChar()
+                        when (ch) {
+                            '\n', '\r' -> flush()
+                            else -> buffer.append(ch)
+                        }
+                    }
+                    flush()
+                }
+            } catch (ignored: Exception) {
+                logger.debug("Stream pump closed for $id ($source): ${ignored.message}")
+            } finally {
+                done.set(true)
+            }
+        }
+        pump.isDaemon = true
+        pump.name = "cli-$id-${source.name.lowercase()}-pump"
+        pump.start()
+        return pump
+    }
+
     companion object {
         private const val DEFAULT_TIMEOUT_SECONDS = 45L
+        private const val STREAM_POLL_MILLIS = 120L
+        private const val STREAM_PUMP_JOIN_MILLIS = 500L
     }
+
+    private enum class StreamSource {
+        STDOUT,
+        STDERR,
+    }
+
+    private data class StreamFrame(
+        val source: StreamSource,
+        val line: String,
+    )
 }

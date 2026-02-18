@@ -85,6 +85,12 @@ class ChatMessagesListPanel(
         }
     }
 
+    fun isNearBottom(thresholdPx: Int = DEFAULT_NEAR_BOTTOM_THRESHOLD_PX): Boolean {
+        val bar = scrollPane.verticalScrollBar
+        val remaining = bar.maximum - (bar.value + bar.visibleAmount)
+        return remaining <= thresholdPx
+    }
+
     private fun trimIfNeeded() {
         if (messages.size <= maxVisibleMessages) {
             return
@@ -98,5 +104,6 @@ class ChatMessagesListPanel(
 
     companion object {
         private const val DEFAULT_MAX_VISIBLE_MESSAGES = 240
+        private const val DEFAULT_NEAR_BOTTOM_THRESHOLD_PX = 80
     }
 }

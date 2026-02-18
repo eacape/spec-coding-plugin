@@ -50,7 +50,10 @@ class ClaudeCodeEngine(
         line: String
     ): EngineChunk? {
         if (line.isBlank()) return null
-        return EngineChunk(delta = line + "\n")
+        return EngineChunk(
+            delta = line + "\n",
+            event = CliProgressEventParser.parseStdout(line),
+        )
     }
 
     override suspend fun getVersion(): String? {

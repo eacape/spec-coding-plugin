@@ -54,3 +54,8 @@ logs/
 /.gradle-user-home/
 /prompt
 /.tmp/
+/.tmp-argtest/
+/.tmp/
+/.kotlin/
+/.gradle-user/
+/.github/

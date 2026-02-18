@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.engine
 
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+
 /**
  * 引擎请求
  */
@@ -36,4 +38,5 @@ data class EngineResponse(
 data class EngineChunk(
     val delta: String,
     val isLast: Boolean = false,
+    val event: ChatStreamEvent? = null,
 )

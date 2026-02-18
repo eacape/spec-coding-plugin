@@ -45,7 +45,13 @@ class ClaudeCliLlmProvider(
 
         engine.stream(engineRequest).collect { chunk ->
             contentBuilder.append(chunk.delta)
-            onChunk(LlmChunk(delta = chunk.delta, isLast = chunk.isLast))
+            onChunk(
+                LlmChunk(
+                    delta = chunk.delta,
+                    isLast = chunk.isLast,
+                    event = chunk.event,
+                )
+            )
         }
 
         return LlmResponse(

@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
@@ -10,6 +12,7 @@ import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import javax.swing.BoxLayout
 import javax.swing.JButton
+import javax.swing.Icon
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JTextPane
@@ -32,8 +35,14 @@ class ChatMessagePanel(
     private val contentPane = JTextPane()
     private val contentHost = JPanel(BorderLayout())
     private val contentBuilder = StringBuilder()
+    private val traceAssembler = StreamingTraceAssembler()
     private val codeBlocks = mutableListOf<String>()
+    private val expandedVerboseEntries = mutableSetOf<String>()
+    private val workflowSectionExpanded = mutableMapOf<WorkflowSectionParser.SectionKind, Boolean>()
     private var buttonPanel: JPanel? = null
+    private var traceExpanded = false
+    private var outputExpanded = false
+    private var messageFinished = false
 
     enum class MessageRole {
         USER, ASSISTANT, SYSTEM, ERROR
@@ -42,9 +51,6 @@ class ChatMessagePanel(
     init {
         isOpaque = false
         border = JBUI.Borders.emptyBottom(10)
-
-        // 角色标签
-        val roleLabel = createRoleLabel()
 
         // 内容区域
         contentPane.isEditable = false
@@ -63,7 +69,6 @@ class ChatMessagePanel(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(8, 10),
         )
-        wrapper.add(roleLabel, BorderLayout.NORTH)
         wrapper.add(contentHost, BorderLayout.CENTER)
 
         add(wrapper, BorderLayout.CENTER)
@@ -77,8 +82,30 @@ class ChatMessagePanel(
      * 追加内容（用于流式渲染）
      */
     fun appendContent(text: String) {
-        contentBuilder.append(text)
+        appendStreamContent(text = text)
+    }
+
+    fun appendStreamContent(text: String, event: ChatStreamEvent? = null) {
+        if (event != null && role == MessageRole.ASSISTANT) {
+            traceAssembler.onStructuredEvent(event)
+        }
+        appendStreamContent(text = text, events = emptyList())
+    }
+
+    fun appendStreamContent(text: String, events: List<ChatStreamEvent>) {
+        if (role == MessageRole.ASSISTANT && events.isNotEmpty()) {
+            events.forEach { event ->
+                traceAssembler.onStructuredEvent(event)
+            }
+        }
+        if (text.isNotEmpty()) {
+            contentBuilder.append(text)
+        }
         renderContent()
+    }
+
+    fun appendStreamEvent(event: ChatStreamEvent) {
+        appendStreamContent(text = "", event = event)
     }
 
     /**
@@ -90,16 +117,22 @@ class ChatMessagePanel(
      * 完成消息（流式结束后调用）
      */
     fun finishMessage() {
+        messageFinished = true
         renderContent(structured = true)
         extractCodeBlocks()
         addActionButtons()
     }
 
     private fun renderContent(structured: Boolean = false) {
+        val useStructured = structured || messageFinished
         val content = contentBuilder.toString()
         if (role == MessageRole.ASSISTANT) {
-            if (structured) {
-                renderAssistantStructuredContent(content)
+            val traceSnapshot = traceAssembler.snapshot(content)
+            if (traceSnapshot.hasTrace) {
+                renderAssistantTraceContent(content, traceSnapshot, useStructured)
+            } else if (useStructured) {
+                contentHost.removeAll()
+                contentHost.add(createAssistantAnswerComponent(content, structured = true), BorderLayout.CENTER)
             } else {
                 contentHost.removeAll()
                 contentHost.add(contentPane, BorderLayout.CENTER)
@@ -119,13 +152,43 @@ class ChatMessagePanel(
         repaint()
     }
 
-    private fun renderAssistantStructuredContent(content: String) {
+    private fun renderAssistantTraceContent(
+        content: String,
+        traceSnapshot: StreamingTraceAssembler.TraceSnapshot,
+        structured: Boolean,
+    ) {
+        val answerContent = extractAssistantAnswerContent(content)
+        val container = JPanel()
+        container.layout = BoxLayout(container, BoxLayout.Y_AXIS)
+        container.isOpaque = false
+        container.border = JBUI.Borders.empty(6, 6, 2, 6)
+
+        val processItems = traceSnapshot.items.filter { it.kind != ExecutionTimelineParser.Kind.OUTPUT }
+        if (processItems.isNotEmpty()) {
+            container.add(createTracePanel(processItems))
+        }
+
+        val outputItems = traceSnapshot.items.filter { it.kind == ExecutionTimelineParser.Kind.OUTPUT }
+        if (outputItems.isNotEmpty()) {
+            container.add(createOutputPanel(outputItems))
+        }
+
+        if (answerContent.isNotBlank()) {
+            container.add(createAssistantAnswerComponent(answerContent, structured))
+        }
+
+        contentHost.removeAll()
+        contentHost.add(container, BorderLayout.CENTER)
+    }
+
+    private fun createAssistantAnswerComponent(content: String, structured: Boolean): JPanel {
+        if (!structured) {
+            return createMarkdownContainer(content)
+        }
+
         val parseResult = WorkflowSectionParser.parse(content)
         if (parseResult.sections.isEmpty()) {
-            contentHost.removeAll()
-            contentHost.add(contentPane, BorderLayout.CENTER)
-            MarkdownRenderer.render(contentPane, content)
-            return
+            return createMarkdownContainer(content)
         }
 
         val container = JPanel()
@@ -143,15 +206,271 @@ class ChatMessagePanel(
                 WorkflowSectionParser.SectionKind.EXECUTE -> SpecCodingBundle.message("chat.workflow.section.execute")
                 WorkflowSectionParser.SectionKind.VERIFY -> SpecCodingBundle.message("chat.workflow.section.verify")
             }
+            val defaultExpanded = section.kind != WorkflowSectionParser.SectionKind.EXECUTE
+            val expanded = workflowSectionExpanded.getOrPut(section.kind) { defaultExpanded }
+
+            val header = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+            header.isOpaque = false
+            header.border = JBUI.Borders.emptyTop(6)
+
             val titleLabel = JBLabel(title)
             titleLabel.font = titleLabel.font.deriveFont(java.awt.Font.BOLD, 12f)
-            titleLabel.border = JBUI.Borders.emptyTop(6)
-            container.add(titleLabel)
-            container.add(createMarkdownPane(section.content))
+            header.add(titleLabel)
+
+            val toggleButton = JButton(
+                SpecCodingBundle.message(
+                    if (expanded) "chat.workflow.toggle.collapse" else "chat.workflow.toggle.expand"
+                )
+            )
+            styleInlineActionButton(toggleButton)
+            toggleButton.addActionListener {
+                workflowSectionExpanded[section.kind] = !expanded
+                renderContent(structured = true)
+            }
+            header.add(toggleButton)
+
+            container.add(header)
+            if (expanded) {
+                container.add(createMarkdownPane(section.content))
+            }
+        }
+        return container
+    }
+
+    private fun createTracePanel(items: List<StreamingTraceAssembler.TraceItem>): JPanel {
+        val wrapper = JPanel(BorderLayout())
+        wrapper.isOpaque = true
+        wrapper.background = JBColor(
+            java.awt.Color(249, 251, 255),
+            java.awt.Color(40, 45, 52),
+        )
+        wrapper.border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(JBColor.border(), 1),
+            JBUI.Borders.empty(8, 10),
+        )
+
+        val summaryBar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        summaryBar.isOpaque = false
+        val summaryLabel = JBLabel(SpecCodingBundle.message("chat.timeline.summary.label"))
+        summaryLabel.font = summaryLabel.font.deriveFont(java.awt.Font.BOLD, 12f)
+        summaryBar.add(summaryLabel)
+
+        val readCount = items.count { it.kind == ExecutionTimelineParser.Kind.READ }
+        val editCount = items.count { it.kind == ExecutionTimelineParser.Kind.EDIT }
+        val verifyCount = items.count { it.kind == ExecutionTimelineParser.Kind.VERIFY }
+        val statsLabel = JBLabel(SpecCodingBundle.message("chat.timeline.summary.stats", readCount, editCount, verifyCount))
+        statsLabel.foreground = JBColor.GRAY
+        statsLabel.font = statsLabel.font.deriveFont(11f)
+        summaryBar.add(statsLabel)
+
+        val toggleButton = JButton(
+            SpecCodingBundle.message(
+                if (traceExpanded) "chat.timeline.toggle.collapse" else "chat.timeline.toggle.expand"
+            )
+        )
+        styleInlineActionButton(toggleButton)
+        toggleButton.addActionListener {
+            traceExpanded = !traceExpanded
+            renderContent()
+        }
+        summaryBar.add(toggleButton)
+
+        wrapper.add(summaryBar, BorderLayout.NORTH)
+
+        if (traceExpanded) {
+            val listPanel = JPanel()
+            listPanel.layout = BoxLayout(listPanel, BoxLayout.Y_AXIS)
+            listPanel.isOpaque = false
+            listPanel.border = JBUI.Borders.emptyTop(6)
+
+            items.forEach { item ->
+                listPanel.add(createTraceItemRow(item))
+            }
+            wrapper.add(listPanel, BorderLayout.CENTER)
         }
 
-        contentHost.removeAll()
-        contentHost.add(container, BorderLayout.CENTER)
+        val container = JPanel(BorderLayout())
+        container.isOpaque = false
+        container.border = JBUI.Borders.emptyBottom(6)
+        container.add(wrapper, BorderLayout.CENTER)
+        return container
+    }
+
+    private fun createOutputPanel(items: List<StreamingTraceAssembler.TraceItem>): JPanel {
+        val wrapper = JPanel(BorderLayout())
+        wrapper.isOpaque = true
+        wrapper.background = JBColor(
+            java.awt.Color(247, 249, 252),
+            java.awt.Color(38, 42, 48),
+        )
+        wrapper.border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(JBColor.border(), 1),
+            JBUI.Borders.empty(8, 10),
+        )
+
+        val header = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        header.isOpaque = false
+
+        val title = JBLabel(SpecCodingBundle.message("chat.timeline.kind.output"))
+        title.font = title.font.deriveFont(java.awt.Font.BOLD, 12f)
+        header.add(title)
+
+        val countLabel = JBLabel(items.size.toString())
+        countLabel.foreground = JBColor.GRAY
+        countLabel.font = countLabel.font.deriveFont(11f)
+        header.add(countLabel)
+
+        val toggleButton = JButton(
+            SpecCodingBundle.message(
+                if (outputExpanded) "chat.timeline.toggle.collapse" else "chat.timeline.toggle.expand"
+            )
+        )
+        styleInlineActionButton(toggleButton)
+        toggleButton.addActionListener {
+            outputExpanded = !outputExpanded
+            renderContent()
+        }
+        header.add(toggleButton)
+
+        wrapper.add(header, BorderLayout.NORTH)
+
+        if (outputExpanded) {
+            val list = JPanel()
+            list.layout = BoxLayout(list, BoxLayout.Y_AXIS)
+            list.isOpaque = false
+            list.border = JBUI.Borders.emptyTop(6)
+            items.forEach { item ->
+                list.add(createTraceDetailBlock(item, forceVerbose = true))
+            }
+            wrapper.add(list, BorderLayout.CENTER)
+        } else {
+            val first = items.firstOrNull()
+            if (first != null) {
+                val previewHost = JPanel(BorderLayout())
+                previewHost.isOpaque = false
+                previewHost.border = JBUI.Borders.emptyTop(6)
+                previewHost.add(createTraceDetailBlock(first, forceVerbose = true), BorderLayout.CENTER)
+                wrapper.add(previewHost, BorderLayout.CENTER)
+            }
+        }
+
+        val container = JPanel(BorderLayout())
+        container.isOpaque = false
+        container.border = JBUI.Borders.emptyBottom(6)
+        container.add(wrapper, BorderLayout.CENTER)
+        return container
+    }
+
+    private fun createTraceItemRow(item: StreamingTraceAssembler.TraceItem): JPanel {
+        val row = JPanel(BorderLayout())
+        row.isOpaque = true
+        row.background = JBColor(
+            java.awt.Color(244, 248, 254),
+            java.awt.Color(47, 54, 62),
+        )
+        row.border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(JBColor.border(), 1),
+            JBUI.Borders.empty(6, 8),
+        )
+
+        val header = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        header.isOpaque = false
+
+        val dot = JBLabel("●")
+        dot.foreground = statusColor(item.status)
+        dot.font = dot.font.deriveFont(10f)
+        header.add(dot)
+
+        val kindLabel = JBLabel(
+            "${kindLabel(item.kind)} · ${statusLabel(item.status)}"
+        )
+        kindLabel.font = kindLabel.font.deriveFont(java.awt.Font.BOLD, 11f)
+        kindLabel.foreground = JBColor(
+            java.awt.Color(40, 52, 73),
+            java.awt.Color(196, 210, 231),
+        )
+        header.add(kindLabel)
+
+        if (item.fileAction != null && onWorkflowFileOpen != null) {
+            val openBtn = JButton(SpecCodingBundle.message("chat.workflow.action.openFile.short"))
+            styleInlineActionButton(openBtn)
+            openBtn.toolTipText = SpecCodingBundle.message("chat.workflow.action.openFile.tooltip", item.fileAction.displayPath)
+            openBtn.addActionListener {
+                onWorkflowFileOpen.invoke(item.fileAction)
+            }
+            header.add(openBtn)
+        }
+
+        row.add(header, BorderLayout.NORTH)
+        row.add(createTraceDetailBlock(item), BorderLayout.CENTER)
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(5)
+            add(row, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createTraceDetailBlock(item: StreamingTraceAssembler.TraceItem, forceVerbose: Boolean = false): JPanel {
+        val block = JPanel(BorderLayout())
+        block.isOpaque = false
+        block.border = JBUI.Borders.empty(2, 10, 2, 0)
+
+        val key = entryKey(item)
+        val verbose = forceVerbose || item.isVerbose
+        val previewLength = if (forceVerbose) TRACE_OUTPUT_PREVIEW_LENGTH else TRACE_DETAIL_PREVIEW_LENGTH
+        val hasOverflow = item.detail.length > previewLength
+        val collapsed = verbose && key !in expandedVerboseEntries
+        val visibleText = if (collapsed) {
+            toPreview(item.detail, previewLength)
+        } else if (!verbose && hasOverflow) {
+            toPreview(item.detail, previewLength)
+        } else {
+            item.detail
+        }
+
+        val detailPane = JTextPane()
+        detailPane.isEditable = false
+        detailPane.isOpaque = false
+        detailPane.isFocusable = false
+        detailPane.border = JBUI.Borders.empty()
+        val doc = detailPane.styledDocument
+        doc.remove(0, doc.length)
+        val attrs = SimpleAttributeSet()
+        StyleConstants.setFontFamily(attrs, "Monospaced")
+        StyleConstants.setFontSize(attrs, 12)
+        doc.insertString(0, visibleText, attrs)
+        block.add(detailPane, BorderLayout.CENTER)
+
+        if (verbose) {
+            val toggleText = if (collapsed) {
+                SpecCodingBundle.message("chat.timeline.toggle.expand")
+            } else {
+                SpecCodingBundle.message("chat.timeline.toggle.collapse")
+            }
+            val toggleBtn = JButton(toggleText)
+            styleInlineActionButton(toggleBtn)
+            toggleBtn.addActionListener {
+                if (collapsed) {
+                    expandedVerboseEntries += key
+                } else {
+                    expandedVerboseEntries -= key
+                }
+                renderContent()
+            }
+            val controls = JPanel(FlowLayout(FlowLayout.LEFT, 0, 4))
+            controls.isOpaque = false
+            controls.add(toggleBtn)
+            block.add(controls, BorderLayout.SOUTH)
+        }
+
+        return block
+    }
+
+    private fun createMarkdownContainer(content: String): JPanel {
+        val panel = JPanel(BorderLayout())
+        panel.isOpaque = false
+        panel.add(createMarkdownPane(content), BorderLayout.CENTER)
+        return panel
     }
 
     private fun createMarkdownPane(content: String): JTextPane {
@@ -162,6 +481,40 @@ class ChatMessagePanel(
         pane.isFocusable = false
         MarkdownRenderer.render(pane, content)
         return pane
+    }
+
+    private fun kindLabel(kind: ExecutionTimelineParser.Kind): String = when (kind) {
+        ExecutionTimelineParser.Kind.THINK -> SpecCodingBundle.message("chat.timeline.kind.think")
+        ExecutionTimelineParser.Kind.READ -> SpecCodingBundle.message("chat.timeline.kind.read")
+        ExecutionTimelineParser.Kind.EDIT -> SpecCodingBundle.message("chat.timeline.kind.edit")
+        ExecutionTimelineParser.Kind.TASK -> SpecCodingBundle.message("chat.timeline.kind.task")
+        ExecutionTimelineParser.Kind.VERIFY -> SpecCodingBundle.message("chat.timeline.kind.verify")
+        ExecutionTimelineParser.Kind.TOOL -> SpecCodingBundle.message("chat.timeline.kind.tool")
+        ExecutionTimelineParser.Kind.OUTPUT -> SpecCodingBundle.message("chat.timeline.kind.output")
+    }
+
+    private fun statusLabel(status: ExecutionTimelineParser.Status): String = when (status) {
+        ExecutionTimelineParser.Status.RUNNING -> SpecCodingBundle.message("chat.timeline.status.running")
+        ExecutionTimelineParser.Status.DONE -> SpecCodingBundle.message("chat.timeline.status.done")
+        ExecutionTimelineParser.Status.ERROR -> SpecCodingBundle.message("chat.timeline.status.error")
+        ExecutionTimelineParser.Status.INFO -> SpecCodingBundle.message("chat.timeline.status.info")
+    }
+
+    private fun statusColor(status: ExecutionTimelineParser.Status): java.awt.Color = when (status) {
+        ExecutionTimelineParser.Status.RUNNING -> JBColor(
+            java.awt.Color(0, 102, 204),
+            java.awt.Color(124, 182, 255),
+        )
+        ExecutionTimelineParser.Status.DONE -> JBColor(
+            java.awt.Color(18, 112, 52),
+            java.awt.Color(107, 206, 147),
+        )
+        ExecutionTimelineParser.Status.ERROR -> JBColor.RED
+        ExecutionTimelineParser.Status.INFO -> JBColor.GRAY
+    }
+
+    private fun entryKey(item: StreamingTraceAssembler.TraceItem): String {
+        return "${item.kind.name}:${item.detail.lowercase()}"
     }
 
     private fun extractCodeBlocks() {
@@ -195,8 +548,12 @@ class ChatMessagePanel(
         }
 
         // 复制全文按钮
-        val copyAllBtn = JButton(SpecCodingBundle.message("chat.message.copy.all"))
-        styleActionButton(copyAllBtn)
+        val copyAllBtn = JButton()
+        styleIconActionButton(
+            button = copyAllBtn,
+            icon = AllIcons.Actions.Copy,
+            tooltip = SpecCodingBundle.message("chat.message.copy.all"),
+        )
         copyAllBtn.addActionListener {
             val clipboard = Toolkit.getDefaultToolkit().systemClipboard
             clipboard.setContents(StringSelection(contentBuilder.toString()), null)
@@ -208,24 +565,36 @@ class ChatMessagePanel(
         }
 
         if (role == MessageRole.ASSISTANT && onContinue != null) {
-            val continueBtn = JButton(SpecCodingBundle.message("chat.message.continue"))
-            styleActionButton(continueBtn)
+            val continueBtn = JButton()
+            styleIconActionButton(
+                button = continueBtn,
+                icon = AllIcons.Actions.Execute,
+                tooltip = SpecCodingBundle.message("chat.message.continue"),
+            )
             continueBtn.addActionListener { onContinue.invoke(this) }
             buttonPanel.add(continueBtn)
         }
 
         // 重新生成按钮（仅 Assistant 消息）
         if (role == MessageRole.ASSISTANT && onRegenerate != null) {
-            val regenBtn = JButton(SpecCodingBundle.message("chat.message.regenerate"))
-            styleActionButton(regenBtn)
+            val regenBtn = JButton()
+            styleIconActionButton(
+                button = regenBtn,
+                icon = AllIcons.Actions.Refresh,
+                tooltip = SpecCodingBundle.message("chat.message.regenerate"),
+            )
             regenBtn.addActionListener { onRegenerate.invoke(this) }
             buttonPanel.add(regenBtn)
         }
 
         // 删除按钮（User 和 Assistant 消息）
         if ((role == MessageRole.USER || role == MessageRole.ASSISTANT) && onDelete != null) {
-            val deleteBtn = JButton(SpecCodingBundle.message("chat.message.delete"))
-            styleActionButton(deleteBtn)
+            val deleteBtn = JButton()
+            styleIconActionButton(
+                button = deleteBtn,
+                icon = AllIcons.Actions.GC,
+                tooltip = SpecCodingBundle.message("chat.message.delete"),
+            )
             deleteBtn.addActionListener { onDelete.invoke(this) }
             buttonPanel.add(deleteBtn)
         }
@@ -283,24 +652,6 @@ class ChatMessagePanel(
         }
     }
 
-    private fun createRoleLabel(): JPanel {
-        val panel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
-        panel.isOpaque = false
-        panel.border = JBUI.Borders.emptyBottom(6)
-
-        val label = javax.swing.JLabel(getRoleText())
-        label.font = label.font.deriveFont(
-            java.awt.Font.BOLD, 11f
-        )
-        label.foreground = getRoleColor()
-        label.isOpaque = true
-        label.background = getRoleBadgeBackground()
-        label.border = JBUI.Borders.empty(3, 8)
-        panel.add(label)
-
-        return panel
-    }
-
     private fun styleActionButton(button: JButton) {
         button.margin = JBUI.insets(3, 8, 3, 8)
         button.isFocusPainted = false
@@ -316,43 +667,84 @@ class ChatMessagePanel(
         button.putClientProperty("JButton.buttonType", "roundRect")
     }
 
-    private fun getRoleText(): String = when (role) {
-        MessageRole.USER -> SpecCodingBundle.message("toolwindow.message.user")
-        MessageRole.ASSISTANT -> SpecCodingBundle.message("toolwindow.message.assistant")
-        MessageRole.SYSTEM -> SpecCodingBundle.message("toolwindow.message.system")
-        MessageRole.ERROR -> SpecCodingBundle.message("toolwindow.message.error")
+    private fun styleInlineActionButton(button: JButton) {
+        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.isFocusPainted = false
+        button.isFocusable = false
+        button.isOpaque = false
+        button.isContentAreaFilled = false
+        button.border = JBUI.Borders.empty(0, 2)
+        button.font = button.font.deriveFont(11f)
+        button.foreground = JBColor(
+            java.awt.Color(57, 95, 151),
+            java.awt.Color(141, 190, 255),
+        )
+        button.putClientProperty("JButton.buttonType", "borderless")
     }
 
-    private fun getRoleColor(): java.awt.Color = when (role) {
-        MessageRole.USER -> JBColor(
-            java.awt.Color(0, 94, 184),
-            java.awt.Color(98, 173, 255)
-        )
-        MessageRole.ASSISTANT -> JBColor(
-            java.awt.Color(18, 112, 52),
-            java.awt.Color(107, 206, 147)
-        )
-        MessageRole.SYSTEM -> JBColor.GRAY
-        MessageRole.ERROR -> JBColor.RED
+    private fun styleIconActionButton(button: JButton, icon: Icon, tooltip: String) {
+        styleActionButton(button)
+        button.icon = icon
+        button.text = ""
+        button.toolTipText = tooltip
+        button.accessibleContext.accessibleName = tooltip
+        button.preferredSize = JBUI.size(26, 22)
+        button.minimumSize = JBUI.size(26, 22)
     }
 
-    private fun getRoleBadgeBackground(): java.awt.Color = when (role) {
-        MessageRole.USER -> JBColor(
-            java.awt.Color(222, 236, 255),
-            java.awt.Color(43, 63, 84),
-        )
-        MessageRole.ASSISTANT -> JBColor(
-            java.awt.Color(223, 245, 228),
-            java.awt.Color(42, 71, 52),
-        )
-        MessageRole.SYSTEM -> JBColor(
-            java.awt.Color(235, 235, 235),
-            java.awt.Color(62, 62, 62),
-        )
-        MessageRole.ERROR -> JBColor(
-            java.awt.Color(255, 228, 228),
-            java.awt.Color(94, 52, 52),
-        )
+    private fun toPreview(text: String, limit: Int): String {
+        val compact = text
+            .lineSequence()
+            .joinToString(" ") { it.trim() }
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (compact.length <= limit) {
+            return compact
+        }
+        return compact.take(limit).trimEnd() + "..."
+    }
+
+    private fun extractAssistantAnswerContent(content: String): String {
+        if (content.isBlank()) return ""
+
+        val kept = mutableListOf<String>()
+        var skippingOutputBody = false
+
+        content.lines().forEach { rawLine ->
+            val trimmed = rawLine.trim()
+            val timelineItem = ExecutionTimelineParser.parseLine(rawLine)
+            if (timelineItem != null) {
+                skippingOutputBody = timelineItem.kind == ExecutionTimelineParser.Kind.OUTPUT ||
+                    timelineItem.kind == ExecutionTimelineParser.Kind.TOOL
+                return@forEach
+            }
+
+            if (skippingOutputBody) {
+                if (trimmed.isBlank()) {
+                    skippingOutputBody = false
+                } else if (isLikelyWorkflowHeading(trimmed)) {
+                    skippingOutputBody = false
+                    kept += rawLine
+                }
+                return@forEach
+            }
+
+            kept += rawLine
+        }
+
+        return kept.joinToString("\n").trim()
+    }
+
+    private fun isLikelyWorkflowHeading(line: String): Boolean {
+        val trimmed = line.trim()
+        if (trimmed.startsWith("## ")) return true
+        val normalized = trimmed
+            .removePrefix("**")
+            .removeSuffix("**")
+            .trim()
+            .trimEnd(':', '：')
+            .lowercase()
+        return normalized in WORKFLOW_HEADING_TITLES
     }
 
     private fun getBackgroundColor(): java.awt.Color = when (role) {
@@ -378,5 +770,12 @@ class ChatMessagePanel(
         private const val MAX_FILE_ACTIONS = 4
         private const val MAX_COMMAND_ACTIONS = 4
         private const val MAX_COMMAND_DISPLAY_LENGTH = 26
+        private const val TRACE_DETAIL_PREVIEW_LENGTH = 220
+        private const val TRACE_OUTPUT_PREVIEW_LENGTH = 140
+        private val WORKFLOW_HEADING_TITLES = setOf(
+            "plan", "planning", "计划", "规划",
+            "execute", "execution", "implement", "执行", "实施",
+            "verify", "verification", "test", "验证", "测试",
+        )
     }
 }

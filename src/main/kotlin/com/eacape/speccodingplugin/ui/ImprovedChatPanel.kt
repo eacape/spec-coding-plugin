@@ -30,6 +30,7 @@ import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecGenerationProgress
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.ui.chat.ChatMessagePanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagesListPanel
 import com.eacape.speccodingplugin.ui.chat.SpecWorkflowResponseBuilder
@@ -405,6 +406,40 @@ class ImprovedChatPanel(
         scope.launch {
             try {
                 val assistantContent = StringBuilder()
+                val pendingDelta = StringBuilder()
+                val pendingEvents = mutableListOf<ChatStreamEvent>()
+                var pendingChunks = 0
+
+                fun flushPending(force: Boolean = false) {
+                    val shouldFlush = force ||
+                        pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
+                        pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
+                        pendingDelta.contains('\n') ||
+                        pendingEvents.isNotEmpty()
+                    if (!shouldFlush) return
+                    if (pendingDelta.isEmpty() && pendingEvents.isEmpty()) {
+                        pendingChunks = 0
+                        return
+                    }
+
+                    val delta = pendingDelta.toString()
+                    val events = pendingEvents.toList()
+                    pendingDelta.setLength(0)
+                    pendingEvents.clear()
+                    pendingChunks = 0
+
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        val panel = currentAssistantPanel ?: return@invokeLater
+                        val shouldAutoScroll = messagesPanel.isNearBottom(STREAM_AUTO_SCROLL_THRESHOLD_PX)
+                        panel.appendStreamContent(delta, events)
+                        if (shouldAutoScroll) {
+                            messagesPanel.scrollToBottom()
+                        }
+                    }
+                }
 
                 projectService.chat(
                     providerId = providerId,
@@ -412,18 +447,23 @@ class ImprovedChatPanel(
                     modelId = modelId,
                     contextSnapshot = contextSnapshot,
                 ) { chunk ->
-                    ApplicationManager.getApplication().invokeLater {
-                        if (project.isDisposed || _isDisposed) {
-                            return@invokeLater
-                        }
+                    if (chunk.delta.isNotEmpty()) {
+                        assistantContent.append(chunk.delta)
+                        pendingDelta.append(chunk.delta)
+                    }
+                    chunk.event?.let { pendingEvents += it }
+                    pendingChunks += 1
 
-                        if (!chunk.isLast) {
-                            assistantContent.append(chunk.delta)
-                            currentAssistantPanel?.appendContent(chunk.delta)
-                            messagesPanel.scrollToBottom()
-                        } else {
+                    if (chunk.isLast) {
+                        flushPending(force = true)
+                        ApplicationManager.getApplication().invokeLater {
+                            if (project.isDisposed || _isDisposed) {
+                                return@invokeLater
+                            }
                             currentAssistantPanel?.finishMessage()
                         }
+                    } else {
+                        flushPending(force = false)
                     }
                 }
 
@@ -1401,22 +1441,63 @@ class ImprovedChatPanel(
         scope.launch {
             try {
                 val assistantContent = StringBuilder()
+                val pendingDelta = StringBuilder()
+                val pendingEvents = mutableListOf<ChatStreamEvent>()
+                var pendingChunks = 0
+
+                fun flushPending(force: Boolean = false) {
+                    val shouldFlush = force ||
+                        pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
+                        pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
+                        pendingDelta.contains('\n') ||
+                        pendingEvents.isNotEmpty()
+                    if (!shouldFlush) return
+                    if (pendingDelta.isEmpty() && pendingEvents.isEmpty()) {
+                        pendingChunks = 0
+                        return
+                    }
+
+                    val delta = pendingDelta.toString()
+                    val events = pendingEvents.toList()
+                    pendingDelta.setLength(0)
+                    pendingEvents.clear()
+                    pendingChunks = 0
+
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        val panelForUpdate = currentAssistantPanel ?: return@invokeLater
+                        val shouldAutoScroll = messagesPanel.isNearBottom(STREAM_AUTO_SCROLL_THRESHOLD_PX)
+                        panelForUpdate.appendStreamContent(delta, events)
+                        if (shouldAutoScroll) {
+                            messagesPanel.scrollToBottom()
+                        }
+                    }
+                }
+
                 projectService.chat(
                     providerId = providerId,
                     userInput = userInput,
                     modelId = modelId,
                 ) { chunk ->
-                    ApplicationManager.getApplication().invokeLater {
-                        if (project.isDisposed || _isDisposed) {
-                            return@invokeLater
-                        }
-                        if (!chunk.isLast) {
-                            assistantContent.append(chunk.delta)
-                            currentAssistantPanel?.appendContent(chunk.delta)
-                            messagesPanel.scrollToBottom()
-                        } else {
+                    if (chunk.delta.isNotEmpty()) {
+                        assistantContent.append(chunk.delta)
+                        pendingDelta.append(chunk.delta)
+                    }
+                    chunk.event?.let { pendingEvents += it }
+                    pendingChunks += 1
+
+                    if (chunk.isLast) {
+                        flushPending(force = true)
+                        ApplicationManager.getApplication().invokeLater {
+                            if (project.isDisposed || _isDisposed) {
+                                return@invokeLater
+                            }
                             currentAssistantPanel?.finishMessage()
                         }
+                    } else {
+                        flushPending(force = false)
                     }
                 }
                 val assistantMessage = LlmMessage(LlmRole.ASSISTANT, assistantContent.toString())
@@ -1480,5 +1561,8 @@ class ImprovedChatPanel(
         private const val MAX_CONVERSATION_HISTORY = 240
         private const val MAX_RESTORED_MESSAGES = 240
         private const val SESSION_LOAD_FETCH_LIMIT = 5000
+        private const val STREAM_BATCH_CHUNK_COUNT = 4
+        private const val STREAM_BATCH_CHAR_COUNT = 240
+        private const val STREAM_AUTO_SCROLL_THRESHOLD_PX = 80
     }
 }
