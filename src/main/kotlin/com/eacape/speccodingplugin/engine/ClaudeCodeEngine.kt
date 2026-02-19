@@ -22,10 +22,50 @@ class ClaudeCodeEngine(
     override fun buildCommandArgs(
         request: EngineRequest
     ): List<String> {
+        return buildArgs(
+            request = request,
+            outputFormat = "text",
+            includePartialMessages = false,
+            verbose = false,
+        )
+    }
+
+    override fun buildStreamCommandArgs(request: EngineRequest): List<String> {
+        return buildArgs(
+            request = request,
+            outputFormat = "stream-json",
+            includePartialMessages = true,
+            verbose = true,
+        )
+    }
+
+    override fun stdoutChunkFlushChars(): Int? = null
+
+    override fun parseStreamLine(
+        line: String
+    ): EngineChunk? {
+        if (line.isEmpty()) return null
+        return ClaudeStreamJsonParser.parseLine(line)
+    }
+
+    private fun buildArgs(
+        request: EngineRequest,
+        outputFormat: String,
+        includePartialMessages: Boolean,
+        verbose: Boolean,
+    ): List<String> {
         val args = mutableListOf<String>()
         args.add("--print")
         args.add("--output-format")
-        args.add("text")
+        args.add(outputFormat)
+
+        if (verbose) {
+            args.add("--verbose")
+        }
+
+        if (includePartialMessages) {
+            args.add("--include-partial-messages")
+        }
 
         request.options["model"]?.let {
             args.add("--model")
@@ -44,16 +84,6 @@ class ClaudeCodeEngine(
 
         args.add(request.prompt)
         return args
-    }
-
-    override fun parseStreamLine(
-        line: String
-    ): EngineChunk? {
-        if (line.isBlank()) return null
-        return EngineChunk(
-            delta = line + "\n",
-            event = CliProgressEventParser.parseStdout(line),
-        )
     }
 
     override suspend fun getVersion(): String? {

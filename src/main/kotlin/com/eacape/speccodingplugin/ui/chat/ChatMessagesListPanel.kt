@@ -2,8 +2,12 @@ package com.eacape.speccodingplugin.ui.chat
 
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
+import java.awt.Dimension
+import java.awt.Rectangle
 import javax.swing.BoxLayout
 import javax.swing.JPanel
+import javax.swing.Scrollable
+import javax.swing.ScrollPaneConstants
 import javax.swing.SwingUtilities
 
 /**
@@ -12,7 +16,7 @@ import javax.swing.SwingUtilities
  */
 class ChatMessagesListPanel(
     private val maxVisibleMessages: Int = DEFAULT_MAX_VISIBLE_MESSAGES,
-) : JPanel() {
+) : JPanel(), Scrollable {
 
     private val messages = mutableListOf<ChatMessagePanel>()
     private val scrollPane: JBScrollPane
@@ -23,6 +27,7 @@ class ChatMessagesListPanel(
 
         scrollPane = JBScrollPane(this)
         scrollPane.border = JBUI.Borders.empty()
+        scrollPane.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         scrollPane.verticalScrollBar.unitIncrement = 16
     }
 
@@ -102,8 +107,23 @@ class ChatMessagesListPanel(
         }
     }
 
+    override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
+
+    override fun getScrollableUnitIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int {
+        return DEFAULT_SCROLL_UNIT_INCREMENT
+    }
+
+    override fun getScrollableBlockIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int {
+        return (visibleRect.height - DEFAULT_SCROLL_UNIT_INCREMENT).coerceAtLeast(DEFAULT_SCROLL_UNIT_INCREMENT)
+    }
+
+    override fun getScrollableTracksViewportWidth(): Boolean = true
+
+    override fun getScrollableTracksViewportHeight(): Boolean = false
+
     companion object {
         private const val DEFAULT_MAX_VISIBLE_MESSAGES = 240
         private const val DEFAULT_NEAR_BOTTOM_THRESHOLD_PX = 80
+        private const val DEFAULT_SCROLL_UNIT_INCREMENT = 16
     }
 }

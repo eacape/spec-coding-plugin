@@ -1,9 +1,13 @@
 ﻿package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.stream.ChatTraceKind
+import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.awt.Component
 import java.awt.Container
@@ -60,10 +64,13 @@ class ChatMessagePanelTraceStreamingTest {
         assertNotNull(expandButton, "Expected expand trace button for collapsed trace panel")
         runOnEdt { expandButton!!.doClick() }
 
-        val openButtonText = SpecCodingBundle.message("chat.workflow.action.openFile.short")
+        val expectedTooltip = SpecCodingBundle.message(
+            "chat.workflow.action.openFile.tooltip",
+            "src/main/kotlin/com/eacape/speccodingplugin/ui/chat/ChatMessagePanel.kt:120",
+        )
         val openButton = collectDescendants(panel)
             .filterIsInstance<JButton>()
-            .firstOrNull { it.text == openButtonText }
+            .firstOrNull { it.toolTipText == expectedTooltip }
         assertNotNull(openButton, "Expected open file action on edit trace item")
 
         runOnEdt { openButton!!.doClick() }
@@ -103,6 +110,110 @@ class ChatMessagePanelTraceStreamingTest {
         assertFalse(allText.contains("[Thinking]"))
         assertFalse(allText.contains("[Task]"))
         assertFalse(allText.contains("[Verify]"))
+    }
+
+    @Test
+    fun `running trace status should become done when message finishes`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendStreamEvent(
+                com.eacape.speccodingplugin.stream.ChatStreamEvent(
+                    kind = com.eacape.speccodingplugin.stream.ChatTraceKind.TASK,
+                    detail = "implement ui polish",
+                    status = com.eacape.speccodingplugin.stream.ChatTraceStatus.RUNNING,
+                )
+            )
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected expand trace button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val doneText = SpecCodingBundle.message("chat.timeline.status.done")
+        val runningText = SpecCodingBundle.message("chat.timeline.status.running")
+        val labels = collectDescendants(panel)
+            .filterIsInstance<javax.swing.JLabel>()
+            .mapNotNull { it.text }
+            .toList()
+
+        assertTrue(labels.any { it.contains(doneText) })
+        assertFalse(labels.any { it.contains(runningText) })
+    }
+
+    @Test
+    fun `trace detail should render markdown style content`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendStreamEvent(
+                ChatStreamEvent(
+                    kind = ChatTraceKind.TASK,
+                    detail = "**项目背景**\n- 第一项\n- 第二项",
+                    status = ChatTraceStatus.RUNNING,
+                )
+            )
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected expand trace button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val allText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertTrue(allText.contains("项目背景"))
+        assertFalse(allText.contains("**项目背景**"))
+    }
+
+    @Test
+    fun `message text pane should be focusable for in-place copy`() {
+        val panel = ChatMessagePanel(
+            role = ChatMessagePanel.MessageRole.ASSISTANT,
+            initialContent = "copy me",
+        )
+
+        runOnEdt { panel.finishMessage() }
+
+        val textPanes = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .toList()
+
+        assertTrue(textPanes.isNotEmpty())
+        assertTrue(textPanes.all { it.isFocusable })
+    }
+
+    @Test
+    fun `copy all action should be clickable`() {
+        val panel = ChatMessagePanel(
+            role = ChatMessagePanel.MessageRole.ASSISTANT,
+            initialContent = "clipboard payload",
+        )
+
+        runOnEdt { panel.finishMessage() }
+
+        val tooltip = SpecCodingBundle.message("chat.message.copy.all")
+        val copyButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.toolTipText == tooltip }
+        assertNotNull(copyButton, "Expected copy-all icon button")
+        val button = copyButton!!
+
+        runOnEdt { button.doClick() }
+
+        val copied = SpecCodingBundle.message("chat.message.copy.copied")
+        val failed = SpecCodingBundle.message("chat.message.copy.failed")
+        assertTrue(button.toolTipText == copied || button.toolTipText == failed)
+        assertTrue(button.text == "OK" || button.text == "!")
     }
 
     private fun collectDescendants(component: Component): Sequence<Component> = sequence {

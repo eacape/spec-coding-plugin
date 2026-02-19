@@ -98,7 +98,7 @@ abstract class CliEngine(
                         content = "",
                         engineId = id,
                         success = false,
-                        error = stderr.ifBlank { "CLI request timed out after $timeoutSeconds seconds" },
+                        error = stderr.ifBlank { timeoutMessage(timeoutSeconds) },
                     )
                 }
 
@@ -117,7 +117,7 @@ abstract class CliEngine(
                     )
                 }
             } finally {
-                watchdogFuture.cancel(true)
+                watchdogFuture?.cancel(true)
                 activeProcesses.remove(requestId)
             }
         } catch (e: Exception) {
@@ -133,7 +133,7 @@ abstract class CliEngine(
     override fun stream(request: EngineRequest): Flow<EngineChunk> = flow {
         val requestId = request.options["requestId"] ?: System.nanoTime().toString()
         val timeoutSeconds = resolveTimeoutSeconds(request)
-        val args = buildCommandArgs(request)
+        val args = buildStreamCommandArgs(request)
         val process = startProcess(args, request.context.workingDirectory)
         activeProcesses[requestId] = process
         val (timedOut, watchdogFuture) = startTimeoutWatchdog(process, timeoutSeconds)
@@ -164,7 +164,9 @@ abstract class CliEngine(
                 val frame = frames.poll(STREAM_POLL_MILLIS, TimeUnit.MILLISECONDS)
                 if (frame != null) {
                     val parsed = when (frame.source) {
-                        StreamSource.STDOUT -> parseStreamLine(frame.line)
+                        StreamSource.STDOUT -> parseStreamLine(
+                            if (frame.hasLineBreak) frame.line + "\n" else frame.line
+                        )
                         StreamSource.STDERR -> parseProgressLine(frame.line)
                     }
                     if (parsed != null) {
@@ -185,12 +187,12 @@ abstract class CliEngine(
             val exitCode = process.waitFor()
             val stderr = stderrText.toString().trim()
             if (timedOut.get()) {
-                val timeoutMessage = if (stderr.isBlank()) {
-                    "CLI request timed out after $timeoutSeconds seconds"
+                val resolvedTimeoutMessage = if (stderr.isBlank()) {
+                    timeoutMessage(timeoutSeconds)
                 } else {
-                    "CLI request timed out after $timeoutSeconds seconds: $stderr"
+                    "${timeoutMessage(timeoutSeconds)}: $stderr"
                 }
-                throw RuntimeException(timeoutMessage)
+                throw RuntimeException(resolvedTimeoutMessage)
             }
             if (exitCode != 0) {
                 throw RuntimeException(stderr.ifBlank { "CLI exited with code: $exitCode" })
@@ -200,7 +202,7 @@ abstract class CliEngine(
             }
             emit(EngineChunk(delta = "", isLast = true))
         } finally {
-            watchdogFuture.cancel(true)
+            watchdogFuture?.cancel(true)
             activeProcesses.remove(requestId)
         }
     }.flowOn(Dispatchers.IO)
@@ -232,6 +234,12 @@ abstract class CliEngine(
     /** 构建命令行参数 */
     protected abstract fun buildCommandArgs(request: EngineRequest): List<String>
 
+    /**
+     * 构建流式命令行参数。
+     * 默认与非流式保持一致，子类可按需覆盖（例如启用结构化流输出）。
+     */
+    protected open fun buildStreamCommandArgs(request: EngineRequest): List<String> = buildCommandArgs(request)
+
     /** 解析流式输出行 */
     protected abstract fun parseStreamLine(line: String): EngineChunk?
 
@@ -247,17 +255,36 @@ abstract class CliEngine(
         )
     }
 
+    /**
+     * stdout 在无换行时的分片阈值。
+     * 返回 null 或 <= 0 时仅按换行刷新，适合 JSONL 等按行协议。
+     */
+    protected open fun stdoutChunkFlushChars(): Int? = STREAM_STDOUT_FLUSH_CHARS
+
     /** 获取版本号 */
     protected abstract suspend fun getVersion(): String?
 
-    private fun resolveTimeoutSeconds(request: EngineRequest): Long {
+    private fun resolveTimeoutSeconds(request: EngineRequest): Long? {
         val option = request.options["timeout_seconds"]?.toLongOrNull()
-        if (option != null && option > 0) return option
-        return DEFAULT_TIMEOUT_SECONDS
+        return option?.takeIf { it > 0 }
     }
 
-    private fun startTimeoutWatchdog(process: Process, timeoutSeconds: Long): Pair<AtomicBoolean, CompletableFuture<Void>> {
+    private fun timeoutMessage(timeoutSeconds: Long?): String {
+        return if (timeoutSeconds != null && timeoutSeconds > 0) {
+            "CLI request timed out after $timeoutSeconds seconds"
+        } else {
+            "CLI request timed out"
+        }
+    }
+
+    private fun startTimeoutWatchdog(
+        process: Process,
+        timeoutSeconds: Long?,
+    ): Pair<AtomicBoolean, CompletableFuture<Void>?> {
         val timedOut = AtomicBoolean(false)
+        if (timeoutSeconds == null || timeoutSeconds <= 0) {
+            return timedOut to null
+        }
         val future = CompletableFuture.runAsync {
             try {
                 Thread.sleep(timeoutSeconds * 1000)
@@ -344,19 +371,30 @@ abstract class CliEngine(
         val pump = Thread {
             try {
                 InputStreamReader(stream).use { reader ->
+                    val stdoutFlushChars = stdoutChunkFlushChars()
                     val buffer = StringBuilder()
 
-                    fun flush() {
+                    fun flush(hasLineBreak: Boolean = false) {
                         if (buffer.isEmpty()) return
-                        val text = buffer.toString().trimEnd()
+                        val text = if (source == StreamSource.STDERR) {
+                            buffer.toString().trimEnd()
+                        } else {
+                            buffer.toString()
+                        }
                         buffer.setLength(0)
-                        if (text.isBlank()) return
+                        if (source == StreamSource.STDERR && text.isBlank()) return
                         if (stderrCollector != null) {
                             synchronized(stderrCollector) {
                                 stderrCollector.appendLine(text)
                             }
                         }
-                        queue.offer(StreamFrame(source = source, line = text))
+                        queue.offer(
+                            StreamFrame(
+                                source = source,
+                                line = text,
+                                hasLineBreak = hasLineBreak,
+                            )
+                        )
                     }
 
                     while (true) {
@@ -364,11 +402,23 @@ abstract class CliEngine(
                         if (value == -1) break
                         val ch = value.toChar()
                         when (ch) {
-                            '\n', '\r' -> flush()
-                            else -> buffer.append(ch)
+                            '\n', '\r' -> flush(hasLineBreak = true)
+                            else -> {
+                                buffer.append(ch)
+                                if (source == StreamSource.STDERR && buffer.length >= STREAM_PROGRESS_FLUSH_CHARS) {
+                                    flush(hasLineBreak = false)
+                                }
+                                if (source == StreamSource.STDOUT &&
+                                    stdoutFlushChars != null &&
+                                    stdoutFlushChars > 0 &&
+                                    buffer.length >= stdoutFlushChars
+                                ) {
+                                    flush(hasLineBreak = false)
+                                }
+                            }
                         }
                     }
-                    flush()
+                    flush(hasLineBreak = false)
                 }
             } catch (ignored: Exception) {
                 logger.debug("Stream pump closed for $id ($source): ${ignored.message}")
@@ -383,9 +433,10 @@ abstract class CliEngine(
     }
 
     companion object {
-        private const val DEFAULT_TIMEOUT_SECONDS = 45L
         private const val STREAM_POLL_MILLIS = 120L
         private const val STREAM_PUMP_JOIN_MILLIS = 500L
+        private const val STREAM_PROGRESS_FLUSH_CHARS = 120
+        private const val STREAM_STDOUT_FLUSH_CHARS = 64
     }
 
     private enum class StreamSource {
@@ -396,5 +447,6 @@ abstract class CliEngine(
     private data class StreamFrame(
         val source: StreamSource,
         val line: String,
+        val hasLineBreak: Boolean,
     )
 }

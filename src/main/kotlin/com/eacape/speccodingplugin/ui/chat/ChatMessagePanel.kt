@@ -3,19 +3,21 @@ package com.eacape.speccodingplugin.ui.chat
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.Icon
-import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JTextPane
+import javax.swing.Timer
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 
@@ -53,11 +55,9 @@ class ChatMessagePanel(
         border = JBUI.Borders.emptyBottom(10)
 
         // 内容区域
-        contentPane.isEditable = false
-        contentPane.isOpaque = false
+        configureReadableTextPane(contentPane)
         contentPane.border = JBUI.Borders.empty(8, 10)
         contentPane.background = getBackgroundColor()
-        contentPane.isFocusable = false
 
         contentHost.isOpaque = false
         contentHost.add(contentPane, BorderLayout.CENTER)
@@ -66,8 +66,17 @@ class ChatMessagePanel(
         wrapper.isOpaque = true
         wrapper.background = getBackgroundColor()
         wrapper.border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(8, 10),
+            JBUI.Borders.customLine(
+                JBColor(
+                    java.awt.Color(225, 230, 238),
+                    java.awt.Color(68, 74, 82),
+                ),
+                0,
+                0,
+                1,
+                0,
+            ),
+            JBUI.Borders.empty(8, 10, 7, 10),
         )
         wrapper.add(contentHost, BorderLayout.CENTER)
 
@@ -118,6 +127,7 @@ class ChatMessagePanel(
      */
     fun finishMessage() {
         messageFinished = true
+        traceAssembler.markRunningItemsDone()
         renderContent(structured = true)
         extractCodeBlocks()
         addActionButtons()
@@ -244,13 +254,17 @@ class ChatMessagePanel(
             java.awt.Color(249, 251, 255),
             java.awt.Color(40, 45, 52),
         )
-        wrapper.border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(8, 10),
-        )
+        wrapper.border = JBUI.Borders.empty(7, 10, 7, 10)
 
         val summaryBar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
         summaryBar.isOpaque = false
+        val summaryIcon = JBLabel("◍")
+        summaryIcon.foreground = JBColor(
+            java.awt.Color(83, 107, 143),
+            java.awt.Color(157, 185, 223),
+        )
+        summaryIcon.font = summaryIcon.font.deriveFont(12f)
+        summaryBar.add(summaryIcon)
         val summaryLabel = JBLabel(SpecCodingBundle.message("chat.timeline.summary.label"))
         summaryLabel.font = summaryLabel.font.deriveFont(java.awt.Font.BOLD, 12f)
         summaryBar.add(summaryLabel)
@@ -303,13 +317,15 @@ class ChatMessagePanel(
             java.awt.Color(247, 249, 252),
             java.awt.Color(38, 42, 48),
         )
-        wrapper.border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(8, 10),
-        )
+        wrapper.border = JBUI.Borders.empty(7, 10, 7, 10)
 
         val header = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
         header.isOpaque = false
+
+        val icon = JBLabel(kindGlyph(ExecutionTimelineParser.Kind.OUTPUT))
+        icon.foreground = kindColor(ExecutionTimelineParser.Kind.OUTPUT)
+        icon.font = icon.font.deriveFont(12f)
+        header.add(icon)
 
         val title = JBLabel(SpecCodingBundle.message("chat.timeline.kind.output"))
         title.font = title.font.deriveFont(java.awt.Font.BOLD, 12f)
@@ -340,7 +356,7 @@ class ChatMessagePanel(
             list.isOpaque = false
             list.border = JBUI.Borders.emptyTop(6)
             items.forEach { item ->
-                list.add(createTraceDetailBlock(item, forceVerbose = true))
+                list.add(createTraceDetailBlock(item, forceVerbose = true, showVerboseToggle = false))
             }
             wrapper.add(list, BorderLayout.CENTER)
         } else {
@@ -349,7 +365,7 @@ class ChatMessagePanel(
                 val previewHost = JPanel(BorderLayout())
                 previewHost.isOpaque = false
                 previewHost.border = JBUI.Borders.emptyTop(6)
-                previewHost.add(createTraceDetailBlock(first, forceVerbose = true), BorderLayout.CENTER)
+                previewHost.add(createTraceDetailBlock(first, forceVerbose = true, showVerboseToggle = false), BorderLayout.CENTER)
                 wrapper.add(previewHost, BorderLayout.CENTER)
             }
         }
@@ -368,31 +384,30 @@ class ChatMessagePanel(
             java.awt.Color(244, 248, 254),
             java.awt.Color(47, 54, 62),
         )
-        row.border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(6, 8),
-        )
+        row.border = JBUI.Borders.empty(6, 8, 6, 8)
 
         val header = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
         header.isOpaque = false
 
-        val dot = JBLabel("●")
-        dot.foreground = statusColor(item.status)
-        dot.font = dot.font.deriveFont(10f)
-        header.add(dot)
+        val icon = JBLabel(kindGlyph(item.kind))
+        icon.foreground = kindColor(item.kind)
+        icon.font = icon.font.deriveFont(12f)
+        header.add(icon)
 
         val kindLabel = JBLabel(
             "${kindLabel(item.kind)} · ${statusLabel(item.status)}"
         )
         kindLabel.font = kindLabel.font.deriveFont(java.awt.Font.BOLD, 11f)
-        kindLabel.foreground = JBColor(
-            java.awt.Color(40, 52, 73),
-            java.awt.Color(196, 210, 231),
-        )
+        kindLabel.foreground = statusColor(item.status)
         header.add(kindLabel)
 
         if (item.fileAction != null && onWorkflowFileOpen != null) {
-            val openBtn = JButton(SpecCodingBundle.message("chat.workflow.action.openFile.short"))
+            val openBtn = JButton(
+                SpecCodingBundle.message(
+                    "chat.workflow.action.openFile",
+                    abbreviateForActionButton(item.fileAction.displayPath),
+                )
+            )
             styleInlineActionButton(openBtn)
             openBtn.toolTipText = SpecCodingBundle.message("chat.workflow.action.openFile.tooltip", item.fileAction.displayPath)
             openBtn.addActionListener {
@@ -410,7 +425,11 @@ class ChatMessagePanel(
         }
     }
 
-    private fun createTraceDetailBlock(item: StreamingTraceAssembler.TraceItem, forceVerbose: Boolean = false): JPanel {
+    private fun createTraceDetailBlock(
+        item: StreamingTraceAssembler.TraceItem,
+        forceVerbose: Boolean = false,
+        showVerboseToggle: Boolean = true,
+    ): JPanel {
         val block = JPanel(BorderLayout())
         block.isOpaque = false
         block.border = JBUI.Borders.empty(2, 10, 2, 0)
@@ -420,32 +439,31 @@ class ChatMessagePanel(
         val previewLength = if (forceVerbose) TRACE_OUTPUT_PREVIEW_LENGTH else TRACE_DETAIL_PREVIEW_LENGTH
         val hasOverflow = item.detail.length > previewLength
         val collapsed = verbose && key !in expandedVerboseEntries
+        val markdownLike = looksLikeMarkdown(item.detail)
+        val previewText = if (markdownLike) {
+            toMarkdownPreview(item.detail, previewLength)
+        } else {
+            toPreview(item.detail, previewLength)
+        }
         val visibleText = if (collapsed) {
-            toPreview(item.detail, previewLength)
+            previewText
         } else if (!verbose && hasOverflow) {
-            toPreview(item.detail, previewLength)
+            previewText
         } else {
             item.detail
         }
 
         val detailPane = JTextPane()
-        detailPane.isEditable = false
-        detailPane.isOpaque = false
-        detailPane.isFocusable = false
+        configureReadableTextPane(detailPane)
         detailPane.border = JBUI.Borders.empty()
-        val doc = detailPane.styledDocument
-        doc.remove(0, doc.length)
-        val attrs = SimpleAttributeSet()
-        StyleConstants.setFontFamily(attrs, "Monospaced")
-        StyleConstants.setFontSize(attrs, 12)
-        doc.insertString(0, visibleText, attrs)
+        renderTraceDetail(detailPane, visibleText)
         block.add(detailPane, BorderLayout.CENTER)
 
-        if (verbose) {
+        if (verbose && hasOverflow && showVerboseToggle) {
             val toggleText = if (collapsed) {
-                SpecCodingBundle.message("chat.timeline.toggle.expand")
+                SpecCodingBundle.message("chat.workflow.toggle.expand")
             } else {
-                SpecCodingBundle.message("chat.timeline.toggle.collapse")
+                SpecCodingBundle.message("chat.workflow.toggle.collapse")
             }
             val toggleBtn = JButton(toggleText)
             styleInlineActionButton(toggleBtn)
@@ -475,12 +493,43 @@ class ChatMessagePanel(
 
     private fun createMarkdownPane(content: String): JTextPane {
         val pane = JTextPane()
-        pane.isEditable = false
-        pane.isOpaque = false
+        configureReadableTextPane(pane)
         pane.border = JBUI.Borders.emptyTop(2)
-        pane.isFocusable = false
         MarkdownRenderer.render(pane, content)
         return pane
+    }
+
+    private fun configureReadableTextPane(pane: JTextPane) {
+        pane.isEditable = false
+        pane.isOpaque = false
+        pane.isFocusable = true
+        pane.cursor = Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR)
+    }
+
+    private fun renderTraceDetail(pane: JTextPane, content: String) {
+        if (looksLikeMarkdown(content)) {
+            MarkdownRenderer.render(pane, content)
+            return
+        }
+        val doc = pane.styledDocument
+        doc.remove(0, doc.length)
+        val attrs = SimpleAttributeSet()
+        StyleConstants.setFontFamily(attrs, "Monospaced")
+        StyleConstants.setFontSize(attrs, 12)
+        doc.insertString(0, content, attrs)
+    }
+
+    private fun looksLikeMarkdown(content: String): Boolean {
+        if (content.contains("**") || content.contains('`')) return true
+        return content.lineSequence().any { line ->
+            val trimmed = line.trimStart()
+            trimmed.startsWith("# ") ||
+                trimmed.startsWith("## ") ||
+                trimmed.startsWith("### ") ||
+                trimmed.startsWith("- ") ||
+                trimmed.startsWith("* ") ||
+                ORDERED_LIST_ITEM_REGEX.matches(trimmed)
+        }
     }
 
     private fun kindLabel(kind: ExecutionTimelineParser.Kind): String = when (kind) {
@@ -513,6 +562,26 @@ class ChatMessagePanel(
         ExecutionTimelineParser.Status.INFO -> JBColor.GRAY
     }
 
+    private fun kindGlyph(kind: ExecutionTimelineParser.Kind): String = when (kind) {
+        ExecutionTimelineParser.Kind.THINK -> "◔"
+        ExecutionTimelineParser.Kind.READ -> "▤"
+        ExecutionTimelineParser.Kind.EDIT -> "✎"
+        ExecutionTimelineParser.Kind.TASK -> "▸"
+        ExecutionTimelineParser.Kind.VERIFY -> "✓"
+        ExecutionTimelineParser.Kind.TOOL -> "⌘"
+        ExecutionTimelineParser.Kind.OUTPUT -> "≡"
+    }
+
+    private fun kindColor(kind: ExecutionTimelineParser.Kind): java.awt.Color = when (kind) {
+        ExecutionTimelineParser.Kind.THINK -> JBColor(java.awt.Color(85, 105, 133), java.awt.Color(170, 188, 212))
+        ExecutionTimelineParser.Kind.READ -> JBColor(java.awt.Color(58, 112, 171), java.awt.Color(135, 189, 247))
+        ExecutionTimelineParser.Kind.EDIT -> JBColor(java.awt.Color(25, 123, 87), java.awt.Color(109, 207, 171))
+        ExecutionTimelineParser.Kind.TASK -> JBColor(java.awt.Color(92, 96, 158), java.awt.Color(164, 170, 245))
+        ExecutionTimelineParser.Kind.VERIFY -> JBColor(java.awt.Color(44, 132, 79), java.awt.Color(131, 217, 164))
+        ExecutionTimelineParser.Kind.TOOL -> JBColor(java.awt.Color(140, 89, 34), java.awt.Color(231, 178, 121))
+        ExecutionTimelineParser.Kind.OUTPUT -> JBColor(java.awt.Color(117, 111, 140), java.awt.Color(191, 184, 220))
+    }
+
     private fun entryKey(item: StreamingTraceAssembler.TraceItem): String {
         return "${item.kind.name}:${item.detail.lowercase()}"
     }
@@ -536,17 +605,6 @@ class ChatMessagePanel(
         buttonPanel.isOpaque = false
         buttonPanel.border = JBUI.Borders.emptyTop(6)
 
-        // 代码块复制按钮
-        codeBlocks.forEachIndexed { index, code ->
-            val copyBtn = JButton(SpecCodingBundle.message("chat.message.copy.index", index + 1))
-            styleActionButton(copyBtn)
-            copyBtn.addActionListener {
-                val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-                clipboard.setContents(StringSelection(code), null)
-            }
-            buttonPanel.add(copyBtn)
-        }
-
         // 复制全文按钮
         val copyAllBtn = JButton()
         styleIconActionButton(
@@ -555,8 +613,8 @@ class ChatMessagePanel(
             tooltip = SpecCodingBundle.message("chat.message.copy.all"),
         )
         copyAllBtn.addActionListener {
-            val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-            clipboard.setContents(StringSelection(contentBuilder.toString()), null)
+            val copied = copyToClipboard(contentBuilder.toString())
+            showCopyFeedback(copyAllBtn, copied = copied, iconOnly = true)
         }
         buttonPanel.add(copyAllBtn)
 
@@ -608,21 +666,7 @@ class ChatMessagePanel(
         val quickActions = WorkflowQuickActionParser.parse(contentBuilder.toString())
         if (quickActions.files.isEmpty() && quickActions.commands.isEmpty()) return
 
-        if (quickActions.files.isNotEmpty()) {
-            panel.add(createActionGroupLabel(SpecCodingBundle.message("chat.workflow.action.filesLabel")))
-            quickActions.files.take(MAX_FILE_ACTIONS).forEach { fileAction ->
-                val btn = JButton(SpecCodingBundle.message("chat.workflow.action.openFile.short"))
-                styleActionButton(btn)
-                btn.toolTipText = SpecCodingBundle.message("chat.workflow.action.openFile.tooltip", fileAction.displayPath)
-                btn.addActionListener {
-                    onWorkflowFileOpen?.invoke(fileAction)
-                }
-                panel.add(btn)
-            }
-        }
-
         if (quickActions.commands.isNotEmpty()) {
-            panel.add(createActionGroupLabel(SpecCodingBundle.message("chat.workflow.action.commandsLabel")))
             quickActions.commands.take(MAX_COMMAND_ACTIONS).forEach { command ->
                 val display = if (command.length > MAX_COMMAND_DISPLAY_LENGTH) {
                     "${command.take(MAX_COMMAND_DISPLAY_LENGTH - 3)}..."
@@ -636,8 +680,8 @@ class ChatMessagePanel(
                     if (onWorkflowCommandInsert != null) {
                         onWorkflowCommandInsert.invoke(command)
                     } else {
-                        val clipboard = Toolkit.getDefaultToolkit().systemClipboard
-                        clipboard.setContents(StringSelection(command), null)
+                        val copied = copyToClipboard(command)
+                        showCopyFeedback(btn, copied = copied, iconOnly = false)
                     }
                 }
                 panel.add(btn)
@@ -645,11 +689,70 @@ class ChatMessagePanel(
         }
     }
 
-    private fun createActionGroupLabel(text: String): JLabel {
-        return JLabel("$text:").apply {
-            foreground = JBColor.GRAY
-            font = font.deriveFont(java.awt.Font.PLAIN, 10.5f)
+    private fun copyToClipboard(text: String): Boolean {
+        val selection = StringSelection(text)
+        val copiedByIde = runCatching {
+            CopyPasteManager.getInstance().setContents(selection)
+        }.isSuccess
+        if (copiedByIde) return true
+
+        return runCatching {
+            Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, null)
+            true
+        }.getOrElse { false }
+    }
+
+    private fun showCopyFeedback(button: JButton, copied: Boolean, iconOnly: Boolean) {
+        val previousTimer = button.getClientProperty(COPY_FEEDBACK_TIMER_KEY) as? Timer
+        previousTimer?.stop()
+
+        val originalText = button.text
+        val originalIcon = button.icon
+        val originalToolTip = button.toolTipText
+        val originalAccessibleName = button.accessibleContext.accessibleName
+        val originalForeground = button.foreground
+
+        val feedbackText = when {
+            iconOnly && copied -> COPY_FEEDBACK_ICON_SUCCESS
+            iconOnly && !copied -> COPY_FEEDBACK_ICON_FAILURE
+            copied -> SpecCodingBundle.message("chat.message.copy.copied")
+            else -> SpecCodingBundle.message("chat.message.copy.failed")
         }
+        val feedbackTip = SpecCodingBundle.message(
+            if (copied) "chat.message.copy.copied" else "chat.message.copy.failed"
+        )
+
+        if (iconOnly) {
+            button.icon = null
+        }
+        button.text = feedbackText
+        button.toolTipText = feedbackTip
+        button.accessibleContext.accessibleName = feedbackTip
+        button.foreground = if (copied) {
+            JBColor(java.awt.Color(23, 128, 62), java.awt.Color(119, 226, 160))
+        } else {
+            JBColor(java.awt.Color(175, 48, 48), java.awt.Color(255, 149, 149))
+        }
+
+        val timer = Timer(COPY_FEEDBACK_DURATION_MS) {
+            button.text = originalText
+            button.icon = originalIcon
+            button.toolTipText = originalToolTip
+            button.accessibleContext.accessibleName = originalAccessibleName
+            button.foreground = originalForeground
+            button.putClientProperty(COPY_FEEDBACK_TIMER_KEY, null)
+        }
+        timer.isRepeats = false
+        button.putClientProperty(COPY_FEEDBACK_TIMER_KEY, timer)
+        timer.start()
+    }
+
+    private fun abbreviateForActionButton(displayPath: String): String {
+        val normalized = displayPath.trim()
+        if (normalized.length <= MAX_ACTION_FILE_DISPLAY_LENGTH) {
+            return normalized
+        }
+        return "...${normalized.takeLast(MAX_ACTION_FILE_DISPLAY_LENGTH - 3)}"
     }
 
     private fun styleActionButton(button: JButton) {
@@ -657,14 +760,10 @@ class ChatMessagePanel(
         button.isFocusPainted = false
         button.isFocusable = false
         button.font = button.font.deriveFont(11f)
-        button.isOpaque = true
-        button.isContentAreaFilled = true
-        button.background = JBColor(
-            java.awt.Color(243, 245, 248),
-            java.awt.Color(58, 63, 69),
-        )
-        button.border = JBUI.Borders.customLine(JBColor.border(), 1)
-        button.putClientProperty("JButton.buttonType", "roundRect")
+        button.isOpaque = false
+        button.isContentAreaFilled = false
+        button.border = JBUI.Borders.empty(1, 6, 1, 6)
+        button.putClientProperty("JButton.buttonType", "borderless")
     }
 
     private fun styleInlineActionButton(button: JButton) {
@@ -702,6 +801,22 @@ class ChatMessagePanel(
             return compact
         }
         return compact.take(limit).trimEnd() + "..."
+    }
+
+    private fun toMarkdownPreview(text: String, limit: Int): String {
+        val normalized = text
+            .replace("\r\n", "\n")
+            .trim()
+        if (normalized.length <= limit) {
+            return normalized
+        }
+
+        val clipped = normalized.take(limit).trimEnd()
+        val splitAt = clipped.lastIndexOf('\n')
+        if (splitAt >= limit / 2) {
+            return clipped.substring(0, splitAt).trimEnd() + "\n..."
+        }
+        return clipped + "..."
     }
 
     private fun extractAssistantAnswerContent(content: String): String {
@@ -770,8 +885,14 @@ class ChatMessagePanel(
         private const val MAX_FILE_ACTIONS = 4
         private const val MAX_COMMAND_ACTIONS = 4
         private const val MAX_COMMAND_DISPLAY_LENGTH = 26
+        private const val MAX_ACTION_FILE_DISPLAY_LENGTH = 30
         private const val TRACE_DETAIL_PREVIEW_LENGTH = 220
         private const val TRACE_OUTPUT_PREVIEW_LENGTH = 140
+        private const val COPY_FEEDBACK_DURATION_MS = 1000
+        private const val COPY_FEEDBACK_TIMER_KEY = "spec.copy.feedback.timer"
+        private const val COPY_FEEDBACK_ICON_SUCCESS = "OK"
+        private const val COPY_FEEDBACK_ICON_FAILURE = "!"
+        private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+\.\s+.*""")
         private val WORKFLOW_HEADING_TITLES = setOf(
             "plan", "planning", "计划", "规划",
             "execute", "execution", "implement", "执行", "实施",

@@ -31,6 +31,15 @@ internal class StreamingTraceAssembler {
         mergeItem(ExecutionTimelineParser.fromStructuredEvent(event), structuredItems)
     }
 
+    fun markRunningItemsDone() {
+        if (structuredItems.isEmpty()) return
+        structuredItems.entries.toList().forEach { (key, item) ->
+            if (item.status == ExecutionTimelineParser.Status.RUNNING) {
+                structuredItems[key] = item.copy(status = ExecutionTimelineParser.Status.DONE)
+            }
+        }
+    }
+
     fun snapshot(content: String): TraceSnapshot {
         val merged = linkedMapOf<String, ExecutionTimelineParser.TimelineItem>()
 

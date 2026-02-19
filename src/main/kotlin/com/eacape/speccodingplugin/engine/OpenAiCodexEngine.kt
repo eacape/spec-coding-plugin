@@ -45,10 +45,11 @@ class OpenAiCodexEngine(
     }
 
     override fun parseStreamLine(line: String): EngineChunk? {
-        if (line.isBlank()) return null
+        if (line.isEmpty()) return null
+        val eventLine = line.trimEnd('\n', '\r')
         return EngineChunk(
-            delta = line + "\n",
-            event = CliProgressEventParser.parseStdout(line),
+            delta = line,
+            event = if (eventLine.isBlank()) null else CliProgressEventParser.parseStdout(eventLine),
         )
     }
 

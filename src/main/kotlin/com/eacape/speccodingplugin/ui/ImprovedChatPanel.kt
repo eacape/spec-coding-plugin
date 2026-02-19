@@ -34,6 +34,7 @@ import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.ui.chat.ChatMessagePanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagesListPanel
 import com.eacape.speccodingplugin.ui.chat.SpecWorkflowResponseBuilder
+import com.eacape.speccodingplugin.ui.chat.TraceEventMetadataCodec
 import com.eacape.speccodingplugin.ui.completion.CompletionProvider
 import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
 import com.eacape.speccodingplugin.ui.input.ContextPreviewPanel
@@ -129,6 +130,7 @@ class ImprovedChatPanel(
     private val conversationHistory = mutableListOf<LlmMessage>()
     private var currentSessionId: String? = null
     private var isGenerating = false
+    private var isRestoringSession = false
     private var activeSpecWorkflowId: String? = null
     @Volatile
     private var _isDisposed = false
@@ -216,6 +218,8 @@ class ImprovedChatPanel(
         updateComboTooltips()
         if (isGenerating) {
             showStatus(SpecCodingBundle.message("toolwindow.status.generating"))
+        } else if (isRestoringSession) {
+            showStatus(SpecCodingBundle.message("toolwindow.status.session.restoring"))
         }
     }
 
@@ -325,7 +329,16 @@ class ImprovedChatPanel(
             java.awt.Color(43, 45, 49),
         )
         composerContainer.border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor.border(), 1),
+            JBUI.Borders.customLine(
+                JBColor(
+                    java.awt.Color(224, 228, 234),
+                    java.awt.Color(69, 73, 80),
+                ),
+                1,
+                0,
+                0,
+                0,
+            ),
             JBUI.Borders.empty(8, 10),
         )
         composerContainer.add(inputScroll, BorderLayout.CENTER)
@@ -371,6 +384,10 @@ class ImprovedChatPanel(
         if (rawInput.isBlank() || isGenerating || project.isDisposed || _isDisposed) {
             return
         }
+        if (isRestoringSession) {
+            showStatus(SpecCodingBundle.message("toolwindow.status.session.restoring"))
+            return
+        }
 
         // Check for slash commands
         if (rawInput.startsWith("/")) {
@@ -408,10 +425,15 @@ class ImprovedChatPanel(
                 val assistantContent = StringBuilder()
                 val pendingDelta = StringBuilder()
                 val pendingEvents = mutableListOf<ChatStreamEvent>()
+                val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
                 var pendingChunks = 0
+                var lastFlushAtNanos = System.nanoTime()
 
                 fun flushPending(force: Boolean = false) {
+                    val now = System.nanoTime()
+                    val dueByTime = now - lastFlushAtNanos >= STREAM_BATCH_INTERVAL_NANOS
                     val shouldFlush = force ||
+                        dueByTime ||
                         pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
                         pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
                         pendingDelta.contains('\n') ||
@@ -427,6 +449,7 @@ class ImprovedChatPanel(
                     pendingDelta.setLength(0)
                     pendingEvents.clear()
                     pendingChunks = 0
+                    lastFlushAtNanos = now
 
                     ApplicationManager.getApplication().invokeLater {
                         if (project.isDisposed || _isDisposed) {
@@ -446,12 +469,16 @@ class ImprovedChatPanel(
                     userInput = stagedPrompt,
                     modelId = modelId,
                     contextSnapshot = contextSnapshot,
+                    conversationHistory = conversationHistory.toList(),
                 ) { chunk ->
                     if (chunk.delta.isNotEmpty()) {
                         assistantContent.append(chunk.delta)
                         pendingDelta.append(chunk.delta)
                     }
-                    chunk.event?.let { pendingEvents += it }
+                    chunk.event?.let {
+                        pendingEvents += it
+                        streamedTraceEvents += it
+                    }
                     pendingChunks += 1
 
                     if (chunk.isLast) {
@@ -471,7 +498,12 @@ class ImprovedChatPanel(
                 val assistantMessage = LlmMessage(LlmRole.ASSISTANT, assistantContent.toString())
                 appendToConversationHistory(assistantMessage)
                 if (sessionId != null) {
-                    persistMessage(sessionId, ConversationRole.ASSISTANT, assistantMessage.content)
+                    persistMessage(
+                        sessionId = sessionId,
+                        role = ConversationRole.ASSISTANT,
+                        content = assistantMessage.content,
+                        metadataJson = TraceEventMetadataCodec.encode(streamedTraceEvents),
+                    )
                 }
 
             } catch (error: Throwable) {
@@ -1111,21 +1143,36 @@ class ImprovedChatPanel(
         if (sessionId.isBlank() || project.isDisposed || _isDisposed) {
             return
         }
+        setSessionRestoringState(true)
+        showStatus(SpecCodingBundle.message("toolwindow.status.session.restoring"))
 
         scope.launch(Dispatchers.IO) {
-            val session = sessionManager.getSession(sessionId)
-            val messages = sessionManager
-                .listMessages(sessionId, limit = SESSION_LOAD_FETCH_LIMIT)
-                .takeLast(MAX_RESTORED_MESSAGES)
+            val loaded = runCatching {
+                val session = sessionManager.getSession(sessionId)
+                val messages = sessionManager
+                    .listMessages(sessionId, limit = SESSION_LOAD_FETCH_LIMIT)
+                    .takeLast(MAX_RESTORED_MESSAGES)
+                session to messages
+            }
 
             ApplicationManager.getApplication().invokeLater {
                 if (project.isDisposed || _isDisposed) {
                     return@invokeLater
                 }
+                if (loaded.isFailure) {
+                    setSessionRestoringState(false)
+                    addErrorMessage(
+                        loaded.exceptionOrNull()?.message ?: SpecCodingBundle.message("toolwindow.error.unknown"),
+                    )
+                    return@invokeLater
+                }
+
+                val (session, messages) = loaded.getOrThrow()
                 if (session == null) {
                     currentSessionId = null
                     sessionIsolationService.clearActiveSession()
                     addErrorMessage(SpecCodingBundle.message("toolwindow.error.session.notFound", sessionId))
+                    setSessionRestoringState(false)
                     return@invokeLater
                 }
 
@@ -1133,6 +1180,7 @@ class ImprovedChatPanel(
                 currentSessionId = session.id
                 sessionIsolationService.activateSession(session.id)
                 showStatus(SpecCodingBundle.message("toolwindow.status.session.loaded", session.title))
+                setSessionRestoringState(false)
             }
         }
     }
@@ -1160,6 +1208,10 @@ class ImprovedChatPanel(
                         onWorkflowFileOpen = ::handleWorkflowFileOpen,
                         onWorkflowCommandInsert = ::handleWorkflowCommandInsert,
                     )
+                    val restoredTraceEvents = TraceEventMetadataCodec.decode(message.metadataJson)
+                    if (restoredTraceEvents.isNotEmpty()) {
+                        panel.appendStreamContent(text = "", events = restoredTraceEvents)
+                    }
                     panel.finishMessage()
                     messagesPanel.addMessage(panel)
                     appendToConversationHistory(LlmMessage(LlmRole.ASSISTANT, message.content))
@@ -1229,11 +1281,17 @@ class ImprovedChatPanel(
         )
     }
 
-    private fun persistMessage(sessionId: String, role: ConversationRole, content: String) {
+    private fun persistMessage(
+        sessionId: String,
+        role: ConversationRole,
+        content: String,
+        metadataJson: String? = null,
+    ) {
         val result = sessionManager.addMessage(
             sessionId = sessionId,
             role = role,
             content = content,
+            metadataJson = metadataJson,
         )
         if (result.isFailure) {
             logger.warn("Failed to persist message for session: $sessionId", result.exceptionOrNull())
@@ -1290,7 +1348,7 @@ class ImprovedChatPanel(
 
     private fun setSendingState(sending: Boolean) {
         isGenerating = sending
-        sendButton.isEnabled = !sending
+        refreshSendButtonState()
         inputField.isEnabled = true
         providerComboBox.isEnabled = true
         modelComboBox.isEnabled = true
@@ -1299,9 +1357,20 @@ class ImprovedChatPanel(
         clearButton.isEnabled = true
         if (sending) {
             showStatus(SpecCodingBundle.message("toolwindow.status.generating"))
+        } else if (isRestoringSession) {
+            showStatus(SpecCodingBundle.message("toolwindow.status.session.restoring"))
         } else {
             hideStatus()
         }
+    }
+
+    private fun setSessionRestoringState(restoring: Boolean) {
+        isRestoringSession = restoring
+        refreshSendButtonState()
+    }
+
+    private fun refreshSendButtonState() {
+        sendButton.isEnabled = !isGenerating && !isRestoringSession
     }
 
     private fun showStatus(text: String) {
@@ -1416,7 +1485,7 @@ class ImprovedChatPanel(
     }
 
     private fun handleRegenerateMessage(panel: ChatMessagePanel) {
-        if (isGenerating) return
+        if (isGenerating || isRestoringSession) return
 
         // 找到对应的 user 消息（前一条）
         val allMessages = messagesPanel.getAllMessages()
@@ -1443,10 +1512,15 @@ class ImprovedChatPanel(
                 val assistantContent = StringBuilder()
                 val pendingDelta = StringBuilder()
                 val pendingEvents = mutableListOf<ChatStreamEvent>()
+                val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
                 var pendingChunks = 0
+                var lastFlushAtNanos = System.nanoTime()
 
                 fun flushPending(force: Boolean = false) {
+                    val now = System.nanoTime()
+                    val dueByTime = now - lastFlushAtNanos >= STREAM_BATCH_INTERVAL_NANOS
                     val shouldFlush = force ||
+                        dueByTime ||
                         pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
                         pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
                         pendingDelta.contains('\n') ||
@@ -1462,6 +1536,7 @@ class ImprovedChatPanel(
                     pendingDelta.setLength(0)
                     pendingEvents.clear()
                     pendingChunks = 0
+                    lastFlushAtNanos = now
 
                     ApplicationManager.getApplication().invokeLater {
                         if (project.isDisposed || _isDisposed) {
@@ -1480,12 +1555,16 @@ class ImprovedChatPanel(
                     providerId = providerId,
                     userInput = userInput,
                     modelId = modelId,
+                    conversationHistory = conversationHistory.toList(),
                 ) { chunk ->
                     if (chunk.delta.isNotEmpty()) {
                         assistantContent.append(chunk.delta)
                         pendingDelta.append(chunk.delta)
                     }
-                    chunk.event?.let { pendingEvents += it }
+                    chunk.event?.let {
+                        pendingEvents += it
+                        streamedTraceEvents += it
+                    }
                     pendingChunks += 1
 
                     if (chunk.isLast) {
@@ -1503,7 +1582,12 @@ class ImprovedChatPanel(
                 val assistantMessage = LlmMessage(LlmRole.ASSISTANT, assistantContent.toString())
                 appendToConversationHistory(assistantMessage)
                 currentSessionId?.let { sessionId ->
-                    persistMessage(sessionId, ConversationRole.ASSISTANT, assistantMessage.content)
+                    persistMessage(
+                        sessionId = sessionId,
+                        role = ConversationRole.ASSISTANT,
+                        content = assistantMessage.content,
+                        metadataJson = TraceEventMetadataCodec.encode(streamedTraceEvents),
+                    )
                 }
             } catch (error: Throwable) {
                 ApplicationManager.getApplication().invokeLater {
@@ -1563,6 +1647,7 @@ class ImprovedChatPanel(
         private const val SESSION_LOAD_FETCH_LIMIT = 5000
         private const val STREAM_BATCH_CHUNK_COUNT = 4
         private const val STREAM_BATCH_CHAR_COUNT = 240
+        private const val STREAM_BATCH_INTERVAL_NANOS = 120_000_000L
         private const val STREAM_AUTO_SCROLL_THRESHOLD_PX = 80
     }
 }
