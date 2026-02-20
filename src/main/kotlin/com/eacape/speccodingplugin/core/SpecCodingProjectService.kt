@@ -9,6 +9,7 @@ import com.eacape.speccodingplugin.llm.LlmRequest
 import com.eacape.speccodingplugin.llm.LlmResponse
 import com.eacape.speccodingplugin.llm.LlmRole
 import com.eacape.speccodingplugin.llm.LlmRouter
+import com.eacape.speccodingplugin.llm.LlmRequestContext
 import com.eacape.speccodingplugin.prompt.PromptManager
 import com.eacape.speccodingplugin.prompt.PromptTemplate
 import com.intellij.openapi.components.Service
@@ -80,7 +81,19 @@ class SpecCodingProjectService(private val project: Project) {
             messages.add(LlmMessage(role = LlmRole.USER, content = userInput))
         }
 
-        val request = LlmRequest(messages = messages, model = modelId)
+        val workingDirectory = LlmRequestContext.normalizeWorkingDirectory(project.basePath)
+        val metadata = if (workingDirectory != null) {
+            mapOf(LlmRequestContext.WORKING_DIRECTORY_METADATA_KEY to workingDirectory)
+        } else {
+            emptyMap()
+        }
+
+        val request = LlmRequest(
+            messages = messages,
+            model = modelId,
+            metadata = metadata,
+            workingDirectory = workingDirectory,
+        )
         return llmRouter.stream(providerId = providerId, request = request, onChunk = onChunk)
     }
 

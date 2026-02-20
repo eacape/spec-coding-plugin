@@ -5,6 +5,10 @@ package com.eacape.speccodingplugin.spec
  * 负责验证各阶段文档的完整性和正确性
  */
 object SpecValidator {
+    private data class SectionRequirement(
+        val displayName: String,
+        val markers: List<String>,
+    )
 
     /**
      * 验证 Spec 文档
@@ -27,16 +31,25 @@ object SpecValidator {
 
         val content = document.content
 
-        // 检查必需章节
+        // 检查必需章节（兼容标题式与条目式输出）
         val requiredSections = listOf(
-            "## 功能需求" to "Functional Requirements",
-            "## 非功能需求" to "Non-Functional Requirements",
-            "## 用户故事" to "User Stories"
+            SectionRequirement(
+                displayName = "功能需求 (Functional Requirements)",
+                markers = listOf("## 功能需求", "功能需求", "Functional Requirements"),
+            ),
+            SectionRequirement(
+                displayName = "非功能需求 (Non-Functional Requirements)",
+                markers = listOf("## 非功能需求", "非功能需求", "Non-Functional Requirements"),
+            ),
+            SectionRequirement(
+                displayName = "用户故事 (User Stories)",
+                markers = listOf("## 用户故事", "用户故事", "User Stories"),
+            ),
         )
 
-        requiredSections.forEach { (chinese, english) ->
-            if (!content.contains(chinese) && !content.contains(english)) {
-                errors.add("缺少必需章节: $chinese ($english)")
+        requiredSections.forEach { requirement ->
+            if (!containsAnyMarker(content, requirement.markers)) {
+                errors.add("缺少必需章节: ${requirement.displayName}")
             }
         }
 
@@ -81,16 +94,25 @@ object SpecValidator {
 
         val content = document.content
 
-        // 检查必需章节
+        // 检查必需章节（兼容标题式与条目式输出）
         val requiredSections = listOf(
-            "## 架构设计" to "Architecture Design",
-            "## 技术选型" to "Technology Stack",
-            "## 数据模型" to "Data Model"
+            SectionRequirement(
+                displayName = "架构设计 (Architecture Design)",
+                markers = listOf("## 架构设计", "架构设计", "系统架构", "Architecture Design", "Architecture"),
+            ),
+            SectionRequirement(
+                displayName = "技术选型 (Technology Stack)",
+                markers = listOf("## 技术选型", "技术选型", "技术方案", "Technology Stack"),
+            ),
+            SectionRequirement(
+                displayName = "数据模型 (Data Model)",
+                markers = listOf("## 数据模型", "数据模型", "实体模型", "Data Model"),
+            ),
         )
 
-        requiredSections.forEach { (chinese, english) ->
-            if (!content.contains(chinese) && !content.contains(english)) {
-                errors.add("缺少必需章节: $chinese ($english)")
+        requiredSections.forEach { requirement ->
+            if (!containsAnyMarker(content, requirement.markers)) {
+                errors.add("缺少必需章节: ${requirement.displayName}")
             }
         }
 
@@ -134,15 +156,21 @@ object SpecValidator {
 
         val content = document.content
 
-        // 检查必需章节
+        // 检查必需章节（兼容标题式与条目式输出）
         val requiredSections = listOf(
-            "## 任务列表" to "Task List",
-            "## 实现步骤" to "Implementation Steps"
+            SectionRequirement(
+                displayName = "任务列表 (Task List)",
+                markers = listOf("## 任务列表", "任务列表", "任务拆解", "Task List"),
+            ),
+            SectionRequirement(
+                displayName = "实现步骤 (Implementation Steps)",
+                markers = listOf("## 实现步骤", "实现步骤", "开发步骤", "Implementation Steps"),
+            ),
         )
 
-        requiredSections.forEach { (chinese, english) ->
-            if (!content.contains(chinese) && !content.contains(english)) {
-                errors.add("缺少必需章节: $chinese ($english)")
+        requiredSections.forEach { requirement ->
+            if (!containsAnyMarker(content, requirement.markers)) {
+                errors.add("缺少必需章节: ${requirement.displayName}")
             }
         }
 
@@ -220,5 +248,9 @@ object SpecValidator {
             valid = errors.isEmpty(),
             errors = errors
         )
+    }
+
+    private fun containsAnyMarker(content: String, markers: List<String>): Boolean {
+        return markers.any { marker -> content.contains(marker, ignoreCase = true) }
     }
 }

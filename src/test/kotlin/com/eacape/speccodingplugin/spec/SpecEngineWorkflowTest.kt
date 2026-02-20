@@ -171,4 +171,119 @@ class SpecEngineWorkflowTest {
         val message = result.exceptionOrNull()?.message ?: ""
         assertTrue(message.contains("Cannot proceed to next phase"))
     }
+
+    @Test
+    fun `proceed to next phase should return validation details when current document is invalid`() {
+        val engine = SpecEngine(project, storage) {
+            SpecGenerationResult.Failure("not used")
+        }
+
+        val created = engine.createWorkflow(
+            title = "Detail Validation",
+            description = "Validation detail surface",
+        ).getOrThrow()
+
+        engine.updateDocumentContent(
+            workflowId = created.id,
+            phase = SpecPhase.SPECIFY,
+            content = """
+                ## 功能需求
+                - 仅保留功能需求和用户故事
+
+                ## 用户故事
+                As a user, I want to search archives quickly.
+            """.trimIndent(),
+        ).getOrThrow()
+
+        val result = engine.proceedToNextPhase(created.id)
+        assertTrue(result.isFailure)
+        val message = result.exceptionOrNull()?.message ?: ""
+        assertTrue(message.contains("Current phase validation failed"))
+        assertTrue(message.contains("非功能需求"))
+    }
+
+    @Test
+    fun `updateDocumentContent should persist edits and enforce revision conflict`() {
+        val engine = SpecEngine(project, storage) { request ->
+            val content = """
+                ## 功能需求
+                - 用户可以创建订单并查看详情
+                - 系统支持订单状态跟踪与通知
+
+                ## 非功能需求
+                - 接口响应时间 < 500ms
+                - 关键操作必须记录审计日志
+                - 核心接口具备限流和重试机制
+
+                ## 用户故事
+                As a buyer, I want to submit and track orders, so that I can complete checkout confidently.
+
+                ## 验收标准
+                - [ ] 下单成功后可在历史列表查看详情
+                - [ ] 订单状态变化时可收到通知
+            """.trimIndent()
+
+            val candidate = SpecDocument(
+                id = "doc-${request.phase.name.lowercase()}",
+                phase = request.phase,
+                content = content,
+                metadata = SpecMetadata(
+                    title = "${request.phase.displayName} Document",
+                    description = "Generated ${request.phase.displayName} document",
+                ),
+            )
+            SpecGenerationResult.Success(
+                candidate.copy(validationResult = SpecValidator.validate(candidate))
+            )
+        }
+
+        val created = engine.createWorkflow(
+            title = "Order Flow",
+            description = "Order processing workflow",
+        ).getOrThrow()
+        runBlocking {
+            engine.generateCurrentPhase(created.id, "generate specify").collect()
+        }
+
+        val beforeEdit = engine.loadWorkflow(created.id).getOrThrow()
+        val beforeDocument = beforeEdit.getDocument(SpecPhase.SPECIFY)
+        assertNotNull(beforeDocument)
+        val beforeRevision = beforeDocument!!.metadata.updatedAt
+
+        val editedText = """
+            ## 功能需求
+            - 支持订单创建、取消、查询
+
+            ## 非功能需求
+            - 延迟小于 300ms
+
+            ## 用户故事
+            As a buyer, I want to update an order after creation, so that I can fix mistakes quickly.
+        """.trimIndent()
+        val updatedWorkflow = engine.updateDocumentContent(
+            workflowId = created.id,
+            phase = SpecPhase.SPECIFY,
+            content = editedText,
+            expectedRevision = beforeRevision,
+        ).getOrThrow()
+
+        val updatedDocument = updatedWorkflow.getDocument(SpecPhase.SPECIFY)
+        assertNotNull(updatedDocument)
+        assertTrue(updatedDocument!!.content.contains("支持订单创建、取消、查询"))
+        assertTrue(updatedDocument.metadata.updatedAt >= beforeRevision)
+
+        val persisted = storage.loadDocument(created.id, SpecPhase.SPECIFY).getOrThrow()
+        assertTrue(persisted.content.contains("支持订单创建、取消、查询"))
+
+        val conflict = engine.updateDocumentContent(
+            workflowId = created.id,
+            phase = SpecPhase.SPECIFY,
+            content = "## 功能需求\n- stale write",
+            expectedRevision = beforeRevision,
+        )
+        assertTrue(conflict.isFailure)
+        assertTrue(
+            conflict.exceptionOrNull()?.message?.contains("revision conflict", ignoreCase = true) == true
+        )
+    }
 }

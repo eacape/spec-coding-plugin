@@ -19,6 +19,7 @@ data class LlmRequest(
     val temperature: Double? = null,
     val maxTokens: Int? = null,
     val metadata: Map<String, String> = emptyMap(),
+    val workingDirectory: String? = null,
 )
 
 data class LlmUsage(

@@ -188,26 +188,104 @@ class SpecEngine(private val project: Project) {
     }
 
     /**
+     * 更新指定阶段文档内容（用于 Chat Spec 卡片内编辑）。
+     * 可选 expectedRevision 用于并发冲突检测。
+     */
+    fun updateDocumentContent(
+        workflowId: String,
+        phase: SpecPhase,
+        content: String,
+        expectedRevision: Long? = null,
+    ): Result<SpecWorkflow> {
+        return runCatching {
+            val workflow = activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+
+            val existingDocument = workflow.getDocument(phase)
+                ?: SpecDocument(
+                    id = "$workflowId-${phase.name.lowercase()}",
+                    phase = phase,
+                    content = "",
+                    metadata = SpecMetadata(
+                        title = "${phase.displayName} Document",
+                        description = "Manually edited ${phase.displayName} document",
+                    ),
+                    validationResult = null,
+                )
+
+            expectedRevision?.let { expected ->
+                val actual = existingDocument.metadata.updatedAt
+                if (actual != expected) {
+                    throw DocumentRevisionConflictException(
+                        workflowId = workflowId,
+                        phase = phase,
+                        expectedRevision = expected,
+                        actualRevision = actual,
+                    )
+                }
+            }
+
+            val normalizedContent = content
+                .replace("\r\n", "\n")
+                .replace('\r', '\n')
+                .trim()
+            require(normalizedContent.isNotBlank()) { "Document content cannot be blank" }
+
+            val now = System.currentTimeMillis()
+            val draftDocument = existingDocument.copy(
+                content = normalizedContent,
+                metadata = existingDocument.metadata.copy(updatedAt = now),
+            )
+            val validation = SpecValidator.validate(draftDocument)
+            val updatedDocument = draftDocument.copy(validationResult = validation)
+
+            storageDelegate.saveDocument(workflowId, updatedDocument).getOrThrow()
+
+            val updatedWorkflow = workflow.copy(
+                documents = workflow.documents + (phase to updatedDocument),
+                updatedAt = now,
+            )
+            activeWorkflows[workflowId] = updatedWorkflow
+            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
+
+            logger.info("Workflow $workflowId updated ${phase.displayName} document")
+            updatedWorkflow
+        }
+    }
+
+    /**
      * 进入下一阶段
      */
     fun proceedToNextPhase(workflowId: String): Result<SpecWorkflow> {
         return runCatching {
             val workflow = activeWorkflows[workflowId]
-                ?: throw IllegalStateException("Workflow not found: $workflowId")
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
 
-            // 检查是否可以进入下一阶段
-            if (!workflow.canProceedToNext()) {
-                throw IllegalStateException("Cannot proceed to next phase. Current phase validation failed or is incomplete.")
+            val currentDocument = workflow.getCurrentDocument()
+                ?: throw IllegalStateException(
+                    "Cannot proceed to next phase. Current phase document is missing. " +
+                        "Run /spec generate <input> first.",
+                )
+
+            // 每次推进阶段前按最新规则实时重算校验，避免历史持久化结果过期
+            val currentValidation = SpecValidator.validate(currentDocument)
+            if (!currentValidation.valid) {
+                val detail = currentValidation.errors
+                    .take(3)
+                    .joinToString("；")
+                    .ifBlank { "unknown validation error" }
+                throw IllegalStateException(
+                    "Cannot proceed to next phase. Current phase validation failed: $detail",
+                )
             }
 
             val nextPhase = workflow.currentPhase.next()
                 ?: throw IllegalStateException("Already at the last phase")
 
             // 验证阶段转换
-            val currentDocument = workflow.getCurrentDocument()
             val validation = SpecValidator.validatePhaseTransition(
                 workflow.currentPhase,
-                currentDocument,
+                currentDocument.copy(validationResult = currentValidation),
                 nextPhase
             )
 
@@ -373,6 +451,16 @@ class SpecEngine(private val project: Project) {
         fun getInstance(project: Project): SpecEngine = project.service()
     }
 }
+
+class DocumentRevisionConflictException(
+    val workflowId: String,
+    val phase: SpecPhase,
+    val expectedRevision: Long,
+    val actualRevision: Long,
+) : IllegalStateException(
+    "Document revision conflict: expected $expectedRevision but was $actualRevision " +
+        "(workflow=$workflowId, phase=${phase.name})",
+)
 
 /**
  * Spec 生成进度

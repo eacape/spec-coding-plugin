@@ -46,7 +46,7 @@ class CompletionProvider internal constructor(
         return when (trigger.triggerType) {
             TriggerType.SLASH -> getSlashCompletions(trigger.query)
             TriggerType.AT -> getFileCompletions(trigger.query)
-            TriggerType.HASH -> getSymbolCompletions(trigger.query)
+            TriggerType.HASH -> getHashCompletions(trigger.query)
             TriggerType.ANGLE -> getTemplateCompletions(trigger.query)
         }
     }
@@ -63,6 +63,33 @@ class CompletionProvider internal constructor(
 
     private fun getFileCompletions(query: String): List<CompletionItem> {
         return fileCompletionsProvider(query)
+    }
+
+    private fun getHashCompletions(query: String): List<CompletionItem> {
+        val promptRefs = getPromptReferenceCompletions(query)
+        val symbols = getSymbolCompletions(query)
+        return (promptRefs + symbols).take(20)
+    }
+
+    private fun getPromptReferenceCompletions(query: String): List<CompletionItem> {
+        val normalizedQuery = query.trim().lowercase()
+        return promptManager.listPromptTemplates()
+            .asSequence()
+            .filter { template ->
+                normalizedQuery.isBlank() ||
+                    template.id.lowercase().contains(normalizedQuery) ||
+                    template.name.lowercase().contains(normalizedQuery)
+            }
+            .sortedBy { it.name.lowercase() }
+            .take(12)
+            .map { template ->
+                CompletionItem(
+                    displayText = "#${template.id}",
+                    insertText = "#${template.id}",
+                    description = "${SpecCodingBundle.message("completion.template.description.prompt")} · ${template.name}",
+                )
+            }
+            .toList()
     }
 
     private fun getSymbolCompletions(query: String): List<CompletionItem> {

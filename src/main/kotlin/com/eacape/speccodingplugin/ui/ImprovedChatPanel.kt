@@ -30,17 +30,28 @@ import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecGenerationProgress
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
+import com.eacape.speccodingplugin.spec.WorkflowStatus
+import com.eacape.speccodingplugin.spec.DocumentRevisionConflictException
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.ui.chat.ChatSpecSidebarPanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagePanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagesListPanel
-import com.eacape.speccodingplugin.ui.chat.SpecWorkflowResponseBuilder
+import com.eacape.speccodingplugin.ui.chat.SpecCardMetadata
+import com.eacape.speccodingplugin.ui.chat.SpecCardMetadataCodec
+import com.eacape.speccodingplugin.ui.chat.SpecCardMessagePanel
+import com.eacape.speccodingplugin.ui.chat.SpecCardPanelSnapshot
+import com.eacape.speccodingplugin.ui.chat.SpecCardSaveConflictException
 import com.eacape.speccodingplugin.ui.chat.TraceEventMetadataCodec
 import com.eacape.speccodingplugin.ui.completion.CompletionProvider
+import com.eacape.speccodingplugin.ui.history.HistoryPanel
 import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
 import com.eacape.speccodingplugin.ui.input.ContextPreviewPanel
 import com.eacape.speccodingplugin.ui.input.SmartInputField
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
+import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedEvent
+import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedListener
 import com.eacape.speccodingplugin.window.WindowSessionIsolationService
+import com.eacape.speccodingplugin.window.WindowStateStore
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -48,13 +59,19 @@ import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.wm.ToolWindowManager
 
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
+import com.intellij.ui.content.ContentFactory
+import com.intellij.ui.content.ContentManagerEvent
+import com.intellij.ui.content.ContentManagerListener
 import com.intellij.util.ui.JBDimension
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.CoroutineScope
@@ -65,12 +82,18 @@ import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.FlowLayout
+import java.io.File
 import java.util.Locale
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JScrollPane
+import javax.swing.JSplitPane
 import javax.swing.Timer
+import javax.swing.JComponent
 
 /**
  * 改进版 Chat Tool Window Panel
@@ -88,6 +111,7 @@ class ImprovedChatPanel(
     private val logger = thisLogger()
     private val projectService: SpecCodingProjectService = project.getService(SpecCodingProjectService::class.java)
     private val sessionManager = SessionManager.getInstance(project)
+    private val windowStateStore = WindowStateStore.getInstance(project)
     private val sessionIsolationService = WindowSessionIsolationService.getInstance(project)
     private val modeManager = OperationModeManager.getInstance(project)
     private val skillExecutor: SkillExecutor = SkillExecutor.getInstance(project)
@@ -113,20 +137,27 @@ class ImprovedChatPanel(
     // UI Components
     private val providerLabel = JBLabel(SpecCodingBundle.message("toolwindow.provider.label"))
     private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))
-    private val promptLabel = JBLabel(SpecCodingBundle.message("toolwindow.prompt.label"))
     private val providerComboBox = ComboBox<String>()
     private val modelComboBox = ComboBox<ModelInfo>()
-    private val promptComboBox = ComboBox<PromptTemplate>()
+    private val interactionModeComboBox = ComboBox(ChatInteractionMode.entries.toTypedArray())
     private val statusLabel = JBLabel()
     private val messagesPanel = ChatMessagesListPanel()
+    private val conversationHostPanel = JPanel(BorderLayout())
+    private val conversationScrollPane by lazy { messagesPanel.getScrollPane() }
+    private val specSidebarPanel = ChatSpecSidebarPanel(
+        loadWorkflow = { workflowId -> specEngine.loadWorkflow(workflowId) },
+        listWorkflows = { specEngine.listWorkflows() },
+        onOpenDocument = ::openSpecWorkflowDocument,
+    )
+    private val chatSplitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
+    private val specSidebarToggleButton = JButton()
     private val contextPreviewPanel = ContextPreviewPanel(project)
     private val composerHintLabel = JBLabel(SpecCodingBundle.message("toolwindow.composer.hint"))
     private lateinit var inputField: SmartInputField
-    private val specStageComboBox = ComboBox(SpecStageOption.entries.toTypedArray())
     private val sendButton = JButton()
-    private val clearButton = JButton()
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var statusAutoHideTimer: Timer? = null
+    private val runningWorkflowCommands = ConcurrentHashMap<String, RunningWorkflowCommand>()
 
     // Session state
     private val conversationHistory = mutableListOf<LlmMessage>()
@@ -134,16 +165,17 @@ class ImprovedChatPanel(
     private var isGenerating = false
     private var isRestoringSession = false
     private var activeSpecWorkflowId: String? = null
+    private var specSidebarVisible = false
+    private var specSidebarDividerLocation = SPEC_SIDEBAR_DEFAULT_DIVIDER
     @Volatile
     private var _isDisposed = false
 
-    private enum class SpecStageOption(
-        val stageKey: String,
+    private enum class ChatInteractionMode(
+        val key: String,
         val messageKey: String,
     ) {
-        REQUIREMENTS("requirements", "toolwindow.spec.quick.requirements"),
-        DESIGN("design", "toolwindow.spec.quick.design"),
-        TASKS("tasks", "toolwindow.spec.quick.tasks"),
+        VIBE("vibe", "toolwindow.chat.mode.vibe"),
+        SPEC("spec", "toolwindow.chat.mode.spec"),
     }
 
     init {
@@ -170,8 +202,9 @@ class ImprovedChatPanel(
         setupUI()
         CliDiscoveryService.getInstance().addDiscoveryListener(discoveryListener)
         subscribeToHistoryOpenEvents()
+        subscribeToToolWindowControlEvents()
+        subscribeToSpecWorkflowEvents()
         subscribeToLocaleEvents()
-        loadPromptTemplatesAsync()
         addSystemMessage(SpecCodingBundle.message("toolwindow.system.intro"))
         restoreWindowStateIfNeeded()
     }
@@ -187,6 +220,49 @@ class ImprovedChatPanel(
             object : HistorySessionOpenListener {
                 override fun onSessionOpenRequested(sessionId: String) {
                     loadSession(sessionId)
+                }
+            },
+        )
+    }
+
+    private fun subscribeToToolWindowControlEvents() {
+        project.messageBus.connect(this).subscribe(
+            ChatToolWindowControlListener.TOPIC,
+            object : ChatToolWindowControlListener {
+                override fun onNewSessionRequested() {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        startNewSession()
+                    }
+                }
+
+                override fun onOpenHistoryRequested() {
+                    openHistoryPanel()
+                }
+            },
+        )
+    }
+
+    private fun subscribeToSpecWorkflowEvents() {
+        project.messageBus.connect(this).subscribe(
+            SpecWorkflowChangedListener.TOPIC,
+            object : SpecWorkflowChangedListener {
+                override fun onWorkflowChanged(event: SpecWorkflowChangedEvent) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) return@invokeLater
+                        event.workflowId?.let { workflowId ->
+                            activeSpecWorkflowId = workflowId
+                        }
+                        if (!specSidebarVisible) return@invokeLater
+                        val eventWorkflowId = event.workflowId
+                        if (!eventWorkflowId.isNullOrBlank() && specSidebarPanel.hasFocusedWorkflow(eventWorkflowId)) {
+                            specSidebarPanel.focusWorkflow(eventWorkflowId)
+                        } else {
+                            specSidebarPanel.refreshCurrentWorkflow()
+                        }
+                    }
                 }
             },
         )
@@ -209,14 +285,15 @@ class ImprovedChatPanel(
     private fun refreshLocalizedTexts() {
         providerLabel.text = SpecCodingBundle.message("toolwindow.provider.label")
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
-        promptLabel.text = SpecCodingBundle.message("toolwindow.prompt.label")
         composerHintLabel.text = SpecCodingBundle.message("toolwindow.composer.hint")
         refreshActionButtonTexts()
-        specStageComboBox.toolTipText = SpecCodingBundle.message("toolwindow.spec.stage.tooltip")
+        updateSpecSidebarToggleButtonTexts()
+        specSidebarPanel.refreshLocalizedTexts()
+        interactionModeComboBox.toolTipText = SpecCodingBundle.message("toolwindow.chat.mode.tooltip")
         providerComboBox.repaint()
         modelComboBox.repaint()
-        promptComboBox.repaint()
-        specStageComboBox.repaint()
+        interactionModeComboBox.repaint()
+        refreshHistoryContentTitle()
         updateComboTooltips()
         if (isGenerating) {
             showStatus(SpecCodingBundle.message("toolwindow.status.generating"))
@@ -226,7 +303,7 @@ class ImprovedChatPanel(
     }
 
     private fun setupUI() {
-        // Model and prompt setup
+        // Model and interaction setup
         providerComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create<String> { label, value, _ ->
             label.text = providerDisplayName(value)
         }
@@ -240,32 +317,18 @@ class ImprovedChatPanel(
         modelComboBox.addActionListener { updateComboTooltips() }
         refreshProviderCombo(preserveSelection = false)
 
-        promptComboBox.isEnabled = false
-        promptComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create<PromptTemplate> { label, value, _ ->
-            label.text = toUiLowercase(value?.name ?: "")
-        }
-        promptComboBox.addActionListener {
-            val selected = promptComboBox.selectedItem as? PromptTemplate ?: return@addActionListener
-            updateComboTooltips()
-            ApplicationManager.getApplication().executeOnPooledThread {
-                projectService.switchActivePrompt(selected.id)
-            }
-        }
-        specStageComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create<SpecStageOption> { label, value, _ ->
+        interactionModeComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create<ChatInteractionMode> { label, value, _ ->
             label.text = if (value == null) "" else SpecCodingBundle.message(value.messageKey)
         }
-        specStageComboBox.selectedItem = SpecStageOption.TASKS
-        specStageComboBox.toolTipText = SpecCodingBundle.message("toolwindow.spec.stage.tooltip")
-        configureCompactCombo(specStageComboBox, 72)
-        configureCompactCombo(providerComboBox, 86)
-        configureCompactCombo(modelComboBox, 140)
-        configureCompactCombo(promptComboBox, 138)
+        interactionModeComboBox.selectedItem = ChatInteractionMode.VIBE
+        interactionModeComboBox.toolTipText = SpecCodingBundle.message("toolwindow.chat.mode.tooltip")
+        configureCompactCombo(interactionModeComboBox, 74)
+        configureCompactCombo(providerComboBox, 72)
+        configureCompactCombo(modelComboBox, 136)
         providerLabel.font = JBUI.Fonts.smallFont()
         modelLabel.font = JBUI.Fonts.smallFont()
-        promptLabel.font = JBUI.Fonts.smallFont()
         providerLabel.foreground = JBColor.GRAY
         modelLabel.foreground = JBColor.GRAY
-        promptLabel.foreground = JBColor.GRAY
         composerHintLabel.foreground = JBColor.GRAY
         composerHintLabel.font = JBUI.Fonts.smallFont()
         statusLabel.foreground = JBColor.GRAY
@@ -274,11 +337,10 @@ class ImprovedChatPanel(
         configureActionButtons()
         updateComboTooltips()
 
-        clearButton.addActionListener { clearConversation() }
         sendButton.addActionListener { sendCurrentInput() }
 
         // Conversation area fills the top
-        val conversationScrollPane = messagesPanel.getScrollPane()
+        conversationHostPanel.isOpaque = false
         conversationScrollPane.border = JBUI.Borders.empty()
         messagesPanel.isOpaque = true
         messagesPanel.background = JBColor(
@@ -287,6 +349,29 @@ class ImprovedChatPanel(
         )
         conversationScrollPane.viewport.isOpaque = true
         conversationScrollPane.viewport.background = messagesPanel.background
+
+        chatSplitPane.leftComponent = conversationScrollPane
+        chatSplitPane.rightComponent = specSidebarPanel
+        chatSplitPane.dividerSize = JBUI.scale(2)
+        chatSplitPane.resizeWeight = 0.74
+        chatSplitPane.isContinuousLayout = true
+        chatSplitPane.isOpaque = false
+        chatSplitPane.border = JBUI.Borders.empty()
+        chatSplitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY) { _ ->
+            val location = chatSplitPane.dividerLocation
+            if (location > 0) {
+                specSidebarDividerLocation = location
+                if (specSidebarVisible) {
+                    windowStateStore.updateChatSpecSidebar(true, specSidebarDividerLocation)
+                }
+            }
+        }
+        configureSpecSidebarToggleButton()
+        val restoredWindowState = windowStateStore.snapshot()
+        specSidebarDividerLocation = restoredWindowState.chatSpecSidebarDividerLocation
+            .takeIf { it > 0 }
+            ?: SPEC_SIDEBAR_DEFAULT_DIVIDER
+        applySpecSidebarVisibility(restoredWindowState.chatSpecSidebarVisible, persist = false)
 
         // Composer area
         val inputScroll = JScrollPane(inputField)
@@ -297,25 +382,22 @@ class ImprovedChatPanel(
         composerMetaRow.isOpaque = false
         composerMetaRow.border = JBUI.Borders.emptyTop(5)
         composerMetaRow.add(composerHintLabel, BorderLayout.WEST)
-        val stagePanel = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0))
-        stagePanel.isOpaque = false
-        stagePanel.add(specStageComboBox)
-        composerMetaRow.add(stagePanel, BorderLayout.EAST)
+        val composerMetaActions = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
+        composerMetaActions.isOpaque = false
+        composerMetaActions.add(interactionModeComboBox)
+        composerMetaRow.add(composerMetaActions, BorderLayout.EAST)
 
         val controlsLeftPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
         controlsLeftPanel.isOpaque = false
-        controlsLeftPanel.add(providerLabel)
         controlsLeftPanel.add(providerComboBox)
         controlsLeftPanel.add(modelLabel)
         controlsLeftPanel.add(modelComboBox)
-        controlsLeftPanel.add(promptLabel)
-        controlsLeftPanel.add(promptComboBox)
         controlsLeftPanel.add(operationModeSelector)
 
-        val controlsRightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 2))
+        val controlsRightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 2))
         controlsRightPanel.isOpaque = false
         controlsRightPanel.add(statusLabel)
-        controlsRightPanel.add(clearButton)
+        controlsRightPanel.add(specSidebarToggleButton)
         controlsRightPanel.add(sendButton)
 
         val controlsRow = JPanel(BorderLayout())
@@ -357,28 +439,10 @@ class ImprovedChatPanel(
         // Layout
         val content = JPanel(BorderLayout())
         content.isOpaque = false
-        content.add(conversationScrollPane, BorderLayout.CENTER)
+        content.add(conversationHostPanel, BorderLayout.CENTER)
         content.add(bottomPanel, BorderLayout.SOUTH)
 
         add(content, BorderLayout.CENTER)
-    }
-
-    private fun loadPromptTemplatesAsync() {
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val templates = projectService.availablePrompts()
-            val activePromptId = projectService.activePromptId()
-            ApplicationManager.getApplication().invokeLater {
-                if (project.isDisposed || _isDisposed) {
-                    return@invokeLater
-                }
-
-                promptComboBox.removeAllItems()
-                templates.forEach { promptComboBox.addItem(it) }
-                promptComboBox.selectedItem = templates.firstOrNull { it.id == activePromptId }
-                promptComboBox.isEnabled = templates.isNotEmpty()
-                updateComboTooltips()
-            }
-        }
     }
 
     private fun sendCurrentInput() {
@@ -397,10 +461,19 @@ class ImprovedChatPanel(
             return
         }
 
-        val stage = specStageComboBox.selectedItem as? SpecStageOption ?: SpecStageOption.TASKS
-        val stageLabel = SpecCodingBundle.message(stage.messageKey)
-        val visibleInput = "[$stageLabel] $rawInput"
-        val stagedPrompt = buildStageAwarePrompt(stage, rawInput)
+        val interactionMode = interactionModeComboBox.selectedItem as? ChatInteractionMode ?: ChatInteractionMode.VIBE
+        if (interactionMode == ChatInteractionMode.SPEC) {
+            handleSpecCommand("/spec $rawInput")
+            return
+        }
+
+        val promptReference = resolvePromptReferences(rawInput)
+        val visibleInput = rawInput
+        val chatInput = buildChatInput(
+            mode = interactionMode,
+            userInput = promptReference.cleanedInput.ifBlank { rawInput },
+            referencedPrompts = promptReference.templates,
+        )
 
         val providerId = providerComboBox.selectedItem as? String
         val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id
@@ -410,7 +483,7 @@ class ImprovedChatPanel(
         contextPreviewPanel.clear()
 
         // Add user message to history
-        val userMessage = LlmMessage(LlmRole.USER, stagedPrompt)
+        val userMessage = LlmMessage(LlmRole.USER, chatInput)
         appendToConversationHistory(userMessage)
         if (sessionId != null) {
             persistMessage(sessionId, ConversationRole.USER, visibleInput)
@@ -468,7 +541,7 @@ class ImprovedChatPanel(
 
                 projectService.chat(
                     providerId = providerId,
-                    userInput = stagedPrompt,
+                    userInput = chatInput,
                     modelId = modelId,
                     contextSnapshot = contextSnapshot,
                     conversationHistory = conversationHistory.toList(),
@@ -530,14 +603,97 @@ class ImprovedChatPanel(
         }
     }
 
-    private fun buildStageAwarePrompt(stage: SpecStageOption, input: String): String {
+    private data class PromptReferenceResolution(
+        val cleanedInput: String,
+        val templates: List<PromptTemplate>,
+    )
+
+    private fun buildChatInput(
+        mode: ChatInteractionMode,
+        userInput: String,
+        referencedPrompts: List<PromptTemplate>,
+    ): String {
+        val modeAwareInput = when (mode) {
+            ChatInteractionMode.VIBE -> userInput.trim()
+            ChatInteractionMode.SPEC -> buildSpecModePrompt(userInput)
+        }
+        if (referencedPrompts.isEmpty()) {
+            return modeAwareInput
+        }
+
+        val promptBlocks = referencedPrompts.joinToString("\n\n") { template ->
+            buildString {
+                appendLine("Prompt #${template.id} (${template.name}):")
+                append(template.content.trim())
+            }
+        }
         return buildString {
-            appendLine("Spec stage: ${stage.stageKey}")
+            appendLine("Referenced prompt templates:")
+            appendLine(promptBlocks)
+            appendLine()
+            append(modeAwareInput)
+        }
+    }
+
+    private fun buildSpecModePrompt(input: String): String {
+        val workflow = resolveActiveSpecWorkflow()
+        val workflowHint = if (workflow != null) {
+            "Workflow=${workflow.id}, phase=${workflow.currentPhase.name.lowercase(Locale.ROOT)}, status=${workflow.status.name.lowercase(Locale.ROOT)}"
+        } else {
+            "No active workflow. Infer phase from context and keep outputs aligned with requirements/design/tasks."
+        }
+        return buildString {
+            appendLine("Interaction mode: spec")
+            appendLine(workflowHint)
+            appendLine(SpecCodingBundle.message("toolwindow.chat.mode.spec.instruction"))
             appendLine("User instruction:")
             appendLine(input.trim())
-            appendLine()
-            append("Please generate or refine the `${stage.stageKey}` phase content first.")
         }
+    }
+
+    private fun resolvePromptReferences(rawInput: String): PromptReferenceResolution {
+        val allReferences = PROMPT_REFERENCE_REGEX.findAll(rawInput)
+            .mapNotNull { match -> match.groupValues.getOrNull(1)?.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
+        if (allReferences.isEmpty()) {
+            return PromptReferenceResolution(cleanedInput = rawInput, templates = emptyList())
+        }
+
+        val templates = projectService.availablePrompts()
+        if (templates.isEmpty()) {
+            return PromptReferenceResolution(cleanedInput = rawInput, templates = emptyList())
+        }
+
+        val byId = templates.associateBy { it.id.lowercase(Locale.ROOT) }
+        val byName = templates.associateBy { normalizePromptAlias(it.name) }
+        val resolvedTemplates = mutableListOf<PromptTemplate>()
+
+        allReferences.forEach { ref ->
+            val byIdMatch = byId[ref.lowercase(Locale.ROOT)]
+            val byNameMatch = byName[normalizePromptAlias(ref)]
+            val matched = byIdMatch ?: byNameMatch
+            if (matched != null && resolvedTemplates.none { it.id == matched.id }) {
+                resolvedTemplates += matched
+            }
+        }
+
+        val cleaned = rawInput
+            .replace(PROMPT_REFERENCE_REGEX, " ")
+            .replace(PROMPT_EXTRA_SPACES_REGEX, " ")
+            .trim()
+        return PromptReferenceResolution(
+            cleanedInput = cleaned.ifBlank { rawInput.trim() },
+            templates = resolvedTemplates,
+        )
+    }
+
+    private fun normalizePromptAlias(value: String): String {
+        return value
+            .trim()
+            .lowercase(Locale.ROOT)
+            .replace(PROMPT_ALIAS_SEPARATOR_REGEX, "")
     }
 
     private fun handleSlashCommand(command: String) {
@@ -642,18 +798,16 @@ class ImprovedChatPanel(
 
         scope.launch(Dispatchers.IO) {
             try {
-                val output = executeSpecCommand(command)
+                val result = executeSpecCommand(command)
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
-                    val panel = addAssistantMessage()
-                    panel.appendContent(output)
-                    panel.finishMessage()
-                    if (sessionId != null) {
-                        persistMessage(sessionId, ConversationRole.ASSISTANT, output)
-                    }
-                    appendToConversationHistory(LlmMessage(LlmRole.ASSISTANT, output))
+                    renderSpecCommandResult(
+                        result = result,
+                        persistSessionId = sessionId,
+                        publishReason = "spec_command",
+                    )
                 }
             } catch (error: Throwable) {
                 ApplicationManager.getApplication().invokeLater {
@@ -678,38 +832,62 @@ class ImprovedChatPanel(
         }
     }
 
-    private suspend fun executeSpecCommand(command: String): String {
+    private data class SpecCommandResult(
+        val output: String,
+        val metadata: SpecCardMetadata? = null,
+    )
+
+    private suspend fun executeSpecCommand(command: String): SpecCommandResult {
         val args = command.removePrefix("/spec").trim()
         if (args.isBlank() || args.equals("help", ignoreCase = true)) {
-            return SpecCodingBundle.message("toolwindow.spec.command.help")
+            return plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.help"))
         }
 
         val commandToken = args.substringBefore(" ").trim().lowercase()
         val commandArg = args.substringAfter(" ", "").trim()
 
         return when (commandToken) {
-            "status" -> formatSpecStatus()
+            "status" -> {
+                val workflow = resolveActiveSpecWorkflow()
+                    ?: return plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.status.none"))
+                buildSpecCardResult(
+                    workflow = workflow,
+                    sourceCommand = command,
+                    summary = formatSpecStatus(workflow),
+                )
+            }
             "open" -> {
                 openSpecTab()
-                SpecCodingBundle.message("toolwindow.spec.command.opened")
+                plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.opened"))
             }
-            "next" -> transitionSpecWorkflow(advance = true)
-            "back" -> transitionSpecWorkflow(advance = false)
+            "next" -> transitionSpecWorkflow(advance = true, sourceCommand = command)
+            "back" -> transitionSpecWorkflow(advance = false, sourceCommand = command)
             "generate" -> {
                 if (commandArg.isBlank()) {
-                    SpecCodingBundle.message("toolwindow.spec.command.inputRequired", "generate")
+                    plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.inputRequired", "generate"))
                 } else {
-                    generateSpecForActiveWorkflow(commandArg)
+                    generateSpecForActiveWorkflow(
+                        input = commandArg,
+                        sourceCommand = command,
+                    )
                 }
             }
-            "complete" -> completeSpecWorkflow()
-            else -> createAndGenerateWorkflow(args)
+            "complete" -> completeSpecWorkflow(sourceCommand = command)
+            else -> createAndGenerateWorkflow(
+                requirementsInput = args,
+                sourceCommand = command,
+            )
         }
     }
 
-    private suspend fun createAndGenerateWorkflow(requirementsInput: String): String {
+    private suspend fun createAndGenerateWorkflow(
+        requirementsInput: String,
+        sourceCommand: String,
+    ): SpecCommandResult {
         if (requirementsInput.isBlank()) {
-            return SpecCodingBundle.message("toolwindow.spec.command.inputRequired", "<requirements text>")
+            return plainSpecResult(
+                SpecCodingBundle.message("toolwindow.spec.command.inputRequired", "<requirements text>"),
+            )
         }
 
         val title = requirementsInput
@@ -727,18 +905,33 @@ class ImprovedChatPanel(
         activeSpecWorkflowId = workflow.id
 
         val generationSummary = runSpecGeneration(workflow.id, requirementsInput)
-        return buildString {
+        val summary = buildString {
             appendLine(SpecCodingBundle.message("toolwindow.spec.command.created", workflow.id))
             if (generationSummary.isNotBlank()) {
                 append(generationSummary)
             }
         }.trimEnd()
+        val refreshed = specEngine.loadWorkflow(workflow.id).getOrNull() ?: workflow
+        return buildSpecCardResult(
+            workflow = refreshed,
+            sourceCommand = sourceCommand,
+            summary = summary,
+        )
     }
 
-    private suspend fun generateSpecForActiveWorkflow(input: String): String {
+    private suspend fun generateSpecForActiveWorkflow(
+        input: String,
+        sourceCommand: String,
+    ): SpecCommandResult {
         val workflow = resolveActiveSpecWorkflow()
-            ?: return SpecCodingBundle.message("toolwindow.spec.command.noActive")
-        return runSpecGeneration(workflow.id, input)
+            ?: return plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.noActive"))
+        val summary = runSpecGeneration(workflow.id, input)
+        val refreshed = specEngine.loadWorkflow(workflow.id).getOrNull() ?: workflow
+        return buildSpecCardResult(
+            workflow = refreshed,
+            sourceCommand = sourceCommand,
+            summary = summary,
+        )
     }
 
     private suspend fun runSpecGeneration(workflowId: String, input: String): String {
@@ -799,9 +992,12 @@ class ImprovedChatPanel(
         return lines.joinToString("\n")
     }
 
-    private fun transitionSpecWorkflow(advance: Boolean): String {
+    private fun transitionSpecWorkflow(
+        advance: Boolean,
+        sourceCommand: String,
+    ): SpecCommandResult {
         val current = resolveActiveSpecWorkflow()
-            ?: return SpecCodingBundle.message("toolwindow.spec.command.noActive")
+            ?: return plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.noActive"))
         val updated = if (advance) {
             specEngine.proceedToNextPhase(current.id)
         } else {
@@ -809,27 +1005,43 @@ class ImprovedChatPanel(
         }.getOrElse { throw it }
 
         activeSpecWorkflowId = updated.id
-        val template = templateForPhase(updated.currentPhase)
-        return SpecWorkflowResponseBuilder.buildPhaseTransitionResponse(
-            workflowId = updated.id,
-            phaseDisplayName = updated.currentPhase.displayName,
-            template = template,
-            advanced = advance,
-            templateInserted = false,
+        val summaryKey = if (advance) {
+            "toolwindow.spec.command.phaseAdvanced"
+        } else {
+            "toolwindow.spec.command.phaseBack"
+        }
+        val summary = SpecCodingBundle.message(
+            summaryKey,
+            updated.id,
+            updated.currentPhase.displayName,
+        )
+        return buildSpecCardResult(
+            workflow = updated,
+            sourceCommand = sourceCommand,
+            summary = summary,
         )
     }
 
-    private fun completeSpecWorkflow(): String {
+    private fun completeSpecWorkflow(sourceCommand: String): SpecCommandResult {
         val workflow = resolveActiveSpecWorkflow()
-            ?: return SpecCodingBundle.message("toolwindow.spec.command.noActive")
+            ?: return plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.noActive"))
         val completed = specEngine.completeWorkflow(workflow.id).getOrElse { throw it }
         activeSpecWorkflowId = completed.id
-        return SpecCodingBundle.message("toolwindow.spec.command.completed", completed.id)
+        val summary = SpecCodingBundle.message("toolwindow.spec.command.completed", completed.id)
+        return buildSpecCardResult(
+            workflow = completed,
+            sourceCommand = sourceCommand,
+            summary = summary,
+        )
     }
 
     private fun formatSpecStatus(): String {
         val workflow = resolveActiveSpecWorkflow()
             ?: return SpecCodingBundle.message("toolwindow.spec.command.status.none")
+        return formatSpecStatus(workflow)
+    }
+
+    private fun formatSpecStatus(workflow: SpecWorkflow): String {
         return SpecCodingBundle.message(
             "toolwindow.spec.command.status.entry",
             workflow.id,
@@ -840,25 +1052,102 @@ class ImprovedChatPanel(
     }
 
     private fun workflowStatusDisplayName(workflow: SpecWorkflow): String {
-        return when (workflow.status) {
-            com.eacape.speccodingplugin.spec.WorkflowStatus.IN_PROGRESS ->
+        return workflowStatusDisplayName(workflow.status)
+    }
+
+    private fun workflowStatusDisplayName(status: WorkflowStatus): String {
+        return when (status) {
+            WorkflowStatus.IN_PROGRESS ->
                 SpecCodingBundle.message("spec.workflow.status.inProgress")
-            com.eacape.speccodingplugin.spec.WorkflowStatus.PAUSED ->
+            WorkflowStatus.PAUSED ->
                 SpecCodingBundle.message("spec.workflow.status.paused")
-            com.eacape.speccodingplugin.spec.WorkflowStatus.COMPLETED ->
+            WorkflowStatus.COMPLETED ->
                 SpecCodingBundle.message("spec.workflow.status.completed")
-            com.eacape.speccodingplugin.spec.WorkflowStatus.FAILED ->
+            WorkflowStatus.FAILED ->
                 SpecCodingBundle.message("spec.workflow.status.failed")
         }
     }
 
-    private fun templateForPhase(phase: SpecPhase): String {
-        return when (phase) {
-            SpecPhase.SPECIFY -> SpecCodingBundle.message("toolwindow.spec.template.requirements")
-            SpecPhase.DESIGN -> SpecCodingBundle.message("toolwindow.spec.template.design")
-            SpecPhase.IMPLEMENT -> SpecCodingBundle.message("toolwindow.spec.template.tasks")
+    private fun buildSpecCardResult(
+        workflow: SpecWorkflow,
+        sourceCommand: String,
+        summary: String? = null,
+    ): SpecCommandResult {
+        val document = workflow.getCurrentDocument()
+        if (document == null) {
+            val fallback = if (!summary.isNullOrBlank()) {
+                listOf(summary, formatSpecStatus(workflow)).joinToString("\n")
+            } else {
+                formatSpecStatus(workflow)
+            }
+            return plainSpecResult(fallback)
+        }
+
+        val title = workflow.title.ifBlank { workflow.id }
+        val metadata = SpecCardMetadata(
+            workflowId = workflow.id,
+            phase = workflow.currentPhase,
+            status = workflow.status,
+            title = title,
+            revision = document.metadata.updatedAt,
+            sourceCommand = sourceCommand,
+        )
+        return SpecCommandResult(
+            output = buildSpecCardMarkdown(
+                metadata = metadata,
+                previewContent = document.content,
+                summary = summary,
+            ),
+            metadata = metadata,
+        )
+    }
+
+    private fun buildSpecCardMarkdown(
+        metadata: SpecCardMetadata,
+        previewContent: String,
+        summary: String?,
+    ): String {
+        val preview = buildSpecCardPreview(previewContent)
+        return buildString {
+            appendLine(
+                "## " + SpecCodingBundle.message(
+                    "toolwindow.spec.card.title",
+                    metadata.title.ifBlank { metadata.workflowId },
+                ),
+            )
+            appendLine("- ${SpecCodingBundle.message("toolwindow.spec.card.workflow")}: `${metadata.workflowId}`")
+            appendLine("- ${SpecCodingBundle.message("toolwindow.spec.card.phase")}: **${metadata.phase.displayName}**")
+            appendLine("- ${SpecCodingBundle.message("toolwindow.spec.card.status")}: **${workflowStatusDisplayName(metadata.status)}**")
+            appendLine("- ${SpecCodingBundle.message("toolwindow.spec.card.command")}: `${metadata.sourceCommand}`")
+            if (!summary.isNullOrBlank()) {
+                appendLine()
+                appendLine("### ${SpecCodingBundle.message("toolwindow.spec.card.summary")}")
+                appendLine(summary.trim())
+            }
+            appendLine()
+            appendLine("### ${SpecCodingBundle.message("toolwindow.spec.card.preview")}")
+            appendLine(preview.ifBlank { SpecCodingBundle.message("toolwindow.spec.card.empty") })
+        }.trimEnd()
+    }
+
+    private fun buildSpecCardPreview(content: String): String {
+        if (content.isBlank()) return ""
+        val normalizedLines = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .take(SPEC_CARD_PREVIEW_MAX_LINES)
+            .toList()
+        val normalized = normalizedLines.joinToString("\n").trim()
+        if (normalized.isBlank()) return ""
+        return if (normalized.length <= SPEC_CARD_PREVIEW_MAX_CHARS) {
+            normalized
+        } else {
+            normalized.take(SPEC_CARD_PREVIEW_MAX_CHARS).trimEnd() + "..."
         }
     }
+
+    private fun plainSpecResult(text: String): SpecCommandResult = SpecCommandResult(output = text)
 
     private fun resolveActiveSpecWorkflow(): SpecWorkflow? {
         val explicitId = activeSpecWorkflowId
@@ -889,6 +1178,62 @@ class ImprovedChatPanel(
                 toolWindow.contentManager.setSelectedContent(target)
             }
         }
+    }
+
+    private fun openHistoryPanel() {
+        if (project.isDisposed || _isDisposed || isGenerating || isRestoringSession) return
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || _isDisposed) {
+                return@invokeLater
+            }
+
+            val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Spec Code") ?: return@invokeLater
+            val contentManager = toolWindow.contentManager
+            val historyTitle = SpecCodingBundle.message("history.tab.title")
+            val existing = contentManager.contents.firstOrNull {
+                it.getUserData(HISTORY_CONTENT_DATA_KEY) == HISTORY_CONTENT_KEY
+            }
+
+            if (existing != null) {
+                existing.displayName = historyTitle
+                contentManager.setSelectedContent(existing)
+                toolWindow.activate(null)
+                return@invokeLater
+            }
+
+            val historyPanel = HistoryPanel(project)
+            val historyContent = ContentFactory.getInstance().createContent(historyPanel, historyTitle, false).apply {
+                putUserData(HISTORY_CONTENT_DATA_KEY, HISTORY_CONTENT_KEY)
+            }
+            Disposer.register(historyContent, historyPanel)
+            contentManager.addContent(historyContent)
+            contentManager.setSelectedContent(historyContent)
+
+            contentManager.addContentManagerListener(object : ContentManagerListener {
+                override fun selectionChanged(event: ContentManagerEvent) {
+                    if (event.content != historyContent && contentManager.contents.contains(historyContent)) {
+                        contentManager.removeContentManagerListener(this)
+                        contentManager.removeContent(historyContent, true)
+                    }
+                }
+
+                override fun contentRemoved(event: ContentManagerEvent) {
+                    if (event.content == historyContent) {
+                        contentManager.removeContentManagerListener(this)
+                    }
+                }
+            })
+            toolWindow.activate(null)
+        }
+    }
+
+    private fun refreshHistoryContentTitle() {
+        if (project.isDisposed || _isDisposed) return
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Spec Code") ?: return
+        val historyContent = toolWindow.contentManager.contents.firstOrNull {
+            it.getUserData(HISTORY_CONTENT_DATA_KEY) == HISTORY_CONTENT_KEY
+        } ?: return
+        historyContent.displayName = SpecCodingBundle.message("history.tab.title")
     }
 
     private fun updateStatusLabel(text: String) {
@@ -1132,15 +1477,20 @@ class ImprovedChatPanel(
         }
     }
 
-    private fun clearConversation() {
+    private fun startNewSession() {
+        if (isGenerating || isRestoringSession) {
+            return
+        }
         conversationHistory.clear()
         currentSessionId = null
         activeSpecWorkflowId = null
         sessionIsolationService.clearActiveSession()
+        specSidebarPanel.clearFocusedWorkflow()
         messagesPanel.clearAll()
         contextPreviewPanel.clear()
+        inputField.text = ""
         currentAssistantPanel = null
-        addSystemMessage(SpecCodingBundle.message("toolwindow.system.cleared"))
+        addSystemMessage(SpecCodingBundle.message("toolwindow.system.intro"))
     }
 
     private fun loadSession(sessionId: String) {
@@ -1207,23 +1557,43 @@ class ImprovedChatPanel(
                 }
 
                 ConversationRole.ASSISTANT -> {
-                    val panel = ChatMessagePanel(
-                        ChatMessagePanel.MessageRole.ASSISTANT,
-                        message.content,
-                        onDelete = ::handleDeleteMessage,
-                        onRegenerate = ::handleRegenerateMessage,
-                        onContinue = ::handleContinueMessage,
-                        onWorkflowFileOpen = ::handleWorkflowFileOpen,
-                        onWorkflowCommandInsert = ::handleWorkflowCommandInsert,
-                    )
+                    val restoredSpecMetadata = SpecCardMetadataCodec.decode(message.metadataJson)
+                    val restoredContent = if (restoredSpecMetadata != null) {
+                        message.content.ifBlank {
+                            buildSpecCardMarkdown(
+                                metadata = restoredSpecMetadata,
+                                previewContent = "",
+                                summary = null,
+                            )
+                        }
+                    } else {
+                        message.content
+                    }
                     val restoredTraceEvents = TraceEventMetadataCodec.decode(message.metadataJson)
                         .mapNotNull(::sanitizeStreamEvent)
-                    if (restoredTraceEvents.isNotEmpty()) {
-                        panel.appendStreamContent(text = "", events = restoredTraceEvents)
+                    if (restoredSpecMetadata != null && restoredTraceEvents.isEmpty()) {
+                        addSpecCardMessage(
+                            cardMarkdown = restoredContent,
+                            metadata = restoredSpecMetadata,
+                        )
+                    } else {
+                        val panel = ChatMessagePanel(
+                            ChatMessagePanel.MessageRole.ASSISTANT,
+                            restoredContent,
+                            onDelete = ::handleDeleteMessage,
+                            onRegenerate = ::handleRegenerateMessage,
+                            onContinue = ::handleContinueMessage,
+                            onWorkflowFileOpen = ::handleWorkflowFileOpen,
+                            onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
+                            onWorkflowCommandStop = ::handleWorkflowCommandStop,
+                        )
+                        if (restoredTraceEvents.isNotEmpty()) {
+                            panel.appendStreamContent(text = "", events = restoredTraceEvents)
+                        }
+                        panel.finishMessage()
+                        messagesPanel.addMessage(panel)
                     }
-                    panel.finishMessage()
-                    messagesPanel.addMessage(panel)
-                    appendToConversationHistory(LlmMessage(LlmRole.ASSISTANT, message.content))
+                    appendToConversationHistory(LlmMessage(LlmRole.ASSISTANT, restoredContent))
                 }
 
                 ConversationRole.SYSTEM -> {
@@ -1337,10 +1707,270 @@ class ImprovedChatPanel(
             onRegenerate = ::handleRegenerateMessage,
             onContinue = ::handleContinueMessage,
             onWorkflowFileOpen = ::handleWorkflowFileOpen,
-            onWorkflowCommandInsert = ::handleWorkflowCommandInsert,
+            onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
+            onWorkflowCommandStop = ::handleWorkflowCommandStop,
         )
         messagesPanel.addMessage(panel)
         return panel
+    }
+
+    private fun addSpecCardMessage(
+        cardMarkdown: String,
+        metadata: SpecCardMetadata,
+    ): SpecCardMessagePanel {
+        val initialState = resolveSpecCardInitialState(metadata, cardMarkdown)
+        val panel = SpecCardMessagePanel(
+            metadata = initialState.metadata,
+            cardMarkdown = cardMarkdown,
+            initialDocumentContent = initialState.documentContent,
+            onDeleteMessage = ::handleDeleteMessage,
+            onContinueMessage = ::handleContinueMessage,
+            onOpenSpecTab = ::openSpecTab,
+            onOpenDocument = ::openSpecWorkflowDocument,
+            onFocusSpecSidebar = ::focusSpecSidebarForCard,
+            onSaveDocument = ::saveSpecCardDocument,
+            onAdvancePhase = ::advanceSpecCardPhase,
+        )
+        messagesPanel.addMessage(panel)
+        return panel
+    }
+
+    private data class SpecCardInitialState(
+        val metadata: SpecCardMetadata,
+        val documentContent: String,
+    )
+
+    private fun resolveSpecCardInitialState(
+        metadata: SpecCardMetadata,
+        cardMarkdown: String,
+    ): SpecCardInitialState {
+        val workflow = specEngine.loadWorkflow(metadata.workflowId).getOrNull()
+        val fallbackContent = extractSpecCardPreviewFromMarkdown(cardMarkdown)
+        if (workflow == null) {
+            return SpecCardInitialState(metadata = metadata, documentContent = fallbackContent)
+        }
+
+        val documentAtPhase = workflow.getDocument(metadata.phase)
+        if (documentAtPhase != null) {
+            val refreshedMetadata = metadata.copy(
+                status = workflow.status,
+                title = workflow.title.ifBlank { metadata.title.ifBlank { metadata.workflowId } },
+                revision = documentAtPhase.metadata.updatedAt,
+            )
+            val content = documentAtPhase.content.ifBlank { fallbackContent }
+            return SpecCardInitialState(metadata = refreshedMetadata, documentContent = content)
+        }
+
+        val currentDocument = workflow.getCurrentDocument()
+        if (currentDocument != null) {
+            val refreshedMetadata = metadata.copy(
+                phase = currentDocument.phase,
+                status = workflow.status,
+                title = workflow.title.ifBlank { metadata.title.ifBlank { metadata.workflowId } },
+                revision = currentDocument.metadata.updatedAt,
+            )
+            val content = currentDocument.content.ifBlank { fallbackContent }
+            return SpecCardInitialState(metadata = refreshedMetadata, documentContent = content)
+        }
+
+        return SpecCardInitialState(metadata = metadata, documentContent = fallbackContent)
+    }
+
+    private fun extractSpecCardPreviewFromMarkdown(cardMarkdown: String): String {
+        val normalizedLines = cardMarkdown
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lines()
+        val previewHeaderIndex = normalizedLines.indexOfFirst { line ->
+            line.trimStart().startsWith("### ") &&
+                (line.contains("preview", ignoreCase = true) || line.contains("预览"))
+        }
+        if (previewHeaderIndex < 0 || previewHeaderIndex >= normalizedLines.lastIndex) {
+            return cardMarkdown.trim()
+        }
+        return normalizedLines.subList(previewHeaderIndex + 1, normalizedLines.size)
+            .joinToString("\n")
+            .trim()
+    }
+
+    private fun focusSpecSidebarForCard(metadata: SpecCardMetadata) {
+        focusSpecSidebar(metadata.workflowId, metadata.phase)
+    }
+
+    private fun openSpecWorkflowDocument(metadata: SpecCardMetadata) {
+        openSpecWorkflowDocument(metadata.workflowId, metadata.phase)
+    }
+
+    private fun openSpecWorkflowDocument(workflowId: String, phase: SpecPhase) {
+        val basePath = project.basePath ?: return
+        val path = "$basePath/.spec-coding/specs/$workflowId/${phase.outputFileName}"
+        val normalizedPath = path.replace('\\', '/')
+        val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(normalizedPath)
+        if (vf == null) {
+            addErrorMessage(SpecCodingBundle.message("chat.workflow.action.fileNotFound", normalizedPath))
+            return
+        }
+        OpenFileDescriptor(project, vf, 0, 0).navigate(true)
+    }
+
+    private fun publishSpecWorkflowChanged(workflowId: String?, reason: String) {
+        runCatching {
+            project.messageBus.syncPublisher(SpecWorkflowChangedListener.TOPIC)
+                .onWorkflowChanged(
+                    SpecWorkflowChangedEvent(
+                        workflowId = workflowId,
+                        reason = reason,
+                    ),
+                )
+        }.onFailure { error ->
+            logger.warn("Failed to publish spec workflow changed event", error)
+        }
+    }
+
+    private fun renderSpecCommandResult(
+        result: SpecCommandResult,
+        persistSessionId: String?,
+        publishReason: String,
+    ) {
+        result.metadata?.workflowId?.let { workflowId ->
+            publishSpecWorkflowChanged(workflowId, reason = publishReason)
+        }
+        if (result.metadata != null) {
+            if (specSidebarVisible) {
+                specSidebarPanel.focusWorkflow(result.metadata.workflowId, result.metadata.phase)
+            }
+            addSpecCardMessage(
+                cardMarkdown = result.output,
+                metadata = result.metadata,
+            )
+        } else {
+            val panel = addAssistantMessage()
+            panel.appendContent(result.output)
+            panel.finishMessage()
+        }
+        if (persistSessionId != null) {
+            persistMessage(
+                sessionId = persistSessionId,
+                role = ConversationRole.ASSISTANT,
+                content = result.output,
+                metadataJson = result.metadata?.let(SpecCardMetadataCodec::encode),
+            )
+        }
+        appendToConversationHistory(LlmMessage(LlmRole.ASSISTANT, result.output))
+    }
+
+    private fun saveSpecCardDocument(
+        metadata: SpecCardMetadata,
+        editedContent: String,
+        forceSave: Boolean,
+    ): Result<SpecCardPanelSnapshot> {
+        return runCatching {
+            val normalized = editedContent
+                .replace("\r\n", "\n")
+                .replace('\r', '\n')
+                .trim()
+            require(normalized.isNotBlank()) { "Document content cannot be blank" }
+
+            val updatedWorkflow = specEngine.updateDocumentContent(
+                workflowId = metadata.workflowId,
+                phase = metadata.phase,
+                content = normalized,
+                expectedRevision = if (forceSave) null else metadata.revision,
+            ).getOrElse { error ->
+                val conflict = error as? DocumentRevisionConflictException
+                if (conflict != null) {
+                    val latestContent = specEngine.loadWorkflow(metadata.workflowId)
+                        .getOrNull()
+                        ?.getDocument(metadata.phase)
+                        ?.content
+                        .orEmpty()
+                    throw SpecCardSaveConflictException(
+                        latestContent = latestContent,
+                        expectedRevision = conflict.expectedRevision,
+                        actualRevision = conflict.actualRevision,
+                    )
+                }
+                throw error
+            }
+
+            activeSpecWorkflowId = updatedWorkflow.id
+
+            val updatedDocument = updatedWorkflow.getDocument(metadata.phase)
+                ?: throw IllegalStateException("Document not found after save: ${metadata.phase.name}")
+            val refreshedMetadata = metadata.copy(
+                status = updatedWorkflow.status,
+                title = updatedWorkflow.title.ifBlank { metadata.title.ifBlank { metadata.workflowId } },
+                revision = updatedDocument.metadata.updatedAt,
+            )
+            val markdown = buildSpecCardMarkdown(
+                metadata = refreshedMetadata,
+                previewContent = updatedDocument.content,
+                summary = SpecCodingBundle.message(
+                    if (forceSave) {
+                        "toolwindow.spec.card.save.summary.force"
+                    } else {
+                        "toolwindow.spec.card.save.summary"
+                    }
+                ),
+            )
+            publishSpecWorkflowChanged(
+                metadata.workflowId,
+                reason = if (forceSave) "spec_card_force_save" else "spec_card_save",
+            )
+
+            SpecCardPanelSnapshot(
+                metadata = refreshedMetadata,
+                cardMarkdown = markdown,
+                documentContent = updatedDocument.content,
+            )
+        }
+    }
+
+    private fun advanceSpecCardPhase(metadata: SpecCardMetadata) {
+        if (isGenerating || isRestoringSession || project.isDisposed || _isDisposed) {
+            return
+        }
+        activeSpecWorkflowId = metadata.workflowId
+        val sessionId = currentSessionId
+        setSendingState(true)
+
+        scope.launch(Dispatchers.IO) {
+            try {
+                val result = transitionSpecWorkflow(
+                    advance = true,
+                    sourceCommand = "/spec next",
+                )
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || _isDisposed) {
+                        return@invokeLater
+                    }
+                    renderSpecCommandResult(
+                        result = result,
+                        persistSessionId = sessionId,
+                        publishReason = "spec_card_next",
+                    )
+                }
+            } catch (error: Throwable) {
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || _isDisposed) {
+                        return@invokeLater
+                    }
+                    addErrorMessage(
+                        SpecCodingBundle.message(
+                            "toolwindow.spec.command.failed",
+                            error.message ?: SpecCodingBundle.message("common.unknown"),
+                        )
+                    )
+                }
+            } finally {
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || _isDisposed) {
+                        return@invokeLater
+                    }
+                    setSendingState(false)
+                }
+            }
+        }
     }
 
     private fun addSystemMessage(content: String) {
@@ -1407,9 +2037,7 @@ class ImprovedChatPanel(
         inputField.isEnabled = true
         providerComboBox.isEnabled = true
         modelComboBox.isEnabled = true
-        promptComboBox.isEnabled = promptComboBox.itemCount > 0
-        specStageComboBox.isEnabled = true
-        clearButton.isEnabled = true
+        interactionModeComboBox.isEnabled = true
         if (sending) {
             showStatus(SpecCodingBundle.message("toolwindow.status.generating"))
         } else if (isRestoringSession) {
@@ -1460,30 +2088,123 @@ class ImprovedChatPanel(
     }
 
     private fun refreshActionButtonTexts() {
-        clearButton.toolTipText = SpecCodingBundle.message("toolwindow.clear")
         sendButton.toolTipText = SpecCodingBundle.message("toolwindow.send")
-        clearButton.accessibleContext.accessibleName = clearButton.toolTipText
         sendButton.accessibleContext.accessibleName = sendButton.toolTipText
     }
 
     private fun configureActionButtons() {
-        clearButton.icon = AllIcons.Actions.GC
         sendButton.icon = AllIcons.Actions.Execute
-        clearButton.text = ""
         sendButton.text = ""
-        clearButton.isFocusable = false
         sendButton.isFocusable = false
-        clearButton.isFocusPainted = false
         sendButton.isFocusPainted = false
-        clearButton.margin = JBUI.emptyInsets()
         sendButton.margin = JBUI.emptyInsets()
-        clearButton.preferredSize = JBDimension(30, 28)
         sendButton.preferredSize = JBDimension(30, 28)
-        clearButton.minimumSize = JBDimension(30, 28)
         sendButton.minimumSize = JBDimension(30, 28)
-        clearButton.putClientProperty("JButton.buttonType", "toolbar")
         sendButton.putClientProperty("JButton.buttonType", "toolbar")
         refreshActionButtonTexts()
+    }
+
+    private fun configureSpecSidebarToggleButton() {
+        specSidebarToggleButton.icon = AllIcons.Nodes.Folder
+        specSidebarToggleButton.isFocusable = false
+        specSidebarToggleButton.isFocusPainted = false
+        specSidebarToggleButton.margin = JBUI.emptyInsets()
+        specSidebarToggleButton.preferredSize = JBDimension(28, 24)
+        specSidebarToggleButton.minimumSize = JBDimension(28, 24)
+        specSidebarToggleButton.maximumSize = JBDimension(28, 24)
+        specSidebarToggleButton.text = ""
+        specSidebarToggleButton.putClientProperty("JButton.buttonType", "borderless")
+        specSidebarToggleButton.addActionListener { toggleSpecSidebar() }
+        updateSpecSidebarToggleButtonTexts()
+    }
+
+    private fun updateSpecSidebarToggleButtonTexts() {
+        val tooltipKey = if (specSidebarVisible) {
+            "toolwindow.spec.sidebar.toggle.hide.tooltip"
+        } else {
+            "toolwindow.spec.sidebar.toggle.show.tooltip"
+        }
+        val tooltip = SpecCodingBundle.message(tooltipKey)
+        specSidebarToggleButton.icon = if (specSidebarVisible) {
+            AllIcons.Actions.MenuOpen
+        } else {
+            AllIcons.Nodes.Folder
+        }
+        specSidebarToggleButton.toolTipText = tooltip
+        specSidebarToggleButton.accessibleContext.accessibleName = tooltip
+    }
+
+    private fun toggleSpecSidebar() {
+        if (!specSidebarVisible) {
+            val targetWorkflowId = activeSpecWorkflowId
+                ?: specSidebarPanel.currentFocusedWorkflowId()
+                ?: specEngine.listWorkflows().lastOrNull()
+            if (!targetWorkflowId.isNullOrBlank()) {
+                specSidebarPanel.focusWorkflow(targetWorkflowId)
+            } else {
+                specSidebarPanel.refreshCurrentWorkflow()
+            }
+        }
+        applySpecSidebarVisibility(!specSidebarVisible, persist = true)
+    }
+
+    private fun focusSpecSidebar(workflowId: String, phase: SpecPhase?) {
+        if (workflowId.isBlank()) return
+        activeSpecWorkflowId = workflowId
+        specSidebarPanel.focusWorkflow(workflowId, preferredPhase = phase)
+        applySpecSidebarVisibility(visible = true, persist = true)
+    }
+
+    private fun applySpecSidebarVisibility(visible: Boolean, persist: Boolean) {
+        if (specSidebarVisible == visible && conversationHostPanel.componentCount > 0) {
+            if (persist) {
+                windowStateStore.updateChatSpecSidebar(specSidebarVisible, specSidebarDividerLocation)
+            }
+            return
+        }
+
+        if (!visible) {
+            val currentDivider = chatSplitPane.dividerLocation
+            if (currentDivider > 0) {
+                specSidebarDividerLocation = currentDivider
+            }
+        }
+
+        conversationHostPanel.removeAll()
+        if (visible) {
+            if (specSidebarPanel.currentFocusedWorkflowId().isNullOrBlank()) {
+                val defaultWorkflowId = activeSpecWorkflowId ?: specEngine.listWorkflows().lastOrNull()
+                if (!defaultWorkflowId.isNullOrBlank()) {
+                    activeSpecWorkflowId = defaultWorkflowId
+                    specSidebarPanel.focusWorkflow(defaultWorkflowId)
+                } else {
+                    specSidebarPanel.refreshCurrentWorkflow()
+                }
+            }
+            if (chatSplitPane.leftComponent !== conversationScrollPane) {
+                chatSplitPane.leftComponent = conversationScrollPane
+            }
+            if (chatSplitPane.rightComponent !== specSidebarPanel) {
+                chatSplitPane.rightComponent = specSidebarPanel
+            }
+            conversationHostPanel.add(chatSplitPane, BorderLayout.CENTER)
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed || _isDisposed || !specSidebarVisible) {
+                    return@invokeLater
+                }
+                chatSplitPane.dividerLocation = specSidebarDividerLocation
+                    .coerceAtLeast(SPEC_SIDEBAR_MIN_DIVIDER)
+            }
+        } else {
+            conversationHostPanel.add(conversationScrollPane, BorderLayout.CENTER)
+        }
+        specSidebarVisible = visible
+        updateSpecSidebarToggleButtonTexts()
+        conversationHostPanel.revalidate()
+        conversationHostPanel.repaint()
+        if (persist) {
+            windowStateStore.updateChatSpecSidebar(specSidebarVisible, specSidebarDividerLocation)
+        }
     }
 
     private fun configureCompactCombo(comboBox: ComboBox<*>, width: Int) {
@@ -1504,7 +2225,7 @@ class ImprovedChatPanel(
     private fun updateComboTooltips() {
         providerComboBox.toolTipText = providerDisplayName(providerComboBox.selectedItem as? String)
         modelComboBox.toolTipText = (modelComboBox.selectedItem as? ModelInfo)?.name
-        promptComboBox.toolTipText = (promptComboBox.selectedItem as? PromptTemplate)?.name
+        interactionModeComboBox.toolTipText = SpecCodingBundle.message("toolwindow.chat.mode.tooltip")
     }
 
     private fun providerDisplayName(providerId: String?): String {
@@ -1671,15 +2392,363 @@ class ImprovedChatPanel(
             normalized.contains("请承接上一轮输出继续执行")
     }
 
-    private fun handleWorkflowCommandInsert(command: String) {
-        if (inputField.text.isBlank()) {
-            inputField.text = command
-        } else {
-            inputField.text = inputField.text.trimEnd() + "\n" + command
+    private fun handleWorkflowCommandExecute(command: String) {
+        val normalizedCommand = command.trim()
+        if (normalizedCommand.isBlank() || project.isDisposed || _isDisposed) {
+            return
         }
-        inputField.requestFocusInWindow()
-        inputField.caretPosition = inputField.text.length
+        if (isGenerating || isRestoringSession) {
+            showStatus(SpecCodingBundle.message("toolwindow.status.generating"))
+            return
+        }
+
+        if (normalizedCommand.startsWith("/")) {
+            handleSlashCommand(normalizedCommand)
+            return
+        }
+
+        val request = OperationRequest(
+            operation = Operation.EXECUTE_COMMAND,
+            description = "Workflow quick action command: $normalizedCommand",
+            details = mapOf("command" to normalizedCommand),
+        )
+        if (!checkWorkflowCommandPermission(request, normalizedCommand)) {
+            return
+        }
+
+        val existing = runningWorkflowCommands[normalizedCommand]
+        if (existing != null && existing.process.isAlive) {
+            val message = SpecCodingBundle.message("chat.workflow.action.runCommand.alreadyRunning", normalizedCommand)
+            addSystemMessage(message)
+            currentSessionId?.let { sessionId ->
+                persistMessage(
+                    sessionId = sessionId,
+                    role = ConversationRole.TOOL,
+                    content = message,
+                )
+            }
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            runWorkflowShellCommandInBackground(normalizedCommand, request)
+        }
     }
+
+    private fun handleWorkflowCommandStop(command: String) {
+        val normalizedCommand = command.trim()
+        if (normalizedCommand.isBlank() || project.isDisposed || _isDisposed) {
+            return
+        }
+
+        val running = runningWorkflowCommands[normalizedCommand]
+        if (running == null || !running.process.isAlive) {
+            val message = SpecCodingBundle.message("chat.workflow.action.stopCommand.notRunning", normalizedCommand)
+            addSystemMessage(message)
+            currentSessionId?.let { sessionId ->
+                persistMessage(
+                    sessionId = sessionId,
+                    role = ConversationRole.TOOL,
+                    content = message,
+                )
+            }
+            return
+        }
+
+        if (!running.stopRequested.compareAndSet(false, true)) {
+            return
+        }
+
+        val stoppingMessage = SpecCodingBundle.message("chat.workflow.action.stopCommand.stopping", normalizedCommand)
+        addSystemMessage(stoppingMessage)
+        currentSessionId?.let { sessionId ->
+            persistMessage(
+                sessionId = sessionId,
+                role = ConversationRole.TOOL,
+                content = stoppingMessage,
+            )
+        }
+
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                running.process.destroy()
+                if (running.process.isAlive) {
+                    val exited = running.process.waitFor(
+                        WORKFLOW_COMMAND_STOP_GRACE_SECONDS,
+                        TimeUnit.SECONDS,
+                    )
+                    if (!exited && running.process.isAlive) {
+                        running.process.destroyForcibly()
+                    }
+                }
+            }.onFailure { error ->
+                val message = SpecCodingBundle.message(
+                    "chat.workflow.action.runCommand.error",
+                    normalizedCommand,
+                ) + "\n" + (error.message ?: SpecCodingBundle.message("common.unknown"))
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || _isDisposed) {
+                        return@invokeLater
+                    }
+                    addErrorMessage(message)
+                }
+                currentSessionId?.let { sessionId ->
+                    persistMessage(
+                        sessionId = sessionId,
+                        role = ConversationRole.TOOL,
+                        content = message,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun checkWorkflowCommandPermission(request: OperationRequest, command: String): Boolean {
+        return when (val result = modeManager.checkOperation(request)) {
+            is OperationResult.Allowed -> true
+            is OperationResult.Denied -> {
+                addErrorMessage(
+                    SpecCodingBundle.message(
+                        "toolwindow.mode.operation.denied",
+                        modeManager.getCurrentMode().displayName,
+                        result.reason,
+                    )
+                )
+                false
+            }
+
+            is OperationResult.RequiresConfirmation -> {
+                val confirmed = Messages.showYesNoDialog(
+                    project,
+                    SpecCodingBundle.message("chat.workflow.action.runCommand.confirm.message", command),
+                    SpecCodingBundle.message("chat.workflow.action.runCommand.confirm.title"),
+                    Messages.getQuestionIcon(),
+                ) == Messages.YES
+                if (confirmed) {
+                    addSystemMessage(
+                        SpecCodingBundle.message(
+                            "toolwindow.mode.confirmation.accepted",
+                            request.operation.name,
+                        )
+                    )
+                }
+                confirmed
+            }
+        }
+    }
+
+    private fun runWorkflowShellCommandInBackground(command: String, request: OperationRequest) {
+        val started: RunningWorkflowCommand = try {
+            startWorkflowShellCommand(command)
+        } catch (error: Exception) {
+            modeManager.recordOperation(request, success = false)
+            val execution = WorkflowCommandExecutionResult(
+                success = false,
+                error = error.message ?: SpecCodingBundle.message("common.unknown"),
+                output = error.message.orEmpty(),
+            )
+            val summary = formatWorkflowCommandExecutionSummary(command, execution)
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed || _isDisposed) {
+                    return@invokeLater
+                }
+                addErrorMessage(summary)
+            }
+            currentSessionId?.let { sessionId ->
+                persistMessage(
+                    sessionId = sessionId,
+                    role = ConversationRole.TOOL,
+                    content = summary,
+                )
+            }
+            return
+        }
+
+        val startedMessage = SpecCodingBundle.message("chat.workflow.action.runCommand.startedBackground", command)
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || _isDisposed) {
+                return@invokeLater
+            }
+            addSystemMessage(startedMessage)
+        }
+        currentSessionId?.let { sessionId ->
+            persistMessage(
+                sessionId = sessionId,
+                role = ConversationRole.TOOL,
+                content = startedMessage,
+            )
+        }
+
+        val timedOut = !started.process.waitFor(WORKFLOW_COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        if (timedOut) {
+            started.stopRequested.set(true)
+            started.process.destroyForcibly()
+            started.process.waitFor(2, TimeUnit.SECONDS)
+        }
+
+        started.outputReaderThread.join(WORKFLOW_COMMAND_JOIN_TIMEOUT_MILLIS)
+        runningWorkflowCommands.remove(command, started)
+
+        val exitCode = runCatching { started.process.exitValue() }.getOrNull()
+        val execution = WorkflowCommandExecutionResult(
+            success = !timedOut && !started.stopRequested.get() && exitCode == 0,
+            exitCode = exitCode,
+            output = started.outputBuffer.toString().trim(),
+            timedOut = timedOut,
+            stoppedByUser = started.stopRequested.get() && !timedOut,
+            outputTruncated = started.outputTruncated.get(),
+        )
+        modeManager.recordOperation(
+            request,
+            success = execution.success || execution.stoppedByUser,
+        )
+        val summary = formatWorkflowCommandExecutionSummary(command, execution)
+
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || _isDisposed) {
+                return@invokeLater
+            }
+            if (execution.success || execution.stoppedByUser) {
+                addSystemMessage(summary)
+            } else {
+                addErrorMessage(summary)
+            }
+        }
+        currentSessionId?.let { sessionId ->
+            persistMessage(
+                sessionId = sessionId,
+                role = ConversationRole.TOOL,
+                content = summary,
+            )
+        }
+    }
+
+    private fun startWorkflowShellCommand(command: String): RunningWorkflowCommand {
+        val process = ProcessBuilder(buildShellCommand(command))
+            .directory(project.basePath?.let(::File))
+            .redirectErrorStream(true)
+            .start()
+        val outputBuffer = StringBuilder()
+        val outputTruncated = AtomicBoolean(false)
+        val stopRequested = AtomicBoolean(false)
+        val outputReaderThread = Thread {
+            process.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    synchronized(outputBuffer) {
+                        if (outputBuffer.length < WORKFLOW_COMMAND_OUTPUT_MAX_CHARS) {
+                            if (outputBuffer.isNotEmpty()) {
+                                outputBuffer.append('\n')
+                            }
+                            outputBuffer.append(line)
+                        } else {
+                            outputTruncated.set(true)
+                        }
+                    }
+                }
+            }
+        }.apply {
+            isDaemon = true
+            name = "workflow-command-output-${command.hashCode()}"
+            start()
+        }
+
+        val running = RunningWorkflowCommand(
+            command = command,
+            process = process,
+            outputBuffer = outputBuffer,
+            outputTruncated = outputTruncated,
+            stopRequested = stopRequested,
+            outputReaderThread = outputReaderThread,
+        )
+        val previous = runningWorkflowCommands.putIfAbsent(command, running)
+        if (previous != null && previous.process.isAlive) {
+            process.destroyForcibly()
+            throw IllegalStateException("Command already running")
+        }
+        if (previous != null && !previous.process.isAlive) {
+            runningWorkflowCommands[command] = running
+        }
+        return running
+    }
+
+    private fun formatWorkflowCommandExecutionSummary(
+        command: String,
+        execution: WorkflowCommandExecutionResult,
+    ): String {
+        val header = when {
+            execution.stoppedByUser -> {
+                SpecCodingBundle.message("chat.workflow.action.stopCommand.stopped", command)
+            }
+
+            execution.timedOut -> {
+                SpecCodingBundle.message(
+                    "chat.workflow.action.runCommand.timeout",
+                    WORKFLOW_COMMAND_TIMEOUT_SECONDS,
+                    command,
+                )
+            }
+
+            execution.error != null -> {
+                SpecCodingBundle.message("chat.workflow.action.runCommand.error", command)
+            }
+
+            execution.success -> {
+                SpecCodingBundle.message(
+                    "chat.workflow.action.runCommand.success",
+                    execution.exitCode ?: 0,
+                    command,
+                )
+            }
+
+            else -> {
+                SpecCodingBundle.message(
+                    "chat.workflow.action.runCommand.failed",
+                    execution.exitCode ?: -1,
+                    command,
+                )
+            }
+        }
+
+        var output = sanitizeDisplayText(execution.output, dropGarbledLines = false)
+            .ifBlank { SpecCodingBundle.message("chat.workflow.action.runCommand.noOutput") }
+        if (execution.outputTruncated) {
+            output += "\n${SpecCodingBundle.message("chat.workflow.action.runCommand.outputTruncated", WORKFLOW_COMMAND_OUTPUT_MAX_CHARS)}"
+        }
+
+        return buildString {
+            appendLine(header)
+            appendLine("```text")
+            appendLine(output)
+            append("```")
+        }
+    }
+
+    private fun buildShellCommand(command: String): List<String> {
+        return if (System.getProperty("os.name").lowercase(Locale.ROOT).contains("win")) {
+            listOf("cmd", "/c", command)
+        } else {
+            listOf("bash", "-lc", command)
+        }
+    }
+
+    private data class WorkflowCommandExecutionResult(
+        val success: Boolean,
+        val exitCode: Int? = null,
+        val output: String = "",
+        val timedOut: Boolean = false,
+        val stoppedByUser: Boolean = false,
+        val error: String? = null,
+        val outputTruncated: Boolean = false,
+    )
+
+    private data class RunningWorkflowCommand(
+        val command: String,
+        val process: Process,
+        val outputBuffer: StringBuilder,
+        val outputTruncated: AtomicBoolean,
+        val stopRequested: AtomicBoolean,
+        val outputReaderThread: Thread,
+    )
 
     private fun handleWorkflowFileOpen(fileAction: com.eacape.speccodingplugin.ui.chat.WorkflowQuickActionParser.FileAction) {
         val basePath = project.basePath ?: return
@@ -1864,18 +2933,37 @@ class ImprovedChatPanel(
         _isDisposed = true
         statusAutoHideTimer?.stop()
         statusAutoHideTimer = null
+        runningWorkflowCommands.values.forEach { running ->
+            runCatching {
+                running.stopRequested.set(true)
+                if (running.process.isAlive) {
+                    running.process.destroyForcibly()
+                }
+            }
+        }
+        runningWorkflowCommands.clear()
         CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
         scope.cancel()
     }
 
     companion object {
+        private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"
+        private val HISTORY_CONTENT_DATA_KEY = Key.create<String>(HISTORY_CONTENT_KEY)
         private const val MAX_CONVERSATION_HISTORY = 240
         private const val MAX_RESTORED_MESSAGES = 240
         private const val SESSION_LOAD_FETCH_LIMIT = 5000
+        private const val WORKFLOW_COMMAND_TIMEOUT_SECONDS = 120L
+        private const val WORKFLOW_COMMAND_JOIN_TIMEOUT_MILLIS = 2000L
+        private const val WORKFLOW_COMMAND_STOP_GRACE_SECONDS = 3L
+        private const val WORKFLOW_COMMAND_OUTPUT_MAX_CHARS = 12_000
         private const val STREAM_BATCH_CHUNK_COUNT = 4
         private const val STREAM_BATCH_CHAR_COUNT = 240
         private const val STREAM_BATCH_INTERVAL_NANOS = 120_000_000L
         private const val STREAM_AUTO_SCROLL_THRESHOLD_PX = 80
+        private const val SPEC_CARD_PREVIEW_MAX_LINES = 18
+        private const val SPEC_CARD_PREVIEW_MAX_CHARS = 1800
+        private const val SPEC_SIDEBAR_DEFAULT_DIVIDER = 760
+        private const val SPEC_SIDEBAR_MIN_DIVIDER = 320
         private const val STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS = 2200
         private const val CONTINUE_FOCUS_MAX_LENGTH = 84
         private val CONTINUE_STAGE_PREFIX_REGEX = Regex("""^\[[^\]]+]\s*""")
@@ -1898,5 +2986,8 @@ class ImprovedChatPanel(
             """^continue from the previous result with focus[:：]\s*(.+?)(?:\.?\s*avoid repeating completed work.*)?$""",
             RegexOption.IGNORE_CASE,
         )
+        private val PROMPT_REFERENCE_REGEX = Regex("""(?<!\S)#([\p{L}\p{N}_.-]+)""")
+        private val PROMPT_EXTRA_SPACES_REGEX = Regex("""\s{2,}""")
+        private val PROMPT_ALIAS_SEPARATOR_REGEX = Regex("""[\s_-]+""")
     }
 }

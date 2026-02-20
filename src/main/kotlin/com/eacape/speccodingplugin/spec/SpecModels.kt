@@ -179,7 +179,7 @@ data class SpecWorkflow(
     fun canProceedToNext(): Boolean {
         // 当前阶段必须有文档且验证通过
         val currentDoc = getCurrentDocument() ?: return false
-        val validation = currentDoc.validationResult ?: return false
+        val validation = SpecValidator.validate(currentDoc)
         return validation.valid && currentPhase.next() != null
     }
 

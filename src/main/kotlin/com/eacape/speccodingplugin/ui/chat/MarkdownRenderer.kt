@@ -35,6 +35,7 @@ object MarkdownRenderer {
     fun render(textPane: JTextPane, markdown: String) {
         val doc = textPane.styledDocument
         doc.remove(0, doc.length)
+        val proseFontFamily = textPane.font?.family ?: Font.SANS_SERIF
 
         val lines = markdown.lines()
         var i = 0
@@ -59,16 +60,16 @@ object MarkdownRenderer {
             when {
                 headingMatch != null -> {
                     val level = headingMatch.groupValues[1].length.coerceIn(1, 6)
-                    renderHeading(doc, headingMatch.groupValues[2], level)
+                    renderHeading(doc, headingMatch.groupValues[2], level, proseFontFamily)
                 }
                 trimmedLine.startsWith("- ") || trimmedLine.startsWith("* ") ->
-                    renderListItem(doc, line, ordered = false)
+                    renderListItem(doc, line, ordered = false, proseFontFamily = proseFontFamily)
                 ORDERED_LIST_REGEX.matches(trimmedLine) ->
-                    renderListItem(doc, line, ordered = true)
+                    renderListItem(doc, line, ordered = true, proseFontFamily = proseFontFamily)
                 line.trim() == "---" || line.trim() == "***" || line.trim() == "___" ->
                     renderHorizontalRule(doc)
                 line.isBlank() -> { /* 空行，newline 已在上面插入 */ }
-                else -> renderInlineMarkdown(doc, line)
+                else -> renderInlineMarkdown(doc, line, proseFontFamily)
             }
 
             i++
@@ -110,7 +111,7 @@ object MarkdownRenderer {
 
         // 代码内容
         val codeAttrs = SimpleAttributeSet()
-        StyleConstants.setFontFamily(codeAttrs, "JetBrains Mono")
+        StyleConstants.setFontFamily(codeAttrs, Font.MONOSPACED)
         StyleConstants.setFontSize(codeAttrs, 11)
         StyleConstants.setBackground(codeAttrs, JBColor(BLOCK_CODE_BG_LIGHT, BLOCK_CODE_BG_DARK))
         StyleConstants.setForeground(codeAttrs, JBColor(Color(50, 50, 50), Color(212, 212, 212)))
@@ -122,7 +123,7 @@ object MarkdownRenderer {
     /**
      * 渲染标题
      */
-    private fun renderHeading(doc: StyledDocument, text: String, level: Int) {
+    private fun renderHeading(doc: StyledDocument, text: String, level: Int, proseFontFamily: String) {
         val attrs = SimpleAttributeSet()
         StyleConstants.setBold(attrs, true)
         val fontSize = when (level) {
@@ -133,19 +134,19 @@ object MarkdownRenderer {
             else -> 12
         }
         StyleConstants.setFontSize(attrs, fontSize)
-        StyleConstants.setFontFamily(attrs, Font.SANS_SERIF)
+        StyleConstants.setFontFamily(attrs, proseFontFamily)
         doc.insertString(doc.length, text, attrs)
     }
 
     /**
      * 渲染列表项
      */
-    private fun renderListItem(doc: StyledDocument, line: String, ordered: Boolean) {
+    private fun renderListItem(doc: StyledDocument, line: String, ordered: Boolean, proseFontFamily: String) {
         val indent = line.length - line.trimStart().length
         val prefix = "  ".repeat(indent / 2)
 
         val bulletAttrs = SimpleAttributeSet()
-        StyleConstants.setFontFamily(bulletAttrs, Font.SANS_SERIF)
+        StyleConstants.setFontFamily(bulletAttrs, proseFontFamily)
         StyleConstants.setFontSize(bulletAttrs, 12)
 
         val trimmed = line.trimStart()
@@ -164,7 +165,7 @@ object MarkdownRenderer {
         } else {
             trimmed.removePrefix("- ").removePrefix("* ")
         }
-        renderInlineMarkdown(doc, content)
+        renderInlineMarkdown(doc, content, proseFontFamily)
     }
 
     /**
@@ -180,27 +181,27 @@ object MarkdownRenderer {
     /**
      * 渲染行内 Markdown（粗体、斜体、行内代码）
      */
-    private fun renderInlineMarkdown(doc: StyledDocument, text: String) {
+    private fun renderInlineMarkdown(doc: StyledDocument, text: String, proseFontFamily: String) {
         val tokens = tokenizeInline(text)
         for (token in tokens) {
             when (token) {
                 is InlineToken.Bold -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setBold(attrs, true)
-                    StyleConstants.setFontFamily(attrs, Font.SANS_SERIF)
+                    StyleConstants.setFontFamily(attrs, proseFontFamily)
                     StyleConstants.setFontSize(attrs, 12)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.Italic -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setItalic(attrs, true)
-                    StyleConstants.setFontFamily(attrs, Font.SANS_SERIF)
+                    StyleConstants.setFontFamily(attrs, proseFontFamily)
                     StyleConstants.setFontSize(attrs, 12)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.InlineCode -> {
                     val attrs = SimpleAttributeSet()
-                    StyleConstants.setFontFamily(attrs, "JetBrains Mono")
+                    StyleConstants.setFontFamily(attrs, Font.MONOSPACED)
                     StyleConstants.setFontSize(attrs, 11)
                     StyleConstants.setBackground(attrs, JBColor(CODE_BG_LIGHT, CODE_BG_DARK))
                     StyleConstants.setForeground(attrs, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
@@ -208,7 +209,7 @@ object MarkdownRenderer {
                 }
                 is InlineToken.Plain -> {
                     val attrs = SimpleAttributeSet()
-                    StyleConstants.setFontFamily(attrs, Font.SANS_SERIF)
+                    StyleConstants.setFontFamily(attrs, proseFontFamily)
                     StyleConstants.setFontSize(attrs, 12)
                     doc.insertString(doc.length, token.text, attrs)
                 }

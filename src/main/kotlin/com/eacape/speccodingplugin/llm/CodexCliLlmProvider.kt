@@ -85,10 +85,11 @@ class CodexCliLlmProvider(
         val options = mutableMapOf<String, String>()
         request.model?.let { options["model"] = it }
         request.metadata["requestId"]?.let { options["requestId"] = it }
+        val workingDirectory = LlmRequestContext.extractWorkingDirectory(request)
 
         return EngineRequest(
             prompt = allMessages,
-            context = EngineContext(),
+            context = EngineContext(workingDirectory = workingDirectory),
             options = options,
         )
     }

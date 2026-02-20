@@ -88,10 +88,11 @@ class ClaudeCliLlmProvider(
         }
         request.maxTokens?.let { options["max_tokens"] = it.toString() }
         request.metadata["requestId"]?.let { options["requestId"] = it }
+        val workingDirectory = LlmRequestContext.extractWorkingDirectory(request)
 
         return EngineRequest(
             prompt = userMessages,
-            context = EngineContext(),
+            context = EngineContext(workingDirectory = workingDirectory),
             options = options,
         )
     }

@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.awt.Component
@@ -11,6 +12,7 @@ import java.awt.Container
 import javax.swing.JButton
 import javax.swing.JLabel
 import javax.swing.SwingUtilities
+import java.awt.BorderLayout
 
 class ChatMessagePanelSpecWorkflowIntegrationTest {
 
@@ -19,7 +21,7 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
         var insertedCommand: String? = null
         val panel = ChatMessagePanel(
             role = ChatMessagePanel.MessageRole.ASSISTANT,
-            onWorkflowCommandInsert = { command -> insertedCommand = command },
+            onWorkflowCommandExecute = { command -> insertedCommand = command },
         )
 
         val response = SpecWorkflowResponseBuilder.buildPhaseTransitionResponse(
@@ -56,7 +58,7 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
         var insertedCommand: String? = null
         val panel = ChatMessagePanel(
             role = ChatMessagePanel.MessageRole.ASSISTANT,
-            onWorkflowCommandInsert = { command -> insertedCommand = command },
+            onWorkflowCommandExecute = { command -> insertedCommand = command },
         )
         val response = SpecWorkflowResponseBuilder.buildPhaseTransitionResponse(
             workflowId = "spec-chat-2",
@@ -83,6 +85,99 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
         assertNotNull(statusButton, "Expected status command button")
         runOnEdt { statusButton!!.doClick() }
         assertEquals("/spec status", insertedCommand)
+    }
+
+    @Test
+    fun `workflow command buttons should be rendered inside markdown area not footer action bar`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val response = SpecWorkflowResponseBuilder.buildPhaseTransitionResponse(
+            workflowId = "spec-chat-3",
+            phaseDisplayName = "Tasks",
+            template = "## Tasks\n- Item",
+            advanced = true,
+            templateInserted = true,
+        )
+
+        runOnEdt {
+            panel.appendContent(response)
+            panel.finishMessage()
+        }
+
+        val layout = panel.layout as BorderLayout
+        val footer = layout.getLayoutComponent(BorderLayout.SOUTH) as? Container
+        val footerHasCommandButton = footer
+            ?.let { collectDescendants(it).filterIsInstance<JButton>() }
+            ?.any { it.toolTipText?.contains("/spec ") == true }
+            ?: false
+
+        val hasMarkdownCommandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .any { it.toolTipText?.contains("/spec ") == true }
+
+        assertFalse(footerHasCommandButton, "Footer action bar should not host workflow command buttons")
+        assertTrue(hasMarkdownCommandButton, "Expected workflow command button inside markdown content area")
+    }
+
+    @Test
+    fun `non slash workflow command should render stop action and invoke callbacks`() {
+        var executedCommand: String? = null
+        var stoppedCommand: String? = null
+        val panel = ChatMessagePanel(
+            role = ChatMessagePanel.MessageRole.ASSISTANT,
+            onWorkflowCommandExecute = { command -> executedCommand = command },
+            onWorkflowCommandStop = { command -> stoppedCommand = command },
+        )
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                ## Plan
+                ```bash
+                git status
+                ```
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val buttons = collectDescendants(panel).filterIsInstance<JButton>().toList()
+        val runButton = buttons.firstOrNull { it.toolTipText?.contains("git status") == true }
+        assertNotNull(runButton, "Expected run button for non-slash command")
+        runOnEdt { runButton!!.doClick() }
+        assertEquals("git status", executedCommand)
+
+        val stopButton = buttons.firstOrNull {
+            it.text == SpecCodingBundle.message("chat.workflow.action.stopCommand") &&
+                it.toolTipText?.contains("git status") == true
+        }
+        assertNotNull(stopButton, "Expected stop button for non-slash command")
+        runOnEdt { stopButton!!.doClick() }
+        assertEquals("git status", stoppedCommand)
+    }
+
+    @Test
+    fun `slash workflow command should not render stop action`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                ## Plan
+                Command: /spec status
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val buttons = collectDescendants(panel).filterIsInstance<JButton>().toList()
+        val runButton = buttons.firstOrNull { it.toolTipText?.contains("/spec status") == true }
+        assertNotNull(runButton, "Expected run button for slash command")
+
+        val stopButton = buttons.firstOrNull {
+            it.text == SpecCodingBundle.message("chat.workflow.action.stopCommand") &&
+                it.toolTipText?.contains("/spec status") == true
+        }
+        assertNull(stopButton, "Slash command should not render stop button")
     }
 
     private fun collectDescendants(component: Component): Sequence<Component> = sequence {

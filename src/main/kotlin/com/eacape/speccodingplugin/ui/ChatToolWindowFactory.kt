@@ -7,11 +7,15 @@ import com.eacape.speccodingplugin.ui.prompt.PromptManagerPanel
 import com.eacape.speccodingplugin.ui.mcp.McpPanel
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowPanel
 import com.eacape.speccodingplugin.ui.worktree.WorktreePanel
-import com.eacape.speccodingplugin.ui.history.HistoryPanel
 import com.eacape.speccodingplugin.ui.hook.HookPanel
 import com.eacape.speccodingplugin.window.WindowStateStore
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.util.Disposer
@@ -25,11 +29,47 @@ class ChatToolWindowFactory : ToolWindowFactory {
         toolWindow.title = SpecCodingBundle.message("toolwindow.title")
         val windowStateStore = WindowStateStore.getInstance(project)
 
-        // 在 Tool Window 标题栏添加齿轮设置按钮
-        val settingsAction = ActionManager.getInstance().getAction("SpecCoding.OpenSettings")
-        if (settingsAction != null) {
-            toolWindow.setTitleActions(listOf(settingsAction))
+        // Tool Window 标题栏图标（从左到右：新建会话、历史会话、设置）
+        val newSessionTitleAction = object : DumbAwareAction() {
+            override fun actionPerformed(e: AnActionEvent) {
+                if (project.isDisposed) return
+                project.messageBus.syncPublisher(ChatToolWindowControlListener.TOPIC).onNewSessionRequested()
+            }
+
+            override fun update(e: AnActionEvent) {
+                val text = SpecCodingBundle.message("toolwindow.session.new.tooltip")
+                e.presentation.icon = AllIcons.General.Add
+                e.presentation.text = text
+                e.presentation.description = text
+                e.presentation.isEnabledAndVisible = !project.isDisposed
+            }
+
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
         }
+
+        val openHistoryTitleAction = object : DumbAwareAction() {
+            override fun actionPerformed(e: AnActionEvent) {
+                if (project.isDisposed) return
+                project.messageBus.syncPublisher(ChatToolWindowControlListener.TOPIC).onOpenHistoryRequested()
+            }
+
+            override fun update(e: AnActionEvent) {
+                val text = SpecCodingBundle.message("toolwindow.history.open.tooltip")
+                e.presentation.icon = AllIcons.Vcs.History
+                e.presentation.text = text
+                e.presentation.description = text
+                e.presentation.isEnabledAndVisible = !project.isDisposed
+            }
+
+            override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+        }
+
+        val settingsAction = ActionManager.getInstance().getAction("SpecCoding.OpenSettings")
+        val titleActions = mutableListOf<AnAction>(newSessionTitleAction, openHistoryTitleAction)
+        if (settingsAction != null) {
+            titleActions.add(settingsAction)
+        }
+        toolWindow.setTitleActions(titleActions)
 
         val contentFactory = ContentFactory.getInstance()
 
@@ -67,12 +107,6 @@ class ChatToolWindowFactory : ToolWindowFactory {
         Disposer.register(worktreeContent, worktreePanel)
         toolWindow.contentManager.addContent(worktreeContent)
 
-        // History 标签页（会话历史）
-        val historyPanel = HistoryPanel(project)
-        val historyContent = contentFactory.createContent(historyPanel, SpecCodingBundle.message("history.tab.title"), false)
-        Disposer.register(historyContent, historyPanel)
-        toolWindow.contentManager.addContent(historyContent)
-
         // Hook 标签页（Hook 管理）
         val hookPanel = HookPanel(project)
         val hookContent = contentFactory.createContent(hookPanel, SpecCodingBundle.message("hook.tab.title"), false)
@@ -84,6 +118,9 @@ class ChatToolWindowFactory : ToolWindowFactory {
             override fun selectionChanged(event: ContentManagerEvent) {
                 val selectedTabTitle = event.content?.displayName ?: return
                 windowStateStore.updateSelectedTabTitle(selectedTabTitle)
+                if (selectedTabTitle == SpecCodingBundle.message("spec.tab.title")) {
+                    specPanel.refreshWorkflows()
+                }
             }
         })
 
@@ -101,7 +138,6 @@ class ChatToolWindowFactory : ToolWindowFactory {
                         specContent.displayName = SpecCodingBundle.message("spec.tab.title")
                         mcpContent.displayName = SpecCodingBundle.message("mcp.tab.title")
                         worktreeContent.displayName = SpecCodingBundle.message("worktree.tab.title")
-                        historyContent.displayName = SpecCodingBundle.message("history.tab.title")
                         hookContent.displayName = SpecCodingBundle.message("hook.tab.title")
                     }
                 }

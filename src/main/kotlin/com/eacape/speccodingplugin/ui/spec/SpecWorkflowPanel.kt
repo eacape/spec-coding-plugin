@@ -78,6 +78,7 @@ class SpecWorkflowPanel(
 
         setupUI()
         subscribeToLocaleEvents()
+        subscribeToWorkflowEvents()
         refreshWorkflows()
     }
 
@@ -118,7 +119,7 @@ class SpecWorkflowPanel(
         add(split, BorderLayout.CENTER)
     }
 
-    fun refreshWorkflows() {
+    fun refreshWorkflows(selectWorkflowId: String? = null) {
         scope.launch(Dispatchers.IO) {
             val ids = specEngine.listWorkflows()
             val items = ids.mapNotNull { id ->
@@ -135,6 +136,21 @@ class SpecWorkflowPanel(
             invokeLaterSafe {
                 listPanel.updateWorkflows(items)
                 statusLabel.text = SpecCodingBundle.message("spec.workflow.status.count", items.size)
+                val targetSelection = selectWorkflowId
+                    ?: selectedWorkflowId?.takeIf { target -> items.any { it.workflowId == target } }
+                if (targetSelection != null) {
+                    listPanel.setSelectedWorkflow(targetSelection)
+                    selectWorkflow(targetSelection)
+                } else if (items.isEmpty()) {
+                    selectedWorkflowId = null
+                    currentWorkflow = null
+                    phaseIndicator.reset()
+                    detailPanel.showEmpty()
+                    createWorktreeButton.isEnabled = false
+                    mergeWorktreeButton.isEnabled = false
+                    deltaButton.isEnabled = false
+                    archiveButton.isEnabled = false
+                }
             }
         }
     }
@@ -482,6 +498,17 @@ class SpecWorkflowPanel(
                     invokeLaterSafe {
                         refreshLocalizedTexts()
                     }
+                }
+            },
+        )
+    }
+
+    private fun subscribeToWorkflowEvents() {
+        project.messageBus.connect(this).subscribe(
+            SpecWorkflowChangedListener.TOPIC,
+            object : SpecWorkflowChangedListener {
+                override fun onWorkflowChanged(event: SpecWorkflowChangedEvent) {
+                    refreshWorkflows(selectWorkflowId = event.workflowId)
                 }
             },
         )

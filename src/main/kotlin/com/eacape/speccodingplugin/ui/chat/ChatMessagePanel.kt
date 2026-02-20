@@ -24,14 +24,15 @@ import javax.swing.text.StyleConstants
 /**
  * 单条聊天消息的 UI 组件
  */
-class ChatMessagePanel(
+open class ChatMessagePanel(
     val role: MessageRole,
     initialContent: String = "",
     private val onDelete: ((ChatMessagePanel) -> Unit)? = null,
     private val onRegenerate: ((ChatMessagePanel) -> Unit)? = null,
     private val onContinue: ((ChatMessagePanel) -> Unit)? = null,
     private val onWorkflowFileOpen: ((WorkflowQuickActionParser.FileAction) -> Unit)? = null,
-    private val onWorkflowCommandInsert: ((String) -> Unit)? = null,
+    private val onWorkflowCommandExecute: ((String) -> Unit)? = null,
+    private val onWorkflowCommandStop: ((String) -> Unit)? = null,
 ) : JPanel(BorderLayout()) {
 
     private val contentPane = JTextPane()
@@ -207,7 +208,7 @@ class ChatMessagePanel(
         container.border = JBUI.Borders.empty(8)
 
         if (parseResult.remainingText.isNotBlank()) {
-            container.add(createMarkdownPane(parseResult.remainingText))
+            container.add(createMarkdownContainer(parseResult.remainingText))
         }
 
         parseResult.sections.forEach { section ->
@@ -241,7 +242,7 @@ class ChatMessagePanel(
 
             container.add(header)
             if (expanded) {
-                container.add(createMarkdownPane(section.content))
+                container.add(createMarkdownContainer(section.content))
             }
         }
         return container
@@ -485,9 +486,37 @@ class ChatMessagePanel(
     }
 
     private fun createMarkdownContainer(content: String): JPanel {
-        val panel = JPanel(BorderLayout())
+        val panel = JPanel()
+        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
         panel.isOpaque = false
-        panel.add(createMarkdownPane(content), BorderLayout.CENTER)
+        panel.add(createMarkdownPane(content))
+
+        val commands = WorkflowQuickActionParser.parse(content)
+            .commands
+            .take(MAX_COMMAND_ACTIONS)
+        if (commands.isNotEmpty()) {
+            panel.add(createInlineCommandActions(commands))
+        }
+
+        return panel
+    }
+
+    private fun createInlineCommandActions(commands: List<String>): JPanel {
+        val panel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
+        panel.isOpaque = false
+        panel.border = JBUI.Borders.empty(4, 0, 0, 0)
+
+        val label = JBLabel("${SpecCodingBundle.message("chat.workflow.action.commandsLabel")}:")
+        label.foreground = JBColor.GRAY
+        label.font = label.font.deriveFont(11f)
+        panel.add(label)
+
+        commands.forEach { command ->
+            panel.add(createWorkflowCommandRunButton(command, inline = true))
+            if (!command.trim().startsWith("/")) {
+                panel.add(createWorkflowCommandStopButton(command, inline = true))
+            }
+        }
         return panel
     }
 
@@ -616,10 +645,6 @@ class ChatMessagePanel(
         }
         buttonPanel.add(copyAllBtn)
 
-        if (role == MessageRole.ASSISTANT) {
-            addWorkflowQuickActionButtons(buttonPanel)
-        }
-
         if (role == MessageRole.ASSISTANT && onContinue != null) {
             val continueBtn = JButton()
             styleIconActionButton(
@@ -660,31 +685,50 @@ class ChatMessagePanel(
         revalidate()
     }
 
-    private fun addWorkflowQuickActionButtons(panel: JPanel) {
-        val quickActions = WorkflowQuickActionParser.parse(contentBuilder.toString())
-        if (quickActions.files.isEmpty() && quickActions.commands.isEmpty()) return
+    private fun createWorkflowCommandRunButton(command: String, inline: Boolean): JButton {
+        val display = if (command.length > MAX_COMMAND_DISPLAY_LENGTH) {
+            "${command.take(MAX_COMMAND_DISPLAY_LENGTH - 3)}..."
+        } else {
+            command
+        }
 
-        if (quickActions.commands.isNotEmpty()) {
-            quickActions.commands.take(MAX_COMMAND_ACTIONS).forEach { command ->
-                val display = if (command.length > MAX_COMMAND_DISPLAY_LENGTH) {
-                    "${command.take(MAX_COMMAND_DISPLAY_LENGTH - 3)}..."
-                } else {
-                    command
-                }
-                val btn = JButton(SpecCodingBundle.message("chat.workflow.action.insertCommand", display))
-                styleActionButton(btn)
-                btn.toolTipText = SpecCodingBundle.message("chat.workflow.action.insertCommand.tooltip", command)
-                btn.addActionListener {
-                    if (onWorkflowCommandInsert != null) {
-                        onWorkflowCommandInsert.invoke(command)
-                    } else {
-                        val copied = copyToClipboard(command)
-                        showCopyFeedback(btn, copied = copied, iconOnly = false)
-                    }
-                }
-                panel.add(btn)
+        val btn = JButton(SpecCodingBundle.message("chat.workflow.action.runCommand", display))
+        if (inline) {
+            styleInlineActionButton(btn)
+        } else {
+            styleActionButton(btn)
+        }
+        val tooltipKey = if (command.trim().startsWith("/")) {
+            "chat.workflow.action.runSlashCommand.tooltip"
+        } else {
+            "chat.workflow.action.runCommand.tooltip"
+        }
+        btn.toolTipText = SpecCodingBundle.message(tooltipKey, command)
+        btn.addActionListener {
+            if (onWorkflowCommandExecute != null) {
+                onWorkflowCommandExecute.invoke(command)
+            } else {
+                val copied = copyToClipboard(command)
+                showCopyFeedback(btn, copied = copied, iconOnly = false)
             }
         }
+        return btn
+    }
+
+    private fun createWorkflowCommandStopButton(command: String, inline: Boolean): JButton {
+        val btn = JButton(SpecCodingBundle.message("chat.workflow.action.stopCommand"))
+        if (inline) {
+            styleInlineActionButton(btn)
+        } else {
+            styleActionButton(btn)
+        }
+        btn.toolTipText = SpecCodingBundle.message("chat.workflow.action.stopCommand.tooltip", command)
+        btn.addActionListener {
+            if (onWorkflowCommandStop != null) {
+                onWorkflowCommandStop.invoke(command)
+            }
+        }
+        return btn
     }
 
     private fun copyToClipboard(text: String): Boolean {
