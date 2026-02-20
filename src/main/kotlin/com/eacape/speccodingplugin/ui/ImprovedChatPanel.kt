@@ -33,6 +33,8 @@ import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.DocumentRevisionConflictException
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.stream.ChatTraceKind
+import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import com.eacape.speccodingplugin.ui.chat.ChatSpecSidebarPanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagePanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagesListPanel
@@ -205,7 +207,6 @@ class ImprovedChatPanel(
         subscribeToToolWindowControlEvents()
         subscribeToSpecWorkflowEvents()
         subscribeToLocaleEvents()
-        addSystemMessage(SpecCodingBundle.message("toolwindow.system.intro"))
         restoreWindowStateIfNeeded()
     }
 
@@ -787,6 +788,8 @@ class ImprovedChatPanel(
     private fun handleSpecCommand(command: String) {
         val providerId = providerComboBox.selectedItem as? String
         val sessionId = ensureActiveSession(command, providerId)
+        val progressPanel = addAssistantMessage()
+        val hasProgressEvent = AtomicBoolean(false)
 
         inputField.text = ""
         appendUserMessage(command)
@@ -798,10 +801,28 @@ class ImprovedChatPanel(
 
         scope.launch(Dispatchers.IO) {
             try {
-                val result = executeSpecCommand(command)
+                val result = executeSpecCommand(command) { event ->
+                    val sanitizedEvent = sanitizeStreamEvent(event) ?: return@executeSpecCommand
+                    hasProgressEvent.set(true)
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        val shouldAutoScroll = messagesPanel.isNearBottom(STREAM_AUTO_SCROLL_THRESHOLD_PX)
+                        progressPanel.appendStreamContent("", listOf(sanitizedEvent))
+                        if (shouldAutoScroll) {
+                            messagesPanel.scrollToBottom()
+                        }
+                    }
+                }
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
+                    }
+                    if (hasProgressEvent.get()) {
+                        progressPanel.finishMessage()
+                    } else {
+                        messagesPanel.removeMessage(progressPanel)
                     }
                     renderSpecCommandResult(
                         result = result,
@@ -813,6 +834,11 @@ class ImprovedChatPanel(
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
+                    }
+                    if (hasProgressEvent.get()) {
+                        progressPanel.finishMessage()
+                    } else {
+                        messagesPanel.removeMessage(progressPanel)
                     }
                     addErrorMessage(
                         SpecCodingBundle.message(
@@ -837,7 +863,10 @@ class ImprovedChatPanel(
         val metadata: SpecCardMetadata? = null,
     )
 
-    private suspend fun executeSpecCommand(command: String): SpecCommandResult {
+    private suspend fun executeSpecCommand(
+        command: String,
+        onProgress: (ChatStreamEvent) -> Unit = {},
+    ): SpecCommandResult {
         val args = command.removePrefix("/spec").trim()
         if (args.isBlank() || args.equals("help", ignoreCase = true)) {
             return plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.help"))
@@ -869,6 +898,7 @@ class ImprovedChatPanel(
                     generateSpecForActiveWorkflow(
                         input = commandArg,
                         sourceCommand = command,
+                        onProgress = onProgress,
                     )
                 }
             }
@@ -876,6 +906,7 @@ class ImprovedChatPanel(
             else -> createAndGenerateWorkflow(
                 requirementsInput = args,
                 sourceCommand = command,
+                onProgress = onProgress,
             )
         }
     }
@@ -883,6 +914,7 @@ class ImprovedChatPanel(
     private suspend fun createAndGenerateWorkflow(
         requirementsInput: String,
         sourceCommand: String,
+        onProgress: (ChatStreamEvent) -> Unit = {},
     ): SpecCommandResult {
         if (requirementsInput.isBlank()) {
             return plainSpecResult(
@@ -898,13 +930,27 @@ class ImprovedChatPanel(
             .ifBlank { SpecCodingBundle.message("toolwindow.session.defaultTitle") }
             .take(80)
 
+        onProgress(
+            buildSpecProgressEvent(
+                kind = ChatTraceKind.TASK,
+                status = ChatTraceStatus.RUNNING,
+                detail = SpecCodingBundle.message("toolwindow.spec.command.progress.create"),
+            ),
+        )
         val workflow = specEngine
             .createWorkflow(title = title, description = requirementsInput)
             .getOrElse { throw it }
+        onProgress(
+            buildSpecProgressEvent(
+                kind = ChatTraceKind.TASK,
+                status = ChatTraceStatus.DONE,
+                detail = SpecCodingBundle.message("toolwindow.spec.command.progress.create"),
+            ),
+        )
 
         activeSpecWorkflowId = workflow.id
 
-        val generationSummary = runSpecGeneration(workflow.id, requirementsInput)
+        val generationSummary = runSpecGeneration(workflow.id, requirementsInput, onProgress)
         val summary = buildString {
             appendLine(SpecCodingBundle.message("toolwindow.spec.command.created", workflow.id))
             if (generationSummary.isNotBlank()) {
@@ -922,10 +968,11 @@ class ImprovedChatPanel(
     private suspend fun generateSpecForActiveWorkflow(
         input: String,
         sourceCommand: String,
+        onProgress: (ChatStreamEvent) -> Unit = {},
     ): SpecCommandResult {
         val workflow = resolveActiveSpecWorkflow()
             ?: return plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.noActive"))
-        val summary = runSpecGeneration(workflow.id, input)
+        val summary = runSpecGeneration(workflow.id, input, onProgress)
         val refreshed = specEngine.loadWorkflow(workflow.id).getOrNull() ?: workflow
         return buildSpecCardResult(
             workflow = refreshed,
@@ -934,53 +981,124 @@ class ImprovedChatPanel(
         )
     }
 
-    private suspend fun runSpecGeneration(workflowId: String, input: String): String {
+    private suspend fun runSpecGeneration(
+        workflowId: String,
+        input: String,
+        onProgress: (ChatStreamEvent) -> Unit = {},
+    ): String {
         val lines = mutableListOf<String>()
         val workflow = specEngine.loadWorkflow(workflowId).getOrElse { throw it }
-        val phaseName = workflow.currentPhase.displayName
+        val phaseName = specPhaseDisplayName(workflow.currentPhase)
+        val generationTaskDetail = SpecCodingBundle.message(
+            "toolwindow.spec.command.progress.generate",
+            phaseName,
+        )
 
         updateStatusLabel(
             SpecCodingBundle.message("toolwindow.spec.command.generating", phaseName),
+        )
+        onProgress(
+            buildSpecProgressEvent(
+                kind = ChatTraceKind.TASK,
+                status = ChatTraceStatus.RUNNING,
+                detail = generationTaskDetail,
+            ),
         )
 
         specEngine.generateCurrentPhase(workflowId, input).collect { progress ->
             when (progress) {
                 is SpecGenerationProgress.Started -> {
+                    val progressPhaseName = specPhaseDisplayName(progress.phase)
                     updateStatusLabel(
-                        SpecCodingBundle.message("toolwindow.spec.command.generating", progress.phase.displayName),
+                        SpecCodingBundle.message("toolwindow.spec.command.generating", progressPhaseName),
                     )
                 }
 
                 is SpecGenerationProgress.Generating -> {
                     val percent = (progress.progress * 100).toInt().coerceIn(0, 100)
+                    val progressPhaseName = specPhaseDisplayName(progress.phase)
                     updateStatusLabel(
                         SpecCodingBundle.message(
                             "toolwindow.spec.command.generating.percent",
-                            progress.phase.displayName,
+                            progressPhaseName,
                             percent,
                         )
+                    )
+                    onProgress(
+                        buildSpecProgressEvent(
+                            kind = ChatTraceKind.OUTPUT,
+                            status = ChatTraceStatus.INFO,
+                            detail = SpecCodingBundle.message(
+                                "toolwindow.spec.command.generating.percent",
+                                progressPhaseName,
+                                percent,
+                            ),
+                        ),
                     )
                 }
 
                 is SpecGenerationProgress.Completed -> {
+                    val validationPassedLabel = SpecCodingBundle.message("toolwindow.spec.command.validation.pass")
+                        .removePrefix("- ")
+                        .removePrefix("-")
+                        .trim()
                     lines += SpecCodingBundle.message(
                         "toolwindow.spec.command.generated",
                         workflowId,
-                        progress.document.phase.displayName,
+                        specPhaseDisplayName(progress.document.phase),
                     )
                     lines += SpecCodingBundle.message("toolwindow.spec.command.validation.pass")
+                    onProgress(
+                        buildSpecProgressEvent(
+                            kind = ChatTraceKind.TASK,
+                            status = ChatTraceStatus.DONE,
+                            detail = generationTaskDetail,
+                        ),
+                    )
+                    onProgress(
+                        buildSpecProgressEvent(
+                            kind = ChatTraceKind.VERIFY,
+                            status = ChatTraceStatus.DONE,
+                            detail = validationPassedLabel,
+                        ),
+                    )
                 }
 
                 is SpecGenerationProgress.ValidationFailed -> {
+                    val validationFailedLabel = SpecCodingBundle.message("toolwindow.spec.command.validation.fail")
+                        .removePrefix("- ")
+                        .removePrefix("-")
+                        .trim()
                     lines += SpecCodingBundle.message(
                         "toolwindow.spec.command.generated",
                         workflowId,
-                        progress.document.phase.displayName,
+                        specPhaseDisplayName(progress.document.phase),
                     )
                     lines += SpecCodingBundle.message("toolwindow.spec.command.validation.fail")
+                    onProgress(
+                        buildSpecProgressEvent(
+                            kind = ChatTraceKind.TASK,
+                            status = ChatTraceStatus.DONE,
+                            detail = generationTaskDetail,
+                        ),
+                    )
+                    onProgress(
+                        buildSpecProgressEvent(
+                            kind = ChatTraceKind.VERIFY,
+                            status = ChatTraceStatus.ERROR,
+                            detail = validationFailedLabel,
+                        ),
+                    )
                 }
 
                 is SpecGenerationProgress.Failed -> {
+                    onProgress(
+                        buildSpecProgressEvent(
+                            kind = ChatTraceKind.TASK,
+                            status = ChatTraceStatus.ERROR,
+                            detail = progress.error,
+                        ),
+                    )
                     throw IllegalStateException(progress.error)
                 }
             }
@@ -1066,6 +1184,26 @@ class ImprovedChatPanel(
             WorkflowStatus.FAILED ->
                 SpecCodingBundle.message("spec.workflow.status.failed")
         }
+    }
+
+    private fun specPhaseDisplayName(phase: SpecPhase): String {
+        return when (phase) {
+            SpecPhase.SPECIFY -> SpecCodingBundle.message("spec.phase.specify")
+            SpecPhase.DESIGN -> SpecCodingBundle.message("spec.phase.design")
+            SpecPhase.IMPLEMENT -> SpecCodingBundle.message("spec.phase.implement")
+        }
+    }
+
+    private fun buildSpecProgressEvent(
+        kind: ChatTraceKind,
+        status: ChatTraceStatus,
+        detail: String,
+    ): ChatStreamEvent {
+        return ChatStreamEvent(
+            kind = kind,
+            status = status,
+            detail = detail,
+        )
     }
 
     private fun buildSpecCardResult(
@@ -1490,7 +1628,6 @@ class ImprovedChatPanel(
         contextPreviewPanel.clear()
         inputField.text = ""
         currentAssistantPanel = null
-        addSystemMessage(SpecCodingBundle.message("toolwindow.system.intro"))
     }
 
     private fun loadSession(sessionId: String) {

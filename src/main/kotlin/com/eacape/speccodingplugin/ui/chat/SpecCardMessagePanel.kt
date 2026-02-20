@@ -87,7 +87,7 @@ internal class SpecCardMessagePanel(
     private val conflictDiffScroll = JScrollPane(conflictDiffArea)
     private val wrapper = JPanel(BorderLayout())
     private val bodyPanel = JPanel(BorderLayout())
-    private val actionButtons = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
+    private val actionButtons = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0))
     private val statusHintLabel = JBLabel()
     private val toggleButton = JButton()
     private val titleLabel = JBLabel()
@@ -200,13 +200,22 @@ internal class SpecCardMessagePanel(
 
     private fun rebuildActionRow() {
         actionButtons.removeAll()
+        var hasTextAction = false
+
+        fun addTextAction(button: JButton) {
+            if (hasTextAction) {
+                actionButtons.add(createActionSeparatorLabel())
+            }
+            actionButtons.add(button)
+            hasTextAction = true
+        }
 
         if (state == CardState.EDITING) {
             val saveButton = JButton(SpecCodingBundle.message("toolwindow.spec.card.action.save"))
             styleTextActionButton(saveButton)
             saveButton.isEnabled = onSaveDocument != null && !busy
             saveButton.addActionListener { saveEditingContent(force = false) }
-            actionButtons.add(saveButton)
+            addTextAction(saveButton)
 
             if (hasRevisionConflict) {
                 if (!conflictLatestContent.isNullOrBlank()) {
@@ -226,14 +235,14 @@ internal class SpecCardMessagePanel(
                         conflictDiffExpanded = !conflictDiffExpanded
                         renderCard()
                     }
-                    actionButtons.add(diffButton)
+                    addTextAction(diffButton)
                 }
 
                 val forceSaveButton = JButton(SpecCodingBundle.message("toolwindow.spec.card.action.forceSave"))
                 styleTextActionButton(forceSaveButton)
                 forceSaveButton.isEnabled = onSaveDocument != null && !busy
                 forceSaveButton.addActionListener { saveEditingContent(force = true) }
-                actionButtons.add(forceSaveButton)
+                addTextAction(forceSaveButton)
             }
 
             val cancelButton = JButton(SpecCodingBundle.message("toolwindow.spec.card.action.cancel"))
@@ -249,7 +258,7 @@ internal class SpecCardMessagePanel(
                 showHint("", isError = false)
                 renderCard()
             }
-            actionButtons.add(cancelButton)
+            addTextAction(cancelButton)
         } else {
             val editButton = JButton(SpecCodingBundle.message("toolwindow.spec.card.action.edit"))
             styleTextActionButton(editButton)
@@ -264,7 +273,7 @@ internal class SpecCardMessagePanel(
                 showHint("", isError = false)
                 renderCard()
             }
-            actionButtons.add(editButton)
+            addTextAction(editButton)
 
             if (metadata.phase.next() != null && onAdvancePhase != null) {
                 val nextButton = JButton(SpecCodingBundle.message("toolwindow.spec.card.action.next"))
@@ -274,7 +283,7 @@ internal class SpecCardMessagePanel(
                     if (busy) return@addActionListener
                     onAdvancePhase.invoke(metadata)
                 }
-                actionButtons.add(nextButton)
+                addTextAction(nextButton)
             }
         }
 
@@ -283,14 +292,14 @@ internal class SpecCardMessagePanel(
         openTabButton.toolTipText = SpecCodingBundle.message("toolwindow.spec.quick.open.tooltip")
         openTabButton.isEnabled = onOpenSpecTab != null && !busy
         openTabButton.addActionListener { onOpenSpecTab?.invoke() }
-        actionButtons.add(openTabButton)
+        addTextAction(openTabButton)
 
         if (onFocusSpecSidebar != null) {
             val sidebarButton = JButton(SpecCodingBundle.message("toolwindow.spec.card.action.sidebar"))
             styleTextActionButton(sidebarButton)
             sidebarButton.isEnabled = !busy
             sidebarButton.addActionListener { onFocusSpecSidebar.invoke(metadata) }
-            actionButtons.add(sidebarButton)
+            addTextAction(sidebarButton)
         }
 
         val openDocButton = JButton(SpecCodingBundle.message("chat.workflow.action.openFile.short"))
@@ -301,7 +310,11 @@ internal class SpecCardMessagePanel(
         )
         openDocButton.isEnabled = onOpenDocument != null && !busy
         openDocButton.addActionListener { onOpenDocument?.invoke(metadata) }
-        actionButtons.add(openDocButton)
+        addTextAction(openDocButton)
+
+        if (hasTextAction) {
+            actionButtons.add(createActionSpacerLabel())
+        }
 
         val copyButton = JButton()
         styleIconActionButton(
@@ -710,14 +723,28 @@ internal class SpecCardMessagePanel(
     }
 
     private fun styleTextActionButton(button: JButton) {
-        button.margin = JBUI.insets(2, 8, 2, 8)
+        button.margin = JBUI.insets(0, 0, 0, 0)
         button.isFocusPainted = false
         button.isFocusable = false
         button.font = button.font.deriveFont(11f)
         button.isOpaque = false
         button.isContentAreaFilled = false
-        button.border = JBUI.Borders.empty(1, 4, 1, 4)
+        button.border = JBUI.Borders.empty(0, 0, 0, 0)
         button.putClientProperty("JButton.buttonType", "borderless")
+    }
+
+    private fun createActionSeparatorLabel(): JBLabel {
+        return JBLabel("|").apply {
+            foreground = JBColor.GRAY
+            font = font.deriveFont(11f)
+            border = JBUI.Borders.empty(0, 0)
+        }
+    }
+
+    private fun createActionSpacerLabel(): JBLabel {
+        return JBLabel(" ").apply {
+            border = JBUI.Borders.empty(0, 0)
+        }
     }
 
     private fun styleInlineActionButton(button: JButton) {
@@ -737,6 +764,8 @@ internal class SpecCardMessagePanel(
 
     private fun styleIconActionButton(button: JButton, icon: javax.swing.Icon, tooltip: String) {
         styleTextActionButton(button)
+        button.margin = JBUI.insets(0, 2, 0, 2)
+        button.border = JBUI.Borders.empty(0, 2, 0, 2)
         button.icon = icon
         button.text = ""
         button.toolTipText = tooltip
