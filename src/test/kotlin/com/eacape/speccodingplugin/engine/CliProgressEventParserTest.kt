@@ -45,4 +45,16 @@ class CliProgressEventParserTest {
         assertNotNull(event)
         assertEquals(ChatTraceStatus.ERROR, event!!.status)
     }
+
+    @Test
+    fun `parseStderr should ignore replacement-char noise`() {
+        val event = CliProgressEventParser.parseStderr("������")
+        assertNull(event)
+    }
+
+    @Test
+    fun `parseStderr should ignore mojibake line with path`() {
+        val event = CliProgressEventParser.parseStderr("'C:\\Users\\12186\\.claude' ç╣□xóèij")
+        assertNull(event)
+    }
 }

@@ -49,6 +49,7 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
     private val listeners = mutableListOf<() -> Unit>()
 
     init {
+        restoreCachedDiscoverySnapshot()
         // 插件启动时自动在后台探测 CLI 工具
         discoverAllAsync()
     }
@@ -87,6 +88,7 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
 
             val codexPath = resolveCliPath(settings.codexCliPath, "codex")
             codexInfo = discoverCodex(codexPath)
+            persistDiscoverySnapshot(settings, claudeInfo, codexInfo)
 
             discoveryCompleted = true
             logger.info("CLI discovery completed: claude=${claudeInfo.available}(${claudeInfo.path}), codex=${codexInfo.available}(${codexInfo.path})")
@@ -96,6 +98,85 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
             discoveryCompleted = true
             notifyListeners()
         }
+    }
+
+    private fun restoreCachedDiscoverySnapshot() {
+        runCatching {
+            val settings = SpecCodingSettingsState.getInstance()
+            val restoredClaude = CliToolInfo(
+                available = settings.cachedClaudeAvailable,
+                path = bootstrapPath(
+                    configuredPath = settings.claudeCodeCliPath,
+                    cachedPath = settings.cachedClaudePath,
+                    fallbackCommand = "claude",
+                ),
+                version = settings.cachedClaudeVersion.takeIf { it.isNotBlank() },
+                models = decodeModels(settings.cachedClaudeModels),
+            )
+            val restoredCodex = CliToolInfo(
+                available = settings.cachedCodexAvailable,
+                path = bootstrapPath(
+                    configuredPath = settings.codexCliPath,
+                    cachedPath = settings.cachedCodexPath,
+                    fallbackCommand = "codex",
+                ),
+                version = settings.cachedCodexVersion.takeIf { it.isNotBlank() },
+                models = decodeModels(settings.cachedCodexModels),
+            )
+            claudeInfo = restoredClaude
+            codexInfo = restoredCodex
+            logger.info(
+                "CLI discovery cache restored: claude=${restoredClaude.available}(${restoredClaude.path}), " +
+                    "codex=${restoredCodex.available}(${restoredCodex.path}), ts=${settings.cachedCliDiscoveryEpochMillis}"
+            )
+        }.onFailure { error ->
+            logger.warn("Failed to restore CLI discovery cache", error)
+        }
+    }
+
+    private fun persistDiscoverySnapshot(
+        settings: SpecCodingSettingsState,
+        claude: CliToolInfo,
+        codex: CliToolInfo,
+    ) {
+        settings.cachedClaudeAvailable = claude.available
+        settings.cachedClaudePath = claude.path
+        settings.cachedClaudeVersion = claude.version.orEmpty()
+        settings.cachedClaudeModels = encodeModels(claude.models)
+
+        settings.cachedCodexAvailable = codex.available
+        settings.cachedCodexPath = codex.path
+        settings.cachedCodexVersion = codex.version.orEmpty()
+        settings.cachedCodexModels = encodeModels(codex.models)
+
+        settings.cachedCliDiscoveryEpochMillis = System.currentTimeMillis()
+    }
+
+    private fun bootstrapPath(configuredPath: String, cachedPath: String, fallbackCommand: String): String {
+        val configured = configuredPath.trim()
+        if (configured.isNotBlank()) return configured
+        val cached = cachedPath.trim()
+        if (cached.isNotBlank()) return cached
+        return fallbackCommand
+    }
+
+    private fun decodeModels(serialized: String): List<String> {
+        if (serialized.isBlank()) return emptyList()
+        return serialized
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
+    }
+
+    private fun encodeModels(models: List<String>): String {
+        return models
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString("\n")
     }
 
     /**

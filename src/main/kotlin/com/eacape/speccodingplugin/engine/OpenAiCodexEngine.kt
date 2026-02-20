@@ -37,12 +37,14 @@ class OpenAiCodexEngine(
             args.add(it)
         }
 
-        // Ensure prompt text is always treated as positional input, not flags.
+        // Read prompt from stdin to avoid shell tokenization issues on Windows cmd fallback.
         args.add("--")
-        args.add(request.prompt)
+        args.add("-")
 
         return args
     }
+
+    override fun stdinPayload(request: EngineRequest): String? = request.prompt
 
     override fun parseStreamLine(line: String): EngineChunk? {
         if (line.isEmpty()) return null

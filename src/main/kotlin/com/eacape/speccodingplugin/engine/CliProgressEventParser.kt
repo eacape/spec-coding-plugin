@@ -22,6 +22,7 @@ internal object CliProgressEventParser {
     private fun parse(line: String, mode: ParseMode): ChatStreamEvent? {
         val detail = sanitize(line)
         if (detail.isBlank()) return null
+        if (looksLikeMojibake(detail)) return null
 
         val lower = detail.lowercase()
         val kind = detectKind(detail = detail, lower = lower, mode = mode)
@@ -40,6 +41,7 @@ internal object CliProgressEventParser {
     private fun sanitize(line: String): String {
         return ANSI_REGEX.replace(line, "")
             .replace('\u0008', ' ')
+            .replace(REPLACEMENT_CHAR_REGEX, "")
             .trim()
             .replace(LEADING_SPINNER_REGEX, "")
             .removePrefix("-")
@@ -130,6 +132,24 @@ internal object CliProgressEventParser {
             detail.startsWith("工具输出")
     }
 
+    private fun looksLikeMojibake(detail: String): Boolean {
+        val normalized = detail.trim()
+        if (normalized.isBlank()) return false
+        if (CJK_REGEX.containsMatchIn(normalized)) return false
+        if (BOX_DRAWING_REGEX.containsMatchIn(normalized)) return true
+
+        val suspiciousCount = SUSPICIOUS_MOJIBAKE_REGEX.findAll(normalized).count()
+        if (suspiciousCount < MOJIBAKE_MIN_COUNT) return false
+        val ratio = suspiciousCount.toDouble() / normalized.length.toDouble().coerceAtLeast(1.0)
+        return ratio >= MOJIBAKE_MIN_RATIO
+    }
+
     private val ANSI_REGEX = Regex("""\u001B\[[;\d]*[ -/]*[@-~]""")
     private val LEADING_SPINNER_REGEX = Regex("""^[\u2800-\u28FF◐◑◒◓◴◵◶◷◜◝◞◟|/\\-]+\s*""")
+    private val REPLACEMENT_CHAR_REGEX = Regex("""\uFFFD+""")
+    private val BOX_DRAWING_REGEX = Regex("""[\u2500-\u259F]""")
+    private val CJK_REGEX = Regex("""\p{IsHan}""")
+    private val SUSPICIOUS_MOJIBAKE_REGEX = Regex("""[\u00C0-\u024F\u2500-\u259F]""")
+    private const val MOJIBAKE_MIN_COUNT = 4
+    private const val MOJIBAKE_MIN_RATIO = 0.15
 }

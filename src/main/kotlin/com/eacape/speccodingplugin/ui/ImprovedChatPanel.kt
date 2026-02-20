@@ -70,6 +70,7 @@ import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JScrollPane
+import javax.swing.Timer
 
 /**
  * 改进版 Chat Tool Window Panel
@@ -125,6 +126,7 @@ class ImprovedChatPanel(
     private val sendButton = JButton()
     private val clearButton = JButton()
     private var currentAssistantPanel: ChatMessagePanel? = null
+    private var statusAutoHideTimer: Timer? = null
 
     // Session state
     private val conversationHistory = mutableListOf<LlmMessage>()
@@ -475,10 +477,12 @@ class ImprovedChatPanel(
                         assistantContent.append(chunk.delta)
                         pendingDelta.append(chunk.delta)
                     }
-                    chunk.event?.let {
-                        pendingEvents += it
-                        streamedTraceEvents += it
-                    }
+                    chunk.event
+                        ?.let(::sanitizeStreamEvent)
+                        ?.let {
+                            pendingEvents += it
+                            streamedTraceEvents += it
+                        }
                     pendingChunks += 1
 
                     if (chunk.isLast) {
@@ -1179,7 +1183,11 @@ class ImprovedChatPanel(
                 restoreSessionMessages(messages)
                 currentSessionId = session.id
                 sessionIsolationService.activateSession(session.id)
-                showStatus(SpecCodingBundle.message("toolwindow.status.session.loaded", session.title))
+                showStatus(
+                    text = SpecCodingBundle.message("toolwindow.status.session.loaded.short"),
+                    tooltip = SpecCodingBundle.message("toolwindow.status.session.loaded", session.title),
+                    autoHideMillis = STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS,
+                )
                 setSessionRestoringState(false)
             }
         }
@@ -1209,6 +1217,7 @@ class ImprovedChatPanel(
                         onWorkflowCommandInsert = ::handleWorkflowCommandInsert,
                     )
                     val restoredTraceEvents = TraceEventMetadataCodec.decode(message.metadataJson)
+                        .mapNotNull(::sanitizeStreamEvent)
                     if (restoredTraceEvents.isNotEmpty()) {
                         panel.appendStreamContent(text = "", events = restoredTraceEvents)
                     }
@@ -1341,9 +1350,55 @@ class ImprovedChatPanel(
     }
 
     private fun addErrorMessage(content: String) {
-        val panel = ChatMessagePanel(ChatMessagePanel.MessageRole.ERROR, content)
+        val normalized = sanitizeDisplayText(content, dropGarbledLines = true)
+            .ifBlank { SpecCodingBundle.message("toolwindow.error.unknown") }
+        val panel = ChatMessagePanel(ChatMessagePanel.MessageRole.ERROR, normalized)
         panel.finishMessage()
         messagesPanel.addMessage(panel)
+    }
+
+    private fun sanitizeStreamEvent(event: ChatStreamEvent): ChatStreamEvent? {
+        val normalizedDetail = sanitizeDisplayText(event.detail, dropGarbledLines = true)
+        if (normalizedDetail.isBlank()) return null
+        return if (normalizedDetail == event.detail) {
+            event
+        } else {
+            event.copy(detail = normalizedDetail)
+        }
+    }
+
+    private fun sanitizeDisplayText(content: String, dropGarbledLines: Boolean): String {
+        if (content.isBlank()) return ""
+        val normalized = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .replace('\uFFFD', ' ')
+            .replace(UI_CONTROL_CHAR_REGEX, "")
+        val lines = normalized.lineSequence()
+            .map { it.trimEnd() }
+            .filter { line -> line.isNotBlank() || !dropGarbledLines }
+            .filter { line -> !dropGarbledLines || !looksLikeGarbledLine(line) }
+            .filter { line -> !dropGarbledLines || !looksLikePlaceholderLine(line) }
+            .toList()
+        return lines.joinToString("\n").trim()
+    }
+
+    private fun looksLikeGarbledLine(line: String): Boolean {
+        val normalized = line.trim()
+        if (normalized.isBlank()) return false
+        if (UI_CJK_REGEX.containsMatchIn(normalized)) return false
+        if (UI_BOX_DRAWING_REGEX.containsMatchIn(normalized)) return true
+        val suspiciousCount = UI_SUSPICIOUS_CHAR_REGEX.findAll(normalized).count()
+        if (suspiciousCount < UI_GARBLED_MIN_COUNT) return false
+        val ratio = suspiciousCount.toDouble() / normalized.length.toDouble().coerceAtLeast(1.0)
+        return ratio >= UI_GARBLED_MIN_RATIO
+    }
+
+    private fun looksLikePlaceholderLine(line: String): Boolean {
+        val normalized = line.trim()
+        if (normalized.isBlank()) return true
+        if (normalized.length > UI_PLACEHOLDER_MAX_LENGTH) return false
+        return UI_PLACEHOLDER_LINE_REGEX.matches(normalized)
     }
 
     private fun setSendingState(sending: Boolean) {
@@ -1373,13 +1428,34 @@ class ImprovedChatPanel(
         sendButton.isEnabled = !isGenerating && !isRestoringSession
     }
 
-    private fun showStatus(text: String) {
+    private fun showStatus(
+        text: String,
+        tooltip: String? = null,
+        autoHideMillis: Int? = null,
+    ) {
+        statusAutoHideTimer?.stop()
+        statusAutoHideTimer = null
         statusLabel.text = text
+        statusLabel.toolTipText = tooltip
         statusLabel.isVisible = text.isNotBlank()
+        if (!statusLabel.isVisible) return
+        if (autoHideMillis == null || autoHideMillis <= 0) return
+
+        val timer = Timer(autoHideMillis) {
+            if (!isGenerating && !isRestoringSession) {
+                hideStatus()
+            }
+        }
+        timer.isRepeats = false
+        statusAutoHideTimer = timer
+        timer.start()
     }
 
     private fun hideStatus() {
+        statusAutoHideTimer?.stop()
+        statusAutoHideTimer = null
         statusLabel.text = ""
+        statusLabel.toolTipText = null
         statusLabel.isVisible = false
     }
 
@@ -1442,10 +1518,157 @@ class ImprovedChatPanel(
 
     private fun toUiLowercase(value: String): String = value.lowercase(Locale.ROOT)
 
-    private fun handleContinueMessage(@Suppress("UNUSED_PARAMETER") panel: ChatMessagePanel) {
-        if (isGenerating) return
-        inputField.text = SpecCodingBundle.message("toolwindow.continue.defaultPrompt")
+    private fun handleContinueMessage(panel: ChatMessagePanel) {
+        if (isGenerating || isRestoringSession || project.isDisposed || _isDisposed) return
+        val focus = resolveContinueFocus(panel)
+        val continuePrompt = if (!focus.isNullOrBlank()) {
+            SpecCodingBundle.message("toolwindow.continue.dynamicPrompt", focus)
+        } else {
+            SpecCodingBundle.message("toolwindow.continue.defaultPrompt")
+        }
+        inputField.text = continuePrompt
         sendCurrentInput()
+    }
+
+    private fun resolveContinueFocus(targetPanel: ChatMessagePanel): String? {
+        val allMessages = messagesPanel.getAllMessages()
+        val targetIndex = allMessages.indexOf(targetPanel)
+        if (targetIndex < 0) return null
+
+        val fromUser = resolveUserContinueFocus(allMessages, targetIndex)
+
+        val fromAssistant = extractAssistantContinueFocus(targetPanel.getContent())
+            ?.let(::unwrapGeneratedContinuePrompt)
+            ?.let(::sanitizeContinueFocus)
+            ?.takeUnless(::isGenericContinueInstruction)
+            ?.takeUnless(::isCodeLikeContinueFocus)
+
+        return fromUser ?: fromAssistant
+    }
+
+    private fun resolveUserContinueFocus(
+        allMessages: List<ChatMessagePanel>,
+        beforeIndexExclusive: Int,
+    ): String? {
+        for (index in beforeIndexExclusive - 1 downTo 0) {
+            val candidate = allMessages[index]
+            if (candidate.role != ChatMessagePanel.MessageRole.USER) continue
+
+            val focus = candidate.getContent()
+                .let(::stripStagePrefix)
+                .let(::unwrapGeneratedContinuePrompt)
+                .let(::stripStagePrefix)
+                .let(::sanitizeContinueFocus)
+                ?: continue
+            if (isGenericContinueInstruction(focus)) continue
+            return focus
+        }
+        return null
+    }
+
+    private fun extractAssistantContinueFocus(content: String): String? {
+        if (content.isBlank()) return null
+        val lines = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toList()
+
+        val heading = lines.firstOrNull { line ->
+            line.startsWith("## ") ||
+                line.startsWith("### ") ||
+                line.startsWith("- ") ||
+                line.startsWith("* ") ||
+                CONTINUE_ORDERED_LINE_REGEX.matches(line)
+        }
+
+        return (heading ?: lines.firstOrNull())
+            ?.removePrefix("## ")
+            ?.removePrefix("### ")
+            ?.removePrefix("- ")
+            ?.removePrefix("* ")
+            ?.replace(CONTINUE_ORDERED_PREFIX_REGEX, "")
+            ?.trim()
+    }
+
+    private fun stripStagePrefix(content: String): String {
+        return content.trim().replace(CONTINUE_STAGE_PREFIX_REGEX, "").trim()
+    }
+
+    private fun unwrapGeneratedContinuePrompt(content: String): String {
+        var current = content.trim()
+        repeat(CONTINUE_PROMPT_UNWRAP_MAX_DEPTH) {
+            val next = extractGeneratedContinueFocus(current)?.trim()
+            if (next.isNullOrBlank() || next == current) return current
+            current = next
+        }
+        return current
+    }
+
+    private fun extractGeneratedContinueFocus(content: String): String? {
+        val normalized = content.trim()
+        CONTINUE_DYNAMIC_ZH_REGEX.matchEntire(normalized)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let { return it }
+        CONTINUE_DYNAMIC_EN_REGEX.matchEntire(normalized)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.let { return it }
+
+        if (normalized.startsWith("请承接上一轮输出继续执行")) {
+            return normalized
+                .substringAfter("重点", "")
+                .substringAfter("：", "")
+                .substringAfter(":", "")
+                .replace(Regex("""。?\s*避免重复已完成内容.*$"""), "")
+                .trim()
+                .ifBlank { null }
+        }
+        if (normalized.lowercase(Locale.ROOT).startsWith("continue from the previous result with focus")) {
+            return normalized
+                .substringAfter("focus", "")
+                .substringAfter(":", "")
+                .substringAfter("：", "")
+                .replace(Regex("""\.?\s*avoid repeating completed work.*$""", RegexOption.IGNORE_CASE), "")
+                .trim()
+                .ifBlank { null }
+        }
+        return null
+    }
+
+    private fun sanitizeContinueFocus(content: String): String? {
+        return content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .joinToString(" ") { it.trim() }
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(CONTINUE_FOCUS_MAX_LENGTH)
+            .ifBlank { null }
+    }
+
+    private fun isCodeLikeContinueFocus(content: String): Boolean {
+        val normalized = content.trim()
+        if (normalized.isBlank()) return true
+        if (normalized.length > 64) return false
+        if (normalized.contains(' ')) return false
+        if (UI_CJK_REGEX.containsMatchIn(normalized)) return false
+        return CONTINUE_CODE_LIKE_FOCUS_REGEX.matches(normalized)
+    }
+
+    private fun isGenericContinueInstruction(content: String): Boolean {
+        val normalized = content.lowercase(Locale.ROOT)
+        return normalized.contains("plan/execute/verify") ||
+            normalized.contains("continue with the current") ||
+            normalized.contains("continue from the previous result with focus") ||
+            normalized.contains("avoid repeating completed work") ||
+            normalized.contains("继续按当前") ||
+            normalized.contains("继续执行下一步") ||
+            normalized.contains("请承接上一轮输出继续执行")
     }
 
     private fun handleWorkflowCommandInsert(command: String) {
@@ -1561,10 +1784,12 @@ class ImprovedChatPanel(
                         assistantContent.append(chunk.delta)
                         pendingDelta.append(chunk.delta)
                     }
-                    chunk.event?.let {
-                        pendingEvents += it
-                        streamedTraceEvents += it
-                    }
+                    chunk.event
+                        ?.let(::sanitizeStreamEvent)
+                        ?.let {
+                            pendingEvents += it
+                            streamedTraceEvents += it
+                        }
                     pendingChunks += 1
 
                     if (chunk.isLast) {
@@ -1637,6 +1862,8 @@ class ImprovedChatPanel(
 
     override fun dispose() {
         _isDisposed = true
+        statusAutoHideTimer?.stop()
+        statusAutoHideTimer = null
         CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
         scope.cancel()
     }
@@ -1649,5 +1876,27 @@ class ImprovedChatPanel(
         private const val STREAM_BATCH_CHAR_COUNT = 240
         private const val STREAM_BATCH_INTERVAL_NANOS = 120_000_000L
         private const val STREAM_AUTO_SCROLL_THRESHOLD_PX = 80
+        private const val STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS = 2200
+        private const val CONTINUE_FOCUS_MAX_LENGTH = 84
+        private val CONTINUE_STAGE_PREFIX_REGEX = Regex("""^\[[^\]]+]\s*""")
+        private val CONTINUE_ORDERED_PREFIX_REGEX = Regex("""^\d+\.\s*""")
+        private val CONTINUE_ORDERED_LINE_REGEX = Regex("""^\d+\.\s+.+""")
+        private val UI_CONTROL_CHAR_REGEX = Regex("""[\u0000-\u0008\u000B\u000C\u000E-\u001F]""")
+        private val UI_BOX_DRAWING_REGEX = Regex("""[\u2500-\u259F]""")
+        private val UI_CJK_REGEX = Regex("""\p{IsHan}""")
+        private val UI_SUSPICIOUS_CHAR_REGEX = Regex("""[\u00C0-\u024F\u2500-\u259F]""")
+        private const val UI_GARBLED_MIN_COUNT = 4
+        private const val UI_GARBLED_MIN_RATIO = 0.15
+        private const val UI_PLACEHOLDER_MAX_LENGTH = 4
+        private val UI_PLACEHOLDER_LINE_REGEX = Regex("""^[\p{P}\p{S}]+$""")
+        private const val CONTINUE_PROMPT_UNWRAP_MAX_DEPTH = 8
+        private val CONTINUE_CODE_LIKE_FOCUS_REGEX = Regex("""^[a-z0-9_.:+\-/]{2,64}$""", RegexOption.IGNORE_CASE)
+        private val CONTINUE_DYNAMIC_ZH_REGEX = Regex(
+            """^请承接上一轮输出继续执行，?\s*重点[:：]\s*(.+?)(?:。?\s*避免重复已完成内容.*)?$"""
+        )
+        private val CONTINUE_DYNAMIC_EN_REGEX = Regex(
+            """^continue from the previous result with focus[:：]\s*(.+?)(?:\.?\s*avoid repeating completed work.*)?$""",
+            RegexOption.IGNORE_CASE,
+        )
     }
 }

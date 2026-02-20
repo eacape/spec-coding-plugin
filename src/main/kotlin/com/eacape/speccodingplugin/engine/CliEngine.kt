@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.InputStream
 import java.io.InputStreamReader
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.BlockingQueue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
@@ -86,13 +87,15 @@ abstract class CliEngine(
             activeProcesses[requestId] = process
             val (timedOut, watchdogFuture) = startTimeoutWatchdog(process, timeoutSeconds)
             try {
-                runCatching { process.outputStream.close() }
+                writeRequestInput(process, request)
                 val stderrFuture = CompletableFuture.supplyAsync {
-                    process.errorStream.bufferedReader().use { it.readText() }
+                    process.errorStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
                 }
-                val output = process.inputStream.bufferedReader().use { it.readText() }
+                val output = process.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
                 val exitCode = process.waitFor()
-                val stderr = runCatching { stderrFuture.get(1, TimeUnit.SECONDS) }.getOrNull().orEmpty()
+                val stderr = sanitizeProcessError(
+                    runCatching { stderrFuture.get(1, TimeUnit.SECONDS) }.getOrNull().orEmpty()
+                )
                 if (timedOut.get()) {
                     return@withContext EngineResponse(
                         content = "",
@@ -138,7 +141,7 @@ abstract class CliEngine(
         activeProcesses[requestId] = process
         val (timedOut, watchdogFuture) = startTimeoutWatchdog(process, timeoutSeconds)
         try {
-            runCatching { process.outputStream.close() }
+            writeRequestInput(process, request)
             var emittedChunk = false
             val frames: BlockingQueue<StreamFrame> = LinkedBlockingQueue()
             val stdoutDone = AtomicBoolean(false)
@@ -185,7 +188,7 @@ abstract class CliEngine(
             stderrPump.join(STREAM_PUMP_JOIN_MILLIS)
 
             val exitCode = process.waitFor()
-            val stderr = stderrText.toString().trim()
+            val stderr = sanitizeProcessError(stderrText.toString())
             if (timedOut.get()) {
                 val resolvedTimeoutMessage = if (stderr.isBlank()) {
                     timeoutMessage(timeoutSeconds)
@@ -240,6 +243,11 @@ abstract class CliEngine(
      */
     protected open fun buildStreamCommandArgs(request: EngineRequest): List<String> = buildCommandArgs(request)
 
+    /**
+     * 可选 stdin 负载；返回 null 表示不写入 stdin。
+     */
+    protected open fun stdinPayload(request: EngineRequest): String? = null
+
     /** 解析流式输出行 */
     protected abstract fun parseStreamLine(line: String): EngineChunk?
 
@@ -263,6 +271,17 @@ abstract class CliEngine(
 
     /** 获取版本号 */
     protected abstract suspend fun getVersion(): String?
+
+    private fun writeRequestInput(process: Process, request: EngineRequest) {
+        val payload = stdinPayload(request)
+        if (payload == null) {
+            runCatching { process.outputStream.close() }
+            return
+        }
+        process.outputStream.bufferedWriter(StandardCharsets.UTF_8).use { writer ->
+            writer.write(payload)
+        }
+    }
 
     private fun resolveTimeoutSeconds(request: EngineRequest): Long? {
         val option = request.options["timeout_seconds"]?.toLongOrNull()
@@ -370,7 +389,7 @@ abstract class CliEngine(
     ): Thread {
         val pump = Thread {
             try {
-                InputStreamReader(stream).use { reader ->
+                InputStreamReader(stream, StandardCharsets.UTF_8).use { reader ->
                     val stdoutFlushChars = stdoutChunkFlushChars()
                     val buffer = StringBuilder()
 
@@ -432,11 +451,45 @@ abstract class CliEngine(
         return pump
     }
 
+    private fun sanitizeProcessError(raw: String): String {
+        if (raw.isBlank()) return ""
+        return raw
+            .replace(ERROR_ANSI_REGEX, "")
+            .replace(ERROR_REPLACEMENT_CHAR_REGEX, "")
+            .replace('\u0008', ' ')
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .filterNot { looksLikeMojibakeLine(it) }
+            .joinToString("\n")
+            .trim()
+    }
+
+    private fun looksLikeMojibakeLine(line: String): Boolean {
+        val normalized = line.trim()
+        if (normalized.isBlank()) return false
+        if (ERROR_CJK_REGEX.containsMatchIn(normalized)) return false
+        if (ERROR_BOX_DRAWING_REGEX.containsMatchIn(normalized)) return true
+        val suspiciousCount = ERROR_SUSPICIOUS_MOJIBAKE_REGEX.findAll(normalized).count()
+        if (suspiciousCount < ERROR_MOJIBAKE_MIN_COUNT) return false
+        val ratio = suspiciousCount.toDouble() / normalized.length.toDouble().coerceAtLeast(1.0)
+        return ratio >= ERROR_MOJIBAKE_MIN_RATIO
+    }
+
     companion object {
         private const val STREAM_POLL_MILLIS = 120L
         private const val STREAM_PUMP_JOIN_MILLIS = 500L
         private const val STREAM_PROGRESS_FLUSH_CHARS = 120
         private const val STREAM_STDOUT_FLUSH_CHARS = 64
+        private val ERROR_ANSI_REGEX = Regex("""\u001B\[[;\d]*[ -/]*[@-~]""")
+        private val ERROR_REPLACEMENT_CHAR_REGEX = Regex("""\uFFFD+""")
+        private val ERROR_BOX_DRAWING_REGEX = Regex("""[\u2500-\u259F]""")
+        private val ERROR_CJK_REGEX = Regex("""\p{IsHan}""")
+        private val ERROR_SUSPICIOUS_MOJIBAKE_REGEX = Regex("""[\u00C0-\u024F\u2500-\u259F]""")
+        private const val ERROR_MOJIBAKE_MIN_COUNT = 4
+        private const val ERROR_MOJIBAKE_MIN_RATIO = 0.15
     }
 
     private enum class StreamSource {

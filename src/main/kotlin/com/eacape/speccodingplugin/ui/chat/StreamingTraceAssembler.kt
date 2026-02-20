@@ -28,7 +28,11 @@ internal class StreamingTraceAssembler {
     }
 
     fun onStructuredEvent(event: ChatStreamEvent) {
-        mergeItem(ExecutionTimelineParser.fromStructuredEvent(event), structuredItems)
+        val sanitizedDetail = sanitizeDetail(event.detail) ?: return
+        mergeItem(
+            ExecutionTimelineParser.fromStructuredEvent(event.copy(detail = sanitizedDetail)),
+            structuredItems,
+        )
     }
 
     fun markRunningItemsDone() {
@@ -44,10 +48,12 @@ internal class StreamingTraceAssembler {
         val merged = linkedMapOf<String, ExecutionTimelineParser.TimelineItem>()
 
         ExecutionTimelineParser.parse(content).forEach { item ->
-            mergeItem(item, merged)
+            val sanitizedDetail = sanitizeDetail(item.detail) ?: return@forEach
+            mergeItem(item.copy(detail = sanitizedDetail), merged)
         }
         structuredItems.values.forEach { item ->
-            mergeItem(item, merged)
+            val sanitizedDetail = sanitizeDetail(item.detail) ?: return@forEach
+            mergeItem(item.copy(detail = sanitizedDetail), merged)
         }
 
         return TraceSnapshot(
@@ -107,9 +113,45 @@ internal class StreamingTraceAssembler {
         }
     }
 
+    private fun sanitizeDetail(value: String): String? {
+        val normalized = value
+            .replace('\uFFFD', ' ')
+            .replace('\u0008', ' ')
+            .replace(CONTROL_CHAR_REGEX, "")
+            .trim()
+        if (normalized.isBlank()) return null
+        if (looksLikePlaceholderDetail(normalized)) return null
+        if (!looksLikeGarbledLine(normalized)) return normalized
+        return null
+    }
+
+    private fun looksLikeGarbledLine(line: String): Boolean {
+        if (line.isBlank()) return false
+        if (CJK_REGEX.containsMatchIn(line)) return false
+        if (BOX_DRAWING_REGEX.containsMatchIn(line)) return true
+        val suspiciousCount = SUSPICIOUS_CHAR_REGEX.findAll(line).count()
+        if (suspiciousCount < GARBLED_MIN_COUNT) return false
+        val ratio = suspiciousCount.toDouble() / line.length.toDouble().coerceAtLeast(1.0)
+        return ratio >= GARBLED_MIN_RATIO
+    }
+
+    private fun looksLikePlaceholderDetail(line: String): Boolean {
+        if (line.isBlank()) return true
+        if (line.length > PLACEHOLDER_MAX_LENGTH) return false
+        return PLACEHOLDER_REGEX.matches(line)
+    }
+
     companion object {
         private val TASK_PROGRESS_PREFIX_REGEX = Regex("""^\d+\s*/\s*\d+\s*""")
         private val MERGE_NOISE_REGEX =
             Regex("""\b(running|done|completed|finished|success|failed|error|进行中|已完成|完成|失败|错误)\b""")
+        private val CONTROL_CHAR_REGEX = Regex("""[\u0000-\u0008\u000B\u000C\u000E-\u001F]""")
+        private val BOX_DRAWING_REGEX = Regex("""[\u2500-\u259F]""")
+        private val CJK_REGEX = Regex("""\p{IsHan}""")
+        private val SUSPICIOUS_CHAR_REGEX = Regex("""[\u00C0-\u024F\u2500-\u259F]""")
+        private const val GARBLED_MIN_COUNT = 4
+        private const val GARBLED_MIN_RATIO = 0.15
+        private const val PLACEHOLDER_MAX_LENGTH = 4
+        private val PLACEHOLDER_REGEX = Regex("""^[\p{P}\p{S}]+$""")
     }
 }

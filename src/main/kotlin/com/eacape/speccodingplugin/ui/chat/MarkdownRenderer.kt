@@ -18,7 +18,7 @@ import javax.swing.text.StyledDocument
  * - 行内代码 (`code`)
  * - 粗体 (**text**)
  * - 斜体 (*text*)
- * - 标题 (# ## ###)
+ * - 标题 (# ~ ######)
  * - 无序列表 (- item)
  * - 有序列表 (1. item)
  * - 分隔线 (---)
@@ -42,9 +42,11 @@ object MarkdownRenderer {
 
         while (i < lines.size) {
             val line = lines[i]
+            val trimmedLine = line.trimStart()
+            val headingMatch = HEADING_REGEX.matchEntire(line)
 
             // 检查代码块开始
-            if (line.trimStart().startsWith("```")) {
+            if (trimmedLine.startsWith("```")) {
                 if (!firstBlock) insertNewline(doc)
                 firstBlock = false
                 i = renderCodeBlock(doc, lines, i)
@@ -55,12 +57,13 @@ object MarkdownRenderer {
             firstBlock = false
 
             when {
-                line.startsWith("### ") -> renderHeading(doc, line.removePrefix("### "), 3)
-                line.startsWith("## ") -> renderHeading(doc, line.removePrefix("## "), 2)
-                line.startsWith("# ") -> renderHeading(doc, line.removePrefix("# "), 1)
-                line.trimStart().startsWith("- ") || line.trimStart().startsWith("* ") ->
+                headingMatch != null -> {
+                    val level = headingMatch.groupValues[1].length.coerceIn(1, 6)
+                    renderHeading(doc, headingMatch.groupValues[2], level)
+                }
+                trimmedLine.startsWith("- ") || trimmedLine.startsWith("* ") ->
                     renderListItem(doc, line, ordered = false)
-                line.trimStart().matches(Regex("^\\d+\\.\\s.*")) ->
+                ORDERED_LIST_REGEX.matches(trimmedLine) ->
                     renderListItem(doc, line, ordered = true)
                 line.trim() == "---" || line.trim() == "***" || line.trim() == "___" ->
                     renderHorizontalRule(doc)
@@ -125,7 +128,9 @@ object MarkdownRenderer {
         val fontSize = when (level) {
             1 -> 18
             2 -> 16
-            else -> 14
+            3 -> 14
+            4 -> 13
+            else -> 12
         }
         StyleConstants.setFontSize(attrs, fontSize)
         StyleConstants.setFontFamily(attrs, Font.SANS_SERIF)
@@ -268,6 +273,9 @@ object MarkdownRenderer {
         }
         return text.length
     }
+
+    private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+(.*)$""")
+    private val ORDERED_LIST_REGEX = Regex("""^\d+\.\s.*$""")
 
     private sealed class InlineToken {
         abstract val text: String

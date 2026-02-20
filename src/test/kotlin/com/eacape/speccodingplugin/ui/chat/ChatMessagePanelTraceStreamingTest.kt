@@ -176,6 +176,59 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
+    fun `garbled output event should not be rendered in timeline`() {
+        val panel = ChatMessagePanel(
+            role = ChatMessagePanel.MessageRole.ASSISTANT,
+            initialContent = "正常响应",
+        )
+
+        runOnEdt {
+            panel.appendStreamEvent(
+                ChatStreamEvent(
+                    kind = ChatTraceKind.OUTPUT,
+                    detail = "'C:\\Users\\12186\\.claude' ç═╬▌xóèij",
+                    status = ChatTraceStatus.ERROR,
+                )
+            )
+            panel.finishMessage()
+        }
+
+        val allText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertTrue(allText.contains("正常响应"))
+        assertFalse(allText.contains(".claude"))
+        assertFalse(allText.contains("ç═"))
+    }
+
+    @Test
+    fun `placeholder output event should not be rendered in timeline`() {
+        val panel = ChatMessagePanel(
+            role = ChatMessagePanel.MessageRole.ASSISTANT,
+            initialContent = "正常响应",
+        )
+
+        runOnEdt {
+            panel.appendStreamEvent(
+                ChatStreamEvent(
+                    kind = ChatTraceKind.OUTPUT,
+                    detail = "-",
+                    status = ChatTraceStatus.INFO,
+                )
+            )
+            panel.finishMessage()
+        }
+
+        val allText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertTrue(allText.contains("正常响应"))
+        assertFalse(allText.lines().any { it.trim() == "-" })
+    }
+
+    @Test
     fun `message text pane should be focusable for in-place copy`() {
         val panel = ChatMessagePanel(
             role = ChatMessagePanel.MessageRole.ASSISTANT,

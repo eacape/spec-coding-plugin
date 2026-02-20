@@ -34,9 +34,13 @@ internal object ClaudeStreamJsonParser {
                 // JSON 行不完整时先忽略，避免把原始片段渲染到回答正文
                 return null
             }
+            val fallbackDelta = sanitizeAssistantDelta(line)
+            if (fallbackDelta.isEmpty()) return null
+            val fallbackEvent = CliProgressEventParser.parseStdout(fallbackDelta.trim())
+                ?: return null
             return EngineChunk(
-                delta = line,
-                event = CliProgressEventParser.parseStdout(trimmed),
+                delta = "",
+                event = fallbackEvent,
             )
         }
 
@@ -58,12 +62,14 @@ internal object ClaudeStreamJsonParser {
             else -> null
         }
 
-        if (delta.isEmpty() && event == null) {
+        val sanitizedDelta = sanitizeAssistantDelta(delta)
+
+        if (sanitizedDelta.isEmpty() && event == null) {
             return null
         }
 
         return EngineChunk(
-            delta = delta,
+            delta = sanitizedDelta,
             event = event,
         )
     }
@@ -94,8 +100,10 @@ internal object ClaudeStreamJsonParser {
 
         if (eventType == "content_block_delta") {
             val delta = event.obj("delta")
-            delta?.string("text")?.takeIf { it.isNotBlank() }?.let { return it }
-            delta?.string("partial_json")?.takeIf { it.isNotBlank() }?.let { return it }
+            val deltaType = delta?.string("type")?.lowercase().orEmpty()
+            delta?.string("text")
+                ?.takeIf { it.isNotBlank() && (deltaType.isBlank() || deltaType.contains("text")) }
+                ?.let { return it }
         }
 
         if (eventType == "content_block_start") {
@@ -178,16 +186,27 @@ internal object ClaudeStreamJsonParser {
             containsAny(payload.string("subtype"), "error", "failed", "failure") ||
             payload.containsKey("error")
 
-        val detail = normalizeDetail(
-            firstNonBlank(
-                payload.string("error"),
-                payload.obj("error")?.toString(),
-                payload.string("result"),
-                payload.string("message"),
-                payload.string("status"),
-                if (isError) "result: error" else "result: done",
+        val detail = if (isError) {
+            normalizeDetail(
+                firstNonBlank(
+                    payload.string("error"),
+                    payload.obj("error")?.toString(),
+                    payload.string("message"),
+                    payload.string("status"),
+                    "result: error",
+                )
             )
-        ) ?: return null
+        } else {
+            // Avoid duplicating the full assistant answer inside execution trace.
+            normalizeDetail(
+                firstNonBlank(
+                    payload.string("message"),
+                    payload.string("status"),
+                    payload.string("subtype")?.let { "result: $it" },
+                    "result: done",
+                )
+            )
+        } ?: return null
 
         return buildEvent(
             detail = detail,
@@ -342,12 +361,23 @@ internal object ClaudeStreamJsonParser {
     private fun normalizeDetail(value: String?): String? {
         if (value.isNullOrBlank()) return null
         return value
+            .replace(REPLACEMENT_CHAR_REGEX, "")
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
             .lineSequence()
-            .joinToString(" ") { it.trim() }
-            .replace(Regex("\\s+"), " ")
+            .joinToString("\n") { it.trimEnd() }
+            .replace(Regex("\n{3,}"), "\n\n")
             .trim()
             .take(MAX_EVENT_DETAIL_LENGTH)
             .ifBlank { null }
+    }
+
+    private fun sanitizeAssistantDelta(value: String): String {
+        if (value.isEmpty()) return value
+        return value
+            .replace(REPLACEMENT_CHAR_REGEX, "")
+            .replace(CONTROL_CHAR_REGEX, "")
+            .ifBlank { "" }
     }
 
     private fun containsAny(value: String?, vararg candidates: String): Boolean {
@@ -355,5 +385,7 @@ internal object ClaudeStreamJsonParser {
         return candidates.any { normalized.contains(it) }
     }
 
-    private const val MAX_EVENT_DETAIL_LENGTH = 320
+    private val REPLACEMENT_CHAR_REGEX = Regex("""\uFFFD+""")
+    private val CONTROL_CHAR_REGEX = Regex("""[\u0000-\u0008\u000B\u000C\u000E-\u001F]""")
+    private const val MAX_EVENT_DETAIL_LENGTH = 800
 }

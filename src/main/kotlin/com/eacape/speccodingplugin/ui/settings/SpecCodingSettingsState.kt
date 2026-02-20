@@ -36,6 +36,17 @@ class SpecCodingSettingsState : PersistentStateComponent<SpecCodingSettingsState
     var codexCliPath: String = ""
     var claudeCodeCliPath: String = ""
 
+    // CLI 探测缓存：用于插件冷启动时快速恢复 provider/model，避免先回退到 mock。
+    var cachedClaudeAvailable: Boolean = false
+    var cachedClaudePath: String = ""
+    var cachedClaudeVersion: String = ""
+    var cachedClaudeModels: String = ""
+    var cachedCodexAvailable: Boolean = false
+    var cachedCodexPath: String = ""
+    var cachedCodexVersion: String = ""
+    var cachedCodexModels: String = ""
+    var cachedCliDiscoveryEpochMillis: Long = 0L
+
     // 默认操作模式
     var defaultOperationMode: String = "DEFAULT"
 

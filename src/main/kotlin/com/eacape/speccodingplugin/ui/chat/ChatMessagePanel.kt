@@ -523,9 +523,7 @@ class ChatMessagePanel(
         if (content.contains("**") || content.contains('`')) return true
         return content.lineSequence().any { line ->
             val trimmed = line.trimStart()
-            trimmed.startsWith("# ") ||
-                trimmed.startsWith("## ") ||
-                trimmed.startsWith("### ") ||
+            MARKDOWN_HEADING_REGEX.matches(trimmed) ||
                 trimmed.startsWith("- ") ||
                 trimmed.startsWith("* ") ||
                 ORDERED_LIST_ITEM_REGEX.matches(trimmed)
@@ -892,6 +890,7 @@ class ChatMessagePanel(
         private const val COPY_FEEDBACK_TIMER_KEY = "spec.copy.feedback.timer"
         private const val COPY_FEEDBACK_ICON_SUCCESS = "OK"
         private const val COPY_FEEDBACK_ICON_FAILURE = "!"
+        private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s+.*$""")
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+\.\s+.*""")
         private val WORKFLOW_HEADING_TITLES = setOf(
             "plan", "planning", "计划", "规划",
