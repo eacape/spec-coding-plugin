@@ -642,17 +642,44 @@ internal class SpecCardMessagePanel(
     }
 
     private fun toCollapsedPreview(content: String): String {
-        val normalizedLines = content
+        val filteredLines = content
             .replace("\r\n", "\n")
             .replace('\r', '\n')
             .lineSequence()
-            .take(PREVIEW_MAX_LINES)
+            .filterNot(::isFirstLevelHeading)
             .toList()
-        val normalized = normalizedLines.joinToString("\n").trim()
+        if (filteredLines.isEmpty()) {
+            return ""
+        }
+
+        val previewLines = if (filteredLines.size > PREVIEW_MAX_LINES) {
+            filteredLines.take(PREVIEW_MAX_LINES - 1) + PREVIEW_ELLIPSIS_LINE
+        } else {
+            filteredLines.take(PREVIEW_MAX_LINES)
+        }
+
+        val normalized = previewLines.joinToString("\n").trim()
         if (normalized.length <= PREVIEW_MAX_CHARS) {
             return normalized
         }
-        return normalized.take(PREVIEW_MAX_CHARS).trimEnd() + "..."
+        val clippedLines = normalized
+            .take(PREVIEW_MAX_CHARS)
+            .trimEnd()
+            .lineSequence()
+            .take((PREVIEW_MAX_LINES - 1).coerceAtLeast(1))
+            .toList()
+        return if (clippedLines.isEmpty()) {
+            PREVIEW_ELLIPSIS_LINE
+        } else {
+            (clippedLines + PREVIEW_ELLIPSIS_LINE).joinToString("\n")
+        }
+    }
+
+    private fun isFirstLevelHeading(line: String): Boolean {
+        val trimmed = line.trimStart()
+        if (!trimmed.startsWith("#")) return false
+        if (trimmed.startsWith("##")) return false
+        return trimmed.drop(1).startsWith(" ") || trimmed.drop(1).isNotBlank()
     }
 
     private fun extractPreviewFromCardMarkdown(markdown: String): String {
@@ -725,24 +752,37 @@ internal class SpecCardMessagePanel(
     private fun styleTextActionButton(button: JButton) {
         button.margin = JBUI.insets(0, 0, 0, 0)
         button.isFocusPainted = false
+        button.isBorderPainted = false
         button.isFocusable = false
-        button.font = button.font.deriveFont(11f)
+        button.font = button.font.deriveFont(12f)
         button.isOpaque = false
         button.isContentAreaFilled = false
-        button.border = JBUI.Borders.empty(0, 0, 0, 0)
+        button.border = JBUI.Borders.empty(0, 10, 0, 10)
         button.putClientProperty("JButton.buttonType", "borderless")
+        button.putClientProperty("JButton.minimumWidth", 0)
+        val label = button.text.orEmpty()
+        if (label.isNotEmpty()) {
+            val metrics = button.getFontMetrics(button.font)
+            val compactSize = JBUI.size(metrics.stringWidth(label) + 20, metrics.height + 2)
+            button.preferredSize = compactSize
+            button.minimumSize = compactSize
+            button.maximumSize = compactSize
+        }
     }
 
     private fun createActionSeparatorLabel(): JBLabel {
         return JBLabel("|").apply {
-            foreground = JBColor.GRAY
-            font = font.deriveFont(11f)
-            border = JBUI.Borders.empty(0, 0)
+            foreground = JBColor(
+                Color(176, 184, 196),
+                Color(129, 136, 146),
+            )
+            font = font.deriveFont(10f)
+            border = JBUI.Borders.empty(0, 2)
         }
     }
 
     private fun createActionSpacerLabel(): JBLabel {
-        return JBLabel(" ").apply {
+        return JBLabel("").apply {
             border = JBUI.Borders.empty(0, 0)
         }
     }
@@ -775,11 +815,12 @@ internal class SpecCardMessagePanel(
     }
 
     companion object {
-        private const val PREVIEW_MAX_LINES = 8
+        private const val PREVIEW_MAX_LINES = 15
         private const val PREVIEW_MAX_CHARS = 1200
         private const val DIFF_PREVIEW_MAX_LINES = 220
         private const val COPY_FEEDBACK_DURATION_MS = 900
         private const val COPY_FEEDBACK_TIMER_KEY = "spec.card.copy.feedback.timer"
+        private const val PREVIEW_ELLIPSIS_LINE = "......"
         private val PREVIEW_HEADER_REGEX = Regex("preview|预览", RegexOption.IGNORE_CASE)
     }
 }

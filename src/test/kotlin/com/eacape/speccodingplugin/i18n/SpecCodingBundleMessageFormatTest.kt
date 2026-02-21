@@ -1,0 +1,24 @@
+package com.eacape.speccodingplugin.i18n
+
+import com.eacape.speccodingplugin.SpecCodingBundle
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+
+class SpecCodingBundleMessageFormatTest {
+
+    @Test
+    fun `message should keep literal braces when no params`() {
+        val text = SpecCodingBundle.message("prompt.editor.hint")
+        assertTrue(text.contains("{{variable_name}}"))
+        assertTrue(text.contains("{{project_name}}"))
+        assertTrue(text.contains("{{project_path}}"))
+    }
+
+    @Test
+    fun `message should format placeholders when params provided`() {
+        val text = SpecCodingBundle.message("prompt.editor.characters", 42)
+        assertTrue(text.contains("42"))
+        assertFalse(text.contains("{0}"))
+    }
+}

@@ -26,11 +26,10 @@ import javax.swing.event.DocumentListener
  */
 class PromptEditorDialog(
     private val existing: PromptTemplate? = null,
+    private val existingPromptIds: Set<String> = emptySet(),
 ) : DialogWrapper(true) {
 
-    private val idField = JBTextField()
     private val nameField = JBTextField()
-    private val tagsField = JBTextField()
     private val contentPane = JTextPane()
     private val variablesLabel = JBLabel("")
     private val previewLabel = JBLabel("")
@@ -50,10 +49,7 @@ class PromptEditorDialog(
 
     private fun loadExisting() {
         if (existing == null) return
-        idField.text = existing.id
-        idField.isEditable = false
         nameField.text = existing.name
-        tagsField.text = existing.tags.joinToString(", ")
         contentPane.text = existing.content
         updateHighlightAndPreview()
     }
@@ -85,21 +81,11 @@ class PromptEditorDialog(
         panel.isOpaque = false
         panel.border = JBUI.Borders.emptyBottom(8)
 
-        // ID 行
-        val idRow = createLabeledRow(SpecCodingBundle.message("prompt.editor.field.id"), idField)
-        idField.emptyText.text = SpecCodingBundle.message("prompt.editor.placeholder.id")
-
         // Name 行
         val nameRow = createLabeledRow(SpecCodingBundle.message("prompt.editor.field.name"), nameField)
         nameField.emptyText.text = SpecCodingBundle.message("prompt.editor.placeholder.name")
 
-        // Tags 行
-        val tagsRow = createLabeledRow(SpecCodingBundle.message("prompt.editor.field.tags"), tagsField)
-        tagsField.emptyText.text = SpecCodingBundle.message("prompt.editor.placeholder.tags")
-
-        panel.add(idRow)
         panel.add(nameRow)
-        panel.add(tagsRow)
 
         return panel
     }
@@ -212,15 +198,6 @@ class PromptEditorDialog(
     }
 
     override fun doValidate(): ValidationInfo? {
-        if (idField.text.isBlank()) {
-            return ValidationInfo(SpecCodingBundle.message("prompt.editor.validation.idRequired"), idField)
-        }
-        if (!idField.text.matches(Regex("^[a-zA-Z0-9_-]+$"))) {
-            return ValidationInfo(
-                SpecCodingBundle.message("prompt.editor.validation.idFormat"),
-                idField
-            )
-        }
         if (nameField.text.isBlank()) {
             return ValidationInfo(SpecCodingBundle.message("prompt.editor.validation.nameRequired"), nameField)
         }
@@ -231,10 +208,7 @@ class PromptEditorDialog(
     }
 
     override fun doOKAction() {
-        val tags = tagsField.text
-            .split(",")
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+        val templateId = resolveTemplateId()
 
         val variables = PromptSyntaxHighlighter
             .extractVariables(contentPane.text)
@@ -252,14 +226,36 @@ class PromptEditorDialog(
         }
 
         result = PromptTemplate(
-            id = idField.text.trim(),
+            id = templateId,
             name = nameField.text.trim(),
             content = contentPane.text.trim(),
             variables = mergedVars,
             scope = PromptScope.PROJECT,
-            tags = tags,
+            tags = existing?.tags.orEmpty(),
         )
 
         super.doOKAction()
+    }
+
+    private fun resolveTemplateId(): String {
+        existing?.id?.let { return it }
+
+        val baseId = nameField.text
+            .trim()
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), "-")
+            .trim('-')
+            .ifBlank { "prompt" }
+        if (baseId !in existingPromptIds) {
+            return baseId
+        }
+
+        var index = 2
+        var candidate = "$baseId-$index"
+        while (candidate in existingPromptIds) {
+            index++
+            candidate = "$baseId-$index"
+        }
+        return candidate
     }
 }

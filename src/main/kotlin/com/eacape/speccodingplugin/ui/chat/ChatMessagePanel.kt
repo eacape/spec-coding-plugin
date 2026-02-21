@@ -32,7 +32,6 @@ open class ChatMessagePanel(
     private val onContinue: ((ChatMessagePanel) -> Unit)? = null,
     private val onWorkflowFileOpen: ((WorkflowQuickActionParser.FileAction) -> Unit)? = null,
     private val onWorkflowCommandExecute: ((String) -> Unit)? = null,
-    private val onWorkflowCommandStop: ((String) -> Unit)? = null,
 ) : JPanel(BorderLayout()) {
 
     private val contentPane = JTextPane()
@@ -513,9 +512,6 @@ open class ChatMessagePanel(
 
         commands.forEach { command ->
             panel.add(createWorkflowCommandRunButton(command, inline = true))
-            if (!command.trim().startsWith("/")) {
-                panel.add(createWorkflowCommandStopButton(command, inline = true))
-            }
         }
         return panel
     }
@@ -710,22 +706,6 @@ open class ChatMessagePanel(
             } else {
                 val copied = copyToClipboard(command)
                 showCopyFeedback(btn, copied = copied, iconOnly = false)
-            }
-        }
-        return btn
-    }
-
-    private fun createWorkflowCommandStopButton(command: String, inline: Boolean): JButton {
-        val btn = JButton(SpecCodingBundle.message("chat.workflow.action.stopCommand"))
-        if (inline) {
-            styleInlineActionButton(btn)
-        } else {
-            styleActionButton(btn)
-        }
-        btn.toolTipText = SpecCodingBundle.message("chat.workflow.action.stopCommand.tooltip", command)
-        btn.addActionListener {
-            if (onWorkflowCommandStop != null) {
-                onWorkflowCommandStop.invoke(command)
             }
         }
         return btn

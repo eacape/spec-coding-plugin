@@ -9,8 +9,8 @@ enum class ConversationRole {
 
 enum class SessionFilter {
     ALL,
-    SPEC_BOUND,
-    WORKTREE_BOUND,
+    SPEC,
+    VIBE,
 }
 
 data class ConversationSession(

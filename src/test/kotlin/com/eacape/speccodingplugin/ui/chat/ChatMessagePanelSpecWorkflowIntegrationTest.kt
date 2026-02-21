@@ -119,13 +119,11 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
     }
 
     @Test
-    fun `non slash workflow command should render stop action and invoke callbacks`() {
+    fun `non slash workflow command should render run action only and invoke execute callback`() {
         var executedCommand: String? = null
-        var stoppedCommand: String? = null
         val panel = ChatMessagePanel(
             role = ChatMessagePanel.MessageRole.ASSISTANT,
             onWorkflowCommandExecute = { command -> executedCommand = command },
-            onWorkflowCommandStop = { command -> stoppedCommand = command },
         )
 
         runOnEdt {
@@ -150,9 +148,7 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
             it.text == SpecCodingBundle.message("chat.workflow.action.stopCommand") &&
                 it.toolTipText?.contains("git status") == true
         }
-        assertNotNull(stopButton, "Expected stop button for non-slash command")
-        runOnEdt { stopButton!!.doClick() }
-        assertEquals("git status", stoppedCommand)
+        assertNull(stopButton, "Stop button should not be rendered for workflow command")
     }
 
     @Test

@@ -91,6 +91,96 @@ class ChatSpecSidebarPanelTest {
         assertEquals(workflowB.id, panel.currentFocusedWorkflowId())
     }
 
+    @Test
+    fun `open current phase document should use workflow current phase`() {
+        val workflow = workflowWithDocs(
+            id = "spec-open-current",
+            currentPhase = SpecPhase.DESIGN,
+            docs = mapOf(
+                SpecPhase.DESIGN to specDocument(
+                    phase = SpecPhase.DESIGN,
+                    content = "design content",
+                    valid = true,
+                ),
+            ),
+        )
+        var openedWorkflowId: String? = null
+        var openedPhase: SpecPhase? = null
+        val panel = runOnEdtResult {
+            ChatSpecSidebarPanel(
+                loadWorkflow = { workflowId ->
+                    if (workflowId == workflow.id) Result.success(workflow) else Result.failure(IllegalStateException("missing"))
+                },
+                listWorkflows = { listOf(workflow.id) },
+                onOpenDocument = { workflowId, phase ->
+                    openedWorkflowId = workflowId
+                    openedPhase = phase
+                },
+            )
+        }
+
+        runOnEdt {
+            panel.focusWorkflow(workflow.id, preferredPhase = SpecPhase.SPECIFY)
+            panel.triggerOpenCurrentPhaseDocumentForTest()
+        }
+
+        assertEquals(workflow.id, openedWorkflowId)
+        assertEquals(SpecPhase.DESIGN, openedPhase)
+    }
+
+    @Test
+    fun `open current phase document should fallback to latest workflow when no focus exists`() {
+        val workflowA = workflowWithDocs(
+            id = "spec-open-a",
+            currentPhase = SpecPhase.SPECIFY,
+            docs = mapOf(
+                SpecPhase.SPECIFY to specDocument(
+                    phase = SpecPhase.SPECIFY,
+                    content = "a content",
+                    valid = true,
+                ),
+            ),
+        )
+        val workflowB = workflowWithDocs(
+            id = "spec-open-z",
+            currentPhase = SpecPhase.IMPLEMENT,
+            docs = mapOf(
+                SpecPhase.IMPLEMENT to specDocument(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = "b content",
+                    valid = true,
+                ),
+            ),
+        )
+        val store = mapOf(
+            workflowA.id to workflowA,
+            workflowB.id to workflowB,
+        )
+        var openedWorkflowId: String? = null
+        var openedPhase: SpecPhase? = null
+        val panel = runOnEdtResult {
+            ChatSpecSidebarPanel(
+                loadWorkflow = { workflowId ->
+                    store[workflowId]?.let { Result.success(it) }
+                        ?: Result.failure(IllegalStateException("missing"))
+                },
+                listWorkflows = { listOf(workflowA.id, workflowB.id) },
+                onOpenDocument = { workflowId, phase ->
+                    openedWorkflowId = workflowId
+                    openedPhase = phase
+                },
+            )
+        }
+
+        runOnEdt {
+            panel.triggerOpenCurrentPhaseDocumentForTest()
+        }
+
+        assertEquals(workflowB.id, openedWorkflowId)
+        assertEquals(SpecPhase.IMPLEMENT, openedPhase)
+        assertEquals(workflowB.id, panel.currentFocusedWorkflowId())
+    }
+
     private fun specDocument(
         phase: SpecPhase,
         content: String,

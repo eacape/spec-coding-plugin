@@ -27,6 +27,19 @@ class OpenAiCodexEngine(
         // Plugin can be used from Welcome/default workspaces that are not git repos.
         args.add("--skip-git-repo-check")
 
+        request.options["sandbox_mode"]?.let {
+            args.add("--sandbox")
+            args.add(it)
+        }
+
+        if (request.options["full_auto"]?.equals("true", ignoreCase = true) == true) {
+            args.add("--full-auto")
+        }
+
+        if (request.options["dangerously_bypass_approvals_and_sandbox"]?.equals("true", ignoreCase = true) == true) {
+            args.add("--dangerously-bypass-approvals-and-sandbox")
+        }
+
         request.options["model"]?.let {
             args.add("--model")
             args.add(it)
@@ -34,6 +47,11 @@ class OpenAiCodexEngine(
 
         request.context.workingDirectory?.let {
             args.add("--cd")
+            args.add(it)
+        }
+
+        request.options["add_dir"]?.let {
+            args.add("--add-dir")
             args.add(it)
         }
 

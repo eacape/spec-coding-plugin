@@ -1,10 +1,12 @@
 package com.eacape.speccodingplugin.llm
 
+import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.engine.ClaudeCodeEngine
 import com.eacape.speccodingplugin.engine.EngineContext
 import com.eacape.speccodingplugin.engine.EngineRequest
 import com.intellij.openapi.diagnostic.thisLogger
+import java.util.Locale
 
 /**
  * Claude CLI LlmProvider 适配器
@@ -90,11 +92,32 @@ class ClaudeCliLlmProvider(
         request.metadata["requestId"]?.let { options["requestId"] = it }
         val workingDirectory = LlmRequestContext.extractWorkingDirectory(request)
 
+        val operationMode = LlmRequestContext.extractOperationMode(request)
+        mapClaudePermissionMode(operationMode)?.let { options["permission_mode"] = it }
+        if (operationMode?.equals(OperationMode.AUTO.name, ignoreCase = true) == true) {
+            options["allow_dangerously_skip_permissions"] = "true"
+            options["dangerously_skip_permissions"] = "true"
+        }
+
         return EngineRequest(
             prompt = userMessages,
             context = EngineContext(workingDirectory = workingDirectory),
             options = options,
         )
+    }
+
+    private fun mapClaudePermissionMode(operationMode: String?): String? {
+        val mode = operationMode
+            ?.trim()
+            ?.uppercase(Locale.ROOT)
+            ?.let { runCatching { OperationMode.valueOf(it) }.getOrNull() }
+            ?: return null
+        return when (mode) {
+            OperationMode.PLAN -> "plan"
+            OperationMode.DEFAULT -> null
+            OperationMode.AGENT -> "acceptEdits"
+            OperationMode.AUTO -> "bypassPermissions"
+        }
     }
 
     companion object {

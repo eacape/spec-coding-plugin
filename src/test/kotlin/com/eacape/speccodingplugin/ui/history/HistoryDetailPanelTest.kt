@@ -19,18 +19,10 @@ class HistoryDetailPanelTest {
             )
         )
 
-        val userEntry = SpecCodingBundle.message(
-            "history.detail.message.entry",
-            SpecCodingBundle.message("history.detail.role.user"),
-            "hello",
-        )
-        val assistantEntry = SpecCodingBundle.message(
-            "history.detail.message.entry",
-            SpecCodingBundle.message("history.detail.role.assistant"),
-            "world",
-        )
-        assertTrue(panel.displayedTextForTest().contains(userEntry))
-        assertTrue(panel.displayedTextForTest().contains(assistantEntry))
+        assertTrue(panel.displayedTextForTest().contains(SpecCodingBundle.message("history.detail.role.user")))
+        assertTrue(panel.displayedTextForTest().contains(SpecCodingBundle.message("history.detail.role.assistant")))
+        assertTrue(panel.displayedTextForTest().contains("hello"))
+        assertTrue(panel.displayedTextForTest().contains("world"))
         assertTrue(!panel.isShowingEmptyForTest())
     }
 

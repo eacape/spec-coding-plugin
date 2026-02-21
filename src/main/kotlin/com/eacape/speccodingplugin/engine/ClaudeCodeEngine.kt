@@ -72,6 +72,23 @@ class ClaudeCodeEngine(
             args.add(it)
         }
 
+        request.options["permission_mode"]?.let {
+            args.add("--permission-mode")
+            args.add(it)
+        }
+
+        request.options["add_dir"]?.let {
+            args.add("--add-dir")
+            args.add(it)
+        }
+
+        if (request.options["allow_dangerously_skip_permissions"]?.equals("true", ignoreCase = true) == true) {
+            args.add("--allow-dangerously-skip-permissions")
+        }
+        if (request.options["dangerously_skip_permissions"]?.equals("true", ignoreCase = true) == true) {
+            args.add("--dangerously-skip-permissions")
+        }
+
         request.options["system_prompt"]?.let {
             args.add("--system-prompt")
             args.add(it)

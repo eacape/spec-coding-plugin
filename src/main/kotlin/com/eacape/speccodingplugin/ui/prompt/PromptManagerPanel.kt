@@ -152,7 +152,8 @@ class PromptManagerPanel(
     }
 
     private fun onNew() {
-        val dialog = PromptEditorDialog()
+        val existingIds = promptManager.listPromptTemplates().map { it.id }.toSet()
+        val dialog = PromptEditorDialog(existingPromptIds = existingIds)
         if (dialog.showAndGet()) {
             val template = dialog.result ?: return
             promptManager.upsertTemplate(template)
@@ -162,7 +163,8 @@ class PromptManagerPanel(
 
     private fun onEdit() {
         val selected = promptList.selectedValue ?: return
-        val dialog = PromptEditorDialog(existing = selected)
+        val existingIds = promptManager.listPromptTemplates().map { it.id }.toSet()
+        val dialog = PromptEditorDialog(existing = selected, existingPromptIds = existingIds)
         if (dialog.showAndGet()) {
             val template = dialog.result ?: return
             promptManager.upsertTemplate(template)

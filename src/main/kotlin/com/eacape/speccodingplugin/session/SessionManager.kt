@@ -309,10 +309,17 @@ class SessionManager internal constructor(
             )
 
             val conditions = mutableListOf<String>()
+            val specSessionCondition = """
+                (
+                    (s.spec_task_id IS NOT NULL AND TRIM(s.spec_task_id) <> '')
+                    OR LOWER(TRIM(s.title)) LIKE '/spec%'
+                    OR LOWER(TRIM(s.title)) LIKE '[spec]%'
+                )
+            """.trimIndent()
             when (filter) {
                 SessionFilter.ALL -> Unit
-                SessionFilter.SPEC_BOUND -> conditions += "s.spec_task_id IS NOT NULL AND TRIM(s.spec_task_id) <> ''"
-                SessionFilter.WORKTREE_BOUND -> conditions += "s.worktree_id IS NOT NULL AND TRIM(s.worktree_id) <> ''"
+                SessionFilter.SPEC -> conditions += specSessionCondition
+                SessionFilter.VIBE -> conditions += "NOT $specSessionCondition"
             }
 
             if (hasQuery) {

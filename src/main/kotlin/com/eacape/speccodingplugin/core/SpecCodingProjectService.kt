@@ -36,6 +36,7 @@ class SpecCodingProjectService(private val project: Project) {
         modelId: String? = null,
         contextSnapshot: ContextSnapshot? = null,
         conversationHistory: List<LlmMessage> = emptyList(),
+        operationMode: OperationMode? = null,
         onChunk: suspend (LlmChunk) -> Unit,
     ): LlmResponse {
         val messages = mutableListOf<LlmMessage>()
@@ -57,6 +58,12 @@ class SpecCodingProjectService(private val project: Project) {
             LlmMessage(
                 role = LlmRole.SYSTEM,
                 content = DEV_WORKFLOW_SYSTEM_INSTRUCTION,
+            ),
+        )
+        messages.add(
+            LlmMessage(
+                role = LlmRole.SYSTEM,
+                content = buildOperationModeInstruction(operationMode),
             ),
         )
 
@@ -82,10 +89,13 @@ class SpecCodingProjectService(private val project: Project) {
         }
 
         val workingDirectory = LlmRequestContext.normalizeWorkingDirectory(project.basePath)
-        val metadata = if (workingDirectory != null) {
-            mapOf(LlmRequestContext.WORKING_DIRECTORY_METADATA_KEY to workingDirectory)
-        } else {
-            emptyMap()
+        val metadata = linkedMapOf<String, String>().apply {
+            if (workingDirectory != null) {
+                put(LlmRequestContext.WORKING_DIRECTORY_METADATA_KEY, workingDirectory)
+            }
+            if (operationMode != null) {
+                put(LlmRequestContext.OPERATION_MODE_METADATA_KEY, operationMode.name)
+            }
         }
 
         val request = LlmRequest(
@@ -108,6 +118,8 @@ class SpecCodingProjectService(private val project: Project) {
             4) include verification/check steps.
             During implementation replies, include short progress lines when relevant, using prefixes:
             [Thinking], [Read], [Edit], [Task], [Verify].
+            Never claim files were created/modified/deleted unless tools actually executed those edits.
+            If no file edit was performed, describe it as a proposal rather than completed work.
             For non-trivial development requests, use this markdown structure:
             ## Plan
             - concise, actionable steps
@@ -117,5 +129,33 @@ class SpecCodingProjectService(private val project: Project) {
             - checks/tests and expected result
             Keep responses practical, specific to this repository, and avoid generic filler.
         """
+    }
+
+    private fun buildOperationModeInstruction(operationMode: OperationMode?): String {
+        return when (operationMode ?: OperationMode.DEFAULT) {
+            OperationMode.PLAN -> """
+                Current operation mode: PLAN.
+                Read-only analysis mode: do not create/modify/delete files and do not run commands.
+                Provide concrete implementation guidance only.
+            """.trimIndent()
+
+            OperationMode.DEFAULT -> """
+                Current operation mode: DEFAULT.
+                You may provide implementation and verification steps.
+                If an edit is not actually applied via tools, describe it as proposed, not completed.
+            """.trimIndent()
+
+            OperationMode.AGENT -> """
+                Current operation mode: AGENT.
+                For implementation requests, apply real file edits in this workspace instead of plan-only output.
+                Create/modify required files first, then provide concise verification steps.
+            """.trimIndent()
+
+            OperationMode.AUTO -> """
+                Current operation mode: AUTO.
+                Execute end-to-end implementation with real workspace edits and verification.
+                Do not stop at plan-only output when code changes are requested.
+            """.trimIndent()
+        }
     }
 }

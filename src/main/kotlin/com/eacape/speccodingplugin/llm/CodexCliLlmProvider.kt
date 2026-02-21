@@ -1,10 +1,12 @@
 package com.eacape.speccodingplugin.llm
 
+import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.engine.EngineContext
 import com.eacape.speccodingplugin.engine.EngineRequest
 import com.eacape.speccodingplugin.engine.OpenAiCodexEngine
 import com.intellij.openapi.diagnostic.thisLogger
+import java.util.Locale
 
 /**
  * Codex CLI LlmProvider 适配器
@@ -86,12 +88,30 @@ class CodexCliLlmProvider(
         request.model?.let { options["model"] = it }
         request.metadata["requestId"]?.let { options["requestId"] = it }
         val workingDirectory = LlmRequestContext.extractWorkingDirectory(request)
+        val operationMode = LlmRequestContext.extractOperationMode(request)
+        options.putAll(mapCodexExecutionOptions(operationMode))
 
         return EngineRequest(
             prompt = allMessages,
             context = EngineContext(workingDirectory = workingDirectory),
             options = options,
         )
+    }
+
+    private fun mapCodexExecutionOptions(operationMode: String?): Map<String, String> {
+        val mode = operationMode
+            ?.trim()
+            ?.uppercase(Locale.ROOT)
+            ?.let { runCatching { OperationMode.valueOf(it) }.getOrNull() }
+            ?: return emptyMap()
+        return when (mode) {
+            OperationMode.PLAN -> mapOf("sandbox_mode" to "read-only")
+            OperationMode.DEFAULT -> emptyMap()
+            OperationMode.AGENT -> mapOf("full_auto" to "true")
+            OperationMode.AUTO -> mapOf(
+                "dangerously_bypass_approvals_and_sandbox" to "true",
+            )
+        }
     }
 
     companion object {

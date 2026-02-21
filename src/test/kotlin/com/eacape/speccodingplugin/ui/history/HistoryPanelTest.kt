@@ -45,11 +45,11 @@ class HistoryPanelTest {
         )
 
         panel.setSearchQueryForTest("history")
-        panel.setFilterForTest(SessionFilter.SPEC_BOUND)
+        panel.setFilterForTest(SessionFilter.SPEC)
         panel.refreshSessions()
 
         assertTrue(capturedQuery.contains("history"))
-        assertTrue(capturedFilter.contains(SessionFilter.SPEC_BOUND))
+        assertTrue(capturedFilter.contains(SessionFilter.SPEC))
         assertEquals(2, panel.sessionsForTest().size)
         assertEquals("s-1", panel.selectedSessionIdForTest())
         assertTrue(panel.statusTextForTest().contains("2"))

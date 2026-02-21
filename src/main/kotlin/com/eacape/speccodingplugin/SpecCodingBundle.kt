@@ -17,7 +17,14 @@ object SpecCodingBundle : DynamicBundle(BUNDLE_NAME) {
         return try {
             val bundle = ResourceBundle.getBundle(BUNDLE_NAME, locale, javaClass.classLoader)
             val pattern = bundle.getString(key)
-            MessageFormat(pattern, locale).format(params)
+            if (params.isEmpty()) {
+                // Keep literal braces untouched (e.g. "{{variable_name}}").
+                pattern
+            } else {
+                runCatching {
+                    MessageFormat(pattern, locale).format(params)
+                }.getOrDefault(pattern)
+            }
         } catch (_: MissingResourceException) {
             getMessage(key, *params)
         }

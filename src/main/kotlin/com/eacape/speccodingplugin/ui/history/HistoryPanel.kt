@@ -15,6 +15,8 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
@@ -24,8 +26,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.FlowLayout
 import java.nio.file.Path
+import javax.swing.DefaultListCellRenderer
 import javax.swing.JComboBox
 import javax.swing.JPanel
 import javax.swing.JSplitPane
@@ -99,22 +103,38 @@ class HistoryPanel(
     private var selectedSessionId: String? = null
 
     init {
-        border = JBUI.Borders.empty(4)
+        border = JBUI.Borders.empty(8)
         setupUi()
         refreshSessions()
     }
 
     private fun setupUi() {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(4)
+            border = JBUI.Borders.emptyBottom(6)
         }
 
-        searchField.columns = 24
+        searchField.columns = 28
         searchField.emptyText.text = SpecCodingBundle.message("history.search.placeholder")
         searchField.addActionListener { refreshSessions() }
 
+        filterCombo.renderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: javax.swing.JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean
+            ): java.awt.Component {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                text = (value as? SessionFilter)?.name ?: SessionFilter.ALL.name
+                return this
+            }
+        }
+        filterCombo.preferredSize = JBUI.size(92, 28)
         filterCombo.addActionListener { refreshSessions() }
+        statusLabel.font = JBUI.Fonts.smallFont()
+        statusLabel.foreground = JBColor(Color(120, 124, 132), Color(146, 152, 163))
 
         toolbar.add(JBLabel(SpecCodingBundle.message("history.search.label")))
         toolbar.add(searchField)
@@ -124,8 +144,11 @@ class HistoryPanel(
         add(toolbar, BorderLayout.NORTH)
 
         val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listPanel, detailPanel).apply {
-            dividerLocation = 280
-            dividerSize = JBUI.scale(4)
+            dividerLocation = 320
+            resizeWeight = 0.34
+            dividerSize = JBUI.scale(5)
+            isContinuousLayout = true
+            border = JBUI.Borders.empty()
         }
         add(splitPane, BorderLayout.CENTER)
     }
@@ -138,14 +161,18 @@ class HistoryPanel(
             val sessions = searchSessions(query, filter, 200)
             invokeLaterSafe {
                 listPanel.updateSessions(sessions)
-                statusLabel.text = SpecCodingBundle.message("history.status.count", sessions.size)
+                statusLabel.text = buildStatusText(sessions.size, query, filter)
 
                 val selected = selectedSessionId?.let { id -> sessions.firstOrNull { it.id == id } }
                     ?: sessions.firstOrNull()
                 selectedSessionId = selected?.id
                 listPanel.setSelectedSession(selected?.id)
                 if (selected == null) {
-                    detailPanel.showEmpty()
+                    if (sessions.isEmpty() && (query.isNotBlank() || filter != SessionFilter.ALL)) {
+                        detailPanel.showText(renderFilteredEmptyText(query, filter))
+                    } else {
+                        detailPanel.showEmpty()
+                    }
                 }
             }
         }
@@ -166,7 +193,20 @@ class HistoryPanel(
         onSessionSelected(sessionId)
         project.messageBus.syncPublisher(HistorySessionOpenListener.TOPIC)
             .onSessionOpenRequested(sessionId)
+        focusChatTabOnly()
         statusLabel.text = SpecCodingBundle.message("history.status.opened")
+    }
+
+    private fun focusChatTabOnly() {
+        runCatching {
+            val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Spec Code") ?: return
+            val chatTitle = SpecCodingBundle.message("toolwindow.tab.chat")
+            val chatContent = toolWindow.contentManager.contents.firstOrNull {
+                it.displayName == chatTitle
+            } ?: return
+            toolWindow.contentManager.setSelectedContent(chatContent, true)
+            toolWindow.activate(null)
+        }
     }
 
     private fun onDeleteSession(sessionId: String) {
@@ -333,6 +373,27 @@ class HistoryPanel(
             appendLine(SpecCodingBundle.message("history.compare.detail.preview.current", currentPreview))
             appendLine(SpecCodingBundle.message("history.compare.detail.preview.target", targetPreview))
         }
+    }
+
+    private fun buildStatusText(count: Int, query: String, filter: SessionFilter): String {
+        val countText = SpecCodingBundle.message("history.status.count", count)
+        val normalizedQuery = query.trim()
+        return when {
+            normalizedQuery.isBlank() && filter == SessionFilter.ALL -> countText
+            normalizedQuery.isBlank() -> "$countText · ${filter.name}"
+            else -> "$countText · ${filter.name} · \"$normalizedQuery\""
+        }
+    }
+
+    private fun renderFilteredEmptyText(query: String, filter: SessionFilter): String {
+        val queryText = query.trim().ifBlank {
+            SpecCodingBundle.message("history.empty.filtered.query.none")
+        }
+        return buildString {
+            appendLine("### ${SpecCodingBundle.message("history.empty.filtered.title")}")
+            appendLine()
+            appendLine(SpecCodingBundle.message("history.empty.filtered.desc", filter.name, queryText))
+        }.trim()
     }
 
     private fun invokeLaterSafe(action: () -> Unit) {

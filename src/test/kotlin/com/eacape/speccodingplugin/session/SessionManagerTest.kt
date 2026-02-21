@@ -146,13 +146,13 @@ class SessionManagerTest {
         val all = manager.searchSessions(limit = 20)
         assertEquals(3, all.size)
 
-        val specOnly = manager.searchSessions(filter = SessionFilter.SPEC_BOUND, limit = 20)
+        val specOnly = manager.searchSessions(filter = SessionFilter.SPEC, limit = 20)
         assertEquals(1, specOnly.size)
         assertEquals(spec.id, specOnly.first().id)
 
-        val worktreeOnly = manager.searchSessions(filter = SessionFilter.WORKTREE_BOUND, limit = 20)
-        assertEquals(1, worktreeOnly.size)
-        assertEquals(worktree.id, worktreeOnly.first().id)
+        val vibeOnly = manager.searchSessions(filter = SessionFilter.VIBE, limit = 20)
+        assertEquals(2, vibeOnly.size)
+        assertEquals(setOf(general.id, worktree.id), vibeOnly.map { it.id }.toSet())
 
         val queryByTitle = manager.searchSessions(query = "General", limit = 20)
         assertEquals(1, queryByTitle.size)
@@ -161,6 +161,21 @@ class SessionManagerTest {
         val queryByBinding = manager.searchSessions(query = "spec-123", limit = 20)
         assertEquals(1, queryByBinding.size)
         assertEquals(spec.id, queryByBinding.first().id)
+    }
+
+    @Test
+    fun `searchSessions SPEC filter should match spec command style titles`() {
+        val specByTitle = manager.createSession(title = "/spec generate requirement doc").getOrThrow()
+        val vibe = manager.createSession(title = "General discussion").getOrThrow()
+
+        manager.addMessage(specByTitle.id, ConversationRole.USER, "spec plan").getOrThrow()
+        manager.addMessage(vibe.id, ConversationRole.USER, "vibe chat").getOrThrow()
+
+        val specOnly = manager.searchSessions(filter = SessionFilter.SPEC, limit = 20)
+        assertEquals(setOf(specByTitle.id), specOnly.map { it.id }.toSet())
+
+        val vibeOnly = manager.searchSessions(filter = SessionFilter.VIBE, limit = 20)
+        assertEquals(setOf(vibe.id), vibeOnly.map { it.id }.toSet())
     }
 
     @Test

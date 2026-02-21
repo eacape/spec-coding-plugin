@@ -88,6 +88,40 @@ class HistorySessionListPanelTest {
         assertEquals(listOf("session-a"), deleted)
     }
 
+    @Test
+    fun `selection info should follow selected session`() {
+        val panel = HistorySessionListPanel(
+            onSessionSelected = {},
+            onOpenSession = {},
+            onContinueSession = {},
+            onExportSession = { _, _ -> },
+            onDeleteSession = {},
+            onBranchSession = {},
+            onCompareSession = {},
+        )
+
+        panel.updateSessions(
+            listOf(
+                summary(id = "s1", title = "Session 1", msgCount = 1),
+                summary(id = "s2", title = "Session 2", msgCount = 2),
+            )
+        )
+
+        val initialInfo = panel.selectedInfoTextForTest()
+        assertFalse(initialInfo.contains("s1"))
+        assertFalse(initialInfo.contains("Session 1"))
+
+        panel.setSelectedSession("s1")
+        val selectedInfo = panel.selectedInfoTextForTest()
+        assertTrue(selectedInfo.contains("s1"))
+        assertTrue(selectedInfo.contains("Session 1"))
+
+        panel.setSelectedSession(null)
+        val clearedInfo = panel.selectedInfoTextForTest()
+        assertFalse(clearedInfo.contains("s1"))
+        assertFalse(clearedInfo.contains("Session 1"))
+    }
+
     private fun summary(id: String, title: String, msgCount: Int): SessionSummary {
         return SessionSummary(
             id = id,

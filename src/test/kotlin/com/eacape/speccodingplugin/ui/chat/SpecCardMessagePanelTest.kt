@@ -26,7 +26,7 @@ class SpecCardMessagePanelTest {
             revision = 1001L,
             sourceCommand = "/spec generate auth flow",
         )
-        val document = (1..12).joinToString("\n") { "line-$it" }
+        val document = (1..20).joinToString("\n") { "line-$it" }
         val panel = runOnEdtResult {
             SpecCardMessagePanel(
                 metadata = metadata,
@@ -39,7 +39,8 @@ class SpecCardMessagePanelTest {
             .filterIsInstance<JTextPane>()
             .joinToString("\n") { it.text.orEmpty() }
         assertTrue(beforeExpand.contains("line-1"))
-        assertFalse(beforeExpand.contains("line-12"))
+        assertTrue(beforeExpand.contains("......"))
+        assertFalse(beforeExpand.contains("line-20"))
 
         val expandButton = collectDescendants(panel)
             .filterIsInstance<JButton>()
@@ -50,7 +51,40 @@ class SpecCardMessagePanelTest {
         val afterExpand = collectDescendants(panel)
             .filterIsInstance<JTextPane>()
             .joinToString("\n") { it.text.orEmpty() }
-        assertTrue(afterExpand.contains("line-12"))
+        assertTrue(afterExpand.contains("line-20"))
+    }
+
+    @Test
+    fun `collapsed preview should show first fifteen lines without h1 heading and end with ellipsis`() {
+        val metadata = SpecCardMetadata(
+            workflowId = "spec-1001b",
+            phase = SpecPhase.SPECIFY,
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Preview Trim",
+            revision = 1010L,
+            sourceCommand = "/spec generate preview trim",
+        )
+        val document = buildString {
+            appendLine("# 一级标题")
+            (1..20).forEach { index -> appendLine("line-$index") }
+        }.trimEnd()
+
+        val panel = runOnEdtResult {
+            SpecCardMessagePanel(
+                metadata = metadata,
+                cardMarkdown = "## Spec Card",
+                initialDocumentContent = document,
+            )
+        }
+
+        val collapsed = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertFalse(collapsed.contains("一级标题"))
+        assertTrue(collapsed.contains("line-14"))
+        assertFalse(collapsed.contains("line-15"))
+        assertTrue(collapsed.contains("......"))
     }
 
     @Test

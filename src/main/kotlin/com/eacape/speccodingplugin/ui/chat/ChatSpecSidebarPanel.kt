@@ -56,8 +56,6 @@ internal class ChatSpecSidebarPanel(
         titleLabel.font = titleLabel.font.deriveFont(java.awt.Font.BOLD, 12f)
         workflowLabel.font = workflowLabel.font.deriveFont(11f)
         workflowLabel.foreground = JBColor.GRAY
-        workflowLabel.icon = AllIcons.Nodes.Folder
-        workflowLabel.iconTextGap = JBUI.scale(RHYTHM_XS)
         titlePanel.add(titleLabel)
         titlePanel.add(workflowLabel)
         headerPanel.add(titlePanel, BorderLayout.CENTER)
@@ -72,11 +70,7 @@ internal class ChatSpecSidebarPanel(
         styleIconActionButton(refreshButton, AllIcons.Actions.Refresh)
         refreshButton.addActionListener { refreshCurrentWorkflow() }
         styleIconActionButton(openFileButton, AllIcons.Actions.MenuOpen)
-        openFileButton.addActionListener {
-            val workflowId = currentWorkflowId ?: return@addActionListener
-            val phase = selectedPhase
-            onOpenDocument?.invoke(workflowId, phase)
-        }
+        openFileButton.addActionListener { openCurrentPhaseDocument() }
         headerActions.add(statusBadgeLabel)
         headerActions.add(refreshButton)
         headerActions.add(openFileButton)
@@ -192,12 +186,16 @@ internal class ChatSpecSidebarPanel(
 
     internal fun currentStatusForTest(): String = statusLabel.text
 
+    internal fun triggerOpenCurrentPhaseDocumentForTest() {
+        openCurrentPhaseDocument()
+    }
+
     private fun reloadWorkflow(preferredPhase: SpecPhase?, allowFallbackToLatest: Boolean) {
         val workflowId = currentWorkflowId
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: if (allowFallbackToLatest) {
-                listWorkflows().lastOrNull()
+                latestWorkflowIdOrNull()
             } else {
                 null
             }
@@ -255,7 +253,7 @@ internal class ChatSpecSidebarPanel(
         statusBadgeLabel.text = workflowStatusDisplayName(workflow.status)
         applyWorkflowStatusBadgeStyle(workflow.status)
         updatePhaseButtons(workflow)
-        openFileButton.isEnabled = onOpenDocument != null && document != null
+        openFileButton.isEnabled = onOpenDocument != null
         if (content.isBlank()) {
             MarkdownRenderer.render(
                 contentPane,
@@ -290,11 +288,48 @@ internal class ChatSpecSidebarPanel(
         documentTitleLabel.text = SpecCodingBundle.message("toolwindow.spec.sidebar.document.empty")
         statusBadgeLabel.isVisible = false
         updatePhaseButtons(null)
-        openFileButton.isEnabled = false
+        openFileButton.isEnabled = onOpenDocument != null
         statusLabel.foreground = JBColor.GRAY
         statusLabel.text = message
         MarkdownRenderer.render(contentPane, message)
         contentPane.caretPosition = 0
+    }
+
+    private fun openCurrentPhaseDocument() {
+        val openDocument = onOpenDocument ?: return
+        if (currentWorkflow == null) {
+            reloadWorkflow(preferredPhase = null, allowFallbackToLatest = true)
+        }
+        val workflow = currentWorkflow ?: return
+        val phase = workflow.currentPhase
+        if (selectedPhase != phase) {
+            selectedPhase = phase
+            renderCurrentWorkflow()
+        }
+        if (workflow.getDocument(phase) == null) {
+            statusLabel.foreground = JBColor.GRAY
+            statusLabel.text = SpecCodingBundle.message("spec.history.noCurrentDocument")
+            return
+        }
+        openDocument.invoke(workflow.id, phase)
+    }
+
+    private fun latestWorkflowIdOrNull(): String? {
+        return runCatching {
+            listWorkflows()
+                .asSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .sorted()
+                .lastOrNull()
+        }.onFailure { error ->
+            showEmptyState(
+                SpecCodingBundle.message(
+                    "toolwindow.spec.sidebar.loadFailed",
+                    error.message ?: SpecCodingBundle.message("common.unknown"),
+                ),
+            )
+        }.getOrNull()
     }
 
     private fun updatePhaseButtons(workflow: SpecWorkflow?) {

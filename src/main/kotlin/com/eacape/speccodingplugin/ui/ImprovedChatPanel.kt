@@ -478,6 +478,7 @@ class ImprovedChatPanel(
 
         val providerId = providerComboBox.selectedItem as? String
         val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id
+        val operationMode = modeManager.getCurrentMode()
         val sessionId = ensureActiveSession(visibleInput, providerId)
         val explicitItems = loadExplicitItemContents(contextPreviewPanel.getItems())
         val contextSnapshot = contextCollector.collectForItems(explicitItems)
@@ -546,6 +547,7 @@ class ImprovedChatPanel(
                     modelId = modelId,
                     contextSnapshot = contextSnapshot,
                     conversationHistory = conversationHistory.toList(),
+                    operationMode = operationMode,
                 ) { chunk ->
                     if (chunk.delta.isNotEmpty()) {
                         assistantContent.append(chunk.delta)
@@ -1722,7 +1724,6 @@ class ImprovedChatPanel(
                             onContinue = ::handleContinueMessage,
                             onWorkflowFileOpen = ::handleWorkflowFileOpen,
                             onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
-                            onWorkflowCommandStop = ::handleWorkflowCommandStop,
                         )
                         if (restoredTraceEvents.isNotEmpty()) {
                             panel.appendStreamContent(text = "", events = restoredTraceEvents)
@@ -1845,7 +1846,6 @@ class ImprovedChatPanel(
             onContinue = ::handleContinueMessage,
             onWorkflowFileOpen = ::handleWorkflowFileOpen,
             onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
-            onWorkflowCommandStop = ::handleWorkflowCommandStop,
         )
         messagesPanel.addMessage(panel)
         return panel
@@ -2701,19 +2701,11 @@ class ImprovedChatPanel(
             return
         }
 
-        val startedMessage = SpecCodingBundle.message("chat.workflow.action.runCommand.startedBackground", command)
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed || _isDisposed) {
                 return@invokeLater
             }
-            addSystemMessage(startedMessage)
-        }
-        currentSessionId?.let { sessionId ->
-            persistMessage(
-                sessionId = sessionId,
-                role = ConversationRole.TOOL,
-                content = startedMessage,
-            )
+            showStatus(SpecCodingBundle.message("chat.workflow.action.runCommand.running", command))
         }
 
         val timedOut = !started.process.waitFor(WORKFLOW_COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -2749,6 +2741,9 @@ class ImprovedChatPanel(
                 addSystemMessage(summary)
             } else {
                 addErrorMessage(summary)
+            }
+            if (!isGenerating && !isRestoringSession) {
+                hideStatus()
             }
         }
         currentSessionId?.let { sessionId ->
@@ -2812,38 +2807,45 @@ class ImprovedChatPanel(
         command: String,
         execution: WorkflowCommandExecutionResult,
     ): String {
-        val header = when {
+        val icon = when {
             execution.stoppedByUser -> {
-                SpecCodingBundle.message("chat.workflow.action.stopCommand.stopped", command)
+                "⏹"
             }
 
             execution.timedOut -> {
-                SpecCodingBundle.message(
-                    "chat.workflow.action.runCommand.timeout",
-                    WORKFLOW_COMMAND_TIMEOUT_SECONDS,
-                    command,
-                )
+                "⏱"
             }
 
             execution.error != null -> {
-                SpecCodingBundle.message("chat.workflow.action.runCommand.error", command)
+                "⚠"
             }
 
             execution.success -> {
-                SpecCodingBundle.message(
-                    "chat.workflow.action.runCommand.success",
-                    execution.exitCode ?: 0,
-                    command,
-                )
+                "✅"
             }
 
             else -> {
-                SpecCodingBundle.message(
-                    "chat.workflow.action.runCommand.failed",
-                    execution.exitCode ?: -1,
-                    command,
-                )
+                "❌"
             }
+        }
+        val statusText = when {
+            execution.stoppedByUser -> SpecCodingBundle.message("chat.workflow.action.stopCommand.stopped", command)
+            execution.timedOut -> SpecCodingBundle.message(
+                "chat.workflow.action.runCommand.timeout",
+                WORKFLOW_COMMAND_TIMEOUT_SECONDS,
+                command,
+            )
+            execution.error != null -> SpecCodingBundle.message("chat.workflow.action.runCommand.error", command)
+            execution.success -> SpecCodingBundle.message(
+                "chat.workflow.action.runCommand.success",
+                execution.exitCode ?: 0,
+                command,
+            )
+            else -> SpecCodingBundle.message(
+                "chat.workflow.action.runCommand.failed",
+                execution.exitCode ?: -1,
+                command,
+            )
         }
 
         var output = sanitizeDisplayText(execution.output, dropGarbledLines = false)
@@ -2853,10 +2855,9 @@ class ImprovedChatPanel(
         }
 
         return buildString {
-            appendLine(header)
-            appendLine("```text")
-            appendLine(output)
-            append("```")
+            appendLine("$icon $statusText")
+            appendLine("${SpecCodingBundle.message("chat.workflow.action.runCommand.outputLabel")}：")
+            append(output)
         }
     }
 
@@ -2933,6 +2934,7 @@ class ImprovedChatPanel(
         // 重新发送
         val providerId = providerComboBox.selectedItem as? String
         val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id
+        val operationMode = modeManager.getCurrentMode()
         setSendingState(true)
         currentAssistantPanel = addAssistantMessage()
 
@@ -2985,6 +2987,7 @@ class ImprovedChatPanel(
                     userInput = userInput,
                     modelId = modelId,
                     conversationHistory = conversationHistory.toList(),
+                    operationMode = operationMode,
                 ) { chunk ->
                     if (chunk.delta.isNotEmpty()) {
                         assistantContent.append(chunk.delta)
