@@ -37,6 +37,7 @@ class SpecCodingProjectService(private val project: Project) {
         contextSnapshot: ContextSnapshot? = null,
         conversationHistory: List<LlmMessage> = emptyList(),
         operationMode: OperationMode? = null,
+        imagePaths: List<String> = emptyList(),
         onChunk: suspend (LlmChunk) -> Unit,
     ): LlmResponse {
         val messages = mutableListOf<LlmMessage>()
@@ -101,6 +102,7 @@ class SpecCodingProjectService(private val project: Project) {
         val request = LlmRequest(
             messages = messages,
             model = modelId,
+            imagePaths = imagePaths,
             metadata = metadata,
             workingDirectory = workingDirectory,
         )

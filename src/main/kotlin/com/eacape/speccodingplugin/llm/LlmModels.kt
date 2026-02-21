@@ -18,6 +18,7 @@ data class LlmRequest(
     val model: String? = null,
     val temperature: Double? = null,
     val maxTokens: Int? = null,
+    val imagePaths: List<String> = emptyList(),
     val metadata: Map<String, String> = emptyMap(),
     val workingDirectory: String? = null,
 )

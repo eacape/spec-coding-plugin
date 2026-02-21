@@ -22,6 +22,9 @@ import com.eacape.speccodingplugin.llm.MockLlmProvider
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.prompt.PromptTemplate
+import com.eacape.speccodingplugin.rollback.Changeset
+import com.eacape.speccodingplugin.rollback.ChangesetStore
+import com.eacape.speccodingplugin.rollback.WorkspaceChangesetCollector
 import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.skill.SkillExecutor
@@ -48,6 +51,7 @@ import com.eacape.speccodingplugin.ui.completion.CompletionProvider
 import com.eacape.speccodingplugin.ui.history.HistoryPanel
 import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
 import com.eacape.speccodingplugin.ui.input.ContextPreviewPanel
+import com.eacape.speccodingplugin.ui.input.ImageAttachmentPreviewPanel
 import com.eacape.speccodingplugin.ui.input.SmartInputField
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedEvent
@@ -59,6 +63,8 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
@@ -83,9 +89,15 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.FlowLayout
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
 import java.io.File
+import java.nio.file.Paths
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -96,6 +108,8 @@ import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.Timer
 import javax.swing.JComponent
+import javax.swing.plaf.basic.BasicSplitPaneDivider
+import javax.swing.plaf.basic.BasicSplitPaneUI
 
 /**
  * 改进版 Chat Tool Window Panel
@@ -123,6 +137,7 @@ class ImprovedChatPanel(
     private val operationModeSelector = OperationModeSelector(project)
     private val llmRouter = LlmRouter.getInstance()
     private val modelRegistry = ModelRegistry.getInstance()
+    private val changesetStore by lazy { ChangesetStore.getInstance(project) }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val discoveryListener: () -> Unit = {
@@ -154,11 +169,14 @@ class ImprovedChatPanel(
     private val chatSplitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
     private val specSidebarToggleButton = JButton()
     private val contextPreviewPanel = ContextPreviewPanel(project)
+    private val imageAttachmentPreviewPanel = ImageAttachmentPreviewPanel()
     private val composerHintLabel = JBLabel(SpecCodingBundle.message("toolwindow.composer.hint"))
     private lateinit var inputField: SmartInputField
+    private val imageAttachButton = JButton()
     private val sendButton = JButton()
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var statusAutoHideTimer: Timer? = null
+    private var dividerPersistTimer: Timer? = null
     private val runningWorkflowCommands = ConcurrentHashMap<String, RunningWorkflowCommand>()
 
     // Session state
@@ -336,6 +354,7 @@ class ImprovedChatPanel(
         statusLabel.font = JBUI.Fonts.smallFont()
         statusLabel.isVisible = false
         configureActionButtons()
+        configureImageAttachButton()
         updateComboTooltips()
 
         sendButton.addActionListener { sendCurrentInput() }
@@ -353,7 +372,7 @@ class ImprovedChatPanel(
 
         chatSplitPane.leftComponent = conversationScrollPane
         chatSplitPane.rightComponent = specSidebarPanel
-        chatSplitPane.dividerSize = JBUI.scale(2)
+        configureSplitPaneDivider()
         chatSplitPane.resizeWeight = 0.74
         chatSplitPane.isContinuousLayout = true
         chatSplitPane.isOpaque = false
@@ -362,9 +381,7 @@ class ImprovedChatPanel(
             val location = chatSplitPane.dividerLocation
             if (location > 0) {
                 specSidebarDividerLocation = location
-                if (specSidebarVisible) {
-                    windowStateStore.updateChatSpecSidebar(true, specSidebarDividerLocation)
-                }
+                scheduleDividerPersist()
             }
         }
         configureSpecSidebarToggleButton()
@@ -398,6 +415,7 @@ class ImprovedChatPanel(
         val controlsRightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 2))
         controlsRightPanel.isOpaque = false
         controlsRightPanel.add(statusLabel)
+        controlsRightPanel.add(imageAttachButton)
         controlsRightPanel.add(specSidebarToggleButton)
         controlsRightPanel.add(sendButton)
 
@@ -434,6 +452,7 @@ class ImprovedChatPanel(
         bottomPanel.isOpaque = false
         bottomPanel.border = JBUI.Borders.emptyTop(8)
         bottomPanel.add(contextPreviewPanel)
+        bottomPanel.add(imageAttachmentPreviewPanel)
         bottomPanel.add(composerContainer)
         bottomPanel.add(controlsRow)
 
@@ -448,7 +467,8 @@ class ImprovedChatPanel(
 
     private fun sendCurrentInput() {
         val rawInput = inputField.text.trim()
-        if (rawInput.isBlank() || isGenerating || project.isDisposed || _isDisposed) {
+        val selectedImagePaths = imageAttachmentPreviewPanel.getImagePaths()
+        if ((rawInput.isBlank() && selectedImagePaths.isEmpty()) || isGenerating || project.isDisposed || _isDisposed) {
             return
         }
         if (isRestoringSession) {
@@ -458,23 +478,43 @@ class ImprovedChatPanel(
 
         // Check for slash commands
         if (rawInput.startsWith("/")) {
+            if (selectedImagePaths.isNotEmpty()) {
+                imageAttachmentPreviewPanel.clear()
+                showStatus(
+                    SpecCodingBundle.message("toolwindow.image.attach.ignored.command"),
+                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                )
+            }
             handleSlashCommand(rawInput)
             return
         }
 
         val interactionMode = interactionModeComboBox.selectedItem as? ChatInteractionMode ?: ChatInteractionMode.VIBE
         if (interactionMode == ChatInteractionMode.SPEC) {
+            if (selectedImagePaths.isNotEmpty()) {
+                imageAttachmentPreviewPanel.clear()
+                showStatus(
+                    SpecCodingBundle.message("toolwindow.image.attach.ignored.spec"),
+                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                )
+            }
+            if (rawInput.isBlank()) {
+                return
+            }
             handleSpecCommand("/spec $rawInput")
             return
         }
 
         val promptReference = resolvePromptReferences(rawInput)
-        val visibleInput = rawInput
-        val chatInput = buildChatInput(
+        val baseChatInput = buildChatInput(
             mode = interactionMode,
-            userInput = promptReference.cleanedInput.ifBlank { rawInput },
+            userInput = promptReference.cleanedInput.ifBlank {
+                rawInput.ifBlank { SpecCodingBundle.message("toolwindow.image.default.prompt") }
+            },
             referencedPrompts = promptReference.templates,
         )
+        val chatInput = appendImagePathsToPrompt(baseChatInput, selectedImagePaths)
+        val visibleInput = buildVisibleInput(rawInput, selectedImagePaths)
 
         val providerId = providerComboBox.selectedItem as? String
         val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id
@@ -483,6 +523,7 @@ class ImprovedChatPanel(
         val explicitItems = loadExplicitItemContents(contextPreviewPanel.getItems())
         val contextSnapshot = contextCollector.collectForItems(explicitItems)
         contextPreviewPanel.clear()
+        imageAttachmentPreviewPanel.clear()
 
         // Add user message to history
         val userMessage = LlmMessage(LlmRole.USER, chatInput)
@@ -548,6 +589,7 @@ class ImprovedChatPanel(
                     contextSnapshot = contextSnapshot,
                     conversationHistory = conversationHistory.toList(),
                     operationMode = operationMode,
+                    imagePaths = selectedImagePaths,
                 ) { chunk ->
                     if (chunk.delta.isNotEmpty()) {
                         assistantContent.append(chunk.delta)
@@ -610,6 +652,78 @@ class ImprovedChatPanel(
         val cleanedInput: String,
         val templates: List<PromptTemplate>,
     )
+
+    private fun chooseImageAttachments() {
+        if (project.isDisposed || _isDisposed) return
+        val descriptor = FileChooserDescriptor(true, false, false, false, true, false).apply {
+            title = SpecCodingBundle.message("toolwindow.image.attach.dialog.title")
+            description = SpecCodingBundle.message("toolwindow.image.attach.dialog.description")
+            withFileFilter { file ->
+                !file.isDirectory && isSupportedImageExtension(file.name)
+            }
+        }
+        val selectedFiles = FileChooser.chooseFiles(descriptor, project, null)
+        if (selectedFiles.isEmpty()) {
+            return
+        }
+
+        val normalizedPaths = selectedFiles
+            .mapNotNull { normalizeImagePath(it.path) }
+            .distinct()
+        if (normalizedPaths.isEmpty()) {
+            showStatus(
+                SpecCodingBundle.message("toolwindow.image.attach.unsupported"),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return
+        }
+
+        imageAttachmentPreviewPanel.addImagePaths(normalizedPaths)
+        showStatus(
+            SpecCodingBundle.message("toolwindow.image.attach.added", normalizedPaths.size),
+            autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+        )
+    }
+
+    private fun isSupportedImageExtension(fileName: String): Boolean {
+        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return extension in SUPPORTED_IMAGE_EXTENSIONS
+    }
+
+    private fun normalizeImagePath(rawPath: String): String? {
+        val trimmed = rawPath.trim()
+        if (trimmed.isBlank()) return null
+        val file = File(trimmed).absoluteFile.normalize()
+        if (!file.isFile) return null
+        if (!isSupportedImageExtension(file.name)) return null
+        return file.path
+    }
+
+    private fun appendImagePathsToPrompt(prompt: String, imagePaths: List<String>): String {
+        if (imagePaths.isEmpty()) return prompt
+        val normalizedPrompt = prompt.ifBlank { SpecCodingBundle.message("toolwindow.image.default.prompt") }
+        val attachmentBlock = buildString {
+            appendLine(SpecCodingBundle.message("toolwindow.image.context.header"))
+            imagePaths.forEach { path ->
+                appendLine("- $path")
+            }
+        }.trimEnd()
+        return "$normalizedPrompt\n\n$attachmentBlock"
+    }
+
+    private fun buildVisibleInput(rawInput: String, imagePaths: List<String>): String {
+        if (imagePaths.isEmpty()) {
+            return rawInput.ifBlank { SpecCodingBundle.message("toolwindow.image.default.prompt") }
+        }
+        val names = imagePaths.joinToString(", ") { path ->
+            File(path).name.ifBlank { path }
+        }
+        val attachmentLine = SpecCodingBundle.message("toolwindow.image.visible.entry", names)
+        if (rawInput.isBlank()) {
+            return attachmentLine
+        }
+        return "$rawInput\n$attachmentLine"
+    }
 
     private fun buildChatInput(
         mode: ChatInteractionMode,
@@ -1628,6 +1742,7 @@ class ImprovedChatPanel(
         specSidebarPanel.clearFocusedWorkflow()
         messagesPanel.clearAll()
         contextPreviewPanel.clear()
+        imageAttachmentPreviewPanel.clear()
         inputField.text = ""
         currentAssistantPanel = null
     }
@@ -1686,6 +1801,7 @@ class ImprovedChatPanel(
         conversationHistory.clear()
         messagesPanel.clearAll()
         contextPreviewPanel.clear()
+        imageAttachmentPreviewPanel.clear()
         currentAssistantPanel = null
 
         for (message in messages) {
@@ -2227,6 +2343,8 @@ class ImprovedChatPanel(
     private fun refreshActionButtonTexts() {
         sendButton.toolTipText = SpecCodingBundle.message("toolwindow.send")
         sendButton.accessibleContext.accessibleName = sendButton.toolTipText
+        imageAttachButton.toolTipText = SpecCodingBundle.message("toolwindow.image.attach.tooltip")
+        imageAttachButton.accessibleContext.accessibleName = imageAttachButton.toolTipText
     }
 
     private fun configureActionButtons() {
@@ -2239,6 +2357,20 @@ class ImprovedChatPanel(
         sendButton.minimumSize = ACTION_ICON_BUTTON_SIZE
         sendButton.maximumSize = ACTION_ICON_BUTTON_SIZE
         sendButton.putClientProperty("JButton.buttonType", "toolbar")
+        refreshActionButtonTexts()
+    }
+
+    private fun configureImageAttachButton() {
+        imageAttachButton.icon = AllIcons.FileTypes.Image
+        imageAttachButton.text = ""
+        imageAttachButton.isFocusable = false
+        imageAttachButton.isFocusPainted = false
+        imageAttachButton.margin = JBUI.emptyInsets()
+        imageAttachButton.preferredSize = ACTION_ICON_BUTTON_SIZE
+        imageAttachButton.minimumSize = ACTION_ICON_BUTTON_SIZE
+        imageAttachButton.maximumSize = ACTION_ICON_BUTTON_SIZE
+        imageAttachButton.putClientProperty("JButton.buttonType", "toolbar")
+        imageAttachButton.addActionListener { chooseImageAttachments() }
         refreshActionButtonTexts()
     }
 
@@ -2270,6 +2402,44 @@ class ImprovedChatPanel(
         }
         specSidebarToggleButton.toolTipText = tooltip
         specSidebarToggleButton.accessibleContext.accessibleName = tooltip
+    }
+
+    private fun configureSplitPaneDivider() {
+        chatSplitPane.ui = SidebarGripSplitPaneUI()
+        chatSplitPane.dividerSize = JBUI.scale(SPEC_SIDEBAR_DIVIDER_SIZE)
+        chatSplitPane.isOneTouchExpandable = false
+        chatSplitPane.cursor = Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)
+        (chatSplitPane.ui as? BasicSplitPaneUI)?.divider?.let { divider ->
+            divider.cursor = Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)
+            divider.background = JBColor(
+                Color(236, 240, 246),
+                Color(74, 80, 89),
+            )
+            divider.border = JBUI.Borders.customLine(
+                JBColor(
+                    Color(217, 223, 232),
+                    Color(87, 94, 105),
+                ),
+                0,
+                1,
+                0,
+                1,
+            )
+        }
+    }
+
+    private fun scheduleDividerPersist() {
+        if (!specSidebarVisible) return
+        dividerPersistTimer?.stop()
+        val timer = Timer(SPEC_SIDEBAR_DIVIDER_PERSIST_DEBOUNCE_MILLIS) {
+            dividerPersistTimer = null
+            if (!project.isDisposed && !_isDisposed && specSidebarVisible) {
+                windowStateStore.updateChatSpecSidebar(true, specSidebarDividerLocation)
+            }
+        }
+        timer.isRepeats = false
+        dividerPersistTimer = timer
+        timer.start()
     }
 
     private fun toggleSpecSidebar() {
@@ -2676,6 +2846,7 @@ class ImprovedChatPanel(
     }
 
     private fun runWorkflowShellCommandInBackground(command: String, request: OperationRequest) {
+        val beforeSnapshot = captureWorkspaceSnapshot()
         val started: RunningWorkflowCommand = try {
             startWorkflowShellCommand(command)
         } catch (error: Exception) {
@@ -2732,6 +2903,7 @@ class ImprovedChatPanel(
             request,
             success = execution.success || execution.stoppedByUser,
         )
+        persistWorkflowCommandChangeset(command, execution, beforeSnapshot)
         val summary = formatWorkflowCommandExecutionSummary(command, execution)
 
         ApplicationManager.getApplication().invokeLater {
@@ -2753,6 +2925,64 @@ class ImprovedChatPanel(
                 role = ConversationRole.TOOL,
                 content = summary,
             )
+        }
+    }
+
+    private fun captureWorkspaceSnapshot(): WorkspaceChangesetCollector.Snapshot? {
+        val basePath = project.basePath ?: return null
+        val root = runCatching { Paths.get(basePath).toAbsolutePath().normalize() }.getOrNull() ?: return null
+        return runCatching {
+            WorkspaceChangesetCollector.capture(root)
+        }.onFailure {
+            logger.debug("Failed to capture workspace snapshot", it)
+        }.getOrNull()
+    }
+
+    private fun persistWorkflowCommandChangeset(
+        command: String,
+        execution: WorkflowCommandExecutionResult,
+        beforeSnapshot: WorkspaceChangesetCollector.Snapshot?,
+    ) {
+        val before = beforeSnapshot ?: return
+        val basePath = project.basePath ?: return
+        val root = runCatching { Paths.get(basePath).toAbsolutePath().normalize() }.getOrNull() ?: return
+
+        val after = runCatching {
+            WorkspaceChangesetCollector.capture(root)
+        }.onFailure {
+            logger.debug("Failed to capture workspace snapshot after command", it)
+        }.getOrNull() ?: return
+
+        val changes = WorkspaceChangesetCollector.diff(root, before, after)
+        if (changes.isEmpty()) return
+
+        val status = when {
+            execution.stoppedByUser -> "stopped"
+            execution.timedOut -> "timeout"
+            execution.success -> "success"
+            execution.error != null -> "error"
+            else -> "failed"
+        }
+        val metadata = linkedMapOf(
+            "source" to "workflow-command",
+            "command" to command.take(WORKFLOW_CHANGESET_COMMAND_MAX_LENGTH),
+            "status" to status,
+        )
+        execution.exitCode?.let { metadata["exitCode"] = it.toString() }
+        if (execution.timedOut) metadata["timedOut"] = "true"
+        if (execution.stoppedByUser) metadata["stoppedByUser"] = "true"
+        if (execution.outputTruncated) metadata["outputTruncated"] = "true"
+
+        val changeset = Changeset(
+            id = UUID.randomUUID().toString(),
+            description = "Command: ${command.take(WORKFLOW_CHANGESET_COMMAND_MAX_LENGTH)}",
+            changes = changes,
+            metadata = metadata,
+        )
+        runCatching {
+            changesetStore.save(changeset)
+        }.onFailure {
+            logger.warn("Failed to persist workflow command changeset", it)
         }
     }
 
@@ -3074,6 +3304,8 @@ class ImprovedChatPanel(
         _isDisposed = true
         statusAutoHideTimer?.stop()
         statusAutoHideTimer = null
+        dividerPersistTimer?.stop()
+        dividerPersistTimer = null
         runningWorkflowCommands.values.forEach { running ->
             runCatching {
                 running.stopRequested.set(true)
@@ -3087,6 +3319,82 @@ class ImprovedChatPanel(
         scope.cancel()
     }
 
+    private class SidebarGripSplitPaneUI : BasicSplitPaneUI() {
+        override fun createDefaultDivider(): BasicSplitPaneDivider {
+            return object : BasicSplitPaneDivider(this) {
+                override fun paint(g: Graphics) {
+                    super.paint(g)
+                    val g2 = g as? Graphics2D ?: return
+                    val horizontal = splitPane?.orientation == JSplitPane.HORIZONTAL_SPLIT
+                    val w = width
+                    val h = height
+                    if (w <= 0 || h <= 0) return
+
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    if (horizontal) {
+                        paintVerticalGrip(g2, w, h)
+                    } else {
+                        paintHorizontalGrip(g2, w, h)
+                    }
+                }
+
+                private fun paintVerticalGrip(g2: Graphics2D, w: Int, h: Int) {
+                    val trackWidth = JBUI.scale(3)
+                    val trackHeight = JBUI.scale(30)
+                    val trackX = (w - trackWidth) / 2
+                    val trackY = (h - trackHeight) / 2
+                    g2.color = JBColor(
+                        Color(225, 232, 242),
+                        Color(92, 99, 111),
+                    )
+                    g2.fillRoundRect(trackX, trackY, trackWidth, trackHeight, trackWidth, trackWidth)
+
+                    val dotSize = JBUI.scale(2)
+                    val dotStep = JBUI.scale(5)
+                    val dotX = (w - dotSize) / 2
+                    val dotStart = trackY + JBUI.scale(5)
+                    val dotEnd = trackY + trackHeight - dotSize - JBUI.scale(4)
+                    g2.color = JBColor(
+                        Color(152, 166, 186),
+                        Color(167, 179, 196),
+                    )
+                    var y = dotStart
+                    while (y <= dotEnd) {
+                        g2.fillOval(dotX, y, dotSize, dotSize)
+                        y += dotStep
+                    }
+                }
+
+                private fun paintHorizontalGrip(g2: Graphics2D, w: Int, h: Int) {
+                    val trackWidth = JBUI.scale(30)
+                    val trackHeight = JBUI.scale(3)
+                    val trackX = (w - trackWidth) / 2
+                    val trackY = (h - trackHeight) / 2
+                    g2.color = JBColor(
+                        Color(225, 232, 242),
+                        Color(92, 99, 111),
+                    )
+                    g2.fillRoundRect(trackX, trackY, trackWidth, trackHeight, trackHeight, trackHeight)
+
+                    val dotSize = JBUI.scale(2)
+                    val dotStep = JBUI.scale(5)
+                    val dotY = (h - dotSize) / 2
+                    val dotStart = trackX + JBUI.scale(5)
+                    val dotEnd = trackX + trackWidth - dotSize - JBUI.scale(4)
+                    g2.color = JBColor(
+                        Color(152, 166, 186),
+                        Color(167, 179, 196),
+                    )
+                    var x = dotStart
+                    while (x <= dotEnd) {
+                        g2.fillOval(x, dotY, dotSize, dotSize)
+                        x += dotStep
+                    }
+                }
+            }
+        }
+    }
+
     companion object {
         private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"
         private val HISTORY_CONTENT_DATA_KEY = Key.create<String>(HISTORY_CONTENT_KEY)
@@ -3098,6 +3406,7 @@ class ImprovedChatPanel(
         private const val WORKFLOW_COMMAND_JOIN_TIMEOUT_MILLIS = 2000L
         private const val WORKFLOW_COMMAND_STOP_GRACE_SECONDS = 3L
         private const val WORKFLOW_COMMAND_OUTPUT_MAX_CHARS = 12_000
+        private const val WORKFLOW_CHANGESET_COMMAND_MAX_LENGTH = 120
         private const val STREAM_BATCH_CHUNK_COUNT = 4
         private const val STREAM_BATCH_CHAR_COUNT = 240
         private const val STREAM_BATCH_INTERVAL_NANOS = 120_000_000L
@@ -3106,7 +3415,10 @@ class ImprovedChatPanel(
         private const val SPEC_CARD_PREVIEW_MAX_CHARS = 1800
         private const val SPEC_SIDEBAR_DEFAULT_DIVIDER = 760
         private const val SPEC_SIDEBAR_MIN_DIVIDER = 320
+        private const val SPEC_SIDEBAR_DIVIDER_SIZE = 8
+        private const val SPEC_SIDEBAR_DIVIDER_PERSIST_DEBOUNCE_MILLIS = 140
         private const val STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS = 2200
+        private const val STATUS_SHORT_HINT_AUTO_HIDE_MILLIS = 1800
         private const val CONTINUE_FOCUS_MAX_LENGTH = 84
         private val CONTINUE_STAGE_PREFIX_REGEX = Regex("""^\[[^\]]+]\s*""")
         private val CONTINUE_ORDERED_PREFIX_REGEX = Regex("""^\d+\.\s*""")
@@ -3131,5 +3443,13 @@ class ImprovedChatPanel(
         private val PROMPT_REFERENCE_REGEX = Regex("""(?<!\S)#([\p{L}\p{N}_.-]+)""")
         private val PROMPT_EXTRA_SPACES_REGEX = Regex("""\s{2,}""")
         private val PROMPT_ALIAS_SEPARATOR_REGEX = Regex("""[\s_-]+""")
+        private val SUPPORTED_IMAGE_EXTENSIONS = setOf(
+            "png",
+            "jpg",
+            "jpeg",
+            "webp",
+            "gif",
+            "bmp",
+        )
     }
 }

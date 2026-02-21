@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.engine
 
+import java.util.concurrent.TimeUnit
+
 /**
  * Claude Code CLI 引擎适配
  */
@@ -18,6 +20,9 @@ class ClaudeCodeEngine(
     ),
     cliPath = cliPath,
 ) {
+
+    @Volatile
+    private var cachedImageFlagSupport: Boolean? = null
 
     override fun buildCommandArgs(
         request: EngineRequest
@@ -46,6 +51,13 @@ class ClaudeCodeEngine(
     ): EngineChunk? {
         if (line.isEmpty()) return null
         return ClaudeStreamJsonParser.parseLine(line)
+    }
+
+    fun supportsImageFlag(): Boolean {
+        cachedImageFlagSupport?.let { return it }
+        val detected = detectImageFlagSupport()
+        cachedImageFlagSupport = detected
+        return detected
     }
 
     private fun buildArgs(
@@ -82,6 +94,13 @@ class ClaudeCodeEngine(
             args.add(it)
         }
 
+        if (supportsImageFlag()) {
+            request.imagePaths.forEach { imagePath ->
+                args.add("--image")
+                args.add(imagePath)
+            }
+        }
+
         if (request.options["allow_dangerously_skip_permissions"]?.equals("true", ignoreCase = true) == true) {
             args.add("--allow-dangerously-skip-permissions")
         }
@@ -102,6 +121,43 @@ class ClaudeCodeEngine(
         args.add(request.prompt)
         return args
     }
+
+    private fun detectImageFlagSupport(): Boolean {
+        val helpOutput = runCommandForOutput("--help") ?: return false
+        return helpOutput.contains("--image")
+    }
+
+    private fun runCommandForOutput(vararg args: String): String? {
+        val command = listOf(cliPath) + args.toList()
+        val process = try {
+            ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .start()
+        } catch (e: Exception) {
+            if (!isWindows()) {
+                return null
+            }
+            runCatching {
+                ProcessBuilder(listOf("cmd", "/c", cliPath) + args.toList())
+                    .redirectErrorStream(true)
+                    .start()
+            }.getOrNull() ?: return null
+        }
+
+        return runCatching {
+            val finished = process.waitFor(8, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                process.waitFor(1, TimeUnit.SECONDS)
+                return null
+            }
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            if (output.isBlank()) null else output
+        }.getOrNull()
+    }
+
+    private fun isWindows(): Boolean =
+        System.getProperty("os.name").lowercase().contains("win")
 
     override suspend fun getVersion(): String? {
         return try {

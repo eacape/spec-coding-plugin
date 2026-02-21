@@ -94,8 +94,18 @@ class CodexCliLlmProvider(
         return EngineRequest(
             prompt = allMessages,
             context = EngineContext(workingDirectory = workingDirectory),
+            imagePaths = normalizeImagePaths(request.imagePaths),
             options = options,
         )
+    }
+
+    private fun normalizeImagePaths(imagePaths: List<String>): List<String> {
+        return imagePaths
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
     }
 
     private fun mapCodexExecutionOptions(operationMode: String?): Map<String, String> {

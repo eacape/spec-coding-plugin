@@ -9,6 +9,7 @@ data class EngineRequest(
     val prompt: String,
     val capability: EngineCapability = EngineCapability.CODE_GENERATION,
     val context: EngineContext = EngineContext(),
+    val imagePaths: List<String> = emptyList(),
     val options: Map<String, String> = emptyMap(),
 )
 

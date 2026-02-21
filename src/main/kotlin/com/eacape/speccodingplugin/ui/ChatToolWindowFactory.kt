@@ -82,6 +82,7 @@ class ChatToolWindowFactory : ToolWindowFactory {
         // Changes 标签页（变更时间线）
         val timelinePanel = ChangesetTimelinePanel(project)
         val timelineContent = contentFactory.createContent(timelinePanel, SpecCodingBundle.message("toolwindow.tab.changes"), false)
+        Disposer.register(timelineContent, timelinePanel)
         toolWindow.contentManager.addContent(timelineContent)
 
         // Prompts 标签页（Prompt 管理）

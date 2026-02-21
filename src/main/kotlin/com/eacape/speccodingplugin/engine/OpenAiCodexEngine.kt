@@ -55,6 +55,11 @@ class OpenAiCodexEngine(
             args.add(it)
         }
 
+        request.imagePaths.forEach { imagePath ->
+            args.add("--image")
+            args.add(imagePath)
+        }
+
         // Read prompt from stdin to avoid shell tokenization issues on Windows cmd fallback.
         args.add("--")
         args.add("-")

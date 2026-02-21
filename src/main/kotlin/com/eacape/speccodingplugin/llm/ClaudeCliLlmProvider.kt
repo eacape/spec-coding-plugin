@@ -5,6 +5,9 @@ import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.engine.ClaudeCodeEngine
 import com.eacape.speccodingplugin.engine.EngineContext
 import com.eacape.speccodingplugin.engine.EngineRequest
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.stream.ChatTraceKind
+import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import com.intellij.openapi.diagnostic.thisLogger
 import java.util.Locale
 
@@ -43,6 +46,19 @@ class ClaudeCliLlmProvider(
         onChunk: suspend (LlmChunk) -> Unit,
     ): LlmResponse {
         val engineRequest = toEngineRequest(request)
+        val fallbackNotice = engineRequest.options[IMAGE_FALLBACK_NOTICE_OPTION_KEY]
+        if (!fallbackNotice.isNullOrBlank()) {
+            onChunk(
+                LlmChunk(
+                    delta = "",
+                    event = ChatStreamEvent(
+                        kind = ChatTraceKind.TOOL,
+                        detail = fallbackNotice,
+                        status = ChatTraceStatus.INFO,
+                    ),
+                )
+            )
+        }
         val contentBuilder = StringBuilder()
 
         engine.stream(engineRequest).collect { chunk ->
@@ -91,6 +107,14 @@ class ClaudeCliLlmProvider(
         request.maxTokens?.let { options["max_tokens"] = it.toString() }
         request.metadata["requestId"]?.let { options["requestId"] = it }
         val workingDirectory = LlmRequestContext.extractWorkingDirectory(request)
+        val normalizedImagePaths = normalizeImagePaths(request.imagePaths)
+        val supportsImageFlag = normalizedImagePaths.isEmpty() || engine.supportsImageFlag()
+        val effectivePrompt = if (!supportsImageFlag && normalizedImagePaths.isNotEmpty()) {
+            options[IMAGE_FALLBACK_NOTICE_OPTION_KEY] = IMAGE_FALLBACK_NOTICE
+            mergePromptWithImageFallback(userMessages, normalizedImagePaths)
+        } else {
+            userMessages
+        }
 
         val operationMode = LlmRequestContext.extractOperationMode(request)
         mapClaudePermissionMode(operationMode)?.let { options["permission_mode"] = it }
@@ -100,10 +124,34 @@ class ClaudeCliLlmProvider(
         }
 
         return EngineRequest(
-            prompt = userMessages,
+            prompt = effectivePrompt,
             context = EngineContext(workingDirectory = workingDirectory),
+            imagePaths = if (supportsImageFlag) normalizedImagePaths else emptyList(),
             options = options,
         )
+    }
+
+    private fun normalizeImagePaths(imagePaths: List<String>): List<String> {
+        return imagePaths
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
+    }
+
+    private fun mergePromptWithImageFallback(prompt: String, imagePaths: List<String>): String {
+        val fallbackBlock = buildString {
+            appendLine("Attached image files (native --image option is unavailable in current Claude CLI):")
+            imagePaths.forEach { path ->
+                appendLine("- $path")
+            }
+            append("If visual details are required, ask the user to describe key parts of the image.")
+        }
+        if (prompt.isBlank()) {
+            return fallbackBlock
+        }
+        return "$prompt\n\n$fallbackBlock"
     }
 
     private fun mapClaudePermissionMode(operationMode: String?): String? {
@@ -122,5 +170,8 @@ class ClaudeCliLlmProvider(
 
     companion object {
         const val ID = "claude-cli"
+        private const val IMAGE_FALLBACK_NOTICE_OPTION_KEY = "image_fallback_notice"
+        private const val IMAGE_FALLBACK_NOTICE =
+            "当前 Claude CLI 暂不支持 --image，已降级为图片路径提示。可升级 Claude CLI 以启用原生图片输入。"
     }
 }

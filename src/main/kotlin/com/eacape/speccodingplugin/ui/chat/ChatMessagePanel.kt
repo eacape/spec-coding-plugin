@@ -7,9 +7,11 @@ import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
+import java.awt.BasicStroke
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Cursor
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Graphics
 import java.awt.Graphics2D
@@ -263,10 +265,21 @@ open class ChatMessagePanel(
         val summaryLeft = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
         summaryLeft.isOpaque = false
 
-        val summaryIcon = JBLabel("●")
-        summaryIcon.foreground = kindColor(ExecutionTimelineParser.Kind.TASK)
-        summaryIcon.font = summaryIcon.font.deriveFont(11f)
-        summaryLeft.add(summaryIcon)
+        val running = items.any { it.status == ExecutionTimelineParser.Status.RUNNING }
+        if (running) {
+            summaryLeft.add(
+                createRunningIndicator(
+                    color = statusColor(ExecutionTimelineParser.Status.RUNNING),
+                    size = 11,
+                    tooltip = statusLabel(ExecutionTimelineParser.Status.RUNNING),
+                )
+            )
+        } else {
+            val summaryIcon = JBLabel("●")
+            summaryIcon.foreground = kindColor(ExecutionTimelineParser.Kind.TASK)
+            summaryIcon.font = summaryIcon.font.deriveFont(11f)
+            summaryLeft.add(summaryIcon)
+        }
 
         val summaryLabel = JBLabel(SpecCodingBundle.message("chat.timeline.summary.label"))
         summaryLabel.font = summaryLabel.font.deriveFont(java.awt.Font.BOLD, 12f)
@@ -329,10 +342,21 @@ open class ChatMessagePanel(
         val left = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
         left.isOpaque = false
 
-        val icon = JBLabel("▤")
-        icon.foreground = kindColor(ExecutionTimelineParser.Kind.OUTPUT)
-        icon.font = icon.font.deriveFont(12f)
-        left.add(icon)
+        val running = items.any { it.status == ExecutionTimelineParser.Status.RUNNING }
+        if (running) {
+            left.add(
+                createRunningIndicator(
+                    color = statusColor(ExecutionTimelineParser.Status.RUNNING),
+                    size = 11,
+                    tooltip = statusLabel(ExecutionTimelineParser.Status.RUNNING),
+                )
+            )
+        } else {
+            val icon = JBLabel("▤")
+            icon.foreground = kindColor(ExecutionTimelineParser.Kind.OUTPUT)
+            icon.font = icon.font.deriveFont(12f)
+            left.add(icon)
+        }
 
         val title = JBLabel(SpecCodingBundle.message("chat.timeline.kind.output"))
         title.font = title.font.deriveFont(java.awt.Font.BOLD, 12f)
@@ -426,11 +450,22 @@ open class ChatMessagePanel(
         }
         header.add(headerLeft, BorderLayout.CENTER)
 
-        val statusDot = JBLabel("●")
-        statusDot.foreground = statusColor(item.status)
-        statusDot.font = statusDot.font.deriveFont(10f)
-        statusDot.toolTipText = statusLabel(item.status)
-        header.add(statusDot, BorderLayout.EAST)
+        if (item.status == ExecutionTimelineParser.Status.RUNNING) {
+            header.add(
+                createRunningIndicator(
+                    color = statusColor(item.status),
+                    size = 10,
+                    tooltip = statusLabel(item.status),
+                ),
+                BorderLayout.EAST
+            )
+        } else {
+            val statusDot = JBLabel("●")
+            statusDot.foreground = statusColor(item.status)
+            statusDot.font = statusDot.font.deriveFont(10f)
+            statusDot.toolTipText = statusLabel(item.status)
+            header.add(statusDot, BorderLayout.EAST)
+        }
 
         row.add(header, BorderLayout.NORTH)
         row.add(createTraceDetailBlock(item), BorderLayout.CENTER)
@@ -1011,6 +1046,19 @@ open class ChatMessagePanel(
         return badge
     }
 
+    private fun createRunningIndicator(
+        color: java.awt.Color,
+        size: Int,
+        tooltip: String,
+    ): RunningSpinnerIndicator {
+        return RunningSpinnerIndicator(
+            color = color,
+            size = size,
+        ).apply {
+            toolTipText = tooltip
+        }
+    }
+
     private fun buildRoundedContainerBorder(
         lineColor: java.awt.Color,
         arc: Int,
@@ -1073,6 +1121,60 @@ open class ChatMessagePanel(
         }
     }
 
+    private class RunningSpinnerIndicator(
+        private val color: java.awt.Color,
+        size: Int,
+    ) : JPanel() {
+        private var angle = 0
+        private val timer = Timer(SPINNER_TICK_MS) {
+            angle = (angle + SPINNER_STEP_DEGREES) % 360
+            repaint()
+        }
+        private val diameter = JBUI.scale(size)
+
+        init {
+            isOpaque = false
+            preferredSize = Dimension(diameter, diameter)
+            minimumSize = preferredSize
+            maximumSize = preferredSize
+        }
+
+        override fun addNotify() {
+            super.addNotify()
+            if (!timer.isRunning) {
+                timer.start()
+            }
+        }
+
+        override fun removeNotify() {
+            timer.stop()
+            super.removeNotify()
+        }
+
+        override fun paintComponent(g: Graphics?) {
+            super.paintComponent(g)
+            val graphics = g as? Graphics2D ?: return
+            val g2 = graphics.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.stroke = BasicStroke(JBUI.scale(1f))
+
+            val drawSize = (diameter - 2).coerceAtLeast(6)
+            val arcExtent = 120
+
+            g2.color = faded(color, alpha = 70)
+            g2.drawArc(1, 1, drawSize, drawSize, 0, 360)
+
+            g2.color = color
+            g2.drawArc(1, 1, drawSize, drawSize, -angle, arcExtent)
+            g2.dispose()
+        }
+
+        private fun faded(base: java.awt.Color, alpha: Int): java.awt.Color {
+            val resolvedAlpha = alpha.coerceIn(0, 255)
+            return java.awt.Color(base.red, base.green, base.blue, resolvedAlpha)
+        }
+    }
+
     companion object {
         private const val MAX_FILE_ACTIONS = 4
         private const val MAX_COMMAND_ACTIONS = 4
@@ -1084,6 +1186,8 @@ open class ChatMessagePanel(
         private const val COPY_FEEDBACK_TIMER_KEY = "spec.copy.feedback.timer"
         private const val COPY_FEEDBACK_ICON_SUCCESS = "OK"
         private const val COPY_FEEDBACK_ICON_FAILURE = "!"
+        private const val SPINNER_TICK_MS = 70
+        private const val SPINNER_STEP_DEGREES = 20
         private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s+.*$""")
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+\.\s+.*""")
         private val WORKFLOW_HEADING_TITLES = setOf(

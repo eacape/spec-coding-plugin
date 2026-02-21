@@ -2,10 +2,13 @@ package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.rollback.Changeset
+import com.eacape.speccodingplugin.rollback.ChangesetChangedEvent
+import com.eacape.speccodingplugin.rollback.ChangesetChangedListener
 import com.eacape.speccodingplugin.rollback.ChangesetStore
 import com.eacape.speccodingplugin.rollback.FileChange
 import com.eacape.speccodingplugin.rollback.RollbackManager
 import com.eacape.speccodingplugin.rollback.RollbackOptions
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -26,7 +29,7 @@ import javax.swing.SwingUtilities
  */
 class ChangesetTimelinePanel(
     private val project: Project,
-) : JPanel(BorderLayout()) {
+) : JPanel(BorderLayout()), Disposable {
 
     private val store = ChangesetStore.getInstance(project)
     private val rollbackManager = RollbackManager.getInstance(project)
@@ -42,6 +45,7 @@ class ChangesetTimelinePanel(
     init {
         border = JBUI.Borders.empty(8)
         setupUI()
+        subscribeToChangesetEvents()
         refresh()
     }
 
@@ -174,7 +178,6 @@ class ChangesetTimelinePanel(
         val deleteBtn = JButton(SpecCodingBundle.message("changeset.timeline.remove"))
         deleteBtn.addActionListener {
             store.delete(changeset.id)
-            refresh()
         }
         actions.add(deleteBtn)
 
@@ -265,13 +268,30 @@ class ChangesetTimelinePanel(
 
     private fun clearAll() {
         store.clear()
-        refresh()
     }
 
     private fun refreshLocalizedTexts() {
         titleLabel.text = SpecCodingBundle.message("changeset.timeline.title")
         refreshButton.text = SpecCodingBundle.message("changeset.timeline.refresh")
         clearButton.text = SpecCodingBundle.message("changeset.timeline.clearAll")
+    }
+
+    private fun subscribeToChangesetEvents() {
+        project.messageBus.connect(this).subscribe(
+            ChangesetChangedListener.TOPIC,
+            object : ChangesetChangedListener {
+                override fun onChanged(event: ChangesetChangedEvent) {
+                    SwingUtilities.invokeLater {
+                        if (!project.isDisposed) {
+                            refresh()
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    override fun dispose() {
     }
 
     companion object {

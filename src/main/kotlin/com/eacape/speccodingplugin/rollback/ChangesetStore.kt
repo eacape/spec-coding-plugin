@@ -45,6 +45,7 @@ class ChangesetStore(private val project: Project) {
             // 持久化到磁盘
             persistToDisk()
         }
+        publishChanged(ChangesetChangedEvent(ChangesetChangedEvent.Action.SAVED, changeset.id))
     }
 
     /**
@@ -81,7 +82,7 @@ class ChangesetStore(private val project: Project) {
      * 删除变更集
      */
     fun delete(id: String): Boolean {
-        synchronized(lock) {
+        val removed = synchronized(lock) {
             ensureLoaded()
 
             val removed = changesets.removeIf { it.id == id }
@@ -89,18 +90,28 @@ class ChangesetStore(private val project: Project) {
                 logger.info("Deleted changeset: $id")
                 persistToDisk()
             }
-            return removed
+            removed
         }
+        if (removed) {
+            publishChanged(ChangesetChangedEvent(ChangesetChangedEvent.Action.DELETED, id))
+        }
+        return removed
     }
 
     /**
      * 清空所有变更集
      */
     fun clear() {
-        synchronized(lock) {
+        val hadChanges = synchronized(lock) {
+            ensureLoaded()
+            val hadChanges = changesets.isNotEmpty()
             changesets.clear()
             logger.info("Cleared all changesets")
             persistToDisk()
+            hadChanges
+        }
+        if (hadChanges) {
+            publishChanged(ChangesetChangedEvent(ChangesetChangedEvent.Action.CLEARED))
         }
     }
 
@@ -181,6 +192,15 @@ class ChangesetStore(private val project: Project) {
         return Paths.get(basePath)
             .resolve(".spec-coding")
             .resolve("changesets.json")
+    }
+
+    private fun publishChanged(event: ChangesetChangedEvent) {
+        runCatching {
+            project.messageBus.syncPublisher(ChangesetChangedListener.TOPIC)
+                .onChanged(event)
+        }.onFailure {
+            logger.debug("Failed to publish changeset changed event", it)
+        }
     }
 
     companion object {

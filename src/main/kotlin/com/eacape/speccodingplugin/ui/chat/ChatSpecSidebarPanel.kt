@@ -44,7 +44,16 @@ internal class ChatSpecSidebarPanel(
     init {
         isOpaque = true
         background = JBColor(Color(250, 252, 254), Color(41, 45, 51))
-        border = JBUI.Borders.empty(RHYTHM_SM, HORIZONTAL_PADDING, RHYTHM_SM, HORIZONTAL_PADDING)
+        border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(
+                JBColor(Color(228, 234, 242), Color(73, 80, 90)),
+                1,
+                0,
+                1,
+                0,
+            ),
+            JBUI.Borders.empty(RHYTHM_SM, HORIZONTAL_PADDING, RHYTHM_SM, HORIZONTAL_PADDING),
+        )
 
         val headerPanel = JPanel(BorderLayout())
         headerPanel.isOpaque = false
