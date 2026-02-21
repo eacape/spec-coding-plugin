@@ -3,13 +3,9 @@ package com.eacape.speccodingplugin.ui.history
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.session.ConversationMessage
 import com.eacape.speccodingplugin.session.ConversationSession
-import com.eacape.speccodingplugin.session.SessionBranchComparison
 import com.eacape.speccodingplugin.session.SessionContextSnapshot
 import com.eacape.speccodingplugin.session.SessionFilter
-import com.eacape.speccodingplugin.session.SessionExportFormat
-import com.eacape.speccodingplugin.session.SessionExporter
 import com.eacape.speccodingplugin.session.SessionManager
-import com.eacape.speccodingplugin.session.SessionExportResult
 import com.eacape.speccodingplugin.session.SessionSummary
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
@@ -28,7 +24,6 @@ import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.FlowLayout
-import java.nio.file.Path
 import javax.swing.DefaultListCellRenderer
 import javax.swing.JComboBox
 import javax.swing.JPanel
@@ -45,9 +40,6 @@ class HistoryPanel(
     private val deleteSession: (sessionId: String) -> Result<Unit> = { sessionId ->
         SessionManager.getInstance(project).deleteSession(sessionId)
     },
-    private val getSession: (sessionId: String) -> ConversationSession? = { sessionId ->
-        SessionManager.getInstance(project).getSession(sessionId)
-    },
     private val saveContextSnapshot: (
         sessionId: String,
         messageId: String?,
@@ -61,20 +53,6 @@ class HistoryPanel(
     },
     private val forkSession: (sourceSessionId: String, fromMessageId: String?, branchName: String?) -> Result<ConversationSession> = { sourceSessionId, fromMessageId, branchName ->
         SessionManager.getInstance(project).forkSession(sourceSessionId, fromMessageId, branchName)
-    },
-    private val compareSessions: (leftSessionId: String, rightSessionId: String) -> Result<SessionBranchComparison> = { leftSessionId, rightSessionId ->
-        SessionManager.getInstance(project).compareSessions(leftSessionId, rightSessionId)
-    },
-    private val listChildSessions: (parentSessionId: String, limit: Int) -> List<ConversationSession> = { parentSessionId, limit ->
-        SessionManager.getInstance(project).listChildSessions(parentSessionId, limit)
-    },
-    private val exportSession: (
-        exportDir: Path,
-        session: ConversationSession,
-        messages: List<ConversationMessage>,
-        format: SessionExportFormat,
-    ) -> Result<SessionExportResult> = { exportDir, session, messages, format ->
-        SessionExporter.exportSession(exportDir, session, messages, format)
     },
     private val runSynchronously: Boolean = false,
 ) : JPanel(BorderLayout()), Disposable {
@@ -93,10 +71,8 @@ class HistoryPanel(
         onSessionSelected = ::onSessionSelected,
         onOpenSession = ::onOpenSession,
         onContinueSession = ::onContinueSession,
-        onExportSession = ::onExportSession,
         onDeleteSession = ::onDeleteSession,
         onBranchSession = ::onBranchSession,
-        onCompareSession = ::onCompareSession,
     )
     private val detailPanel = HistoryDetailPanel()
 
@@ -274,107 +250,6 @@ class HistoryPanel(
         }
     }
 
-    private fun onCompareSession(sessionId: String) {
-        runBackground {
-            runCatching {
-                val base = getSession(sessionId)
-                    ?: error(SpecCodingBundle.message("history.error.sessionNotFound", sessionId))
-                val target = findComparableSession(base)
-                    ?: error(SpecCodingBundle.message("history.compare.noTarget"))
-
-                compareSessions(base.id, target.id).getOrThrow() to target
-            }.onSuccess { (comparison, target) ->
-                invokeLaterSafe {
-                    detailPanel.showText(renderComparisonText(comparison, target))
-                    statusLabel.text = SpecCodingBundle.message(
-                        "history.status.compare",
-                        target.title,
-                        comparison.commonPrefixCount,
-                        comparison.leftOnlyCount,
-                        comparison.rightOnlyCount,
-                    )
-                }
-            }.onFailure { error ->
-                logger.warn("Failed to compare session: $sessionId", error)
-                invokeLaterSafe {
-                    statusLabel.text = SpecCodingBundle.message(
-                        "history.status.compareFailed",
-                        error.message ?: SpecCodingBundle.message("common.unknown"),
-                    )
-                }
-            }
-        }
-    }
-
-    private fun onExportSession(sessionId: String, format: SessionExportFormat) {
-        runBackground {
-            runCatching {
-                val session = getSession(sessionId)
-                    ?: error(SpecCodingBundle.message("history.error.sessionNotFound", sessionId))
-                val messages = listMessages(sessionId, 5000)
-
-                val exportDir = resolveExportDir()
-                exportSession(exportDir, session, messages, format).getOrThrow()
-            }.onSuccess { result ->
-                invokeLaterSafe {
-                    statusLabel.text = SpecCodingBundle.message(
-                        "history.status.exported",
-                        result.format.toString(),
-                        result.filePath.fileName.toString(),
-                    )
-                }
-            }.onFailure { error ->
-                logger.warn("Failed to export session: $sessionId", error)
-                invokeLaterSafe {
-                    statusLabel.text = SpecCodingBundle.message(
-                        "history.status.exportFailed",
-                        error.message ?: SpecCodingBundle.message("common.unknown"),
-                    )
-                }
-            }
-        }
-    }
-
-    private fun resolveExportDir(): Path {
-        val basePath = project.basePath
-            ?: error(SpecCodingBundle.message("history.error.projectBasePathUnavailable"))
-        return Path.of(basePath, ".spec-coding", "exports")
-    }
-
-    private fun findComparableSession(base: ConversationSession): ConversationSession? {
-        val parentId = base.parentSessionId
-        if (!parentId.isNullOrBlank()) {
-            return getSession(parentId)
-        }
-        return listChildSessions(base.id, 1).firstOrNull()
-    }
-
-    private fun renderComparisonText(comparison: SessionBranchComparison, target: ConversationSession): String {
-        val currentPreview = comparison.leftPreview ?: SpecCodingBundle.message("common.unknown")
-        val targetPreview = comparison.rightPreview ?: SpecCodingBundle.message("common.unknown")
-        return buildString {
-            appendLine(
-                SpecCodingBundle.message(
-                    "history.compare.detail.header",
-                    comparison.leftSessionId,
-                    target.id,
-                )
-            )
-            appendLine()
-            appendLine(
-                SpecCodingBundle.message(
-                    "history.compare.detail.summary",
-                    comparison.commonPrefixCount,
-                    comparison.leftOnlyCount,
-                    comparison.rightOnlyCount,
-                )
-            )
-            appendLine()
-            appendLine(SpecCodingBundle.message("history.compare.detail.preview.current", currentPreview))
-            appendLine(SpecCodingBundle.message("history.compare.detail.preview.target", targetPreview))
-        }
-    }
-
     private fun buildStatusText(count: Int, query: String, filter: SessionFilter): String {
         val countText = SpecCodingBundle.message("history.status.count", count)
         val normalizedQuery = query.trim()
@@ -455,16 +330,8 @@ class HistoryPanel(
         listPanel.clickContinueForTest()
     }
 
-    internal fun clickCompareForTest() {
-        listPanel.clickCompareForTest()
-    }
-
     internal fun clickDeleteForTest() {
         listPanel.clickDeleteForTest()
-    }
-
-    internal fun clickExportForTest() {
-        listPanel.clickExportForTest()
     }
 
     override fun dispose() {

@@ -1,7 +1,6 @@
 package com.eacape.speccodingplugin.ui.history
 
 import com.eacape.speccodingplugin.SpecCodingBundle
-import com.eacape.speccodingplugin.session.SessionExportFormat
 import com.eacape.speccodingplugin.session.SessionSummary
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBList
@@ -23,7 +22,6 @@ import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.DefaultListModel
 import javax.swing.JButton
-import javax.swing.JComboBox
 import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.ListCellRenderer
@@ -36,10 +34,8 @@ class HistorySessionListPanel(
     private val onSessionSelected: (String) -> Unit,
     private val onOpenSession: (String) -> Unit,
     private val onContinueSession: (String) -> Unit,
-    private val onExportSession: (String, SessionExportFormat) -> Unit,
     private val onDeleteSession: (String) -> Unit,
     private val onBranchSession: (String) -> Unit,
-    private val onCompareSession: (String) -> Unit,
 ) : JPanel(BorderLayout()) {
 
     private val listModel = DefaultListModel<SessionSummary>()
@@ -47,9 +43,6 @@ class HistorySessionListPanel(
     private val openButton = JButton(SpecCodingBundle.message("history.action.open"))
     private val continueButton = JButton(SpecCodingBundle.message("history.action.continue"))
     private val branchButton = JButton(SpecCodingBundle.message("history.action.branch"))
-    private val compareButton = JButton(SpecCodingBundle.message("history.action.compare"))
-    private val exportFormatCombo = JComboBox(SessionExportFormat.entries.toTypedArray())
-    private val exportButton = JButton(SpecCodingBundle.message("history.action.export"))
     private val deleteButton = JButton(SpecCodingBundle.message("history.action.delete"))
     private val selectionInfoCard = RoundedCardPanel(JBUI.scale(12))
     private val selectionInfoTitle = JLabel(SpecCodingBundle.message("history.info.title"))
@@ -69,27 +62,16 @@ class HistorySessionListPanel(
         styleActionButton(openButton)
         styleActionButton(continueButton)
         styleActionButton(branchButton)
-        styleActionButton(compareButton)
-        styleActionButton(exportButton)
         styleActionButton(deleteButton)
 
         openButton.addActionListener { selectedSessionId()?.let(onOpenSession) }
         continueButton.addActionListener { selectedSessionId()?.let(onContinueSession) }
         branchButton.addActionListener { selectedSessionId()?.let(onBranchSession) }
-        compareButton.addActionListener { selectedSessionId()?.let(onCompareSession) }
-        exportButton.addActionListener {
-            val sessionId = selectedSessionId() ?: return@addActionListener
-            val format = exportFormatCombo.selectedItem as? SessionExportFormat ?: SessionExportFormat.MARKDOWN
-            onExportSession(sessionId, format)
-        }
         deleteButton.addActionListener { selectedSessionId()?.let(onDeleteSession) }
 
         toolbar.add(openButton)
         toolbar.add(continueButton)
         toolbar.add(branchButton)
-        toolbar.add(compareButton)
-        toolbar.add(exportFormatCombo)
-        toolbar.add(exportButton)
         toolbar.add(deleteButton)
         add(toolbar, BorderLayout.NORTH)
 
@@ -169,8 +151,6 @@ class HistorySessionListPanel(
             "openEnabled" to openButton.isEnabled,
             "continueEnabled" to continueButton.isEnabled,
             "branchEnabled" to branchButton.isEnabled,
-            "compareEnabled" to compareButton.isEnabled,
-            "exportEnabled" to exportButton.isEnabled,
             "deleteEnabled" to deleteButton.isEnabled,
         )
     }
@@ -191,14 +171,6 @@ class HistorySessionListPanel(
         branchButton.doClick()
     }
 
-    internal fun clickCompareForTest() {
-        compareButton.doClick()
-    }
-
-    internal fun clickExportForTest() {
-        exportButton.doClick()
-    }
-
     internal fun selectedInfoTextForTest(): String = selectionInfoArea.text
 
     private fun selectedSessionId(): String? = sessionList.selectedValue?.id
@@ -208,8 +180,6 @@ class HistorySessionListPanel(
         openButton.isEnabled = hasSelection
         continueButton.isEnabled = hasSelection
         branchButton.isEnabled = hasSelection
-        compareButton.isEnabled = hasSelection
-        exportButton.isEnabled = hasSelection
         deleteButton.isEnabled = hasSelection
     }
 
@@ -217,7 +187,7 @@ class HistorySessionListPanel(
         button.isFocusable = false
         button.isFocusPainted = false
         button.font = JBUI.Fonts.smallFont()
-        button.margin = JBUI.insets(2, 7, 2, 7)
+        button.margin = JBUI.insets(2, 5, 2, 5)
     }
 
     private fun isSpecSession(summary: SessionSummary): Boolean {

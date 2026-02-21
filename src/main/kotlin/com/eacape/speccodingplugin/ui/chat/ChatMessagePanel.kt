@@ -8,8 +8,13 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Component
 import java.awt.Cursor
 import java.awt.FlowLayout
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.Insets
+import java.awt.RenderingHints
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import javax.swing.BoxLayout
@@ -18,6 +23,9 @@ import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.JTextPane
 import javax.swing.Timer
+import javax.swing.border.AbstractBorder
+import javax.swing.border.Border
+import javax.swing.border.CompoundBorder
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 
@@ -65,18 +73,10 @@ open class ChatMessagePanel(
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = true
         wrapper.background = getBackgroundColor()
-        wrapper.border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(
-                JBColor(
-                    java.awt.Color(225, 230, 238),
-                    java.awt.Color(68, 74, 82),
-                ),
-                0,
-                0,
-                1,
-                0,
-            ),
-            JBUI.Borders.empty(8, 10, 7, 10),
+        wrapper.border = buildRoundedContainerBorder(
+            lineColor = messageCardBorderColor(),
+            arc = 12,
+            padding = JBUI.insets(8, 10, 7, 10),
         )
         wrapper.add(contentHost, BorderLayout.CENTER)
 
@@ -250,32 +250,35 @@ open class ChatMessagePanel(
     private fun createTracePanel(items: List<StreamingTraceAssembler.TraceItem>): JPanel {
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = true
-        wrapper.background = JBColor(
-            java.awt.Color(249, 251, 255),
-            java.awt.Color(40, 45, 52),
+        wrapper.background = traceCardBackgroundColor()
+        wrapper.border = buildRoundedContainerBorder(
+            lineColor = traceCardBorderColor(),
+            arc = 12,
+            padding = JBUI.insets(8, 10, 8, 10),
         )
-        wrapper.border = JBUI.Borders.empty(7, 10, 7, 10)
 
-        val summaryBar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        val summaryBar = JPanel(BorderLayout())
         summaryBar.isOpaque = false
-        val summaryIcon = JBLabel("◍")
-        summaryIcon.foreground = JBColor(
-            java.awt.Color(83, 107, 143),
-            java.awt.Color(157, 185, 223),
-        )
-        summaryIcon.font = summaryIcon.font.deriveFont(12f)
-        summaryBar.add(summaryIcon)
+
+        val summaryLeft = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        summaryLeft.isOpaque = false
+
+        val summaryIcon = JBLabel("●")
+        summaryIcon.foreground = kindColor(ExecutionTimelineParser.Kind.TASK)
+        summaryIcon.font = summaryIcon.font.deriveFont(11f)
+        summaryLeft.add(summaryIcon)
+
         val summaryLabel = JBLabel(SpecCodingBundle.message("chat.timeline.summary.label"))
         summaryLabel.font = summaryLabel.font.deriveFont(java.awt.Font.BOLD, 12f)
-        summaryBar.add(summaryLabel)
+        summaryLeft.add(summaryLabel)
 
         val readCount = items.count { it.kind == ExecutionTimelineParser.Kind.READ }
         val editCount = items.count { it.kind == ExecutionTimelineParser.Kind.EDIT }
         val verifyCount = items.count { it.kind == ExecutionTimelineParser.Kind.VERIFY }
-        val statsLabel = JBLabel(SpecCodingBundle.message("chat.timeline.summary.stats", readCount, editCount, verifyCount))
-        statsLabel.foreground = JBColor.GRAY
-        statsLabel.font = statsLabel.font.deriveFont(11f)
-        summaryBar.add(statsLabel)
+        summaryLeft.add(createSummaryBadge("${kindLabel(ExecutionTimelineParser.Kind.READ)} $readCount"))
+        summaryLeft.add(createSummaryBadge("${kindLabel(ExecutionTimelineParser.Kind.EDIT)} $editCount"))
+        summaryLeft.add(createSummaryBadge("${kindLabel(ExecutionTimelineParser.Kind.VERIFY)} $verifyCount"))
+        summaryBar.add(summaryLeft, BorderLayout.CENTER)
 
         val toggleButton = JButton(
             SpecCodingBundle.message(
@@ -287,7 +290,7 @@ open class ChatMessagePanel(
             traceExpanded = !traceExpanded
             renderContent()
         }
-        summaryBar.add(toggleButton)
+        summaryBar.add(toggleButton, BorderLayout.EAST)
 
         wrapper.add(summaryBar, BorderLayout.NORTH)
 
@@ -295,7 +298,7 @@ open class ChatMessagePanel(
             val listPanel = JPanel()
             listPanel.layout = BoxLayout(listPanel, BoxLayout.Y_AXIS)
             listPanel.isOpaque = false
-            listPanel.border = JBUI.Borders.emptyTop(6)
+            listPanel.border = JBUI.Borders.emptyTop(8)
 
             items.forEach { item ->
                 listPanel.add(createTraceItemRow(item))
@@ -313,28 +316,30 @@ open class ChatMessagePanel(
     private fun createOutputPanel(items: List<StreamingTraceAssembler.TraceItem>): JPanel {
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = true
-        wrapper.background = JBColor(
-            java.awt.Color(247, 249, 252),
-            java.awt.Color(38, 42, 48),
+        wrapper.background = outputCardBackgroundColor()
+        wrapper.border = buildRoundedContainerBorder(
+            lineColor = outputCardBorderColor(),
+            arc = 12,
+            padding = JBUI.insets(8, 10, 8, 10),
         )
-        wrapper.border = JBUI.Borders.empty(7, 10, 7, 10)
 
-        val header = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        val header = JPanel(BorderLayout())
         header.isOpaque = false
 
-        val icon = JBLabel(kindGlyph(ExecutionTimelineParser.Kind.OUTPUT))
+        val left = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        left.isOpaque = false
+
+        val icon = JBLabel("▤")
         icon.foreground = kindColor(ExecutionTimelineParser.Kind.OUTPUT)
         icon.font = icon.font.deriveFont(12f)
-        header.add(icon)
+        left.add(icon)
 
         val title = JBLabel(SpecCodingBundle.message("chat.timeline.kind.output"))
         title.font = title.font.deriveFont(java.awt.Font.BOLD, 12f)
-        header.add(title)
+        left.add(title)
 
-        val countLabel = JBLabel(items.size.toString())
-        countLabel.foreground = JBColor.GRAY
-        countLabel.font = countLabel.font.deriveFont(11f)
-        header.add(countLabel)
+        left.add(createSummaryBadge(items.size.toString()))
+        header.add(left, BorderLayout.CENTER)
 
         val toggleButton = JButton(
             SpecCodingBundle.message(
@@ -346,7 +351,7 @@ open class ChatMessagePanel(
             outputExpanded = !outputExpanded
             renderContent()
         }
-        header.add(toggleButton)
+        header.add(toggleButton, BorderLayout.EAST)
 
         wrapper.add(header, BorderLayout.NORTH)
 
@@ -354,7 +359,7 @@ open class ChatMessagePanel(
             val list = JPanel()
             list.layout = BoxLayout(list, BoxLayout.Y_AXIS)
             list.isOpaque = false
-            list.border = JBUI.Borders.emptyTop(6)
+            list.border = JBUI.Borders.emptyTop(8)
             items.forEach { item ->
                 list.add(createTraceDetailBlock(item, forceVerbose = true, showVerboseToggle = false))
             }
@@ -380,26 +385,30 @@ open class ChatMessagePanel(
     private fun createTraceItemRow(item: StreamingTraceAssembler.TraceItem): JPanel {
         val row = JPanel(BorderLayout())
         row.isOpaque = true
-        row.background = JBColor(
-            java.awt.Color(244, 248, 254),
-            java.awt.Color(47, 54, 62),
+        row.background = traceRowBackgroundColor()
+        row.border = buildRoundedContainerBorder(
+            lineColor = traceRowBorderColor(),
+            arc = 10,
+            padding = JBUI.insets(6, 8, 6, 8),
         )
-        row.border = JBUI.Borders.empty(6, 8, 6, 8)
 
-        val header = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        val header = JPanel(BorderLayout())
         header.isOpaque = false
+
+        val headerLeft = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        headerLeft.isOpaque = false
 
         val icon = JBLabel(kindGlyph(item.kind))
         icon.foreground = kindColor(item.kind)
         icon.font = icon.font.deriveFont(12f)
-        header.add(icon)
+        headerLeft.add(icon)
 
         val kindLabel = JBLabel(
             "${kindLabel(item.kind)} · ${statusLabel(item.status)}"
         )
         kindLabel.font = kindLabel.font.deriveFont(java.awt.Font.BOLD, 11f)
         kindLabel.foreground = statusColor(item.status)
-        header.add(kindLabel)
+        headerLeft.add(kindLabel)
 
         if (item.fileAction != null && onWorkflowFileOpen != null) {
             val openBtn = JButton(
@@ -413,14 +422,21 @@ open class ChatMessagePanel(
             openBtn.addActionListener {
                 onWorkflowFileOpen.invoke(item.fileAction)
             }
-            header.add(openBtn)
+            headerLeft.add(openBtn)
         }
+        header.add(headerLeft, BorderLayout.CENTER)
+
+        val statusDot = JBLabel("●")
+        statusDot.foreground = statusColor(item.status)
+        statusDot.font = statusDot.font.deriveFont(10f)
+        statusDot.toolTipText = statusLabel(item.status)
+        header.add(statusDot, BorderLayout.EAST)
 
         row.add(header, BorderLayout.NORTH)
         row.add(createTraceDetailBlock(item), BorderLayout.CENTER)
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(5)
+            border = JBUI.Borders.emptyBottom(6)
             add(row, BorderLayout.CENTER)
         }
     }
@@ -432,7 +448,7 @@ open class ChatMessagePanel(
     ): JPanel {
         val block = JPanel(BorderLayout())
         block.isOpaque = false
-        block.border = JBUI.Borders.empty(2, 10, 2, 0)
+        block.border = JBUI.Borders.empty(4, 2, 2, 0)
 
         val key = entryKey(item)
         val verbose = forceVerbose || item.isVerbose
@@ -457,7 +473,17 @@ open class ChatMessagePanel(
         configureReadableTextPane(detailPane)
         detailPane.border = JBUI.Borders.empty()
         renderTraceDetail(detailPane, visibleText)
-        block.add(detailPane, BorderLayout.CENTER)
+
+        val detailHost = JPanel(BorderLayout())
+        detailHost.isOpaque = true
+        detailHost.background = traceDetailBackgroundColor()
+        detailHost.border = buildRoundedContainerBorder(
+            lineColor = traceDetailBorderColor(),
+            arc = 8,
+            padding = JBUI.insets(4, 8, 4, 8),
+        )
+        detailHost.add(detailPane, BorderLayout.CENTER)
+        block.add(detailHost, BorderLayout.CENTER)
 
         if (verbose && hasOverflow && showVerboseToggle) {
             val toggleText = if (collapsed) {
@@ -789,16 +815,16 @@ open class ChatMessagePanel(
     }
 
     private fun styleInlineActionButton(button: JButton) {
-        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.margin = JBUI.insets(1, 5, 1, 5)
         button.isFocusPainted = false
         button.isFocusable = false
         button.isOpaque = false
         button.isContentAreaFilled = false
-        button.border = JBUI.Borders.empty(0, 2)
+        button.border = JBUI.Borders.empty(1, 3, 1, 3)
         button.font = button.font.deriveFont(11f)
         button.foreground = JBColor(
-            java.awt.Color(57, 95, 151),
-            java.awt.Color(141, 190, 255),
+            java.awt.Color(78, 102, 132),
+            java.awt.Color(159, 189, 226),
         )
         button.putClientProperty("JButton.buttonType", "borderless")
     }
@@ -886,12 +912,12 @@ open class ChatMessagePanel(
 
     private fun getBackgroundColor(): java.awt.Color = when (role) {
         MessageRole.USER -> JBColor(
-            java.awt.Color(242, 247, 255),
-            java.awt.Color(37, 44, 55)
+            java.awt.Color(244, 248, 255),
+            java.awt.Color(41, 47, 58)
         )
         MessageRole.ASSISTANT -> JBColor(
-            java.awt.Color(244, 250, 244),
-            java.awt.Color(35, 47, 39)
+            java.awt.Color(249, 251, 253),
+            java.awt.Color(38, 44, 52)
         )
         MessageRole.SYSTEM -> JBColor(
             java.awt.Color(246, 247, 249),
@@ -901,6 +927,150 @@ open class ChatMessagePanel(
             java.awt.Color(255, 242, 242),
             java.awt.Color(62, 37, 37)
         )
+    }
+
+    private fun messageCardBorderColor(): java.awt.Color = when (role) {
+        MessageRole.USER -> JBColor(
+            java.awt.Color(222, 231, 246),
+            java.awt.Color(74, 85, 99),
+        )
+        MessageRole.ASSISTANT -> JBColor(
+            java.awt.Color(224, 230, 238),
+            java.awt.Color(74, 84, 96),
+        )
+        MessageRole.SYSTEM -> JBColor(
+            java.awt.Color(224, 228, 235),
+            java.awt.Color(80, 84, 90),
+        )
+        MessageRole.ERROR -> JBColor(
+            java.awt.Color(242, 215, 215),
+            java.awt.Color(110, 66, 66),
+        )
+    }
+
+    private fun traceCardBackgroundColor(): java.awt.Color = JBColor(
+        java.awt.Color(252, 253, 255),
+        java.awt.Color(42, 47, 55),
+    )
+
+    private fun traceCardBorderColor(): java.awt.Color = JBColor(
+        java.awt.Color(224, 230, 237),
+        java.awt.Color(76, 84, 95),
+    )
+
+    private fun outputCardBackgroundColor(): java.awt.Color = JBColor(
+        java.awt.Color(252, 253, 255),
+        java.awt.Color(41, 46, 53),
+    )
+
+    private fun outputCardBorderColor(): java.awt.Color = JBColor(
+        java.awt.Color(222, 228, 236),
+        java.awt.Color(73, 81, 92),
+    )
+
+    private fun traceRowBackgroundColor(): java.awt.Color = JBColor(
+        java.awt.Color(250, 252, 255),
+        java.awt.Color(46, 52, 60),
+    )
+
+    private fun traceRowBorderColor(): java.awt.Color = JBColor(
+        java.awt.Color(223, 229, 237),
+        java.awt.Color(77, 86, 98),
+    )
+
+    private fun traceDetailBackgroundColor(): java.awt.Color = JBColor(
+        java.awt.Color(247, 250, 255),
+        java.awt.Color(43, 49, 58),
+    )
+
+    private fun traceDetailBorderColor(): java.awt.Color = JBColor(
+        java.awt.Color(227, 233, 240),
+        java.awt.Color(76, 85, 98),
+    )
+
+    private fun createSummaryBadge(text: String): JBLabel {
+        val badge = JBLabel(text)
+        badge.isOpaque = true
+        badge.background = JBColor(
+            java.awt.Color(242, 246, 252),
+            java.awt.Color(56, 63, 74),
+        )
+        badge.foreground = JBColor(
+            java.awt.Color(86, 102, 122),
+            java.awt.Color(174, 190, 212),
+        )
+        badge.font = badge.font.deriveFont(10.5f)
+        badge.border = buildRoundedContainerBorder(
+            lineColor = JBColor(
+                java.awt.Color(219, 227, 236),
+                java.awt.Color(83, 94, 107),
+            ),
+            arc = 9,
+            padding = JBUI.insets(1, 6, 1, 6),
+        )
+        return badge
+    }
+
+    private fun buildRoundedContainerBorder(
+        lineColor: java.awt.Color,
+        arc: Int,
+        padding: Insets,
+    ): Border {
+        return CompoundBorder(
+            RoundedLineBorder(
+                lineColor = lineColor,
+                arc = arc,
+            ),
+            JBUI.Borders.empty(padding.top, padding.left, padding.bottom, padding.right),
+        )
+    }
+
+    private class RoundedLineBorder(
+        private val lineColor: java.awt.Color,
+        private val arc: Int,
+        private val thickness: Int = 1,
+    ) : AbstractBorder() {
+        override fun paintBorder(
+            c: Component?,
+            g: Graphics?,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+        ) {
+            val graphics = g as? Graphics2D ?: return
+            val g2 = graphics.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = lineColor
+            repeat(thickness.coerceAtLeast(1)) { index ->
+                g2.drawRoundRect(
+                    x + index,
+                    y + index,
+                    width - 1 - index * 2,
+                    height - 1 - index * 2,
+                    arc,
+                    arc,
+                )
+            }
+            g2.dispose()
+        }
+
+        override fun getBorderInsets(c: Component?): Insets = Insets(
+            thickness,
+            thickness,
+            thickness,
+            thickness,
+        )
+
+        override fun getBorderInsets(c: Component?, insets: Insets): Insets {
+            insets.set(
+                thickness,
+                thickness,
+                thickness,
+                thickness,
+            )
+            return insets
+        }
     }
 
     companion object {

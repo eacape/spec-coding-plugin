@@ -3,10 +3,7 @@ package com.eacape.speccodingplugin.ui.history
 import com.eacape.speccodingplugin.session.ConversationMessage
 import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.ConversationSession
-import com.eacape.speccodingplugin.session.SessionBranchComparison
 import com.eacape.speccodingplugin.session.SessionContextSnapshot
-import com.eacape.speccodingplugin.session.SessionExportFormat
-import com.eacape.speccodingplugin.session.SessionExportResult
 import com.eacape.speccodingplugin.session.SessionFilter
 import com.eacape.speccodingplugin.session.SessionSummary
 import com.intellij.openapi.project.Project
@@ -18,7 +15,6 @@ import io.mockk.verify
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.nio.file.Path
 
 class HistoryPanelTest {
 
@@ -39,8 +35,6 @@ class HistoryPanelTest {
             },
             listMessages = { _, _ -> emptyList() },
             deleteSession = { Result.success(Unit) },
-            getSession = { null },
-            exportSession = { _, _, _, _ -> Result.failure(IllegalStateException("unused")) },
             runSynchronously = true,
         )
 
@@ -79,8 +73,6 @@ class HistoryPanelTest {
                 }
             },
             deleteSession = { Result.success(Unit) },
-            getSession = { null },
-            exportSession = { _, _, _, _ -> Result.failure(IllegalStateException("unused")) },
             runSynchronously = true,
         )
 
@@ -102,8 +94,6 @@ class HistoryPanelTest {
             searchSessions = { _, _, _ -> listOf(summary(id = "del-1", title = "Delete me")) },
             listMessages = { _, _ -> emptyList() },
             deleteSession = { Result.failure(IllegalStateException("db down")) },
-            getSession = { null },
-            exportSession = { _, _, _, _ -> Result.failure(IllegalStateException("unused")) },
             runSynchronously = true,
         )
 
@@ -113,50 +103,6 @@ class HistoryPanelTest {
 
         assertEquals("del-1", panel.selectedSessionIdForTest())
         assertTrue(panel.statusTextForTest().contains("db down"))
-
-        panel.dispose()
-    }
-
-    @Test
-    fun `export action should use injected exporter and update status`() {
-        val exported = mutableListOf<Pair<String, SessionExportFormat>>()
-
-        val panel = HistoryPanel(
-            project = fakeProject(),
-            searchSessions = { _, _, _ -> listOf(summary(id = "exp-1", title = "Export me")) },
-            listMessages = { sessionId, _ -> listOf(message(sessionId, ConversationRole.USER, "payload")) },
-            deleteSession = { Result.success(Unit) },
-            getSession = { sessionId ->
-                ConversationSession(
-                    id = sessionId,
-                    title = "Export me",
-                    specTaskId = null,
-                    worktreeId = null,
-                    modelProvider = "openai",
-                    createdAt = 1L,
-                    updatedAt = 2L,
-                )
-            },
-            exportSession = { _, session, _, format ->
-                exported += session.id to format
-                Result.success(
-                    SessionExportResult(
-                        format = format,
-                        filePath = Path.of("D:/repo/.spec-coding/exports/${session.id}.md"),
-                        messageCount = 1,
-                        bytesWritten = 12,
-                    )
-                )
-            },
-            runSynchronously = true,
-        )
-
-        panel.refreshSessions()
-        panel.selectSessionForTest("exp-1")
-        panel.clickExportForTest()
-
-        assertEquals(listOf("exp-1" to SessionExportFormat.MARKDOWN), exported)
-        assertTrue(panel.statusTextForTest().contains("exp-1"))
 
         panel.dispose()
     }
@@ -173,21 +119,6 @@ class HistoryPanelTest {
             searchSessions = { _, _, _ -> sessions.toList() },
             listMessages = { _, _ -> emptyList() },
             deleteSession = { Result.success(Unit) },
-            getSession = { sessionId ->
-                if (sessionId == "s-root") {
-                    ConversationSession(
-                        id = "s-root",
-                        title = "Root",
-                        specTaskId = null,
-                        worktreeId = null,
-                        modelProvider = "openai",
-                        createdAt = 1L,
-                        updatedAt = 2L,
-                    )
-                } else {
-                    null
-                }
-            },
             forkSession = { sourceSessionId, fromMessageId, _ ->
                 forkedMessages += sourceSessionId to fromMessageId
                 sessions.add(
@@ -212,7 +143,6 @@ class HistoryPanelTest {
                     )
                 )
             },
-            exportSession = { _, _, _, _ -> Result.failure(IllegalStateException("unused")) },
             runSynchronously = true,
         )
 
@@ -238,21 +168,6 @@ class HistoryPanelTest {
             searchSessions = { _, _, _ -> sessions.toList() },
             listMessages = { _, _ -> emptyList() },
             deleteSession = { Result.success(Unit) },
-            getSession = { sessionId ->
-                if (sessionId == "s-root") {
-                    ConversationSession(
-                        id = "s-root",
-                        title = "Root",
-                        specTaskId = null,
-                        worktreeId = null,
-                        modelProvider = "openai",
-                        createdAt = 1L,
-                        updatedAt = 2L,
-                    )
-                } else {
-                    null
-                }
-            },
             saveContextSnapshot = { sessionId, _, _, _ ->
                 snapshots += sessionId
                 Result.success(
@@ -291,7 +206,6 @@ class HistoryPanelTest {
                     )
                 )
             },
-            exportSession = { _, _, _, _ -> Result.failure(IllegalStateException("unused")) },
             runSynchronously = true,
         )
 
@@ -303,69 +217,6 @@ class HistoryPanelTest {
         assertEquals(listOf("snap-1"), continuations)
         assertEquals("s-continue", panel.selectedSessionIdForTest())
         assertTrue(panel.statusTextForTest().contains("Root [continue]"))
-
-        panel.dispose()
-    }
-
-    @Test
-    fun `compare action should render comparison summary`() {
-        val panel = HistoryPanel(
-            project = fakeProject(),
-            searchSessions = { _, _, _ -> listOf(summary(id = "child", title = "Child", parentSessionId = "root")) },
-            listMessages = { _, _ -> emptyList() },
-            deleteSession = { Result.success(Unit) },
-            getSession = { sessionId ->
-                when (sessionId) {
-                    "child" -> ConversationSession(
-                        id = "child",
-                        title = "Child",
-                        specTaskId = null,
-                        worktreeId = null,
-                        modelProvider = "openai",
-                        parentSessionId = "root",
-                        branchFromMessageId = "m-1",
-                        branchName = "proposal-b",
-                        createdAt = 2L,
-                        updatedAt = 3L,
-                    )
-                    "root" -> ConversationSession(
-                        id = "root",
-                        title = "Root",
-                        specTaskId = null,
-                        worktreeId = null,
-                        modelProvider = "openai",
-                        createdAt = 1L,
-                        updatedAt = 2L,
-                    )
-                    else -> null
-                }
-            },
-            compareSessions = { left, right ->
-                assertEquals("child", left)
-                assertEquals("root", right)
-                Result.success(
-                    SessionBranchComparison(
-                        leftSessionId = left,
-                        rightSessionId = right,
-                        commonPrefixCount = 2,
-                        leftOnlyCount = 1,
-                        rightOnlyCount = 1,
-                        leftPreview = "current proposal",
-                        rightPreview = "baseline proposal",
-                    )
-                )
-            },
-            exportSession = { _, _, _, _ -> Result.failure(IllegalStateException("unused")) },
-            runSynchronously = true,
-        )
-
-        panel.refreshSessions()
-        panel.selectSessionForTest("child")
-        panel.clickCompareForTest()
-
-        assertTrue(panel.statusTextForTest().contains("Root"))
-        assertTrue(panel.detailTextForTest().contains("current proposal"))
-        assertTrue(panel.detailTextForTest().contains("baseline proposal"))
 
         panel.dispose()
     }

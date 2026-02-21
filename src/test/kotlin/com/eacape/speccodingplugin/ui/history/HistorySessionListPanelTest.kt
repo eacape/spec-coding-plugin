@@ -1,7 +1,6 @@
 package com.eacape.speccodingplugin.ui.history
 
 import com.eacape.speccodingplugin.session.SessionSummary
-import com.eacape.speccodingplugin.session.SessionExportFormat
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -15,10 +14,8 @@ class HistorySessionListPanelTest {
             onSessionSelected = {},
             onOpenSession = {},
             onContinueSession = {},
-            onExportSession = { _, _ -> },
             onDeleteSession = {},
             onBranchSession = {},
-            onCompareSession = {},
         )
 
         panel.updateSessions(
@@ -37,8 +34,6 @@ class HistorySessionListPanelTest {
         assertTrue(selectedState["openEnabled"] == true)
         assertTrue(selectedState["continueEnabled"] == true)
         assertTrue(selectedState["branchEnabled"] == true)
-        assertTrue(selectedState["compareEnabled"] == true)
-        assertTrue(selectedState["exportEnabled"] == true)
         assertTrue(selectedState["deleteEnabled"] == true)
 
         panel.setSelectedSession(null)
@@ -46,8 +41,6 @@ class HistorySessionListPanelTest {
         assertFalse(noSelectionState["openEnabled"] == true)
         assertFalse(noSelectionState["continueEnabled"] == true)
         assertFalse(noSelectionState["branchEnabled"] == true)
-        assertFalse(noSelectionState["compareEnabled"] == true)
-        assertFalse(noSelectionState["exportEnabled"] == true)
         assertFalse(noSelectionState["deleteEnabled"] == true)
     }
 
@@ -56,18 +49,14 @@ class HistorySessionListPanelTest {
         val opened = mutableListOf<String>()
         val continued = mutableListOf<String>()
         val branched = mutableListOf<String>()
-        val compared = mutableListOf<String>()
-        val exported = mutableListOf<Pair<String, SessionExportFormat>>()
         val deleted = mutableListOf<String>()
 
         val panel = HistorySessionListPanel(
             onSessionSelected = {},
             onOpenSession = { opened += it },
             onContinueSession = { continued += it },
-            onExportSession = { id, format -> exported += id to format },
             onDeleteSession = { deleted += it },
             onBranchSession = { branched += it },
-            onCompareSession = { compared += it },
         )
 
         panel.updateSessions(listOf(summary(id = "session-a", title = "A", msgCount = 3)))
@@ -76,15 +65,11 @@ class HistorySessionListPanelTest {
         panel.clickOpenForTest()
         panel.clickContinueForTest()
         panel.clickBranchForTest()
-        panel.clickCompareForTest()
-        panel.clickExportForTest()
         panel.clickDeleteForTest()
 
         assertEquals(listOf("session-a"), opened)
         assertEquals(listOf("session-a"), continued)
         assertEquals(listOf("session-a"), branched)
-        assertEquals(listOf("session-a"), compared)
-        assertEquals(listOf("session-a" to SessionExportFormat.MARKDOWN), exported)
         assertEquals(listOf("session-a"), deleted)
     }
 
@@ -94,10 +79,8 @@ class HistorySessionListPanelTest {
             onSessionSelected = {},
             onOpenSession = {},
             onContinueSession = {},
-            onExportSession = { _, _ -> },
             onDeleteSession = {},
             onBranchSession = {},
-            onCompareSession = {},
         )
 
         panel.updateSessions(

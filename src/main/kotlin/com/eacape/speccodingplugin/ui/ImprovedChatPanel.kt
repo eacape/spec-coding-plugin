@@ -2235,8 +2235,9 @@ class ImprovedChatPanel(
         sendButton.isFocusable = false
         sendButton.isFocusPainted = false
         sendButton.margin = JBUI.emptyInsets()
-        sendButton.preferredSize = JBDimension(30, 28)
-        sendButton.minimumSize = JBDimension(30, 28)
+        sendButton.preferredSize = ACTION_ICON_BUTTON_SIZE
+        sendButton.minimumSize = ACTION_ICON_BUTTON_SIZE
+        sendButton.maximumSize = ACTION_ICON_BUTTON_SIZE
         sendButton.putClientProperty("JButton.buttonType", "toolbar")
         refreshActionButtonTexts()
     }
@@ -2246,11 +2247,11 @@ class ImprovedChatPanel(
         specSidebarToggleButton.isFocusable = false
         specSidebarToggleButton.isFocusPainted = false
         specSidebarToggleButton.margin = JBUI.emptyInsets()
-        specSidebarToggleButton.preferredSize = JBDimension(28, 24)
-        specSidebarToggleButton.minimumSize = JBDimension(28, 24)
-        specSidebarToggleButton.maximumSize = JBDimension(28, 24)
+        specSidebarToggleButton.preferredSize = ACTION_ICON_BUTTON_SIZE
+        specSidebarToggleButton.minimumSize = ACTION_ICON_BUTTON_SIZE
+        specSidebarToggleButton.maximumSize = ACTION_ICON_BUTTON_SIZE
         specSidebarToggleButton.text = ""
-        specSidebarToggleButton.putClientProperty("JButton.buttonType", "borderless")
+        specSidebarToggleButton.putClientProperty("JButton.buttonType", "toolbar")
         specSidebarToggleButton.addActionListener { toggleSpecSidebar() }
         updateSpecSidebarToggleButtonTexts()
     }
@@ -3089,6 +3090,7 @@ class ImprovedChatPanel(
     companion object {
         private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"
         private val HISTORY_CONTENT_DATA_KEY = Key.create<String>(HISTORY_CONTENT_KEY)
+        private val ACTION_ICON_BUTTON_SIZE = JBDimension(28, 24)
         private const val MAX_CONVERSATION_HISTORY = 240
         private const val MAX_RESTORED_MESSAGES = 240
         private const val SESSION_LOAD_FETCH_LIMIT = 5000
