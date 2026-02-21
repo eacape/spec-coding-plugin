@@ -104,11 +104,11 @@ internal class SpecCardMessagePanel(
         wrapper.background = JBColor(Color(245, 249, 245), Color(38, 49, 40))
         wrapper.border = JBUI.Borders.compound(
             JBUI.Borders.customLine(
-                JBColor(Color(225, 230, 238), Color(68, 74, 82)),
-                0,
-                0,
+                JBColor(Color(210, 219, 231), Color(89, 97, 108)),
                 1,
-                0,
+                1,
+                1,
+                1,
             ),
             JBUI.Borders.empty(8, 10, 8, 10),
         )

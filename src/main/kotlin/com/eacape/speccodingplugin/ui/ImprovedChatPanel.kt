@@ -63,8 +63,6 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.thisLogger
-import com.intellij.openapi.fileChooser.FileChooser
-import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
@@ -93,23 +91,37 @@ import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.Image
 import java.awt.RenderingHints
+import java.awt.Toolkit
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
+import java.awt.event.ActionEvent
+import java.awt.event.InputEvent
+import java.awt.event.KeyEvent
+import java.awt.image.BufferedImage
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.InputStream
 import java.nio.file.Paths
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.imageio.ImageIO
+import javax.swing.AbstractAction
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JSplitPane
+import javax.swing.KeyStroke
 import javax.swing.Timer
 import javax.swing.JComponent
 import javax.swing.plaf.basic.BasicSplitPaneDivider
 import javax.swing.plaf.basic.BasicSplitPaneUI
+import javax.swing.text.DefaultEditorKit
 
 /**
  * 改进版 Chat Tool Window Panel
@@ -169,15 +181,15 @@ class ImprovedChatPanel(
     private val chatSplitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
     private val specSidebarToggleButton = JButton()
     private val contextPreviewPanel = ContextPreviewPanel(project)
-    private val imageAttachmentPreviewPanel = ImageAttachmentPreviewPanel()
+    private val imageAttachmentPreviewPanel = ImageAttachmentPreviewPanel(onRemove = ::removeTransientClipboardImageIfNeeded)
     private val composerHintLabel = JBLabel(SpecCodingBundle.message("toolwindow.composer.hint"))
     private lateinit var inputField: SmartInputField
-    private val imageAttachButton = JButton()
     private val sendButton = JButton()
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var statusAutoHideTimer: Timer? = null
     private var dividerPersistTimer: Timer? = null
     private val runningWorkflowCommands = ConcurrentHashMap<String, RunningWorkflowCommand>()
+    private val transientClipboardImagePaths = mutableSetOf<String>()
 
     // Session state
     private val conversationHistory = mutableListOf<LlmMessage>()
@@ -322,6 +334,15 @@ class ImprovedChatPanel(
     }
 
     private fun setupUI() {
+        val shellBorderColor = JBColor(
+            Color(218, 224, 233),
+            Color(78, 84, 93),
+        )
+        val composerSurfaceColor = JBColor(
+            Color(252, 252, 253),
+            Color(43, 45, 49),
+        )
+
         // Model and interaction setup
         providerComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create<String> { label, value, _ ->
             label.text = providerDisplayName(value)
@@ -354,19 +375,21 @@ class ImprovedChatPanel(
         statusLabel.font = JBUI.Fonts.smallFont()
         statusLabel.isVisible = false
         configureActionButtons()
-        configureImageAttachButton()
+        configureClipboardImagePaste()
         updateComboTooltips()
 
         sendButton.addActionListener { sendCurrentInput() }
 
         // Conversation area fills the top
-        conversationHostPanel.isOpaque = false
+        conversationHostPanel.isOpaque = true
         conversationScrollPane.border = JBUI.Borders.empty()
         messagesPanel.isOpaque = true
         messagesPanel.background = JBColor(
             java.awt.Color(247, 248, 250),
             java.awt.Color(34, 36, 39),
         )
+        conversationHostPanel.background = messagesPanel.background
+        conversationHostPanel.border = JBUI.Borders.customLine(shellBorderColor, 1, 1, 0, 1)
         conversationScrollPane.viewport.isOpaque = true
         conversationScrollPane.viewport.background = messagesPanel.background
 
@@ -415,7 +438,6 @@ class ImprovedChatPanel(
         val controlsRightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 2))
         controlsRightPanel.isOpaque = false
         controlsRightPanel.add(statusLabel)
-        controlsRightPanel.add(imageAttachButton)
         controlsRightPanel.add(specSidebarToggleButton)
         controlsRightPanel.add(sendButton)
 
@@ -427,20 +449,14 @@ class ImprovedChatPanel(
 
         val composerContainer = JPanel(BorderLayout())
         composerContainer.isOpaque = true
-        composerContainer.background = JBColor(
-            java.awt.Color(252, 252, 253),
-            java.awt.Color(43, 45, 49),
-        )
+        composerContainer.background = composerSurfaceColor
         composerContainer.border = JBUI.Borders.compound(
             JBUI.Borders.customLine(
-                JBColor(
-                    java.awt.Color(224, 228, 234),
-                    java.awt.Color(69, 73, 80),
-                ),
+                shellBorderColor,
                 1,
-                0,
-                0,
-                0,
+                1,
+                1,
+                1,
             ),
             JBUI.Borders.empty(8, 10),
         )
@@ -449,8 +465,12 @@ class ImprovedChatPanel(
 
         val bottomPanel = JPanel()
         bottomPanel.layout = BoxLayout(bottomPanel, BoxLayout.Y_AXIS)
-        bottomPanel.isOpaque = false
-        bottomPanel.border = JBUI.Borders.emptyTop(8)
+        bottomPanel.isOpaque = true
+        bottomPanel.background = composerSurfaceColor
+        bottomPanel.border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(shellBorderColor, 1, 1, 1, 1),
+            JBUI.Borders.empty(8, 10, 8, 10),
+        )
         bottomPanel.add(contextPreviewPanel)
         bottomPanel.add(imageAttachmentPreviewPanel)
         bottomPanel.add(composerContainer)
@@ -479,7 +499,7 @@ class ImprovedChatPanel(
         // Check for slash commands
         if (rawInput.startsWith("/")) {
             if (selectedImagePaths.isNotEmpty()) {
-                imageAttachmentPreviewPanel.clear()
+                clearImageAttachments()
                 showStatus(
                     SpecCodingBundle.message("toolwindow.image.attach.ignored.command"),
                     autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
@@ -492,7 +512,7 @@ class ImprovedChatPanel(
         val interactionMode = interactionModeComboBox.selectedItem as? ChatInteractionMode ?: ChatInteractionMode.VIBE
         if (interactionMode == ChatInteractionMode.SPEC) {
             if (selectedImagePaths.isNotEmpty()) {
-                imageAttachmentPreviewPanel.clear()
+                clearImageAttachments()
                 showStatus(
                     SpecCodingBundle.message("toolwindow.image.attach.ignored.spec"),
                     autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
@@ -523,7 +543,7 @@ class ImprovedChatPanel(
         val explicitItems = loadExplicitItemContents(contextPreviewPanel.getItems())
         val contextSnapshot = contextCollector.collectForItems(explicitItems)
         contextPreviewPanel.clear()
-        imageAttachmentPreviewPanel.clear()
+        clearImageAttachments(purgeTransientFiles = false)
 
         // Add user message to history
         val userMessage = LlmMessage(LlmRole.USER, chatInput)
@@ -535,15 +555,16 @@ class ImprovedChatPanel(
         appendUserMessage(visibleInput)
         inputField.text = ""
 
+        val beforeSnapshot = captureWorkspaceSnapshot()
         setSendingState(true)
         currentAssistantPanel = addAssistantMessage()
 
         scope.launch {
+            val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
             try {
                 val assistantContent = StringBuilder()
                 val pendingDelta = StringBuilder()
                 val pendingEvents = mutableListOf<ChatStreamEvent>()
-                val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
                 var pendingChunks = 0
                 var lastFlushAtNanos = System.nanoTime()
 
@@ -638,10 +659,18 @@ class ImprovedChatPanel(
                     )
                 }
             } finally {
+                persistAssistantResponseChangeset(
+                    requestText = visibleInput,
+                    providerId = providerId,
+                    modelId = modelId,
+                    beforeSnapshot = beforeSnapshot,
+                    hasExecutionTrace = streamedTraceEvents.isNotEmpty(),
+                )
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
+                    cleanupTransientClipboardImages(selectedImagePaths)
                     setSendingState(false)
                 }
             }
@@ -653,36 +682,247 @@ class ImprovedChatPanel(
         val templates: List<PromptTemplate>,
     )
 
-    private fun chooseImageAttachments() {
-        if (project.isDisposed || _isDisposed) return
-        val descriptor = FileChooserDescriptor(true, false, false, false, true, false).apply {
-            title = SpecCodingBundle.message("toolwindow.image.attach.dialog.title")
-            description = SpecCodingBundle.message("toolwindow.image.attach.dialog.description")
-            withFileFilter { file ->
-                !file.isDirectory && isSupportedImageExtension(file.name)
+    private fun configureClipboardImagePaste() {
+        val focusedInputMap = inputField.getInputMap(JComponent.WHEN_FOCUSED)
+        val ancestorInputMap = inputField.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+        val actionMap = inputField.actionMap
+        val defaultPasteAction = actionMap.get(DefaultEditorKit.pasteAction)
+        val shortcutMask = runCatching { Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx }
+            .getOrDefault(InputEvent.CTRL_DOWN_MASK)
+        val pasteAction = object : AbstractAction() {
+            override fun actionPerformed(e: ActionEvent?) {
+                if (tryPasteImageAttachmentsFromClipboard()) {
+                    return
+                }
+                defaultPasteAction?.actionPerformed(e) ?: inputField.paste()
             }
         }
-        val selectedFiles = FileChooser.chooseFiles(descriptor, project, null)
-        if (selectedFiles.isEmpty()) {
-            return
-        }
+        focusedInputMap.put(
+            KeyStroke.getKeyStroke(KeyEvent.VK_V, shortcutMask),
+            ACTION_PASTE_IMAGE_OR_TEXT,
+        )
+        focusedInputMap.put(
+            KeyStroke.getKeyStroke(KeyEvent.VK_INSERT, InputEvent.SHIFT_DOWN_MASK),
+            ACTION_PASTE_IMAGE_OR_TEXT,
+        )
+        ancestorInputMap.put(
+            KeyStroke.getKeyStroke(KeyEvent.VK_V, shortcutMask),
+            ACTION_PASTE_IMAGE_OR_TEXT,
+        )
+        actionMap.put(ACTION_PASTE_IMAGE_OR_TEXT, pasteAction)
+        // Also intercept paste invoked from popup menu / editor kit action.
+        actionMap.put(DefaultEditorKit.pasteAction, pasteAction)
+    }
 
-        val normalizedPaths = selectedFiles
-            .mapNotNull { normalizeImagePath(it.path) }
-            .distinct()
-        if (normalizedPaths.isEmpty()) {
+    private fun tryPasteImageAttachmentsFromClipboard(): Boolean {
+        if (project.isDisposed || _isDisposed) return false
+        val clipboardContent = runCatching {
+            Toolkit.getDefaultToolkit().systemClipboard.getContents(null)
+        }.getOrNull() ?: return false
+
+        val fileListImagePaths = extractImagePathsFromClipboardFiles(clipboardContent)
+        if (fileListImagePaths.isNotEmpty()) {
+            imageAttachmentPreviewPanel.addImagePaths(fileListImagePaths)
+            showStatus(
+                SpecCodingBundle.message("toolwindow.image.attach.added", fileListImagePaths.size),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return true
+        }
+        val textImagePaths = extractImagePathsFromClipboardText(clipboardContent)
+        if (textImagePaths.isNotEmpty()) {
+            imageAttachmentPreviewPanel.addImagePaths(textImagePaths)
+            showStatus(
+                SpecCodingBundle.message("toolwindow.image.attach.added", textImagePaths.size),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return true
+        }
+        if (clipboardContent.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
             showStatus(
                 SpecCodingBundle.message("toolwindow.image.attach.unsupported"),
                 autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
             )
-            return
+            return true
         }
 
-        imageAttachmentPreviewPanel.addImagePaths(normalizedPaths)
+        val clipboardImage = extractClipboardImage(clipboardContent) ?: return false
+        val tempImagePath = persistClipboardImage(clipboardImage)
+        if (tempImagePath == null) {
+            showStatus(
+                SpecCodingBundle.message("toolwindow.image.attach.unsupported"),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return true
+        }
+        imageAttachmentPreviewPanel.addImagePaths(listOf(tempImagePath))
+        transientClipboardImagePaths += normalizedPathKey(tempImagePath)
         showStatus(
-            SpecCodingBundle.message("toolwindow.image.attach.added", normalizedPaths.size),
+            SpecCodingBundle.message("toolwindow.image.attach.added", 1),
             autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
         )
+        return true
+    }
+
+    private fun extractImagePathsFromClipboardFiles(transferable: Transferable): List<String> {
+        if (!transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+            return emptyList()
+        }
+        val files = runCatching {
+            transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<*>
+        }.getOrNull().orEmpty()
+        return files.mapNotNull { item ->
+            val rawPath = when (item) {
+                is File -> item.path
+                is java.nio.file.Path -> item.toString()
+                is String -> item
+                else -> null
+            } ?: return@mapNotNull null
+            normalizeImagePath(rawPath)
+        }.distinct()
+    }
+
+    private fun extractImagePathsFromClipboardText(transferable: Transferable): List<String> {
+        if (!transferable.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+            return emptyList()
+        }
+        val rawText = runCatching {
+            transferable.getTransferData(DataFlavor.stringFlavor) as? String
+        }.getOrNull()?.trim().orEmpty()
+        if (rawText.isBlank()) {
+            return emptyList()
+        }
+        return rawText
+            .lineSequence()
+            .map { it.trim().trim('"') }
+            .filter { it.isNotBlank() }
+            .mapNotNull { normalizeImagePath(it) }
+            .distinct()
+            .toList()
+    }
+
+    private fun extractClipboardImage(transferable: Transferable): Image? {
+        val directImage = if (transferable.isDataFlavorSupported(DataFlavor.imageFlavor)) {
+            runCatching {
+                transferable.getTransferData(DataFlavor.imageFlavor) as? Image
+            }.getOrNull()
+        } else {
+            null
+        }
+        if (directImage != null) {
+            return directImage
+        }
+
+        transferable.transferDataFlavors.forEach { flavor ->
+            val isImageLike = flavor.primaryType.equals("image", ignoreCase = true) ||
+                flavor.mimeType.contains("image", ignoreCase = true)
+            if (!isImageLike) return@forEach
+
+            val data = runCatching { transferable.getTransferData(flavor) }.getOrNull() ?: return@forEach
+            when (data) {
+                is Image -> return data
+                is ByteArray -> {
+                    val decoded = decodeImageFromBytes(data)
+                    if (decoded != null) return decoded
+                }
+                is InputStream -> {
+                    val decoded = decodeImageFromInputStream(data)
+                    if (decoded != null) return decoded
+                }
+                is java.nio.ByteBuffer -> {
+                    val remaining = data.remaining()
+                    if (remaining > 0) {
+                        val bytes = ByteArray(remaining)
+                        data.get(bytes)
+                        val decoded = decodeImageFromBytes(bytes)
+                        if (decoded != null) return decoded
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private fun decodeImageFromBytes(bytes: ByteArray): BufferedImage? {
+        if (bytes.isEmpty()) return null
+        return runCatching {
+            ByteArrayInputStream(bytes).use { stream ->
+                ImageIO.read(stream)
+            }
+        }.getOrNull()
+    }
+
+    private fun decodeImageFromInputStream(inputStream: InputStream): BufferedImage? {
+        return runCatching {
+            inputStream.use { stream ->
+                ImageIO.read(stream)
+            }
+        }.getOrNull()
+    }
+
+    private fun persistClipboardImage(image: Image): String? {
+        val bufferedImage = toBufferedImage(image) ?: return null
+        val tempDir = File(System.getProperty("java.io.tmpdir"), CLIPBOARD_IMAGE_TEMP_DIR_NAME)
+        if (!tempDir.exists() && !tempDir.mkdirs()) return null
+
+        val tempFile = File(tempDir, "spec-clipboard-${UUID.randomUUID()}.png")
+        val written = runCatching {
+            ImageIO.write(bufferedImage, "png", tempFile)
+        }.getOrElse { false }
+        if (!written) return null
+        tempFile.deleteOnExit()
+        return normalizeImagePath(tempFile.path)
+    }
+
+    private fun toBufferedImage(image: Image): BufferedImage? {
+        val width = image.getWidth(null)
+        val height = image.getHeight(null)
+        if (width <= 0 || height <= 0) return null
+        if (image is BufferedImage) return image
+
+        val buffered = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+        val graphics = buffered.createGraphics()
+        try {
+            graphics.drawImage(image, 0, 0, null)
+        } finally {
+            graphics.dispose()
+        }
+        return buffered
+    }
+
+    private fun clearImageAttachments(purgeTransientFiles: Boolean = true) {
+        val existingImagePaths = imageAttachmentPreviewPanel.getImagePaths()
+        imageAttachmentPreviewPanel.clear()
+        if (purgeTransientFiles) {
+            cleanupTransientClipboardImages(existingImagePaths)
+        }
+    }
+
+    private fun cleanupTransientClipboardImages(paths: List<String>) {
+        paths.forEach { path ->
+            removeTransientClipboardImageIfNeeded(path)
+        }
+    }
+
+    private fun removeTransientClipboardImageIfNeeded(path: String) {
+        val key = normalizedPathKey(path)
+        if (key.isBlank()) return
+        if (!transientClipboardImagePaths.remove(key)) return
+        runCatching {
+            val file = File(path)
+            if (file.exists()) {
+                file.delete()
+            }
+        }
+    }
+
+    private fun normalizedPathKey(path: String): String {
+        val trimmed = path.trim()
+        if (trimmed.isBlank()) return ""
+        val normalized = runCatching {
+            Paths.get(trimmed).toAbsolutePath().normalize().toString()
+        }.getOrElse { trimmed }
+        return normalized.lowercase(Locale.ROOT)
     }
 
     private fun isSupportedImageExtension(fileName: String): Boolean {
@@ -1742,7 +1982,7 @@ class ImprovedChatPanel(
         specSidebarPanel.clearFocusedWorkflow()
         messagesPanel.clearAll()
         contextPreviewPanel.clear()
-        imageAttachmentPreviewPanel.clear()
+        clearImageAttachments()
         inputField.text = ""
         currentAssistantPanel = null
     }
@@ -1801,7 +2041,7 @@ class ImprovedChatPanel(
         conversationHistory.clear()
         messagesPanel.clearAll()
         contextPreviewPanel.clear()
-        imageAttachmentPreviewPanel.clear()
+        clearImageAttachments()
         currentAssistantPanel = null
 
         for (message in messages) {
@@ -2343,8 +2583,6 @@ class ImprovedChatPanel(
     private fun refreshActionButtonTexts() {
         sendButton.toolTipText = SpecCodingBundle.message("toolwindow.send")
         sendButton.accessibleContext.accessibleName = sendButton.toolTipText
-        imageAttachButton.toolTipText = SpecCodingBundle.message("toolwindow.image.attach.tooltip")
-        imageAttachButton.accessibleContext.accessibleName = imageAttachButton.toolTipText
     }
 
     private fun configureActionButtons() {
@@ -2357,20 +2595,6 @@ class ImprovedChatPanel(
         sendButton.minimumSize = ACTION_ICON_BUTTON_SIZE
         sendButton.maximumSize = ACTION_ICON_BUTTON_SIZE
         sendButton.putClientProperty("JButton.buttonType", "toolbar")
-        refreshActionButtonTexts()
-    }
-
-    private fun configureImageAttachButton() {
-        imageAttachButton.icon = AllIcons.FileTypes.Image
-        imageAttachButton.text = ""
-        imageAttachButton.isFocusable = false
-        imageAttachButton.isFocusPainted = false
-        imageAttachButton.margin = JBUI.emptyInsets()
-        imageAttachButton.preferredSize = ACTION_ICON_BUTTON_SIZE
-        imageAttachButton.minimumSize = ACTION_ICON_BUTTON_SIZE
-        imageAttachButton.maximumSize = ACTION_ICON_BUTTON_SIZE
-        imageAttachButton.putClientProperty("JButton.buttonType", "toolbar")
-        imageAttachButton.addActionListener { chooseImageAttachments() }
         refreshActionButtonTexts()
     }
 
@@ -2954,7 +3178,6 @@ class ImprovedChatPanel(
         }.getOrNull() ?: return
 
         val changes = WorkspaceChangesetCollector.diff(root, before, after)
-        if (changes.isEmpty()) return
 
         val status = when {
             execution.stoppedByUser -> "stopped"
@@ -2972,6 +3195,7 @@ class ImprovedChatPanel(
         if (execution.timedOut) metadata["timedOut"] = "true"
         if (execution.stoppedByUser) metadata["stoppedByUser"] = "true"
         if (execution.outputTruncated) metadata["outputTruncated"] = "true"
+        if (changes.isEmpty()) metadata["noFileChange"] = "true"
 
         val changeset = Changeset(
             id = UUID.randomUUID().toString(),
@@ -2983,6 +3207,70 @@ class ImprovedChatPanel(
             changesetStore.save(changeset)
         }.onFailure {
             logger.warn("Failed to persist workflow command changeset", it)
+        }
+    }
+
+    private fun persistAssistantResponseChangeset(
+        requestText: String,
+        providerId: String?,
+        modelId: String?,
+        beforeSnapshot: WorkspaceChangesetCollector.Snapshot?,
+        hasExecutionTrace: Boolean,
+    ) {
+        val before = beforeSnapshot ?: return
+        val basePath = project.basePath ?: return
+        val root = runCatching { Paths.get(basePath).toAbsolutePath().normalize() }.getOrNull() ?: return
+
+        val after = runCatching {
+            WorkspaceChangesetCollector.capture(root)
+        }.onFailure {
+            logger.debug("Failed to capture workspace snapshot after assistant response", it)
+        }.getOrNull() ?: return
+
+        val changes = WorkspaceChangesetCollector.diff(root, before, after)
+        if (changes.isEmpty() && !hasExecutionTrace) {
+            return
+        }
+
+        val requestSummary = requestText
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .joinToString(" ") { it.trim() }
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(ASSISTANT_CHANGESET_REQUEST_MAX_LENGTH)
+            .ifBlank { SpecCodingBundle.message("common.unknown") }
+
+        val metadata = linkedMapOf(
+            "source" to "assistant-response",
+            "request" to requestSummary,
+        )
+        providerId
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { metadata["provider"] = it }
+        modelId
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { metadata["model"] = it }
+        if (hasExecutionTrace) {
+            metadata["trace"] = "true"
+        }
+        if (changes.isEmpty()) {
+            metadata["status"] = "no-file-change"
+        }
+
+        val changeset = Changeset(
+            id = UUID.randomUUID().toString(),
+            description = "Response: $requestSummary",
+            changes = changes,
+            metadata = metadata,
+        )
+        runCatching {
+            changesetStore.save(changeset)
+        }.onFailure {
+            logger.warn("Failed to persist assistant response changeset", it)
         }
     }
 
@@ -3166,15 +3454,16 @@ class ImprovedChatPanel(
         val providerId = providerComboBox.selectedItem as? String
         val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id
         val operationMode = modeManager.getCurrentMode()
+        val beforeSnapshot = captureWorkspaceSnapshot()
         setSendingState(true)
         currentAssistantPanel = addAssistantMessage()
 
         scope.launch {
+            val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
             try {
                 val assistantContent = StringBuilder()
                 val pendingDelta = StringBuilder()
                 val pendingEvents = mutableListOf<ChatStreamEvent>()
-                val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
                 var pendingChunks = 0
                 var lastFlushAtNanos = System.nanoTime()
 
@@ -3262,6 +3551,13 @@ class ImprovedChatPanel(
                     addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
                 }
             } finally {
+                persistAssistantResponseChangeset(
+                    requestText = userInput,
+                    providerId = providerId,
+                    modelId = modelId,
+                    beforeSnapshot = beforeSnapshot,
+                    hasExecutionTrace = streamedTraceEvents.isNotEmpty(),
+                )
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
@@ -3315,6 +3611,7 @@ class ImprovedChatPanel(
             }
         }
         runningWorkflowCommands.clear()
+        clearImageAttachments()
         CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
         scope.cancel()
     }
@@ -3407,10 +3704,13 @@ class ImprovedChatPanel(
         private const val WORKFLOW_COMMAND_STOP_GRACE_SECONDS = 3L
         private const val WORKFLOW_COMMAND_OUTPUT_MAX_CHARS = 12_000
         private const val WORKFLOW_CHANGESET_COMMAND_MAX_LENGTH = 120
+        private const val ASSISTANT_CHANGESET_REQUEST_MAX_LENGTH = 120
         private const val STREAM_BATCH_CHUNK_COUNT = 4
         private const val STREAM_BATCH_CHAR_COUNT = 240
         private const val STREAM_BATCH_INTERVAL_NANOS = 120_000_000L
         private const val STREAM_AUTO_SCROLL_THRESHOLD_PX = 80
+        private const val ACTION_PASTE_IMAGE_OR_TEXT = "specCoding.pasteImageOrText"
+        private const val CLIPBOARD_IMAGE_TEMP_DIR_NAME = "spec-coding-plugin"
         private const val SPEC_CARD_PREVIEW_MAX_LINES = 18
         private const val SPEC_CARD_PREVIEW_MAX_CHARS = 1800
         private const val SPEC_SIDEBAR_DEFAULT_DIVIDER = 760

@@ -21,6 +21,7 @@ import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import javax.swing.BoxLayout
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.JTextPane
@@ -250,6 +251,8 @@ open class ChatMessagePanel(
     }
 
     private fun createTracePanel(items: List<StreamingTraceAssembler.TraceItem>): JPanel {
+        val displayItems = mergeTraceItemsForDisplay(items)
+
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = true
         wrapper.background = traceCardBackgroundColor()
@@ -311,9 +314,12 @@ open class ChatMessagePanel(
             val listPanel = JPanel()
             listPanel.layout = BoxLayout(listPanel, BoxLayout.Y_AXIS)
             listPanel.isOpaque = false
-            listPanel.border = JBUI.Borders.emptyTop(8)
+            listPanel.border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(traceSectionDividerColor(), 1, 0, 0, 0),
+                JBUI.Borders.emptyTop(8),
+            )
 
-            items.forEach { item ->
+            displayItems.forEach { item ->
                 listPanel.add(createTraceItemRow(item))
             }
             wrapper.add(listPanel, BorderLayout.CENTER)
@@ -383,7 +389,10 @@ open class ChatMessagePanel(
             val list = JPanel()
             list.layout = BoxLayout(list, BoxLayout.Y_AXIS)
             list.isOpaque = false
-            list.border = JBUI.Borders.emptyTop(8)
+            list.border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(outputSectionDividerColor(), 1, 0, 0, 0),
+                JBUI.Borders.emptyTop(8),
+            )
             items.forEach { item ->
                 list.add(createTraceDetailBlock(item, forceVerbose = true, showVerboseToggle = false))
             }
@@ -393,7 +402,10 @@ open class ChatMessagePanel(
             if (first != null) {
                 val previewHost = JPanel(BorderLayout())
                 previewHost.isOpaque = false
-                previewHost.border = JBUI.Borders.emptyTop(6)
+                previewHost.border = JBUI.Borders.compound(
+                    JBUI.Borders.customLine(outputSectionDividerColor(), 1, 0, 0, 0),
+                    JBUI.Borders.emptyTop(6),
+                )
                 previewHost.add(createTraceDetailBlock(first, forceVerbose = true, showVerboseToggle = false), BorderLayout.CENTER)
                 wrapper.add(previewHost, BorderLayout.CENTER)
             }
@@ -406,7 +418,7 @@ open class ChatMessagePanel(
         return container
     }
 
-    private fun createTraceItemRow(item: StreamingTraceAssembler.TraceItem): JPanel {
+    private fun createTraceItemRow(item: TraceDisplayItem): JPanel {
         val row = JPanel(BorderLayout())
         row.isOpaque = true
         row.background = traceRowBackgroundColor()
@@ -433,6 +445,10 @@ open class ChatMessagePanel(
         kindLabel.font = kindLabel.font.deriveFont(java.awt.Font.BOLD, 11f)
         kindLabel.foreground = statusColor(item.status)
         headerLeft.add(kindLabel)
+
+        if (item.mergedCount > 1) {
+            headerLeft.add(createSummaryBadge("x${item.mergedCount}"))
+        }
 
         if (item.fileAction != null && onWorkflowFileOpen != null) {
             val openBtn = JButton(
@@ -468,7 +484,18 @@ open class ChatMessagePanel(
         }
 
         row.add(header, BorderLayout.NORTH)
-        row.add(createTraceDetailBlock(item), BorderLayout.CENTER)
+        row.add(
+            createTraceDetailBlock(
+                StreamingTraceAssembler.TraceItem(
+                    kind = item.kind,
+                    status = item.status,
+                    detail = item.detail,
+                    fileAction = item.fileAction,
+                    isVerbose = item.isVerbose,
+                )
+            ),
+            BorderLayout.CENTER
+        )
         return JPanel(BorderLayout()).apply {
             isOpaque = false
             border = JBUI.Borders.emptyBottom(6)
@@ -664,6 +691,70 @@ open class ChatMessagePanel(
         ExecutionTimelineParser.Kind.VERIFY -> JBColor(java.awt.Color(44, 132, 79), java.awt.Color(131, 217, 164))
         ExecutionTimelineParser.Kind.TOOL -> JBColor(java.awt.Color(140, 89, 34), java.awt.Color(231, 178, 121))
         ExecutionTimelineParser.Kind.OUTPUT -> JBColor(java.awt.Color(117, 111, 140), java.awt.Color(191, 184, 220))
+    }
+
+    private fun mergeTraceItemsForDisplay(items: List<StreamingTraceAssembler.TraceItem>): List<TraceDisplayItem> {
+        if (items.isEmpty()) return emptyList()
+
+        val merged = mutableListOf<TraceDisplayItem>()
+        var currentGroup = mutableListOf<StreamingTraceAssembler.TraceItem>()
+
+        fun flush() {
+            if (currentGroup.isEmpty()) return
+            merged += toTraceDisplayItem(currentGroup)
+            currentGroup = mutableListOf()
+        }
+
+        items.forEach { item ->
+            val currentKind = currentGroup.firstOrNull()?.kind
+            if (currentKind == null || currentKind == item.kind) {
+                currentGroup += item
+            } else {
+                flush()
+                currentGroup += item
+            }
+        }
+        flush()
+
+        return merged
+    }
+
+    private fun toTraceDisplayItem(groupItems: List<StreamingTraceAssembler.TraceItem>): TraceDisplayItem {
+        val first = groupItems.first()
+        val mergedCount = groupItems.size
+        val status = groupItems.maxByOrNull { statusPriority(it.status) }?.status ?: first.status
+        val detail = if (mergedCount == 1) {
+            first.detail
+        } else {
+            val previews = groupItems
+                .asSequence()
+                .map { toPreview(it.detail, TRACE_GROUP_DETAIL_PREVIEW_LENGTH) }
+                .distinct()
+                .take(TRACE_GROUP_DETAIL_SAMPLE_COUNT)
+                .toList()
+            val more = (mergedCount - previews.size).coerceAtLeast(0)
+            val lines = previews.map { "- $it" } +
+                if (more > 0) listOf("... (+$more)") else emptyList()
+            lines.joinToString("\n")
+        }
+
+        return TraceDisplayItem(
+            kind = first.kind,
+            status = status,
+            detail = detail,
+            fileAction = if (mergedCount == 1) first.fileAction else null,
+            isVerbose = groupItems.any { it.isVerbose },
+            mergedCount = mergedCount,
+        )
+    }
+
+    private fun statusPriority(status: ExecutionTimelineParser.Status): Int {
+        return when (status) {
+            ExecutionTimelineParser.Status.ERROR -> 3
+            ExecutionTimelineParser.Status.RUNNING -> 2
+            ExecutionTimelineParser.Status.DONE -> 1
+            ExecutionTimelineParser.Status.INFO -> 0
+        }
     }
 
     private fun entryKey(item: StreamingTraceAssembler.TraceItem): String {
@@ -966,20 +1057,20 @@ open class ChatMessagePanel(
 
     private fun messageCardBorderColor(): java.awt.Color = when (role) {
         MessageRole.USER -> JBColor(
-            java.awt.Color(222, 231, 246),
-            java.awt.Color(74, 85, 99),
+            java.awt.Color(208, 220, 238),
+            java.awt.Color(92, 102, 115),
         )
         MessageRole.ASSISTANT -> JBColor(
-            java.awt.Color(224, 230, 238),
-            java.awt.Color(74, 84, 96),
+            java.awt.Color(211, 220, 232),
+            java.awt.Color(90, 100, 112),
         )
         MessageRole.SYSTEM -> JBColor(
-            java.awt.Color(224, 228, 235),
-            java.awt.Color(80, 84, 90),
+            java.awt.Color(212, 219, 228),
+            java.awt.Color(93, 98, 105),
         )
         MessageRole.ERROR -> JBColor(
-            java.awt.Color(242, 215, 215),
-            java.awt.Color(110, 66, 66),
+            java.awt.Color(232, 200, 200),
+            java.awt.Color(126, 82, 82),
         )
     }
 
@@ -989,8 +1080,8 @@ open class ChatMessagePanel(
     )
 
     private fun traceCardBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(224, 230, 237),
-        java.awt.Color(76, 84, 95),
+        java.awt.Color(209, 218, 229),
+        java.awt.Color(91, 101, 112),
     )
 
     private fun outputCardBackgroundColor(): java.awt.Color = JBColor(
@@ -999,8 +1090,8 @@ open class ChatMessagePanel(
     )
 
     private fun outputCardBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(222, 228, 236),
-        java.awt.Color(73, 81, 92),
+        java.awt.Color(208, 217, 229),
+        java.awt.Color(89, 99, 111),
     )
 
     private fun traceRowBackgroundColor(): java.awt.Color = JBColor(
@@ -1009,8 +1100,8 @@ open class ChatMessagePanel(
     )
 
     private fun traceRowBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(223, 229, 237),
-        java.awt.Color(77, 86, 98),
+        java.awt.Color(210, 219, 230),
+        java.awt.Color(92, 102, 114),
     )
 
     private fun traceDetailBackgroundColor(): java.awt.Color = JBColor(
@@ -1019,8 +1110,18 @@ open class ChatMessagePanel(
     )
 
     private fun traceDetailBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(227, 233, 240),
-        java.awt.Color(76, 85, 98),
+        java.awt.Color(214, 223, 233),
+        java.awt.Color(92, 102, 114),
+    )
+
+    private fun traceSectionDividerColor(): java.awt.Color = JBColor(
+        java.awt.Color(218, 225, 234),
+        java.awt.Color(96, 106, 119),
+    )
+
+    private fun outputSectionDividerColor(): java.awt.Color = JBColor(
+        java.awt.Color(216, 224, 234),
+        java.awt.Color(96, 106, 119),
     )
 
     private fun createSummaryBadge(text: String): JBLabel {
@@ -1124,7 +1225,7 @@ open class ChatMessagePanel(
     private class RunningSpinnerIndicator(
         private val color: java.awt.Color,
         size: Int,
-    ) : JPanel() {
+    ) : JComponent() {
         private var angle = 0
         private val timer = Timer(SPINNER_TICK_MS) {
             angle = (angle + SPINNER_STEP_DEGREES) % 360
@@ -1156,7 +1257,7 @@ open class ChatMessagePanel(
             val graphics = g as? Graphics2D ?: return
             val g2 = graphics.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            g2.stroke = BasicStroke(JBUI.scale(1f))
+            g2.stroke = BasicStroke(JBUI.scale(1).toFloat())
 
             val drawSize = (diameter - 2).coerceAtLeast(6)
             val arcExtent = 120
@@ -1182,6 +1283,8 @@ open class ChatMessagePanel(
         private const val MAX_ACTION_FILE_DISPLAY_LENGTH = 30
         private const val TRACE_DETAIL_PREVIEW_LENGTH = 220
         private const val TRACE_OUTPUT_PREVIEW_LENGTH = 140
+        private const val TRACE_GROUP_DETAIL_PREVIEW_LENGTH = 96
+        private const val TRACE_GROUP_DETAIL_SAMPLE_COUNT = 2
         private const val COPY_FEEDBACK_DURATION_MS = 1000
         private const val COPY_FEEDBACK_TIMER_KEY = "spec.copy.feedback.timer"
         private const val COPY_FEEDBACK_ICON_SUCCESS = "OK"
@@ -1196,4 +1299,13 @@ open class ChatMessagePanel(
             "verify", "verification", "test", "验证", "测试",
         )
     }
+
+    private data class TraceDisplayItem(
+        val kind: ExecutionTimelineParser.Kind,
+        val status: ExecutionTimelineParser.Status,
+        val detail: String,
+        val fileAction: WorkflowQuickActionParser.FileAction?,
+        val isVerbose: Boolean,
+        val mergedCount: Int,
+    )
 }

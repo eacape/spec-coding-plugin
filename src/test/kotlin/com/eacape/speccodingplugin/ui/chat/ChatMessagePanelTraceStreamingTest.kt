@@ -176,6 +176,39 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
+    fun `expanded trace should merge consecutive same kind steps`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                [Read] docs/spec-a.md done
+                [Read] docs/spec-b.md done
+                [Read] docs/spec-c.md done
+                [Edit] src/main/kotlin/com/eacape/speccodingplugin/ui/chat/ChatMessagePanel.kt done
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected expand trace button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val mergedLabel = "${SpecCodingBundle.message("chat.timeline.kind.read")} · ${SpecCodingBundle.message("chat.timeline.status.done")}"
+        val labels = collectDescendants(panel)
+            .filterIsInstance<javax.swing.JLabel>()
+            .mapNotNull { it.text }
+            .toList()
+
+        assertEquals(1, labels.count { it == mergedLabel })
+        assertTrue(labels.any { it == "x3" })
+    }
+
+    @Test
     fun `garbled output event should not be rendered in timeline`() {
         val panel = ChatMessagePanel(
             role = ChatMessagePanel.MessageRole.ASSISTANT,

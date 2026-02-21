@@ -135,7 +135,7 @@ class RollbackManager(private val project: Project) {
      * 删除文件
      */
     private fun deleteFile(filePath: String) {
-        val virtualFile = LocalFileSystem.getInstance().findFileByPath(filePath)
+        val virtualFile = LocalFileSystem.getInstance().findFileByPath(toVfsPath(filePath))
             ?: throw IllegalStateException("File not found: $filePath")
 
         WriteAction.runAndWait<Throwable> {
@@ -147,7 +147,7 @@ class RollbackManager(private val project: Project) {
      * 恢复文件内容
      */
     private fun restoreFileContent(filePath: String, content: String) {
-        val virtualFile = LocalFileSystem.getInstance().findFileByPath(filePath)
+        val virtualFile = LocalFileSystem.getInstance().findFileByPath(toVfsPath(filePath))
             ?: throw IllegalStateException("File not found: $filePath")
 
         WriteAction.runAndWait<Throwable> {
@@ -178,7 +178,7 @@ class RollbackManager(private val project: Project) {
             Files.writeString(path, content)
 
             // 刷新 VFS
-            LocalFileSystem.getInstance().refreshAndFindFileByPath(filePath)
+            LocalFileSystem.getInstance().refreshAndFindFileByPath(toVfsPath(filePath))
         }
     }
 
@@ -196,7 +196,7 @@ class RollbackManager(private val project: Project) {
             Files.createDirectories(backupDir)
 
             for (change in changeset.changes) {
-                val virtualFile = LocalFileSystem.getInstance().findFileByPath(change.filePath)
+                val virtualFile = LocalFileSystem.getInstance().findFileByPath(toVfsPath(change.filePath))
                 if (virtualFile != null && virtualFile.exists()) {
                     val content = runReadAction {
                         String(virtualFile.contentsToByteArray(), virtualFile.charset)
@@ -222,7 +222,7 @@ class RollbackManager(private val project: Project) {
 
         for (change in changeset.changes) {
             if (change.changeType == FileChange.ChangeType.MODIFIED) {
-                val virtualFile = LocalFileSystem.getInstance().findFileByPath(change.filePath)
+                val virtualFile = LocalFileSystem.getInstance().findFileByPath(toVfsPath(change.filePath))
                 if (virtualFile != null && virtualFile.exists()) {
                     val currentContent = runReadAction {
                         String(virtualFile.contentsToByteArray(), virtualFile.charset)
@@ -237,6 +237,10 @@ class RollbackManager(private val project: Project) {
         }
 
         return conflicts
+    }
+
+    private fun toVfsPath(path: String): String {
+        return path.replace('\\', '/')
     }
 
     companion object {
