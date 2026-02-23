@@ -41,6 +41,10 @@ class ChangesetStore(private val project: Project) {
 
             changesets.add(changeset)
             logger.info("Saved changeset: ${changeset.id} - ${changeset.description}")
+            val pruned = applyRetentionLimitLocked()
+            if (pruned > 0) {
+                logger.info("Pruned $pruned old changeset(s), keep latest $MAX_RETAINED_CHANGESETS")
+            }
 
             // 持久化到磁盘
             persistToDisk()
@@ -71,7 +75,7 @@ class ChangesetStore(private val project: Project) {
     /**
      * 获取最近的变更集
      */
-    fun getRecent(limit: Int = 10): List<Changeset> {
+    fun getRecent(limit: Int = MAX_RETAINED_CHANGESETS): List<Changeset> {
         ensureLoaded()
         return synchronized(lock) {
             changesets.sortedByDescending { it.timestamp }.take(limit)
@@ -136,8 +140,27 @@ class ChangesetStore(private val project: Project) {
             }
 
             loadFromDisk()
+            val pruned = applyRetentionLimitLocked()
+            if (pruned > 0) {
+                logger.info("Pruned $pruned old changeset(s) after load, keep latest $MAX_RETAINED_CHANGESETS")
+                persistToDisk()
+            }
             loaded = true
         }
+    }
+
+    private fun applyRetentionLimitLocked(): Int {
+        if (changesets.size <= MAX_RETAINED_CHANGESETS) {
+            return 0
+        }
+
+        val retainedIds = changesets
+            .sortedByDescending { it.timestamp }
+            .take(MAX_RETAINED_CHANGESETS)
+            .mapTo(mutableSetOf()) { it.id }
+        val before = changesets.size
+        changesets.removeIf { it.id !in retainedIds }
+        return before - changesets.size
     }
 
     private fun loadFromDisk() {
@@ -204,6 +227,8 @@ class ChangesetStore(private val project: Project) {
     }
 
     companion object {
+        const val MAX_RETAINED_CHANGESETS = 12
+
         fun getInstance(project: Project): ChangesetStore {
             return project.getService(ChangesetStore::class.java)
         }

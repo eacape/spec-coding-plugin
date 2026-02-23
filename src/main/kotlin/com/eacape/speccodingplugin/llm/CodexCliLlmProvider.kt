@@ -6,7 +6,9 @@ import com.eacape.speccodingplugin.engine.EngineContext
 import com.eacape.speccodingplugin.engine.EngineRequest
 import com.eacape.speccodingplugin.engine.OpenAiCodexEngine
 import com.intellij.openapi.diagnostic.thisLogger
+import java.io.File
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Codex CLI LlmProvider 适配器
@@ -20,13 +22,11 @@ class CodexCliLlmProvider(
 
     private val logger = thisLogger()
 
-    private val engine: OpenAiCodexEngine by lazy {
-        OpenAiCodexEngine(discoveryService.codexInfo.path)
-    }
+    private val enginesByPath = ConcurrentHashMap<String, OpenAiCodexEngine>()
 
     override suspend fun generate(request: LlmRequest): LlmResponse {
         val engineRequest = toEngineRequest(request)
-        val engineResponse = engine.generate(engineRequest)
+        val engineResponse = resolveEngine().generate(engineRequest)
 
         if (!engineResponse.success) {
             throw RuntimeException("Codex CLI error: ${engineResponse.error}")
@@ -44,6 +44,7 @@ class CodexCliLlmProvider(
     ): LlmResponse {
         val engineRequest = toEngineRequest(request)
         val contentBuilder = StringBuilder()
+        val engine = resolveEngine()
 
         engine.stream(engineRequest).collect { chunk ->
             contentBuilder.append(chunk.delta)
@@ -63,7 +64,9 @@ class CodexCliLlmProvider(
     }
 
     override fun cancel(requestId: String) {
-        engine.cancelProcess(requestId)
+        enginesByPath.values.forEach { engine ->
+            engine.cancelProcess(requestId)
+        }
     }
 
     override suspend fun healthCheck(): LlmHealthStatus {
@@ -107,6 +110,45 @@ class CodexCliLlmProvider(
             .distinct()
             .toList()
     }
+
+    private fun resolveEngine(): OpenAiCodexEngine {
+        val cliPath = resolveExecutablePath(discoveryService.codexInfo.path)
+        return enginesByPath.computeIfAbsent(cliPath) { path ->
+            logger.info("Using Codex CLI path: $path")
+            OpenAiCodexEngine(path)
+        }
+    }
+
+    private fun resolveExecutablePath(rawPath: String): String {
+        val sanitized = rawPath.trim().trim('"', '\'')
+        if (sanitized.isBlank()) return "codex"
+
+        val normalized = sanitized.replace('\\', '/').trimEnd('/').lowercase(Locale.ROOT)
+        if (normalized.endsWith("/.codex")) {
+            // `.codex` is Codex home directory, not an executable path.
+            return "codex"
+        }
+
+        val configuredFile = File(sanitized)
+        if (configuredFile.isDirectory) {
+            val candidates = if (isWindows()) {
+                listOf("codex.cmd", "codex.exe", "codex.bat", "codex")
+            } else {
+                listOf("codex")
+            }
+            candidates
+                .asSequence()
+                .map { child -> File(configuredFile, child) }
+                .firstOrNull { child -> child.isFile }
+                ?.let { executable -> return executable.absolutePath }
+            return "codex"
+        }
+
+        return sanitized
+    }
+
+    private fun isWindows(): Boolean =
+        System.getProperty("os.name").lowercase(Locale.ROOT).contains("win")
 
     private fun mapCodexExecutionOptions(operationMode: String?): Map<String, String> {
         val mode = operationMode

@@ -209,6 +209,113 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
+    fun `expanded output should merge multiple output events into one detail block`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                [Output] OpenAI Codex v0.104.0
+                [Output] workdir: C:/Users/12186/PyCharmMiscProject
+                [Output] model: gpt-5.3-codex
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected output expand button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val textPanes = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .map { it.text.orEmpty() }
+            .toList()
+
+        val mergedPane = textPanes.firstOrNull {
+            it.contains("OpenAI Codex v0.104.0") &&
+                it.contains("workdir: C:/Users/12186/PyCharmMiscProject") &&
+                it.contains("model: gpt-5.3-codex")
+        }
+        assertNotNull(mergedPane, "Expected one merged output detail block containing all lines")
+        assertTrue(textPanes.count { it.contains("OpenAI Codex v0.104.0") } == 1)
+    }
+
+    @Test
+    fun `output filter level should toggle between key and all lines`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                [Output] model: gpt-5.3-codex
+                [Output] noise-line-0001
+                [Output] noise-line-0002
+                [Output] noise-line-0003
+                [Output] noise-line-0004
+                [Output] noise-line-0005
+                [Output] noise-line-0006
+                [Output] final-noise-tail
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected output expand button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val keyFilterText = SpecCodingBundle.message(
+            "chat.timeline.output.filter.toggle",
+            SpecCodingBundle.message("chat.timeline.output.filter.key"),
+        )
+        val filterButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == keyFilterText }
+        assertNotNull(filterButton, "Expected output filter button in key mode")
+
+        val filteredText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertTrue(filteredText.contains("model: gpt-5.3-codex"))
+        assertFalse(filteredText.contains("final-noise-tail"))
+        assertTrue(
+            filteredText.contains(
+                SpecCodingBundle.message("chat.timeline.output.filtered.more", 6)
+            )
+        )
+
+        runOnEdt { filterButton!!.doClick() }
+
+        val allFilterText = SpecCodingBundle.message(
+            "chat.timeline.output.filter.toggle",
+            SpecCodingBundle.message("chat.timeline.output.filter.all"),
+        )
+        val switchedButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == allFilterText }
+        assertNotNull(switchedButton, "Expected output filter button in all mode")
+
+        val allText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertTrue(allText.contains("final-noise-tail"))
+        assertFalse(
+            allText.contains(
+                SpecCodingBundle.message("chat.timeline.output.filtered.more", 6)
+            )
+        )
+    }
+
+    @Test
     fun `garbled output event should not be rendered in timeline`() {
         val panel = ChatMessagePanel(
             role = ChatMessagePanel.MessageRole.ASSISTANT,

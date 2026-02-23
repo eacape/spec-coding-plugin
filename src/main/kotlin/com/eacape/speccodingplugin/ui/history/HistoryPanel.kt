@@ -23,7 +23,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Color
-import java.awt.FlowLayout
+import java.awt.Component
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
+import javax.swing.BorderFactory
 import javax.swing.DefaultListCellRenderer
 import javax.swing.JComboBox
 import javax.swing.JPanel
@@ -85,13 +88,28 @@ class HistoryPanel(
     }
 
     private fun setupUi() {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-            isOpaque = false
-            border = JBUI.Borders.emptyBottom(6)
-        }
+        add(buildToolbar(), BorderLayout.NORTH)
 
-        searchField.columns = 28
+        val splitPane = JSplitPane(
+            JSplitPane.HORIZONTAL_SPLIT,
+            createSectionContainer(listPanel),
+            createSectionContainer(detailPanel),
+        ).apply {
+            dividerLocation = 340
+            resizeWeight = 0.36
+            dividerSize = JBUI.scale(6)
+            isContinuousLayout = true
+            border = JBUI.Borders.empty()
+            background = PANEL_SECTION_BG
+        }
+        add(splitPane, BorderLayout.CENTER)
+    }
+
+    private fun buildToolbar(): JPanel {
+        searchField.columns = 18
         searchField.emptyText.text = SpecCodingBundle.message("history.search.placeholder")
+        searchField.preferredSize = JBUI.size(280, 30)
+        searchField.minimumSize = JBUI.size(150, 30)
         searchField.addActionListener { refreshSessions() }
 
         filterCombo.renderer = object : DefaultListCellRenderer() {
@@ -107,26 +125,84 @@ class HistoryPanel(
                 return this
             }
         }
-        filterCombo.preferredSize = JBUI.size(92, 28)
+        filterCombo.preferredSize = JBUI.size(92, 30)
+        filterCombo.minimumSize = JBUI.size(82, 30)
         filterCombo.addActionListener { refreshSessions() }
+
+        val searchLabel = JBLabel(SpecCodingBundle.message("history.search.label"))
+        val filterLabel = JBLabel(SpecCodingBundle.message("history.filter.label"))
+        styleToolbarLabel(searchLabel)
+        styleToolbarLabel(filterLabel)
+
         statusLabel.font = JBUI.Fonts.smallFont()
-        statusLabel.foreground = JBColor(Color(120, 124, 132), Color(146, 152, 163))
-
-        toolbar.add(JBLabel(SpecCodingBundle.message("history.search.label")))
-        toolbar.add(searchField)
-        toolbar.add(JBLabel(SpecCodingBundle.message("history.filter.label")))
-        toolbar.add(filterCombo)
-        toolbar.add(statusLabel)
-        add(toolbar, BorderLayout.NORTH)
-
-        val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listPanel, detailPanel).apply {
-            dividerLocation = 320
-            resizeWeight = 0.34
-            dividerSize = JBUI.scale(5)
-            isContinuousLayout = true
-            border = JBUI.Borders.empty()
+        statusLabel.foreground = STATUS_TEXT_FG
+        val statusChip = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            background = STATUS_CHIP_BG
+            border = JBUI.Borders.empty(4, 6)
+            add(statusLabel, BorderLayout.CENTER)
         }
-        add(splitPane, BorderLayout.CENTER)
+
+        val controls = JPanel(GridBagLayout()).apply {
+            isOpaque = false
+        }
+        val constraints = GridBagConstraints().apply {
+            gridy = 0
+            fill = GridBagConstraints.HORIZONTAL
+            anchor = GridBagConstraints.WEST
+            insets = JBUI.insets(0, 0, 0, 8)
+        }
+
+        constraints.gridx = 0
+        constraints.weightx = 0.0
+        controls.add(searchLabel, constraints)
+
+        constraints.gridx = 1
+        constraints.weightx = 1.0
+        controls.add(searchField, constraints)
+
+        constraints.gridx = 2
+        constraints.weightx = 0.0
+        controls.add(filterLabel, constraints)
+
+        constraints.gridx = 3
+        constraints.weightx = 0.0
+        constraints.insets = JBUI.insets(0, 0, 0, 0)
+        controls.add(filterCombo, constraints)
+
+        val toolbarCard = JPanel(BorderLayout(JBUI.scale(10), 0)).apply {
+            isOpaque = true
+            background = TOOLBAR_BG
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(TOOLBAR_BORDER, 1),
+                JBUI.Borders.empty(8, 10),
+            )
+            add(controls, BorderLayout.CENTER)
+            add(statusChip, BorderLayout.EAST)
+        }
+
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(8)
+            add(toolbarCard, BorderLayout.CENTER)
+        }
+    }
+
+    private fun styleToolbarLabel(label: JBLabel) {
+        label.font = JBUI.Fonts.smallFont()
+        label.foreground = TOOLBAR_LABEL_FG
+    }
+
+    private fun createSectionContainer(content: Component): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = PANEL_SECTION_BG
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(PANEL_SECTION_BORDER, 1),
+                JBUI.Borders.empty(2),
+            )
+            add(content, BorderLayout.CENTER)
+        }
     }
 
     fun refreshSessions() {
@@ -342,5 +418,13 @@ class HistoryPanel(
     companion object {
         private const val SESSION_MESSAGES_FETCH_LIMIT = 5000
         private const val SESSION_MESSAGES_RENDER_LIMIT = 600
+        private val TOOLBAR_BG = JBColor(Color(248, 250, 253), Color(58, 63, 71))
+        private val TOOLBAR_BORDER = JBColor(Color(214, 222, 236), Color(82, 90, 102))
+        private val TOOLBAR_LABEL_FG = JBColor(Color(82, 92, 108), Color(171, 180, 194))
+        private val STATUS_CHIP_BG = JBColor(Color(239, 245, 253), Color(64, 74, 88))
+        private val STATUS_CHIP_BORDER = JBColor(Color(186, 201, 224), Color(96, 111, 131))
+        private val STATUS_TEXT_FG = JBColor(Color(60, 76, 100), Color(194, 207, 225))
+        private val PANEL_SECTION_BG = JBColor(Color(251, 252, 254), Color(50, 54, 61))
+        private val PANEL_SECTION_BORDER = JBColor(Color(211, 218, 232), Color(79, 85, 96))
     }
 }

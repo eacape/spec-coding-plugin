@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.input
 import com.eacape.speccodingplugin.ui.completion.CompletionItem
 import com.eacape.speccodingplugin.ui.completion.TriggerParser
 import com.eacape.speccodingplugin.ui.completion.TriggerParseResult
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.event.ActionEvent
@@ -10,6 +11,7 @@ import java.awt.event.InputEvent
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
+import java.awt.Toolkit
 import java.awt.event.KeyEvent
 import javax.swing.AbstractAction
 import javax.swing.JComponent
@@ -29,12 +31,30 @@ class SmartInputField(
     private val onTrigger: (TriggerParseResult) -> Unit = {},
     private val onTriggerDismiss: () -> Unit = {},
     private val onCompletionSelect: (CompletionItem) -> Unit = {},
+    private val onPasteIntercept: (() -> Boolean)? = null,
 ) : JTextArea() {
+    private val logger = logger<SmartInputField>()
 
     private var debounceTimer: Timer? = null
     private var lastTrigger: TriggerParseResult? = null
 
     val completionPopup = CompletionPopup(::handleCompletionSelect)
+
+    // Keep binary compatibility for callers compiled against the old constructor.
+    constructor(
+        placeholder: String,
+        onSend: (String) -> Unit,
+        onTrigger: (TriggerParseResult) -> Unit,
+        onTriggerDismiss: () -> Unit,
+        onCompletionSelect: (CompletionItem) -> Unit,
+    ) : this(
+        placeholder = placeholder,
+        onSend = onSend,
+        onTrigger = onTrigger,
+        onTriggerDismiss = onTriggerDismiss,
+        onCompletionSelect = onCompletionSelect,
+        onPasteIntercept = null,
+    )
 
     init {
         rows = 1
@@ -50,6 +70,8 @@ class SmartInputField(
     private fun setupKeyBindings() {
         val inputMap = getInputMap(JComponent.WHEN_FOCUSED)
         val actionMap = actionMap
+        val shortcutMask = runCatching { Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx }
+            .getOrDefault(InputEvent.CTRL_DOWN_MASK)
 
         inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), ACTION_SEND)
         actionMap.put(
@@ -123,6 +145,18 @@ class SmartInputField(
                     if (completionPopup.isVisible) {
                         completionPopup.confirmSelection()
                     }
+                }
+            },
+        )
+
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_V, shortcutMask), ACTION_PASTE_CONTENT)
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_INSERT, InputEvent.SHIFT_DOWN_MASK), ACTION_PASTE_CONTENT)
+        actionMap.put(
+            ACTION_PASTE_CONTENT,
+            object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) {
+                    logger.warn("[PasteDiag] ACTION_PASTE_CONTENT triggered on SmartInputField")
+                    paste()
                 }
             },
         )
@@ -204,6 +238,21 @@ class SmartInputField(
         }
     }
 
+    override fun paste() {
+        logger.warn("[PasteDiag] SmartInputField.paste invoked; hasIntercept=${onPasteIntercept != null}")
+        val intercepted = runCatching {
+            onPasteIntercept?.invoke() == true
+        }.onFailure { error ->
+            logger.warn("[PasteDiag] SmartInputField paste intercept failed: ${error.message}", error)
+        }.getOrDefault(false)
+        if (intercepted) {
+            logger.warn("[PasteDiag] SmartInputField.paste handled by intercept")
+            return
+        }
+        logger.warn("[PasteDiag] SmartInputField.paste delegated to super")
+        super.paste()
+    }
+
     companion object {
         private const val ACTION_SEND = "specCoding.send"
         private const val ACTION_NEWLINE = "specCoding.newline"
@@ -211,5 +260,6 @@ class SmartInputField(
         private const val ACTION_COMPLETION_UP = "specCoding.completionUp"
         private const val ACTION_COMPLETION_DOWN = "specCoding.completionDown"
         private const val ACTION_COMPLETION_CONFIRM = "specCoding.completionConfirm"
+        private const val ACTION_PASTE_CONTENT = "specCoding.pasteContent"
     }
 }

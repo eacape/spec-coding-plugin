@@ -46,6 +46,7 @@ class ChangesetTimelinePanel(
     private val store = ChangesetStore.getInstance(project)
     private val rollbackManager = RollbackManager.getInstance(project)
     private val timelineContainer = JPanel()
+    private val retentionHintLabel = JBLabel()
     private val formatter = DateTimeFormatter
         .ofPattern("HH:mm:ss")
         .withZone(ZoneId.systemDefault())
@@ -58,6 +59,14 @@ class ChangesetTimelinePanel(
     }
 
     private fun setupUI() {
+        retentionHintLabel.foreground = SECONDARY_TEXT_COLOR
+        retentionHintLabel.font = JBUI.Fonts.smallFont()
+        retentionHintLabel.border = JBUI.Borders.emptyBottom(4)
+        retentionHintLabel.text = SpecCodingBundle.message(
+            "changeset.timeline.retentionHint",
+            ChangesetStore.MAX_RETAINED_CHANGESETS,
+        )
+
         // 时间线容器
         timelineContainer.layout = BoxLayout(
             timelineContainer, BoxLayout.Y_AXIS
@@ -68,6 +77,7 @@ class ChangesetTimelinePanel(
         scrollPane.border = JBUI.Borders.empty()
         scrollPane.verticalScrollBar.unitIncrement = 16
 
+        add(retentionHintLabel, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
     }
 
@@ -75,7 +85,7 @@ class ChangesetTimelinePanel(
      * 刷新时间线
      */
     fun refresh() {
-        val changesets = store.getRecent(20)
+        val changesets = store.getRecent(ChangesetStore.MAX_RETAINED_CHANGESETS)
         timelineContainer.removeAll()
 
         if (changesets.isEmpty()) {

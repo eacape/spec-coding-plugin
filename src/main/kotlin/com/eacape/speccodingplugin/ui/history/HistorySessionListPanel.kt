@@ -9,11 +9,13 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
-import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.GridLayout
+import java.awt.Insets
 import java.awt.RenderingHints
+import java.awt.geom.RoundRectangle2D
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -28,7 +30,10 @@ import javax.swing.ListCellRenderer
 import javax.swing.ListSelectionModel
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
+import javax.swing.SwingConstants
 import javax.swing.JTextArea
+import javax.swing.border.AbstractBorder
+import javax.swing.border.CompoundBorder
 
 class HistorySessionListPanel(
     private val onSessionSelected: (String) -> Unit,
@@ -54,9 +59,12 @@ class HistorySessionListPanel(
     }
 
     private fun setupUi() {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+        val toolbar = JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(6)
+            border = JBUI.Borders.emptyBottom(8)
+        }
+        val actionsRow = JPanel(GridLayout(1, 4, JBUI.scale(6), 0)).apply {
+            isOpaque = false
         }
 
         styleActionButton(openButton)
@@ -69,10 +77,11 @@ class HistorySessionListPanel(
         branchButton.addActionListener { selectedSessionId()?.let(onBranchSession) }
         deleteButton.addActionListener { selectedSessionId()?.let(onDeleteSession) }
 
-        toolbar.add(openButton)
-        toolbar.add(continueButton)
-        toolbar.add(branchButton)
-        toolbar.add(deleteButton)
+        actionsRow.add(openButton)
+        actionsRow.add(continueButton)
+        actionsRow.add(branchButton)
+        actionsRow.add(deleteButton)
+        toolbar.add(actionsRow, BorderLayout.CENTER)
         add(toolbar, BorderLayout.NORTH)
 
         sessionList.selectionMode = ListSelectionModel.SINGLE_SELECTION
@@ -186,8 +195,23 @@ class HistorySessionListPanel(
     private fun styleActionButton(button: JButton) {
         button.isFocusable = false
         button.isFocusPainted = false
-        button.font = JBUI.Fonts.smallFont()
-        button.margin = JBUI.insets(2, 5, 2, 5)
+        button.font = button.font.deriveFont(Font.BOLD, 11f)
+        button.margin = JBUI.emptyInsets()
+        button.isOpaque = true
+        button.isContentAreaFilled = true
+        button.background = ACTION_BUTTON_BG
+        button.foreground = ACTION_BUTTON_FG
+        button.border = CompoundBorder(
+            RoundedLineBorder(
+                lineColor = ACTION_BUTTON_BORDER,
+                arc = JBUI.scale(12),
+            ),
+            JBUI.Borders.empty(3, 10, 3, 10),
+        )
+        button.preferredSize = JBUI.size(0, 30)
+        button.minimumSize = JBUI.size(0, 30)
+        button.putClientProperty("JButton.buttonType", "roundRect")
+        button.putClientProperty("JComponent.roundRectArc", JBUI.scale(12))
     }
 
     private fun isSpecSession(summary: SessionSummary): Boolean {
@@ -311,7 +335,8 @@ class HistorySessionListPanel(
         private val modeBadge = JLabel()
         private val titleLabel = JLabel()
         private val detailLabel = JLabel()
-        private val metaLabel = JLabel()
+        private val providerLabel = JLabel()
+        private val updatedLabel = JLabel()
 
         init {
             rowPanel.isOpaque = false
@@ -327,8 +352,17 @@ class HistorySessionListPanel(
             modeBadge.isOpaque = true
 
             titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 12.5f)
+            titleLabel.horizontalAlignment = SwingConstants.LEFT
             detailLabel.font = detailLabel.font.deriveFont(Font.PLAIN, 11f)
-            metaLabel.font = metaLabel.font.deriveFont(Font.PLAIN, 10.5f)
+            detailLabel.horizontalAlignment = SwingConstants.LEFT
+            providerLabel.font = providerLabel.font.deriveFont(Font.PLAIN, 10.5f)
+            providerLabel.horizontalAlignment = SwingConstants.LEFT
+            updatedLabel.font = updatedLabel.font.deriveFont(Font.PLAIN, 10.5f)
+            updatedLabel.horizontalAlignment = SwingConstants.LEFT
+            topRow.alignmentX = Component.LEFT_ALIGNMENT
+            detailLabel.alignmentX = Component.LEFT_ALIGNMENT
+            providerLabel.alignmentX = Component.LEFT_ALIGNMENT
+            updatedLabel.alignmentX = Component.LEFT_ALIGNMENT
 
             topRow.add(modeBadge, BorderLayout.WEST)
             topRow.add(titleLabel, BorderLayout.CENTER)
@@ -336,11 +370,14 @@ class HistorySessionListPanel(
             val content = JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 isOpaque = false
+                alignmentX = Component.LEFT_ALIGNMENT
                 add(topRow)
                 add(Box.createVerticalStrut(4))
                 add(detailLabel)
                 add(Box.createVerticalStrut(3))
-                add(metaLabel)
+                add(providerLabel)
+                add(Box.createVerticalStrut(2))
+                add(updatedLabel)
             }
             cardPanel.add(content, BorderLayout.CENTER)
             rowPanel.add(cardPanel, BorderLayout.CENTER)
@@ -367,12 +404,10 @@ class HistorySessionListPanel(
                     value.messageCount,
                 )
                 val updated = timestampFormatter.format(Instant.ofEpochMilli(value.updatedAt))
-                val meta = SpecCodingBundle.message("history.tooltip.provider", resolveProviderText(value)) +
-                    " · " +
-                    SpecCodingBundle.message("history.tooltip.updated", updated)
                 titleLabel.text = value.title
                 detailLabel.text = bindingDetail
-                metaLabel.text = meta
+                providerLabel.text = SpecCodingBundle.message("history.tooltip.provider", resolveProviderText(value))
+                updatedLabel.text = SpecCodingBundle.message("history.tooltip.updated", updated)
 
                 modeBadge.background = if (isSpec) {
                     MODE_SPEC_BADGE_BG
@@ -415,7 +450,8 @@ class HistorySessionListPanel(
             cardPanel.updateColors(cardBackground, cardBorder)
             titleLabel.foreground = textColor
             detailLabel.foreground = subTextColor
-            metaLabel.foreground = subTextColor
+            providerLabel.foreground = subTextColor
+            updatedLabel.foreground = subTextColor
             modeBadge.border = BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(badgeBorder, 1),
                 JBUI.Borders.empty(1, 6, 1, 6),
@@ -464,9 +500,72 @@ class HistorySessionListPanel(
         private val MODE_SPEC_BADGE_FG = JBColor(Color(36, 73, 133), Color(214, 226, 250))
         private val MODE_VIBE_BADGE_BG = JBColor(Color(230, 245, 233), Color(74, 107, 81))
         private val MODE_VIBE_BADGE_FG = JBColor(Color(44, 96, 56), Color(204, 236, 210))
+        private val ACTION_BUTTON_BG = JBColor(Color(245, 248, 253), Color(62, 67, 77))
+        private val ACTION_BUTTON_BORDER = JBColor(Color(194, 206, 224), Color(95, 106, 123))
+        private val ACTION_BUTTON_FG = JBColor(Color(58, 78, 107), Color(199, 211, 230))
         private val INFO_CARD_BG = JBColor(Color(242, 246, 253), Color(49, 53, 61))
         private val INFO_CARD_BORDER = JBColor(Color(210, 220, 236), Color(76, 82, 93))
         private val INFO_TITLE_FG = JBColor(Color(58, 74, 101), Color(196, 207, 224))
         private val INFO_TEXT_FG = JBColor(Color(74, 88, 112), Color(174, 186, 204))
+    }
+
+    private class RoundedLineBorder(
+        private val lineColor: Color,
+        private val arc: Int,
+        private val thickness: Int = 1,
+    ) : AbstractBorder() {
+        override fun paintBorder(
+            c: Component?,
+            g: Graphics?,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+        ) {
+            val graphics = g as? Graphics2D ?: return
+            val g2 = graphics.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+                g2.color = lineColor
+                val safeThickness = thickness.coerceAtLeast(1)
+                repeat(safeThickness) { index ->
+                    val offset = index + 0.5f
+                    val drawWidth = width - index * 2 - 1f
+                    val drawHeight = height - index * 2 - 1f
+                    if (drawWidth <= 0f || drawHeight <= 0f) return@repeat
+                    val arcSize = (arc - index * 2).coerceAtLeast(2).toFloat()
+                    g2.draw(
+                        RoundRectangle2D.Float(
+                            x + offset,
+                            y + offset,
+                            drawWidth,
+                            drawHeight,
+                            arcSize,
+                            arcSize,
+                        ),
+                    )
+                }
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        override fun getBorderInsets(c: Component?): Insets = Insets(
+            thickness,
+            thickness,
+            thickness,
+            thickness,
+        )
+
+        override fun getBorderInsets(c: Component?, insets: Insets): Insets {
+            insets.set(
+                thickness,
+                thickness,
+                thickness,
+                thickness,
+            )
+            return insets
+        }
     }
 }

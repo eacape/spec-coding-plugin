@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.input
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Test
+import java.awt.Toolkit
 import java.awt.event.ActionEvent
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
@@ -55,6 +56,36 @@ class SmartInputFieldTest {
         assertEquals(emptyList<String>(), sent)
     }
 
+    @Test
+    fun `ctrl v should invoke paste intercept`() {
+        var intercepted = 0
+        val field = SmartInputField(onPasteIntercept = {
+            intercepted += 1
+            true
+        })
+
+        runOnEdt {
+            invokeKeyAction(field, KeyEvent.VK_V, shortcutMask())
+        }
+
+        assertEquals(1, intercepted)
+    }
+
+    @Test
+    fun `shift insert should invoke paste intercept`() {
+        var intercepted = 0
+        val field = SmartInputField(onPasteIntercept = {
+            intercepted += 1
+            true
+        })
+
+        runOnEdt {
+            invokeKeyAction(field, KeyEvent.VK_INSERT, InputEvent.SHIFT_DOWN_MASK)
+        }
+
+        assertEquals(1, intercepted)
+    }
+
     private fun createField(sent: MutableList<String>): SmartInputField {
         return SmartInputField(onSend = { sent += it })
     }
@@ -74,5 +105,10 @@ class SmartInputFieldTest {
             return
         }
         SwingUtilities.invokeAndWait(block)
+    }
+
+    private fun shortcutMask(): Int {
+        return runCatching { Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx }
+            .getOrDefault(InputEvent.CTRL_DOWN_MASK)
     }
 }

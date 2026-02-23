@@ -154,9 +154,13 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
 
     private fun bootstrapPath(configuredPath: String, cachedPath: String, fallbackCommand: String): String {
         val configured = configuredPath.trim()
-        if (configured.isNotBlank()) return configured
+        if (configured.isNotBlank()) {
+            return resolveCliPath(configured, fallbackCommand)
+        }
         val cached = cachedPath.trim()
-        if (cached.isNotBlank()) return cached
+        if (cached.isNotBlank()) {
+            return resolveCliPath(cached, fallbackCommand)
+        }
         return fallbackCommand
     }
 

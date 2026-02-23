@@ -63,6 +63,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
@@ -92,6 +93,8 @@ import java.awt.FlowLayout
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Image
+import java.awt.KeyEventDispatcher
+import java.awt.KeyboardFocusManager
 import java.awt.RenderingHints
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
@@ -104,6 +107,7 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
 import java.nio.file.Paths
+import java.util.Base64
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -117,8 +121,10 @@ import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.KeyStroke
+import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.JComponent
+import javax.swing.ImageIcon
 import javax.swing.plaf.basic.BasicSplitPaneDivider
 import javax.swing.plaf.basic.BasicSplitPaneUI
 import javax.swing.text.DefaultEditorKit
@@ -188,6 +194,7 @@ class ImprovedChatPanel(
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var statusAutoHideTimer: Timer? = null
     private var dividerPersistTimer: Timer? = null
+    private var pasteKeyDispatcher: KeyEventDispatcher? = null
     private val runningWorkflowCommands = ConcurrentHashMap<String, RunningWorkflowCommand>()
     private val transientClipboardImagePaths = mutableSetOf<String>()
 
@@ -228,6 +235,7 @@ class ImprovedChatPanel(
             onCompletionSelect = { item ->
                 item.contextItem?.let { contextPreviewPanel.addItem(it) }
             },
+            onPasteIntercept = { tryPasteImageAttachmentsFromClipboard() },
         )
 
         border = JBUI.Borders.empty(12)
@@ -376,6 +384,8 @@ class ImprovedChatPanel(
         statusLabel.isVisible = false
         configureActionButtons()
         configureClipboardImagePaste()
+        installGlobalPasteKeyDispatcher()
+        logPasteDiagnostic("paste diagnostics active; panel=${this::class.java.simpleName}")
         updateComboTooltips()
 
         sendButton.addActionListener { sendCurrentInput() }
@@ -691,10 +701,23 @@ class ImprovedChatPanel(
             .getOrDefault(InputEvent.CTRL_DOWN_MASK)
         val pasteAction = object : AbstractAction() {
             override fun actionPerformed(e: ActionEvent?) {
+                logPasteDiagnostic(
+                    "ACTION_PASTE_IMAGE_OR_TEXT triggered; focusOwner=${inputField.isFocusOwner}; source=${e?.source?.javaClass?.simpleName}",
+                )
                 if (tryPasteImageAttachmentsFromClipboard()) {
+                    logPasteDiagnostic("paste action handled by image attachment flow")
                     return
                 }
+                val hasStringContent = clipboardHasStringContent()
+                logPasteDiagnostic("paste action fallback to text; hasStringContent=$hasStringContent")
                 defaultPasteAction?.actionPerformed(e) ?: inputField.paste()
+                if (!hasStringContent) {
+                    showStatus(
+                        SpecCodingBundle.message("toolwindow.image.attach.unsupported"),
+                        autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                    )
+                    logPasteDiagnostic("paste fallback had no string content; unsupported notice shown")
+                }
             }
         }
         focusedInputMap.put(
@@ -714,45 +737,104 @@ class ImprovedChatPanel(
         actionMap.put(DefaultEditorKit.pasteAction, pasteAction)
     }
 
+    private fun installGlobalPasteKeyDispatcher() {
+        val existing = pasteKeyDispatcher
+        if (existing != null) {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(existing)
+        }
+        val dispatcher = KeyEventDispatcher { event ->
+            if (event.id != KeyEvent.KEY_PRESSED || !isPasteShortcut(event)) {
+                return@KeyEventDispatcher false
+            }
+            if (project.isDisposed || _isDisposed) {
+                return@KeyEventDispatcher false
+            }
+            val focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().focusOwner ?: return@KeyEventDispatcher false
+            if (!SwingUtilities.isDescendingFrom(focusOwner, this)) {
+                return@KeyEventDispatcher false
+            }
+            logPasteDiagnostic(
+                "global dispatcher captured paste key=${event.keyCode}; focus=${focusOwner.javaClass.name}",
+            )
+            val handled = tryPasteImageAttachmentsFromClipboard()
+            if (handled) {
+                event.consume()
+                logPasteDiagnostic("global dispatcher consumed paste event for image attach")
+            } else {
+                logPasteDiagnostic("global dispatcher did not resolve image attachment")
+            }
+            handled
+        }
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(dispatcher)
+        pasteKeyDispatcher = dispatcher
+        logPasteDiagnostic("global paste key dispatcher installed")
+    }
+
+    private fun isPasteShortcut(event: KeyEvent): Boolean {
+        val shortcutMask = runCatching { Toolkit.getDefaultToolkit().menuShortcutKeyMaskEx }
+            .getOrDefault(InputEvent.CTRL_DOWN_MASK)
+        val ctrlLikePaste = event.keyCode == KeyEvent.VK_V && (event.modifiersEx and shortcutMask) == shortcutMask
+        val shiftInsertPaste = event.keyCode == KeyEvent.VK_INSERT && event.isShiftDown
+        return ctrlLikePaste || shiftInsertPaste
+    }
+
     private fun tryPasteImageAttachmentsFromClipboard(): Boolean {
         if (project.isDisposed || _isDisposed) return false
-        val clipboardContent = runCatching {
-            Toolkit.getDefaultToolkit().systemClipboard.getContents(null)
-        }.getOrNull() ?: return false
+        logPasteDiagnostic("tryPasteImageAttachmentsFromClipboard start")
+        val clipboardCandidates = currentClipboardContentsCandidates()
+        if (clipboardCandidates.isEmpty()) {
+            logPasteDiagnostic("no clipboard candidates available")
+            return false
+        }
 
-        val fileListImagePaths = extractImagePathsFromClipboardFiles(clipboardContent)
-        if (fileListImagePaths.isNotEmpty()) {
-            imageAttachmentPreviewPanel.addImagePaths(fileListImagePaths)
+        val detectedImagePaths = linkedSetOf<String>()
+        var detectedClipboardImage: Image? = null
+        var hasFileListFlavor = false
+        clipboardCandidates.forEachIndexed { index, clipboardContent ->
+            logPasteDiagnostic("clipboard candidate[$index] flavors=${describeClipboardTransferable(clipboardContent)}")
+            detectedImagePaths += extractImagePathsFromClipboardFiles(clipboardContent)
+            detectedImagePaths += extractImagePathsFromClipboardText(clipboardContent)
+            if (detectedClipboardImage == null) {
+                detectedClipboardImage = extractClipboardImage(clipboardContent)
+            }
+            if (clipboardContent.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                hasFileListFlavor = true
+            }
+        }
+        logPasteDiagnostic(
+            "clipboard parse summary: imagePaths=${detectedImagePaths.size}, hasClipboardImage=${detectedClipboardImage != null}, hasFileListFlavor=$hasFileListFlavor",
+        )
+
+        if (detectedImagePaths.isNotEmpty()) {
+            val imagePaths = detectedImagePaths.toList()
+            imageAttachmentPreviewPanel.addImagePaths(imagePaths)
             showStatus(
-                SpecCodingBundle.message("toolwindow.image.attach.added", fileListImagePaths.size),
+                SpecCodingBundle.message("toolwindow.image.attach.added", imagePaths.size),
                 autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
             )
+            logPasteDiagnostic("added image paths: ${imagePaths.joinToString(limit = 3, truncated = "...")}")
             return true
         }
-        val textImagePaths = extractImagePathsFromClipboardText(clipboardContent)
-        if (textImagePaths.isNotEmpty()) {
-            imageAttachmentPreviewPanel.addImagePaths(textImagePaths)
-            showStatus(
-                SpecCodingBundle.message("toolwindow.image.attach.added", textImagePaths.size),
-                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
-            )
-            return true
-        }
-        if (clipboardContent.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+        if (hasFileListFlavor) {
             showStatus(
                 SpecCodingBundle.message("toolwindow.image.attach.unsupported"),
                 autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
             )
+            logPasteDiagnostic("clipboard has file list flavor but no supported image path")
             return true
         }
 
-        val clipboardImage = extractClipboardImage(clipboardContent) ?: return false
+        val clipboardImage = detectedClipboardImage ?: run {
+            logPasteDiagnostic("no raw clipboard image detected")
+            return false
+        }
         val tempImagePath = persistClipboardImage(clipboardImage)
         if (tempImagePath == null) {
             showStatus(
                 SpecCodingBundle.message("toolwindow.image.attach.unsupported"),
                 autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
             )
+            logPasteDiagnostic("clipboard image detected but failed to persist temp file")
             return true
         }
         imageAttachmentPreviewPanel.addImagePaths(listOf(tempImagePath))
@@ -761,7 +843,39 @@ class ImprovedChatPanel(
             SpecCodingBundle.message("toolwindow.image.attach.added", 1),
             autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
         )
+        logPasteDiagnostic("added clipboard image as temp file: $tempImagePath")
         return true
+    }
+
+    private fun currentClipboardContentsCandidates(): List<Transferable> {
+        val candidates = mutableListOf<Transferable>()
+
+        val systemClipboard = runCatching {
+            Toolkit.getDefaultToolkit().systemClipboard.getContents(null)
+        }.onFailure { error ->
+            warnPasteDiagnostic("failed to read system clipboard: ${error.message}", error)
+        }.getOrNull()
+        if (systemClipboard != null) {
+            candidates += systemClipboard
+        }
+
+        val ideClipboard = runCatching {
+            CopyPasteManager.getInstance().contents
+        }.onFailure { error ->
+            warnPasteDiagnostic("failed to read IDE clipboard: ${error.message}", error)
+        }.getOrNull()
+        if (ideClipboard != null && candidates.none { it === ideClipboard }) {
+            candidates += ideClipboard
+        }
+        logPasteDiagnostic(
+            "clipboard candidates assembled: count=${candidates.size}, system=${systemClipboard != null}, ide=${ideClipboard != null}",
+        )
+        return candidates
+    }
+
+    private fun clipboardHasStringContent(): Boolean {
+        return currentClipboardContentsCandidates()
+            .any { clipboard -> clipboard.isDataFlavorSupported(DataFlavor.stringFlavor) }
     }
 
     private fun extractImagePathsFromClipboardFiles(transferable: Transferable): List<String> {
@@ -805,32 +919,42 @@ class ImprovedChatPanel(
         val directImage = if (transferable.isDataFlavorSupported(DataFlavor.imageFlavor)) {
             runCatching {
                 transferable.getTransferData(DataFlavor.imageFlavor) as? Image
+            }.onFailure { error ->
+                warnPasteDiagnostic("failed to get DataFlavor.imageFlavor: ${error.message}", error)
             }.getOrNull()
         } else {
             null
         }
         if (directImage != null) {
+            logPasteDiagnostic("clipboard image resolved via DataFlavor.imageFlavor")
             return directImage
         }
 
         transferable.transferDataFlavors.forEach { flavor ->
-            val isImageLike = flavor.primaryType.equals("image", ignoreCase = true) ||
-                flavor.mimeType.contains("image", ignoreCase = true)
-            if (!isImageLike) return@forEach
-
-            val data = runCatching { transferable.getTransferData(flavor) }.getOrNull() ?: return@forEach
+            val data = runCatching { transferable.getTransferData(flavor) }
+                .onFailure { error ->
+                    warnPasteDiagnostic("failed to read clipboard flavor ${describeDataFlavor(flavor)}: ${error.message}")
+                }
+                .getOrNull()
+                ?: return@forEach
             when (data) {
-                is Image -> return data
+                is Image -> {
+                    logPasteDiagnostic("clipboard image resolved via flavor ${describeDataFlavor(flavor)} as Image")
+                    return data
+                }
                 is ByteArray -> {
+                    logPasteDiagnostic("clipboard flavor ${describeDataFlavor(flavor)} returned ByteArray(size=${data.size})")
                     val decoded = decodeImageFromBytes(data)
                     if (decoded != null) return decoded
                 }
                 is InputStream -> {
+                    logPasteDiagnostic("clipboard flavor ${describeDataFlavor(flavor)} returned InputStream")
                     val decoded = decodeImageFromInputStream(data)
                     if (decoded != null) return decoded
                 }
                 is java.nio.ByteBuffer -> {
                     val remaining = data.remaining()
+                    logPasteDiagnostic("clipboard flavor ${describeDataFlavor(flavor)} returned ByteBuffer(remaining=$remaining)")
                     if (remaining > 0) {
                         val bytes = ByteArray(remaining)
                         data.get(bytes)
@@ -838,9 +962,44 @@ class ImprovedChatPanel(
                         if (decoded != null) return decoded
                     }
                 }
+                is String -> {
+                    logPasteDiagnostic("clipboard flavor ${describeDataFlavor(flavor)} returned String(length=${data.length})")
+                    val decoded = decodeImageFromDataUrl(data)
+                    if (decoded != null) return decoded
+                }
+                else -> {
+                    logPasteDiagnostic("clipboard flavor ${describeDataFlavor(flavor)} returned unsupported type=${data::class.java.name}")
+                }
             }
         }
+        logPasteDiagnostic("extractClipboardImage completed with no image result")
         return null
+    }
+
+    private fun describeClipboardTransferable(transferable: Transferable): String {
+        val flavors = transferable.transferDataFlavors
+        if (flavors.isEmpty()) return "<none>"
+        return flavors.joinToString(", ") { flavor -> describeDataFlavor(flavor) }
+    }
+
+    private fun describeDataFlavor(flavor: DataFlavor): String {
+        val mime = flavor.mimeType.substringBefore(';').trim()
+        val representation = flavor.representationClass?.simpleName ?: "Unknown"
+        return "${flavor.humanPresentableName}[$mime->$representation]"
+    }
+
+    private fun logPasteDiagnostic(message: String) {
+        if (!PASTE_DIAGNOSTICS_ENABLED) return
+        logger.warn("[PasteDiag] $message")
+    }
+
+    private fun warnPasteDiagnostic(message: String, throwable: Throwable? = null) {
+        if (!PASTE_DIAGNOSTICS_ENABLED) return
+        if (throwable == null) {
+            logger.warn("[PasteDiag] $message")
+            return
+        }
+        logger.warn("[PasteDiag] $message", throwable)
     }
 
     private fun decodeImageFromBytes(bytes: ByteArray): BufferedImage? {
@@ -860,6 +1019,26 @@ class ImprovedChatPanel(
         }.getOrNull()
     }
 
+    private fun decodeImageFromDataUrl(raw: String): BufferedImage? {
+        val text = raw.trim()
+        if (!text.startsWith("data:image/", ignoreCase = true)) {
+            return null
+        }
+        val commaIndex = text.indexOf(',')
+        if (commaIndex <= 0 || commaIndex >= text.lastIndex) {
+            return null
+        }
+        val header = text.substring(0, commaIndex)
+        val payload = text.substring(commaIndex + 1)
+        if (!header.contains(";base64", ignoreCase = true)) {
+            return null
+        }
+        val bytes = runCatching {
+            Base64.getDecoder().decode(payload)
+        }.getOrNull() ?: return null
+        return decodeImageFromBytes(bytes)
+    }
+
     private fun persistClipboardImage(image: Image): String? {
         val bufferedImage = toBufferedImage(image) ?: return null
         val tempDir = File(System.getProperty("java.io.tmpdir"), CLIPBOARD_IMAGE_TEMP_DIR_NAME)
@@ -875,8 +1054,13 @@ class ImprovedChatPanel(
     }
 
     private fun toBufferedImage(image: Image): BufferedImage? {
-        val width = image.getWidth(null)
-        val height = image.getHeight(null)
+        var width = image.getWidth(null)
+        var height = image.getHeight(null)
+        if (width <= 0 || height <= 0) {
+            val icon = ImageIcon(image)
+            width = icon.iconWidth
+            height = icon.iconHeight
+        }
         if (width <= 0 || height <= 0) return null
         if (image is BufferedImage) return image
 
@@ -3598,6 +3782,10 @@ class ImprovedChatPanel(
 
     override fun dispose() {
         _isDisposed = true
+        pasteKeyDispatcher?.let { dispatcher ->
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(dispatcher)
+        }
+        pasteKeyDispatcher = null
         statusAutoHideTimer?.stop()
         statusAutoHideTimer = null
         dividerPersistTimer?.stop()
@@ -3710,6 +3898,7 @@ class ImprovedChatPanel(
         private const val STREAM_BATCH_INTERVAL_NANOS = 120_000_000L
         private const val STREAM_AUTO_SCROLL_THRESHOLD_PX = 80
         private const val ACTION_PASTE_IMAGE_OR_TEXT = "specCoding.pasteImageOrText"
+        private const val PASTE_DIAGNOSTICS_ENABLED = true
         private const val CLIPBOARD_IMAGE_TEMP_DIR_NAME = "spec-coding-plugin"
         private const val SPEC_CARD_PREVIEW_MAX_LINES = 18
         private const val SPEC_CARD_PREVIEW_MAX_CHARS = 1800

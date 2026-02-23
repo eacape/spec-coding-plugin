@@ -19,6 +19,7 @@ import java.awt.Insets
 import java.awt.RenderingHints
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
+import java.awt.geom.RoundRectangle2D
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -55,6 +56,7 @@ open class ChatMessagePanel(
     private var buttonPanel: JPanel? = null
     private var traceExpanded = false
     private var outputExpanded = false
+    private var outputFilterLevel = OutputFilterLevel.KEY
     private var messageFinished = false
 
     enum class MessageRole {
@@ -63,7 +65,7 @@ open class ChatMessagePanel(
 
     init {
         isOpaque = false
-        border = JBUI.Borders.emptyBottom(10)
+        border = JBUI.Borders.empty(2, 0, 10, 0)
 
         // 内容区域
         configureReadableTextPane(contentPane)
@@ -333,6 +335,7 @@ open class ChatMessagePanel(
     }
 
     private fun createOutputPanel(items: List<StreamingTraceAssembler.TraceItem>): JPanel {
+        val mergedOutput = mergeOutputItemsForDisplay(items, outputFilterLevel)
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = true
         wrapper.background = outputCardBackgroundColor()
@@ -348,7 +351,7 @@ open class ChatMessagePanel(
         val left = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
         left.isOpaque = false
 
-        val running = items.any { it.status == ExecutionTimelineParser.Status.RUNNING }
+        val running = mergedOutput.status == ExecutionTimelineParser.Status.RUNNING
         if (running) {
             left.add(
                 createRunningIndicator(
@@ -371,6 +374,22 @@ open class ChatMessagePanel(
         left.add(createSummaryBadge(items.size.toString()))
         header.add(left, BorderLayout.CENTER)
 
+        val right = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
+        right.isOpaque = false
+
+        val filterButton = JButton(
+            SpecCodingBundle.message(
+                "chat.timeline.output.filter.toggle",
+                outputFilterLabel(outputFilterLevel),
+            )
+        )
+        styleInlineActionButton(filterButton)
+        filterButton.addActionListener {
+            outputFilterLevel = outputFilterLevel.next()
+            renderContent()
+        }
+        right.add(filterButton)
+
         val toggleButton = JButton(
             SpecCodingBundle.message(
                 if (outputExpanded) "chat.timeline.toggle.collapse" else "chat.timeline.toggle.expand"
@@ -381,34 +400,56 @@ open class ChatMessagePanel(
             outputExpanded = !outputExpanded
             renderContent()
         }
-        header.add(toggleButton, BorderLayout.EAST)
+        right.add(toggleButton)
+        header.add(right, BorderLayout.EAST)
 
         wrapper.add(header, BorderLayout.NORTH)
 
         if (outputExpanded) {
-            val list = JPanel()
-            list.layout = BoxLayout(list, BoxLayout.Y_AXIS)
-            list.isOpaque = false
-            list.border = JBUI.Borders.compound(
+            val detailHost = JPanel(BorderLayout())
+            detailHost.isOpaque = false
+            detailHost.border = JBUI.Borders.compound(
                 JBUI.Borders.customLine(outputSectionDividerColor(), 1, 0, 0, 0),
                 JBUI.Borders.emptyTop(8),
             )
-            items.forEach { item ->
-                list.add(createTraceDetailBlock(item, forceVerbose = true, showVerboseToggle = false))
-            }
-            wrapper.add(list, BorderLayout.CENTER)
+            detailHost.add(
+                createTraceDetailBlock(
+                    StreamingTraceAssembler.TraceItem(
+                        kind = ExecutionTimelineParser.Kind.OUTPUT,
+                        status = mergedOutput.status,
+                        detail = mergedOutput.detail,
+                        fileAction = null,
+                        isVerbose = true,
+                    ),
+                    forceVerbose = true,
+                    showVerboseToggle = false,
+                    alwaysExpanded = true,
+                ),
+                BorderLayout.CENTER
+            )
+            wrapper.add(detailHost, BorderLayout.CENTER)
         } else {
-            val first = items.firstOrNull()
-            if (first != null) {
-                val previewHost = JPanel(BorderLayout())
-                previewHost.isOpaque = false
-                previewHost.border = JBUI.Borders.compound(
-                    JBUI.Borders.customLine(outputSectionDividerColor(), 1, 0, 0, 0),
-                    JBUI.Borders.emptyTop(6),
-                )
-                previewHost.add(createTraceDetailBlock(first, forceVerbose = true, showVerboseToggle = false), BorderLayout.CENTER)
-                wrapper.add(previewHost, BorderLayout.CENTER)
-            }
+            val previewHost = JPanel(BorderLayout())
+            previewHost.isOpaque = false
+            previewHost.border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(outputSectionDividerColor(), 1, 0, 0, 0),
+                JBUI.Borders.emptyTop(6),
+            )
+            previewHost.add(
+                createTraceDetailBlock(
+                    StreamingTraceAssembler.TraceItem(
+                        kind = ExecutionTimelineParser.Kind.OUTPUT,
+                        status = mergedOutput.status,
+                        detail = mergedOutput.detail,
+                        fileAction = null,
+                        isVerbose = true,
+                    ),
+                    forceVerbose = true,
+                    showVerboseToggle = false,
+                ),
+                BorderLayout.CENTER
+            )
+            wrapper.add(previewHost, BorderLayout.CENTER)
         }
 
         val container = JPanel(BorderLayout())
@@ -507,6 +548,7 @@ open class ChatMessagePanel(
         item: StreamingTraceAssembler.TraceItem,
         forceVerbose: Boolean = false,
         showVerboseToggle: Boolean = true,
+        alwaysExpanded: Boolean = false,
     ): JPanel {
         val block = JPanel(BorderLayout())
         block.isOpaque = false
@@ -516,14 +558,16 @@ open class ChatMessagePanel(
         val verbose = forceVerbose || item.isVerbose
         val previewLength = if (forceVerbose) TRACE_OUTPUT_PREVIEW_LENGTH else TRACE_DETAIL_PREVIEW_LENGTH
         val hasOverflow = item.detail.length > previewLength
-        val collapsed = verbose && key !in expandedVerboseEntries
+        val collapsed = !alwaysExpanded && verbose && key !in expandedVerboseEntries
         val markdownLike = looksLikeMarkdown(item.detail)
         val previewText = if (markdownLike) {
             toMarkdownPreview(item.detail, previewLength)
         } else {
             toPreview(item.detail, previewLength)
         }
-        val visibleText = if (collapsed) {
+        val visibleText = if (alwaysExpanded) {
+            item.detail
+        } else if (collapsed) {
             previewText
         } else if (!verbose && hasOverflow) {
             previewText
@@ -746,6 +790,111 @@ open class ChatMessagePanel(
             isVerbose = groupItems.any { it.isVerbose },
             mergedCount = mergedCount,
         )
+    }
+
+    private fun mergeOutputItemsForDisplay(
+        items: List<StreamingTraceAssembler.TraceItem>,
+        filterLevel: OutputFilterLevel,
+    ): OutputDisplay {
+        if (items.isEmpty()) {
+            return OutputDisplay(
+                status = ExecutionTimelineParser.Status.INFO,
+                detail = "",
+            )
+        }
+        val status = items.maxByOrNull { statusPriority(it.status) }?.status
+            ?: ExecutionTimelineParser.Status.INFO
+
+        val lines = mutableListOf<String>()
+        var previousLine: String? = null
+        var previousBlank = false
+        items.forEach { item ->
+            item.detail
+                .replace("\r\n", "\n")
+                .lines()
+                .forEach { raw ->
+                    val line = raw.trimEnd()
+                    val blank = line.isBlank()
+                    if (blank && previousBlank) return@forEach
+                    if (line.isNotBlank() && line == previousLine) return@forEach
+                    lines += line
+                    previousLine = line
+                    previousBlank = blank
+                }
+        }
+
+        val mergedDetail = lines.joinToString("\n").trim().ifBlank {
+            items.firstOrNull()?.detail?.trim().orEmpty()
+        }
+
+        return OutputDisplay(
+            status = status,
+            detail = applyOutputFilter(mergedDetail, filterLevel),
+        )
+    }
+
+    private fun applyOutputFilter(rawDetail: String, level: OutputFilterLevel): String {
+        if (level == OutputFilterLevel.ALL) return rawDetail
+        if (rawDetail.isBlank()) return rawDetail
+
+        val nonBlankLines = rawDetail
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (nonBlankLines.isEmpty()) return rawDetail
+
+        val keyLines = selectKeyOutputLines(nonBlankLines)
+        if (keyLines.isEmpty()) {
+            return nonBlankLines
+                .take(OUTPUT_FILTER_FALLBACK_LINES)
+                .joinToString("\n")
+        }
+
+        val filteredCount = (nonBlankLines.size - keyLines.size).coerceAtLeast(0)
+        val body = keyLines.joinToString("\n")
+        if (filteredCount <= 0) return body
+
+        return buildString {
+            append(body)
+            append("\n\n")
+            append(SpecCodingBundle.message("chat.timeline.output.filtered.more", filteredCount))
+        }
+    }
+
+    private fun selectKeyOutputLines(lines: List<String>): List<String> {
+        val kept = mutableListOf<String>()
+        lines.forEachIndexed { index, line ->
+            val lowered = line.lowercase()
+            val keywordMatch = OUTPUT_KEYWORDS.any { lowered.contains(it) } ||
+                OUTPUT_KEYWORDS_ZH.any { line.contains(it) }
+            val keyValueMatch = OUTPUT_KEY_VALUE_REGEX.containsMatchIn(line)
+            val structureMatch = line.startsWith("[") ||
+                line.startsWith("#") ||
+                line.startsWith("$ ") ||
+                line.startsWith("> ")
+
+            if (keywordMatch || keyValueMatch || structureMatch) {
+                kept += line
+            } else if (index < OUTPUT_FILTER_CONTEXT_HEAD_LINES && kept.size < OUTPUT_FILTER_MIN_LINES) {
+                kept += line
+            }
+        }
+
+        val deduped = kept.distinct()
+        if (deduped.isNotEmpty()) {
+            return deduped.take(OUTPUT_FILTER_MAX_LINES)
+        }
+
+        return lines
+            .take(OUTPUT_FILTER_FALLBACK_LINES)
+            .distinct()
+    }
+
+    private fun outputFilterLabel(level: OutputFilterLevel): String {
+        return when (level) {
+            OutputFilterLevel.KEY -> SpecCodingBundle.message("chat.timeline.output.filter.key")
+            OutputFilterLevel.ALL -> SpecCodingBundle.message("chat.timeline.output.filter.all")
+        }
     }
 
     private fun statusPriority(status: ExecutionTimelineParser.Status): Int {
@@ -1080,7 +1229,7 @@ open class ChatMessagePanel(
     )
 
     private fun traceCardBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(209, 218, 229),
+        java.awt.Color(197, 208, 222),
         java.awt.Color(91, 101, 112),
     )
 
@@ -1090,7 +1239,7 @@ open class ChatMessagePanel(
     )
 
     private fun outputCardBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(208, 217, 229),
+        java.awt.Color(196, 207, 221),
         java.awt.Color(89, 99, 111),
     )
 
@@ -1190,15 +1339,24 @@ open class ChatMessagePanel(
             val graphics = g as? Graphics2D ?: return
             val g2 = graphics.create() as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
             g2.color = lineColor
-            repeat(thickness.coerceAtLeast(1)) { index ->
-                g2.drawRoundRect(
-                    x + index,
-                    y + index,
-                    width - 1 - index * 2,
-                    height - 1 - index * 2,
-                    arc,
-                    arc,
+            val safeThickness = thickness.coerceAtLeast(1)
+            repeat(safeThickness) { index ->
+                val offset = index + 0.5f
+                val drawWidth = width - index * 2 - 1f
+                val drawHeight = height - index * 2 - 1f
+                if (drawWidth <= 0f || drawHeight <= 0f) return@repeat
+                val arcSize = (arc - index * 2).coerceAtLeast(2).toFloat()
+                g2.draw(
+                    RoundRectangle2D.Float(
+                        x + offset,
+                        y + offset,
+                        drawWidth,
+                        drawHeight,
+                        arcSize,
+                        arcSize,
+                    )
                 )
             }
             g2.dispose()
@@ -1285,6 +1443,10 @@ open class ChatMessagePanel(
         private const val TRACE_OUTPUT_PREVIEW_LENGTH = 140
         private const val TRACE_GROUP_DETAIL_PREVIEW_LENGTH = 96
         private const val TRACE_GROUP_DETAIL_SAMPLE_COUNT = 2
+        private const val OUTPUT_FILTER_MIN_LINES = 2
+        private const val OUTPUT_FILTER_MAX_LINES = 24
+        private const val OUTPUT_FILTER_FALLBACK_LINES = 6
+        private const val OUTPUT_FILTER_CONTEXT_HEAD_LINES = 6
         private const val COPY_FEEDBACK_DURATION_MS = 1000
         private const val COPY_FEEDBACK_TIMER_KEY = "spec.copy.feedback.timer"
         private const val COPY_FEEDBACK_ICON_SUCCESS = "OK"
@@ -1298,6 +1460,17 @@ open class ChatMessagePanel(
             "execute", "execution", "implement", "执行", "实施",
             "verify", "verification", "test", "验证", "测试",
         )
+        private val OUTPUT_KEYWORDS = listOf(
+            "model", "provider", "workdir", "sandbox", "approval", "session id",
+            "error", "failed", "success", "warning", "exit", "command", "token",
+            "cost", "trace", "task", "verify", "read", "edit", "spec", "mcp", "hook",
+        )
+        private val OUTPUT_KEYWORDS_ZH = listOf(
+            "模型", "提供商", "工作目录", "沙箱", "审批", "会话",
+            "错误", "失败", "成功", "警告", "退出", "命令",
+            "成本", "任务", "验证", "读取", "编辑", "规格", "输出",
+        )
+        private val OUTPUT_KEY_VALUE_REGEX = Regex("""^[^\\s].{0,40}[:：]\\s*.+$""")
     }
 
     private data class TraceDisplayItem(
@@ -1308,4 +1481,22 @@ open class ChatMessagePanel(
         val isVerbose: Boolean,
         val mergedCount: Int,
     )
+
+    private data class OutputDisplay(
+        val status: ExecutionTimelineParser.Status,
+        val detail: String,
+    )
+
+    private enum class OutputFilterLevel {
+        KEY,
+        ALL,
+        ;
+
+        fun next(): OutputFilterLevel {
+            return when (this) {
+                KEY -> ALL
+                ALL -> KEY
+            }
+        }
+    }
 }

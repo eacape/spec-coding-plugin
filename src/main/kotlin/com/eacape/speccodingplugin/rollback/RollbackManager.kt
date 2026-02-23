@@ -114,32 +114,34 @@ class RollbackManager(private val project: Project) {
         when (change.changeType) {
             FileChange.ChangeType.CREATED -> {
                 // 删除创建的文件
-                deleteFile(change.filePath)
+                deleteFileIfExists(change.filePath)
             }
             FileChange.ChangeType.MODIFIED -> {
                 // 恢复修改前的内容
                 val beforeContent = change.beforeContent
                     ?: throw IllegalStateException("No before content for modified file: ${change.filePath}")
-                restoreFileContent(change.filePath, beforeContent)
+                restoreOrRecreateFileContent(change.filePath, beforeContent)
             }
             FileChange.ChangeType.DELETED -> {
                 // 恢复删除的文件
                 val beforeContent = change.beforeContent
                     ?: throw IllegalStateException("No before content for deleted file: ${change.filePath}")
-                recreateFile(change.filePath, beforeContent)
+                restoreOrRecreateFileContent(change.filePath, beforeContent)
             }
         }
     }
 
     /**
-     * 删除文件
+     * 删除文件（若不存在则视为已回滚）
      */
-    private fun deleteFile(filePath: String) {
+    private fun deleteFileIfExists(filePath: String) {
         val virtualFile = LocalFileSystem.getInstance().findFileByPath(toVfsPath(filePath))
-            ?: throw IllegalStateException("File not found: $filePath")
+            ?: return
 
         WriteAction.runAndWait<Throwable> {
-            virtualFile.delete(this)
+            if (virtualFile.exists()) {
+                virtualFile.delete(this)
+            }
         }
     }
 
@@ -158,6 +160,18 @@ class RollbackManager(private val project: Project) {
             } else {
                 virtualFile.setBinaryContent(content.toByteArray(virtualFile.charset))
             }
+        }
+    }
+
+    /**
+     * 优先恢复已有文件；若文件已不存在则重建为 before 内容。
+     */
+    private fun restoreOrRecreateFileContent(filePath: String, content: String) {
+        val existing = LocalFileSystem.getInstance().refreshAndFindFileByPath(toVfsPath(filePath))
+        if (existing != null && existing.exists()) {
+            restoreFileContent(filePath, content)
+        } else {
+            recreateFile(filePath, content)
         }
     }
 
