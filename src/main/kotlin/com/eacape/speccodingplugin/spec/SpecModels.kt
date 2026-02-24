@@ -237,6 +237,7 @@ data class SpecGenerationRequest(
  * 生成选项
  */
 data class GenerationOptions(
+    val providerId: String? = null,
     val model: String? = null,
     val temperature: Double? = null,
     val maxTokens: Int? = null,

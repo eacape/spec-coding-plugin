@@ -35,7 +35,7 @@ class SpecGenerator(
                 maxTokens = request.options.maxTokens
             )
 
-            val response = runCatching { llmRouter.generate(providerId = null, request = llmRequest) }
+            val response = runCatching { llmRouter.generate(providerId = request.options.providerId, request = llmRequest) }
 
             if (response.isFailure) {
                 return@withContext SpecGenerationResult.Failure(

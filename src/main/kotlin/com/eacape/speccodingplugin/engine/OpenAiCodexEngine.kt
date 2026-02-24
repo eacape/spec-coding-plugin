@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.engine
 
+import java.nio.charset.StandardCharsets
+
 /**
  * OpenAI Codex CLI 引擎适配
  */
@@ -88,7 +90,7 @@ class OpenAiCodexEngine(
             val process = ProcessBuilder(command)
                 .redirectErrorStream(true)
                 .start()
-            val output = process.inputStream.bufferedReader().readText().trim()
+            val output = process.inputStream.bufferedReader(StandardCharsets.UTF_8).readText().trim()
             process.waitFor()
             if (process.exitValue() == 0) output else null
         } catch (e: Exception) {

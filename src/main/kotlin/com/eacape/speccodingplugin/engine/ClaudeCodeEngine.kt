@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.engine
 
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 
 /**
@@ -151,7 +152,7 @@ class ClaudeCodeEngine(
                 process.waitFor(1, TimeUnit.SECONDS)
                 return null
             }
-            val output = process.inputStream.bufferedReader().use { it.readText() }
+            val output = process.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
             if (output.isBlank()) null else output
         }.getOrNull()
     }
@@ -169,7 +170,7 @@ class ClaudeCodeEngine(
             val process = ProcessBuilder(command)
                 .redirectErrorStream(true).start()
             val output = process.inputStream
-                .bufferedReader().readText().trim()
+                .bufferedReader(StandardCharsets.UTF_8).readText().trim()
             process.waitFor()
             if (process.exitValue() == 0) output else null
         } catch (e: Exception) {

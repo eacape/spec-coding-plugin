@@ -13,6 +13,7 @@ class SpecWorkflowListPanelTest {
         val panel = SpecWorkflowListPanel(
             onWorkflowSelected = {},
             onCreateWorkflow = {},
+            onEditWorkflow = {},
             onDeleteWorkflow = {},
         )
 
@@ -37,11 +38,13 @@ class SpecWorkflowListPanelTest {
     @Test
     fun `toolbar buttons should trigger callbacks`() {
         var createCalls = 0
+        val editedIds = mutableListOf<String>()
         val deletedIds = mutableListOf<String>()
 
         val panel = SpecWorkflowListPanel(
             onWorkflowSelected = {},
             onCreateWorkflow = { createCalls += 1 },
+            onEditWorkflow = { editedIds += it },
             onDeleteWorkflow = { deletedIds += it },
         )
 
@@ -53,12 +56,16 @@ class SpecWorkflowListPanelTest {
         panel.setSelectedWorkflow("wf-del")
         panel.clickDeleteForTest()
         assertEquals(listOf("wf-del"), deletedIds)
+
+        panel.clickEditForTest()
+        assertEquals(listOf("wf-del"), editedIds)
     }
 
     private fun item(id: String, title: String, phase: SpecPhase): SpecWorkflowListPanel.WorkflowListItem {
         return SpecWorkflowListPanel.WorkflowListItem(
             workflowId = id,
             title = title,
+            description = "desc",
             currentPhase = phase,
             status = WorkflowStatus.IN_PROGRESS,
             updatedAt = 1L,

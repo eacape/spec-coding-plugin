@@ -120,6 +120,17 @@ class SpecEngine(private val project: Project) {
     suspend fun generateCurrentPhase(
         workflowId: String,
         input: String,
+    ): Flow<SpecGenerationProgress> {
+        return generateCurrentPhase(
+            workflowId = workflowId,
+            input = input,
+            options = GenerationOptions(),
+        )
+    }
+
+    suspend fun generateCurrentPhase(
+        workflowId: String,
+        input: String,
         options: GenerationOptions = GenerationOptions()
     ): Flow<SpecGenerationProgress> = flow {
         val workflow = activeWorkflows[workflowId]
@@ -249,6 +260,39 @@ class SpecEngine(private val project: Project) {
             storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
             logger.info("Workflow $workflowId updated ${phase.displayName} document")
+            updatedWorkflow
+        }
+    }
+
+    fun updateWorkflowMetadata(
+        workflowId: String,
+        title: String,
+        description: String,
+    ): Result<SpecWorkflow> {
+        return runCatching {
+            val normalizedTitle = title
+                .replace("\r\n", "\n")
+                .replace('\r', '\n')
+                .replace('\n', ' ')
+                .trim()
+            require(normalizedTitle.isNotBlank()) { "Workflow title cannot be blank" }
+
+            val workflow = activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+
+            val now = System.currentTimeMillis()
+            val updatedWorkflow = workflow.copy(
+                title = normalizedTitle,
+                description = description
+                    .replace("\r\n", "\n")
+                    .replace('\r', '\n')
+                    .trim(),
+                updatedAt = now,
+            )
+            activeWorkflows[workflowId] = updatedWorkflow
+            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
+
+            logger.info("Workflow $workflowId updated metadata")
             updatedWorkflow
         }
     }

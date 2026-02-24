@@ -22,14 +22,17 @@ internal class ChatSpecSidebarPanel(
     private val loadWorkflow: (String) -> Result<SpecWorkflow>,
     private val listWorkflows: () -> List<String>,
     private val onOpenDocument: ((workflowId: String, phase: SpecPhase) -> Unit)? = null,
+    private val onEditWorkflow: ((workflowId: String) -> Unit)? = null,
 ) : JPanel(BorderLayout()) {
 
     private val titleLabel = JBLabel()
     private val workflowLabel = JBLabel()
+    private val workflowDescriptionLabel = JBLabel()
     private val statusBadgeLabel = JBLabel()
     private val phaseLabel = JBLabel()
     private val phaseChipsPanel = JPanel(GridLayout(1, SpecPhase.entries.size, RHYTHM_XS, 0))
     private val refreshButton = JButton()
+    private val editWorkflowButton = JButton()
     private val openFileButton = JButton()
     private val documentTitleLabel = JBLabel()
     private val contentPane = JTextPane()
@@ -65,8 +68,11 @@ internal class ChatSpecSidebarPanel(
         titleLabel.font = titleLabel.font.deriveFont(java.awt.Font.BOLD, 12f)
         workflowLabel.font = workflowLabel.font.deriveFont(11f)
         workflowLabel.foreground = JBColor.GRAY
+        workflowDescriptionLabel.font = workflowDescriptionLabel.font.deriveFont(11f)
+        workflowDescriptionLabel.foreground = JBColor.GRAY
         titlePanel.add(titleLabel)
         titlePanel.add(workflowLabel)
+        titlePanel.add(workflowDescriptionLabel)
         headerPanel.add(titlePanel, BorderLayout.CENTER)
 
         statusBadgeLabel.font = statusBadgeLabel.font.deriveFont(10f)
@@ -78,9 +84,18 @@ internal class ChatSpecSidebarPanel(
         headerActions.isOpaque = false
         styleIconActionButton(refreshButton, AllIcons.Actions.Refresh)
         refreshButton.addActionListener { refreshCurrentWorkflow() }
+        styleIconActionButton(editWorkflowButton, AllIcons.Actions.Edit)
+        editWorkflowButton.addActionListener {
+            val handler = onEditWorkflow ?: return@addActionListener
+            val workflowId = currentWorkflow?.id ?: currentWorkflowId
+            if (!workflowId.isNullOrBlank()) {
+                handler.invoke(workflowId)
+            }
+        }
         styleIconActionButton(openFileButton, AllIcons.Actions.MenuOpen)
         openFileButton.addActionListener { openCurrentPhaseDocument() }
         headerActions.add(statusBadgeLabel)
+        headerActions.add(editWorkflowButton)
         headerActions.add(refreshButton)
         headerActions.add(openFileButton)
         headerPanel.add(headerActions, BorderLayout.EAST)
@@ -153,6 +168,8 @@ internal class ChatSpecSidebarPanel(
         phaseLabel.text = SpecCodingBundle.message("toolwindow.spec.card.phase")
         refreshButton.toolTipText = SpecCodingBundle.message("spec.workflow.refresh")
         refreshButton.accessibleContext.accessibleName = refreshButton.toolTipText
+        editWorkflowButton.toolTipText = SpecCodingBundle.message("toolwindow.spec.sidebar.edit.tooltip")
+        editWorkflowButton.accessibleContext.accessibleName = editWorkflowButton.toolTipText
         openFileButton.toolTipText = SpecCodingBundle.message("toolwindow.spec.sidebar.openFile.tooltip")
         openFileButton.accessibleContext.accessibleName = openFileButton.toolTipText
         for ((phase, button) in phaseButtons) {
@@ -252,7 +269,23 @@ internal class ChatSpecSidebarPanel(
             ?.trim()
             .orEmpty()
 
+        titleLabel.text = workflow.title.ifBlank { workflow.id }
         workflowLabel.text = SpecCodingBundle.message("toolwindow.spec.sidebar.workflow", workflow.id)
+        val normalizedDescription = workflow.description
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .replace('\n', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (normalizedDescription.isBlank()) {
+            workflowDescriptionLabel.text = ""
+            workflowDescriptionLabel.toolTipText = null
+            workflowDescriptionLabel.isVisible = false
+        } else {
+            workflowDescriptionLabel.text = truncateSingleLine(normalizedDescription, maxChars = 120)
+            workflowDescriptionLabel.toolTipText = normalizedDescription
+            workflowDescriptionLabel.isVisible = true
+        }
         documentTitleLabel.text = SpecCodingBundle.message(
             "toolwindow.spec.sidebar.document",
             phaseDisplayName(phase),
@@ -262,6 +295,7 @@ internal class ChatSpecSidebarPanel(
         statusBadgeLabel.text = workflowStatusDisplayName(workflow.status)
         applyWorkflowStatusBadgeStyle(workflow.status)
         updatePhaseButtons(workflow)
+        editWorkflowButton.isEnabled = onEditWorkflow != null
         openFileButton.isEnabled = onOpenDocument != null
         if (content.isBlank()) {
             MarkdownRenderer.render(
@@ -293,15 +327,27 @@ internal class ChatSpecSidebarPanel(
     }
 
     private fun showEmptyState(message: String) {
+        titleLabel.text = SpecCodingBundle.message("toolwindow.spec.sidebar.title")
         workflowLabel.text = ""
+        workflowDescriptionLabel.text = ""
+        workflowDescriptionLabel.toolTipText = null
+        workflowDescriptionLabel.isVisible = false
         documentTitleLabel.text = SpecCodingBundle.message("toolwindow.spec.sidebar.document.empty")
         statusBadgeLabel.isVisible = false
         updatePhaseButtons(null)
+        editWorkflowButton.isEnabled = false
         openFileButton.isEnabled = onOpenDocument != null
         statusLabel.foreground = JBColor.GRAY
         statusLabel.text = message
         MarkdownRenderer.render(contentPane, message)
         contentPane.caretPosition = 0
+    }
+
+    private fun truncateSingleLine(value: String, maxChars: Int): String {
+        if (maxChars <= 0) return ""
+        val normalized = value.replace(Regex("\\s+"), " ").trim()
+        if (normalized.length <= maxChars) return normalized
+        return normalized.take(maxChars - 1).trimEnd() + "…"
     }
 
     private fun openCurrentPhaseDocument() {

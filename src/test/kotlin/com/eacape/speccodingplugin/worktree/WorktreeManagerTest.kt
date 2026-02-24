@@ -65,6 +65,18 @@ class WorktreeManagerTest {
     }
 
     @Test
+    fun `createWorktree should persist resolved base branch from executor`() {
+        gitExecutor.resolveOutcome = Result.success("master")
+
+        val created = manager.createWorktree("SPEC-124", "fallback-base", "main").getOrThrow()
+
+        assertEquals("master", created.baseBranch)
+        assertEquals(1, gitExecutor.resolveCalls.size)
+        assertEquals("main", gitExecutor.resolveCalls.first().requestedBaseBranch)
+        assertEquals("master", gitExecutor.addCalls.first().baseBranch)
+    }
+
+    @Test
     fun `switchWorktree should set active binding`() {
         val first = manager.createWorktree("SPEC-1", "first", "main").getOrThrow()
         val second = manager.createWorktree("SPEC-2", "second", "main").getOrThrow()
@@ -207,6 +219,11 @@ class WorktreeManagerTest {
     }
 
     private class FakeGitWorktreeExecutor : GitWorktreeExecutor {
+        data class ResolveCall(
+            val repoPath: String,
+            val requestedBaseBranch: String,
+        )
+
         data class AddCall(
             val repoPath: String,
             val worktreePath: String,
@@ -220,14 +237,21 @@ class WorktreeManagerTest {
             val force: Boolean,
         )
 
+        val resolveCalls = mutableListOf<ResolveCall>()
         val addCalls = mutableListOf<AddCall>()
         val removeCalls = mutableListOf<RemoveCall>()
 
+        var resolveOutcome: Result<String> = Result.success("main")
         var addOutcome: Result<Unit> = Result.success(Unit)
         var removeOutcome: Result<Unit> = Result.success(Unit)
         var mergeOutcome: Result<GitMergeOutcome> = Result.success(
             GitMergeOutcome(hasConflicts = false, statusDescription = "MERGED")
         )
+
+        override fun resolveBaseBranch(repoPath: String, requestedBaseBranch: String): Result<String> {
+            resolveCalls += ResolveCall(repoPath = repoPath, requestedBaseBranch = requestedBaseBranch)
+            return resolveOutcome
+        }
 
         override fun addWorktree(
             repoPath: String,

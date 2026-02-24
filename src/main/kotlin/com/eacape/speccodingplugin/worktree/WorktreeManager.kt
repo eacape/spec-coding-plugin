@@ -42,7 +42,8 @@ class WorktreeManager internal constructor(
                 val branchName = "spec/${normalizeSegment(normalizedSpecTaskId)}-$normalizedShortName"
                 val worktreePath = resolveWorktreePath(basePath, normalizedSpecTaskId, normalizedShortName)
 
-                gitExecutor.addWorktree(basePath, worktreePath.toString(), branchName, baseBranch).getOrThrow()
+                val resolvedBaseBranch = gitExecutor.resolveBaseBranch(basePath, baseBranch).getOrThrow()
+                gitExecutor.addWorktree(basePath, worktreePath.toString(), branchName, resolvedBaseBranch).getOrThrow()
 
                 val now = System.currentTimeMillis()
                 val binding = WorktreeBinding(
@@ -50,7 +51,7 @@ class WorktreeManager internal constructor(
                     specTaskId = normalizedSpecTaskId,
                     branchName = branchName,
                     worktreePath = worktreePath.toString(),
-                    baseBranch = baseBranch,
+                    baseBranch = resolvedBaseBranch,
                     status = WorktreeStatus.ACTIVE,
                     createdAt = now,
                     updatedAt = now,

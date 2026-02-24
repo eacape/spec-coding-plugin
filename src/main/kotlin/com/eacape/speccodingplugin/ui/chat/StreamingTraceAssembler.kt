@@ -1,6 +1,8 @@
 ﻿package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import java.nio.charset.Charset
+import java.nio.charset.StandardCharsets
 
 internal class StreamingTraceAssembler {
 
@@ -114,19 +116,39 @@ internal class StreamingTraceAssembler {
     }
 
     private fun sanitizeDetail(value: String): String? {
+        val normalized = normalizeDetail(value) ?: return null
+        if (looksLikePlaceholderDetail(normalized)) return null
+        if (!looksLikeGarbledLine(normalized)) return normalized
+        return tryRepairMojibake(normalized)
+    }
+
+    private fun normalizeDetail(value: String): String? {
         val normalized = value
             .replace('\uFFFD', ' ')
             .replace('\u0008', ' ')
             .replace(CONTROL_CHAR_REGEX, "")
             .trim()
         if (normalized.isBlank()) return null
-        if (looksLikePlaceholderDetail(normalized)) return null
-        if (!looksLikeGarbledLine(normalized)) return normalized
-        return null
+        return normalized
+    }
+
+    private fun tryRepairMojibake(line: String): String? {
+        return RECOVERY_SOURCE_CHARSETS.asSequence()
+            .mapNotNull { sourceCharset ->
+                runCatching {
+                    String(line.toByteArray(sourceCharset), StandardCharsets.UTF_8)
+                }.getOrNull()
+            }
+            .mapNotNull { normalizeDetail(it) }
+            .filterNot { looksLikePlaceholderDetail(it) }
+            .filter { CJK_REGEX.findAll(it).count() >= RECOVERY_MIN_CJK_COUNT }
+            .filterNot { looksLikeGarbledLine(it) }
+            .firstOrNull()
     }
 
     private fun looksLikeGarbledLine(line: String): Boolean {
         if (line.isBlank()) return false
+        if (PRIVATE_USE_REGEX.containsMatchIn(line)) return true
         if (CJK_REGEX.containsMatchIn(line)) return false
         if (BOX_DRAWING_REGEX.containsMatchIn(line)) return true
         val suspiciousCount = SUSPICIOUS_CHAR_REGEX.findAll(line).count()
@@ -148,10 +170,17 @@ internal class StreamingTraceAssembler {
         private val CONTROL_CHAR_REGEX = Regex("""[\u0000-\u0008\u000B\u000C\u000E-\u001F]""")
         private val BOX_DRAWING_REGEX = Regex("""[\u2500-\u259F]""")
         private val CJK_REGEX = Regex("""\p{IsHan}""")
+        private val PRIVATE_USE_REGEX = Regex("""[\uE000-\uF8FF]""")
         private val SUSPICIOUS_CHAR_REGEX = Regex("""[\u00C0-\u024F\u2500-\u259F]""")
         private const val GARBLED_MIN_COUNT = 4
         private const val GARBLED_MIN_RATIO = 0.15
         private const val PLACEHOLDER_MAX_LENGTH = 4
+        private const val RECOVERY_MIN_CJK_COUNT = 2
         private val PLACEHOLDER_REGEX = Regex("""^[\p{P}\p{S}]+$""")
+        private val RECOVERY_SOURCE_CHARSETS = listOf(
+            Charset.forName("GB18030"),
+            Charset.forName("GBK"),
+            Charset.forName("Big5"),
+        )
     }
 }

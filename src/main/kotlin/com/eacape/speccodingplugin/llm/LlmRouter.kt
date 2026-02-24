@@ -81,6 +81,18 @@ class LlmRouter {
         return resolveProvider(providerId).stream(request, onChunk)
     }
 
+    fun cancel(providerId: String?, requestId: String) {
+        val normalizedRequestId = requestId.trim()
+        if (normalizedRequestId.isBlank()) {
+            return
+        }
+        runCatching {
+            resolveProvider(providerId).cancel(normalizedRequestId)
+        }.onFailure { error ->
+            logger.warn("Failed to cancel request=$normalizedRequestId for provider=${providerId.orEmpty()}", error)
+        }
+    }
+
     suspend fun healthCheckAll(): Map<String, LlmHealthStatus> {
         return providerMap.mapValues { (_, provider) -> provider.healthCheck() }
     }

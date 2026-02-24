@@ -5,28 +5,33 @@ import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.prompt.PromptManager
 import com.eacape.speccodingplugin.prompt.PromptTemplate
-import com.eacape.speccodingplugin.prompt.TeamPromptSyncService
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
 import java.awt.BorderLayout
+import java.awt.Color
+import java.awt.Cursor
 import java.awt.FlowLayout
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.Insets
+import java.awt.Point
+import java.awt.RenderingHints
+import java.awt.geom.RoundRectangle2D
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import javax.swing.BorderFactory
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.ListSelectionModel
+import javax.swing.border.AbstractBorder
+import javax.swing.border.CompoundBorder
 
 /**
  * Prompt 管理面板
@@ -37,17 +42,11 @@ class PromptManagerPanel(
 ) : JPanel(BorderLayout()), Disposable {
 
     private val promptManager = PromptManager.getInstance(project)
-    private val teamPromptSyncService = TeamPromptSyncService.getInstance(project)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val listModel = DefaultListModel<PromptTemplate>()
     private val promptList = JBList(listModel)
 
     private val titleLabel = JBLabel()
     private val newBtn = JButton()
-    private val editBtn = JButton()
-    private val deleteBtn = JButton()
-    private val teamPullBtn = JButton()
-    private val teamPushBtn = JButton()
     private val activeLabel = JBLabel("")
 
     @Volatile
@@ -62,48 +61,92 @@ class PromptManagerPanel(
     }
 
     private fun setupUI() {
-        // 顶部标题栏
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
-        toolbar.isOpaque = false
+        // 顶部工具栏卡片
+        val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+            isOpaque = false
+        }
 
         titleLabel.font = titleLabel.font.deriveFont(
-            java.awt.Font.BOLD, 13f
+            java.awt.Font.BOLD,
+            13f,
         )
-        toolbar.add(titleLabel)
-        toolbar.add(newBtn)
-        toolbar.add(editBtn)
-        toolbar.add(deleteBtn)
-        toolbar.add(teamPullBtn)
-        toolbar.add(teamPushBtn)
+        titleLabel.foreground = TOOLBAR_TITLE_FG
+        styleActionButton(newBtn)
+        actionRow.add(newBtn)
+
+        val toolbarActions = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(actionRow, BorderLayout.EAST)
+        }
+
+        val toolbarCard = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque = true
+            background = TOOLBAR_BG
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(TOOLBAR_BORDER, 1),
+                JBUI.Borders.empty(8, 10),
+            )
+            add(titleLabel, BorderLayout.WEST)
+            add(toolbarActions, BorderLayout.EAST)
+        }
+
+        val toolbarHost = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(8)
+            add(toolbarCard, BorderLayout.CENTER)
+        }
 
         // 列表
         promptList.selectionMode =
             ListSelectionModel.SINGLE_SELECTION
         promptList.cellRenderer = PromptListCellRenderer()
-        promptList.addListSelectionListener {
-            updateButtonStates()
-        }
+        promptList.isOpaque = false
+        promptList.fixedCellHeight = -1
+        promptList.addMouseListener(
+            object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    handleListClick(e.point, e.clickCount)
+                }
 
-        val scrollPane = JBScrollPane(promptList)
-        scrollPane.border = JBUI.Borders.emptyTop(8)
+                override fun mouseExited(e: MouseEvent) {
+                    promptList.cursor = Cursor.getDefaultCursor()
+                }
+            },
+        )
+        promptList.addMouseMotionListener(
+            object : MouseAdapter() {
+                override fun mouseMoved(e: MouseEvent) {
+                    updateListCursor(e.point)
+                }
+            },
+        )
+
+        val scrollPane = JBScrollPane(promptList).apply {
+            border = JBUI.Borders.empty()
+            viewport.isOpaque = false
+            isOpaque = false
+        }
+        val listCard = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = LIST_SECTION_BG
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(LIST_SECTION_BORDER, 1),
+                JBUI.Borders.empty(2),
+            )
+            add(scrollPane, BorderLayout.CENTER)
+        }
 
         // 底部状态
         activeLabel.foreground = JBColor.GRAY
         activeLabel.font = activeLabel.font.deriveFont(11f)
-        activeLabel.border = JBUI.Borders.emptyTop(4)
+        activeLabel.border = JBUI.Borders.empty(4, 2, 0, 2)
 
         // 按钮事件
         newBtn.addActionListener { onNew() }
-        editBtn.addActionListener { onEdit() }
-        deleteBtn.addActionListener { onDelete() }
-        teamPullBtn.addActionListener { onPullTeam() }
-        teamPushBtn.addActionListener { onPushTeam() }
 
-        add(toolbar, BorderLayout.NORTH)
-        add(scrollPane, BorderLayout.CENTER)
+        add(toolbarHost, BorderLayout.NORTH)
+        add(listCard, BorderLayout.CENTER)
         add(activeLabel, BorderLayout.SOUTH)
-
-        updateButtonStates()
     }
 
     fun refresh() {
@@ -117,17 +160,12 @@ class PromptManagerPanel(
             ?: activeId
             ?: SpecCodingBundle.message("prompt.manager.active.none")
         activeLabel.text = SpecCodingBundle.message("prompt.manager.active", activeName, templates.size)
-
-        updateButtonStates()
     }
 
     private fun refreshLocalizedTexts() {
         titleLabel.text = SpecCodingBundle.message("prompt.manager.title")
         newBtn.text = SpecCodingBundle.message("prompt.manager.new")
-        editBtn.text = SpecCodingBundle.message("prompt.manager.edit")
-        deleteBtn.text = SpecCodingBundle.message("prompt.manager.delete")
-        teamPullBtn.text = SpecCodingBundle.message("prompt.manager.teamPull")
-        teamPushBtn.text = SpecCodingBundle.message("prompt.manager.teamPush")
+        promptList.repaint()
     }
 
     private fun subscribeToLocaleEvents() {
@@ -144,11 +182,62 @@ class PromptManagerPanel(
         )
     }
 
-    private fun updateButtonStates() {
-        val selected = promptList.selectedValue
-        editBtn.isEnabled = selected != null
-        deleteBtn.isEnabled = selected != null &&
-            selected.id != PromptManager.DEFAULT_PROMPT_ID
+    private fun updateListCursor(point: Point) {
+        val index = promptList.locationToIndex(point)
+        if (index < 0) {
+            promptList.cursor = Cursor.getDefaultCursor()
+            return
+        }
+        val cellBounds = promptList.getCellBounds(index, index) ?: run {
+            promptList.cursor = Cursor.getDefaultCursor()
+            return
+        }
+        val action = PromptListCellRenderer.resolveRowAction(cellBounds, point)
+        promptList.cursor = if (action != null) {
+            Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        } else {
+            Cursor.getDefaultCursor()
+        }
+    }
+
+    private fun handleListClick(point: Point, clickCount: Int) {
+        val index = promptList.locationToIndex(point)
+        if (index < 0) {
+            return
+        }
+        val cellBounds = promptList.getCellBounds(index, index) ?: return
+        if (!cellBounds.contains(point)) {
+            return
+        }
+        val selected = listModel.getElementAt(index)
+        promptList.selectedIndex = index
+        when (PromptListCellRenderer.resolveRowAction(cellBounds, point)) {
+            PromptListCellRenderer.RowAction.EDIT -> onEdit(selected)
+            PromptListCellRenderer.RowAction.DELETE -> onDelete(selected)
+            null -> if (clickCount >= 2) onEdit(selected)
+        }
+    }
+
+    private fun styleActionButton(button: JButton) {
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.font = button.font.deriveFont(java.awt.Font.BOLD, 11f)
+        button.margin = JBUI.emptyInsets()
+        button.isOpaque = true
+        button.isContentAreaFilled = true
+        button.background = ACTION_BUTTON_BG
+        button.foreground = ACTION_BUTTON_FG
+        button.border = CompoundBorder(
+            RoundedLineBorder(
+                lineColor = ACTION_BUTTON_BORDER,
+                arc = JBUI.scale(12),
+            ),
+            JBUI.Borders.empty(3, 10, 3, 10),
+        )
+        button.preferredSize = JBUI.size(0, 30)
+        button.minimumSize = JBUI.size(0, 30)
+        button.putClientProperty("JButton.buttonType", "roundRect")
+        button.putClientProperty("JComponent.roundRectArc", JBUI.scale(12))
     }
 
     private fun onNew() {
@@ -161,8 +250,8 @@ class PromptManagerPanel(
         }
     }
 
-    private fun onEdit() {
-        val selected = promptList.selectedValue ?: return
+    private fun onEdit(template: PromptTemplate? = promptList.selectedValue) {
+        val selected = template ?: return
         val existingIds = promptManager.listPromptTemplates().map { it.id }.toSet()
         val dialog = PromptEditorDialog(existing = selected, existingPromptIds = existingIds)
         if (dialog.showAndGet()) {
@@ -172,87 +261,13 @@ class PromptManagerPanel(
         }
     }
 
-    private fun onDelete() {
-        val selected = promptList.selectedValue ?: return
+    private fun onDelete(template: PromptTemplate? = promptList.selectedValue) {
+        val selected = template ?: return
         if (selected.id == PromptManager.DEFAULT_PROMPT_ID) {
             return
         }
         promptManager.deleteTemplate(selected.id)
         refresh()
-    }
-
-    private fun onPullTeam() {
-        runBackground {
-            teamPromptSyncService.pullFromTeamRepo()
-                .onSuccess { result ->
-                    invokeLaterSafe {
-                        refresh()
-                        notifyUser(
-                            SpecCodingBundle.message(
-                                "prompt.teamSync.pull.success",
-                                result.syncedFiles,
-                                result.branch,
-                            ),
-                            NotificationType.INFORMATION,
-                        )
-                    }
-                }
-                .onFailure { error ->
-                    invokeLaterSafe {
-                        notifyUser(
-                            SpecCodingBundle.message(
-                                "prompt.teamSync.pull.failed",
-                                error.message ?: SpecCodingBundle.message("prompt.teamSync.error.generic"),
-                            ),
-                            NotificationType.ERROR,
-                        )
-                    }
-                }
-        }
-    }
-
-    private fun onPushTeam() {
-        runBackground {
-            teamPromptSyncService.pushToTeamRepo()
-                .onSuccess { result ->
-                    invokeLaterSafe {
-                        if (result.noChanges) {
-                            notifyUser(
-                                SpecCodingBundle.message("prompt.teamSync.push.noChanges", result.branch),
-                                NotificationType.INFORMATION,
-                            )
-                        } else {
-                            notifyUser(
-                                SpecCodingBundle.message(
-                                    "prompt.teamSync.push.success",
-                                    result.syncedFiles,
-                                    result.branch,
-                                    result.commitId ?: SpecCodingBundle.message("common.unknown"),
-                                ),
-                                NotificationType.INFORMATION,
-                            )
-                        }
-                    }
-                }
-                .onFailure { error ->
-                    invokeLaterSafe {
-                        notifyUser(
-                            SpecCodingBundle.message(
-                                "prompt.teamSync.push.failed",
-                                error.message ?: SpecCodingBundle.message("prompt.teamSync.error.generic"),
-                            ),
-                            NotificationType.ERROR,
-                        )
-                    }
-                }
-        }
-    }
-
-    private fun notifyUser(message: String, type: NotificationType) {
-        NotificationGroupManager.getInstance()
-            .getNotificationGroup("SpecCoding.Notifications")
-            .createNotification(message, type)
-            .notify(project)
     }
 
     private fun invokeLaterSafe(action: () -> Unit) {
@@ -266,15 +281,78 @@ class PromptManagerPanel(
         }
     }
 
-    private fun runBackground(task: () -> Unit) {
-        if (isDisposed) {
-            return
-        }
-        scope.launch(Dispatchers.IO) { task() }
-    }
-
     override fun dispose() {
         isDisposed = true
-        scope.cancel()
+    }
+
+    private class RoundedLineBorder(
+        private val lineColor: Color,
+        private val arc: Int,
+        private val thickness: Int = 1,
+    ) : AbstractBorder() {
+        override fun paintBorder(
+            c: java.awt.Component?,
+            g: Graphics?,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+        ) {
+            val graphics = g as? Graphics2D ?: return
+            val g2 = graphics.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+                g2.color = lineColor
+                val safeThickness = thickness.coerceAtLeast(1)
+                repeat(safeThickness) { index ->
+                    val offset = index + 0.5f
+                    val drawWidth = width - index * 2 - 1f
+                    val drawHeight = height - index * 2 - 1f
+                    if (drawWidth <= 0f || drawHeight <= 0f) return@repeat
+                    val arcSize = (arc - index * 2).coerceAtLeast(2).toFloat()
+                    g2.draw(
+                        RoundRectangle2D.Float(
+                            x + offset,
+                            y + offset,
+                            drawWidth,
+                            drawHeight,
+                            arcSize,
+                            arcSize,
+                        ),
+                    )
+                }
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        override fun getBorderInsets(c: java.awt.Component?): Insets = Insets(
+            thickness,
+            thickness,
+            thickness,
+            thickness,
+        )
+
+        override fun getBorderInsets(c: java.awt.Component?, insets: Insets): Insets {
+            insets.set(
+                thickness,
+                thickness,
+                thickness,
+                thickness,
+            )
+            return insets
+        }
+    }
+
+    companion object {
+        private val TOOLBAR_BG = JBColor(Color(250, 252, 255), Color(50, 54, 61))
+        private val TOOLBAR_BORDER = JBColor(Color(214, 223, 236), Color(79, 85, 95))
+        private val TOOLBAR_TITLE_FG = JBColor(Color(49, 67, 94), Color(201, 212, 228))
+        private val LIST_SECTION_BG = JBColor(Color(247, 249, 252), Color(44, 48, 55))
+        private val LIST_SECTION_BORDER = JBColor(Color(209, 219, 234), Color(79, 86, 97))
+        private val ACTION_BUTTON_BG = JBColor(Color(245, 248, 253), Color(62, 67, 77))
+        private val ACTION_BUTTON_BORDER = JBColor(Color(194, 206, 224), Color(95, 106, 123))
+        private val ACTION_BUTTON_FG = JBColor(Color(58, 78, 107), Color(199, 211, 230))
     }
 }

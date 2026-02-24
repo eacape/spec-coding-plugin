@@ -113,6 +113,31 @@ class SessionManager internal constructor(
         }
     }
 
+    fun updateSessionSpecTaskId(sessionId: String, specTaskId: String?): Result<ConversationSession> {
+        return runCatching {
+            val normalizedSessionId = sessionId.trim()
+            require(normalizedSessionId.isNotBlank()) { "Session id cannot be blank" }
+
+            val normalizedSpecTaskId = specTaskId?.trim()?.ifBlank { null }
+            val now = clock()
+
+            val updatedCount = withConnection { connection ->
+                connection.prepareStatement(
+                    "UPDATE sessions SET spec_task_id = ?, updated_at = ? WHERE id = ?"
+                ).use { statement ->
+                    statement.setString(1, normalizedSpecTaskId)
+                    statement.setLong(2, now)
+                    statement.setString(3, normalizedSessionId)
+                    statement.executeUpdate()
+                }
+            }
+            require(updatedCount > 0) { "Session not found: $normalizedSessionId" }
+
+            getSession(normalizedSessionId)
+                ?: throw IllegalStateException("Failed to load updated session: $normalizedSessionId")
+        }
+    }
+
     fun deleteSession(sessionId: String): Result<Unit> {
         return runCatching {
             val normalizedSessionId = sessionId.trim()

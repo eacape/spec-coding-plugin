@@ -245,6 +245,82 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
+    fun `expanded trace should display latest 10 timeline entries only`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        val content = (1..15).joinToString("\n") { index ->
+            val id = index.toString().padStart(2, '0')
+            if (index % 2 == 0) {
+                "[Read] trace-entry-$id done"
+            } else {
+                "[Edit] trace-entry-$id done"
+            }
+        }
+
+        runOnEdt {
+            panel.appendContent(content)
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected expand trace button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val allText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertFalse(allText.contains("trace-entry-01"))
+        assertFalse(allText.contains("trace-entry-05"))
+        assertTrue(allText.contains("trace-entry-06"))
+        assertTrue(allText.contains("trace-entry-15"))
+    }
+
+    @Test
+    fun `expanded output should display latest 10 output entries only in all mode`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        val content = (1..15).joinToString("\n") { index ->
+            val id = index.toString().padStart(2, '0')
+            "[Output] output-entry-$id"
+        }
+
+        runOnEdt {
+            panel.appendContent(content)
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected output expand button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val keyFilterText = SpecCodingBundle.message(
+            "chat.timeline.output.filter.toggle",
+            SpecCodingBundle.message("chat.timeline.output.filter.key"),
+        )
+        val filterButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == keyFilterText }
+        assertNotNull(filterButton, "Expected output filter button in key mode")
+        runOnEdt { filterButton!!.doClick() }
+
+        val allText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertFalse(allText.contains("output-entry-01"))
+        assertFalse(allText.contains("output-entry-05"))
+        assertTrue(allText.contains("output-entry-06"))
+        assertTrue(allText.contains("output-entry-15"))
+    }
+
+    @Test
     fun `output filter level should toggle between key and all lines`() {
         val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
 

@@ -35,6 +35,16 @@ class SpecDetailPanelTest {
     @Test
     fun `updateWorkflow should show current phase preview and button states`() {
         val panel = createPanel()
+        val designContent = """
+            ## 架构设计
+            - 使用三层架构
+
+            ## 技术选型
+            - Kotlin + IntelliJ Platform SDK
+
+            ## 数据模型
+            - SpecWorkflow / SpecDocument
+        """.trimIndent()
         val workflow = SpecWorkflow(
             id = "wf-1",
             currentPhase = SpecPhase.DESIGN,
@@ -46,7 +56,7 @@ class SpecDetailPanelTest {
                 ),
                 SpecPhase.DESIGN to document(
                     phase = SpecPhase.DESIGN,
-                    content = "design content",
+                    content = designContent,
                     valid = true,
                 ),
             ),
@@ -59,7 +69,7 @@ class SpecDetailPanelTest {
 
         panel.updateWorkflow(workflow)
 
-        assertEquals("design content", panel.currentPreviewTextForTest())
+        assertEquals(designContent, panel.currentPreviewTextForTest())
         assertEquals("Validation: PASSED", panel.currentValidationTextForTest())
 
         val states = panel.buttonStatesForTest()
@@ -142,6 +152,7 @@ class SpecDetailPanelTest {
             onPauseResume = {},
             onOpenInEditor = {},
             onShowHistoryDiff = {},
+            onSaveDocument = { _, _, onDone -> onDone(Result.failure(IllegalStateException("not implemented"))) },
         )
     }
 

@@ -38,6 +38,7 @@ class SpecCodingProjectService(private val project: Project) {
         conversationHistory: List<LlmMessage> = emptyList(),
         operationMode: OperationMode? = null,
         imagePaths: List<String> = emptyList(),
+        requestId: String? = null,
         onChunk: suspend (LlmChunk) -> Unit,
     ): LlmResponse {
         val messages = mutableListOf<LlmMessage>()
@@ -96,6 +97,10 @@ class SpecCodingProjectService(private val project: Project) {
             }
             if (operationMode != null) {
                 put(LlmRequestContext.OPERATION_MODE_METADATA_KEY, operationMode.name)
+            }
+            val normalizedRequestId = requestId?.trim().orEmpty()
+            if (normalizedRequestId.isNotBlank()) {
+                put("requestId", normalizedRequestId)
             }
         }
 

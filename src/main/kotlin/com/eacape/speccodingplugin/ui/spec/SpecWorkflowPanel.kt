@@ -5,7 +5,14 @@ import com.eacape.speccodingplugin.context.CodeGraphRenderer
 import com.eacape.speccodingplugin.context.CodeGraphService
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
+import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
+import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
+import com.eacape.speccodingplugin.llm.LlmRouter
+import com.eacape.speccodingplugin.llm.MockLlmProvider
+import com.eacape.speccodingplugin.llm.ModelInfo
+import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.spec.*
+import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
 import com.eacape.speccodingplugin.worktree.WorktreeStatus
@@ -13,21 +20,33 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.JBColor
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import java.awt.BorderLayout
+import java.awt.Color
+import java.awt.Component
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.FlowLayout
+import java.awt.Font
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Locale
+import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JSplitPane
+import javax.swing.ScrollPaneConstants
 
 class SpecWorkflowPanel(
     private val project: Project
@@ -38,6 +57,8 @@ class SpecWorkflowPanel(
     private val specDeltaService = SpecDeltaService.getInstance(project)
     private val codeGraphService = CodeGraphService.getInstance(project)
     private val worktreeManager = WorktreeManager.getInstance(project)
+    private val llmRouter = LlmRouter.getInstance()
+    private val modelRegistry = ModelRegistry.getInstance()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Volatile
@@ -47,12 +68,17 @@ class SpecWorkflowPanel(
     private val listPanel: SpecWorkflowListPanel
     private val detailPanel: SpecDetailPanel
     private val statusLabel = JBLabel("")
-    private val createWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.createWorktree"))
-    private val mergeWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.mergeWorktree"))
-    private val deltaButton = JButton(SpecCodingBundle.message("spec.workflow.delta"))
-    private val codeGraphButton = JButton(SpecCodingBundle.message("spec.workflow.codeGraph"))
-    private val archiveButton = JButton(SpecCodingBundle.message("spec.workflow.archive"))
-    private val refreshButton = JButton(SpecCodingBundle.message("spec.workflow.refresh"))
+    private val statusChipPanel = JPanel(BorderLayout())
+    private val providerLabel = JBLabel(SpecCodingBundle.message("toolwindow.provider.label"))
+    private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))
+    private val providerComboBox = ComboBox<String>()
+    private val modelComboBox = ComboBox<ModelInfo>()
+    private val createWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.createWorktree.short"))
+    private val mergeWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.mergeWorktree.short"))
+    private val deltaButton = JButton(SpecCodingBundle.message("spec.workflow.delta.short"))
+    private val codeGraphButton = JButton(SpecCodingBundle.message("spec.workflow.codeGraph.short"))
+    private val archiveButton = JButton(SpecCodingBundle.message("spec.workflow.archive.short"))
+    private val refreshButton = JButton(SpecCodingBundle.message("spec.workflow.refresh.short"))
 
     private var selectedWorkflowId: String? = null
     private var currentWorkflow: SpecWorkflow? = null
@@ -61,8 +87,9 @@ class SpecWorkflowPanel(
         border = JBUI.Borders.empty(8)
 
         listPanel = SpecWorkflowListPanel(
-            onWorkflowSelected = ::selectWorkflow,
+            onWorkflowSelected = ::onWorkflowSelectedByUser,
             onCreateWorkflow = ::onCreateWorkflow,
+            onEditWorkflow = ::onEditWorkflow,
             onDeleteWorkflow = ::onDeleteWorkflow
         )
 
@@ -74,6 +101,7 @@ class SpecWorkflowPanel(
             onPauseResume = ::onPauseResume,
             onOpenInEditor = ::onOpenInEditor,
             onShowHistoryDiff = ::onShowHistoryDiff,
+            onSaveDocument = ::onSaveDocument,
         )
 
         setupUI()
@@ -83,12 +111,7 @@ class SpecWorkflowPanel(
     }
 
     private fun setupUI() {
-        // 工具栏
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
-        toolbar.isOpaque = false
-        toolbar.border = JBUI.Borders.emptyBottom(8)
         refreshButton.addActionListener { refreshWorkflows() }
-        toolbar.add(refreshButton)
         createWorktreeButton.isEnabled = false
         mergeWorktreeButton.isEnabled = false
         deltaButton.isEnabled = false
@@ -99,24 +122,324 @@ class SpecWorkflowPanel(
         deltaButton.addActionListener { onShowDelta() }
         codeGraphButton.addActionListener { onShowCodeGraph() }
         archiveButton.addActionListener { onArchiveWorkflow() }
-        toolbar.add(createWorktreeButton)
-        toolbar.add(mergeWorktreeButton)
-        toolbar.add(deltaButton)
-        toolbar.add(codeGraphButton)
-        toolbar.add(archiveButton)
-        toolbar.add(statusLabel)
-        add(toolbar, BorderLayout.NORTH)
 
-        // 右侧面板（指示器 + 详情）
-        val rightPanel = JPanel(BorderLayout())
-        rightPanel.add(phaseIndicator, BorderLayout.NORTH)
-        rightPanel.add(detailPanel, BorderLayout.CENTER)
+        styleToolbarButton(refreshButton)
+        styleToolbarButton(createWorktreeButton)
+        styleToolbarButton(mergeWorktreeButton)
+        styleToolbarButton(deltaButton)
+        styleToolbarButton(codeGraphButton)
+        styleToolbarButton(archiveButton)
 
-        // 左右分割
-        val split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listPanel, rightPanel)
-        split.dividerLocation = 200
-        split.dividerSize = JBUI.scale(4)
+        statusLabel.font = JBUI.Fonts.smallFont()
+        statusLabel.foreground = STATUS_TEXT_FG
+        setupGenerationControls()
+
+        val modelRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(JBUI.scale(6))
+            add(providerLabel)
+            add(providerComboBox)
+            add(modelLabel)
+            add(modelComboBox)
+        }
+        val modelHost = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(2)
+            add(
+                JBScrollPane(modelRow).apply {
+                    border = JBUI.Borders.empty()
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+                    verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
+                    viewport.isOpaque = false
+                    isOpaque = false
+                    SpecUiStyle.applySlimHorizontalScrollBar(this, height = 7)
+                },
+                BorderLayout.CENTER,
+            )
+        }
+        val actionsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(JBUI.scale(6))
+            add(refreshButton)
+            add(createWorktreeButton)
+            add(mergeWorktreeButton)
+            add(deltaButton)
+            add(codeGraphButton)
+            add(archiveButton)
+        }
+        val actionsHost = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(2)
+            add(
+                JBScrollPane(actionsRow).apply {
+                    border = JBUI.Borders.empty()
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+                    verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
+                    viewport.isOpaque = false
+                    isOpaque = false
+                    SpecUiStyle.applySlimHorizontalScrollBar(this, height = 7)
+                },
+                BorderLayout.CENTER,
+            )
+        }
+        statusChipPanel.isOpaque = true
+        statusChipPanel.background = STATUS_CHIP_BG
+        statusChipPanel.border = SpecUiStyle.roundedCardBorder(
+            lineColor = STATUS_CHIP_BORDER,
+            arc = JBUI.scale(12),
+            top = 4,
+            left = 10,
+            bottom = 4,
+            right = 10,
+        )
+        statusChipPanel.removeAll()
+        statusChipPanel.add(statusLabel, BorderLayout.CENTER)
+        val toolbarCard = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
+            isOpaque = true
+            background = TOOLBAR_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = TOOLBAR_BORDER,
+                arc = JBUI.scale(14),
+                top = 8,
+                left = 10,
+                bottom = 8,
+                right = 10,
+            )
+            add(modelHost, BorderLayout.NORTH)
+            add(actionsHost, BorderLayout.CENTER)
+            add(
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    add(statusChipPanel, BorderLayout.WEST)
+                },
+                BorderLayout.SOUTH,
+            )
+        }
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyBottom(8)
+                add(toolbarCard, BorderLayout.CENTER)
+            },
+            BorderLayout.NORTH,
+        )
+
+        val rightPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            isOpaque = false
+            add(createSectionContainer(phaseIndicator, padding = 4), BorderLayout.NORTH)
+            add(createSectionContainer(detailPanel), BorderLayout.CENTER)
+        }
+
+        val split = JSplitPane(
+            JSplitPane.HORIZONTAL_SPLIT,
+            createSectionContainer(listPanel),
+            rightPanel,
+        ).apply {
+            dividerLocation = 210
+            resizeWeight = 0.26
+            dividerSize = JBUI.scale(6)
+            isContinuousLayout = true
+            border = JBUI.Borders.empty()
+            background = PANEL_SECTION_BG
+        }
+        split.addComponentListener(
+            object : ComponentAdapter() {
+                override fun componentResized(e: ComponentEvent?) {
+                    clampDividerLocation(split)
+                }
+            },
+        )
         add(split, BorderLayout.CENTER)
+        clampDividerLocation(split)
+        setStatusText(null)
+    }
+
+    private fun clampDividerLocation(split: JSplitPane) {
+        val total = split.width - split.dividerSize
+        if (total <= 0) return
+        val minLeft = JBUI.scale(120)
+        val minRight = JBUI.scale(240)
+        val maxLeft = (total - minRight).coerceAtLeast(minLeft)
+        val current = split.dividerLocation
+        val clamped = current.coerceIn(minLeft, maxLeft)
+        if (clamped != current) {
+            split.dividerLocation = clamped
+        }
+    }
+
+    private fun styleToolbarButton(button: JButton) {
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.isContentAreaFilled = true
+        button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.isOpaque = true
+        button.foreground = BUTTON_FG
+        button.background = BUTTON_BG
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+            JBUI.Borders.empty(1, 5, 1, 5),
+        )
+        SpecUiStyle.applyRoundRect(button, arc = 10)
+        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
+        val insets = button.insets
+        val lafWidth = button.preferredSize?.width ?: 0
+        val width = maxOf(
+            lafWidth,
+            textWidth + insets.left + insets.right + JBUI.scale(10),
+            JBUI.scale(40),
+        )
+        button.preferredSize = JBUI.size(width, JBUI.scale(28))
+        button.minimumSize = button.preferredSize
+    }
+
+    private fun setupGenerationControls() {
+        providerLabel.font = JBUI.Fonts.smallFont()
+        modelLabel.font = JBUI.Fonts.smallFont()
+        providerLabel.foreground = STATUS_TEXT_FG
+        modelLabel.foreground = STATUS_TEXT_FG
+
+        providerComboBox.renderer = SimpleListCellRenderer.create<String> { label, value, _ ->
+            label.text = providerDisplayName(value)
+        }
+        modelComboBox.renderer = SimpleListCellRenderer.create<ModelInfo> { label, value, _ ->
+            label.text = toUiLowercase(value?.name ?: "")
+        }
+        providerComboBox.addActionListener {
+            refreshModelCombo(preserveSelection = true)
+        }
+        modelComboBox.addActionListener {
+            updateSelectorTooltips()
+        }
+        configureToolbarCombo(providerComboBox, preferredWidth = 114)
+        configureToolbarCombo(modelComboBox, preferredWidth = 158)
+        refreshProviderCombo(preserveSelection = false)
+    }
+
+    private fun configureToolbarCombo(comboBox: ComboBox<*>, preferredWidth: Int) {
+        val width = JBUI.scale(preferredWidth)
+        val height = JBUI.scale(28)
+        comboBox.preferredSize = JBUI.size(width, height)
+        comboBox.minimumSize = JBUI.size(JBUI.scale(92), height)
+        comboBox.maximumSize = JBUI.size(JBUI.scale(260), height)
+        comboBox.putClientProperty("JComponent.roundRect", false)
+        comboBox.putClientProperty("JComboBox.isBorderless", true)
+        comboBox.putClientProperty("ComboBox.isBorderless", true)
+        comboBox.putClientProperty("JComponent.outline", null)
+        comboBox.background = BUTTON_BG
+        comboBox.foreground = BUTTON_FG
+        comboBox.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+            JBUI.Borders.empty(0, 5, 0, 5),
+        )
+        comboBox.isOpaque = true
+        comboBox.font = JBUI.Fonts.smallFont()
+    }
+
+    private fun refreshProviderCombo(preserveSelection: Boolean) {
+        val settings = SpecCodingSettingsState.getInstance()
+        val previousSelection = if (preserveSelection) providerComboBox.selectedItem as? String else null
+        val providers = llmRouter.availableUiProviders()
+            .ifEmpty { llmRouter.availableProviders() }
+            .ifEmpty { listOf(MockLlmProvider.ID) }
+
+        providerComboBox.removeAllItems()
+        providers.forEach { providerComboBox.addItem(it) }
+
+        val preferred = when {
+            !previousSelection.isNullOrBlank() -> previousSelection
+            settings.defaultProvider.isNotBlank() -> settings.defaultProvider
+            else -> llmRouter.defaultProviderId()
+        }
+        val selectedProvider = providers.firstOrNull { it == preferred } ?: providers.firstOrNull()
+        providerComboBox.selectedItem = selectedProvider
+        refreshModelCombo(preserveSelection = preserveSelection)
+    }
+
+    private fun refreshModelCombo(preserveSelection: Boolean) {
+        val selectedProvider = providerComboBox.selectedItem as? String
+        val previousModelId = if (preserveSelection) {
+            (modelComboBox.selectedItem as? ModelInfo)?.id?.trim().orEmpty()
+        } else {
+            ""
+        }
+        modelComboBox.removeAllItems()
+
+        if (selectedProvider.isNullOrBlank()) {
+            modelComboBox.isEnabled = false
+            updateSelectorTooltips()
+            return
+        }
+
+        val settings = SpecCodingSettingsState.getInstance()
+        val savedModelId = settings.selectedCliModel.trim()
+        val models = modelRegistry.getModelsForProvider(selectedProvider)
+            .sortedBy { it.name.lowercase(Locale.ROOT) }
+            .toMutableList()
+
+        if (models.isEmpty() && savedModelId.isNotBlank() && selectedProvider == settings.defaultProvider) {
+            models += ModelInfo(
+                id = savedModelId,
+                name = savedModelId,
+                provider = selectedProvider,
+                contextWindow = 0,
+                capabilities = emptySet(),
+            )
+        }
+
+        models.forEach { modelComboBox.addItem(it) }
+        val preferredModelId = when {
+            previousModelId.isNotBlank() -> previousModelId
+            savedModelId.isNotBlank() -> savedModelId
+            else -> ""
+        }
+        val selectedModel = models.firstOrNull { it.id == preferredModelId } ?: models.firstOrNull()
+        if (selectedModel != null) {
+            modelComboBox.selectedItem = selectedModel
+        }
+        modelComboBox.isEnabled = models.isNotEmpty()
+        updateSelectorTooltips()
+    }
+
+    private fun updateSelectorTooltips() {
+        providerComboBox.toolTipText = providerDisplayName(providerComboBox.selectedItem as? String)
+        modelComboBox.toolTipText = (modelComboBox.selectedItem as? ModelInfo)?.name
+    }
+
+    private fun providerDisplayName(providerId: String?): String {
+        return when (providerId) {
+            ClaudeCliLlmProvider.ID -> "claude"
+            CodexCliLlmProvider.ID -> "codex"
+            MockLlmProvider.ID -> toUiLowercase(SpecCodingBundle.message("toolwindow.model.mock"))
+            null -> ""
+            else -> toUiLowercase(providerId)
+        }
+    }
+
+    private fun toUiLowercase(value: String): String = value.lowercase(Locale.ROOT)
+
+    private fun setStatusText(text: String?) {
+        val value = text?.trim().orEmpty()
+        statusLabel.text = value
+        statusChipPanel.isVisible = value.isNotEmpty()
+        statusChipPanel.revalidate()
+        statusChipPanel.repaint()
+    }
+
+    private fun createSectionContainer(content: Component, padding: Int = 2): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = PANEL_SECTION_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = PANEL_SECTION_BORDER,
+                arc = JBUI.scale(14),
+                top = padding,
+                left = padding,
+                bottom = padding,
+                right = padding,
+            )
+            add(content, BorderLayout.CENTER)
+        }
     }
 
     fun refreshWorkflows(selectWorkflowId: String? = null) {
@@ -127,6 +450,7 @@ class SpecWorkflowPanel(
                     SpecWorkflowListPanel.WorkflowListItem(
                         workflowId = wf.id,
                         title = wf.title.ifBlank { wf.id },
+                        description = wf.description,
                         currentPhase = wf.currentPhase,
                         status = wf.status,
                         updatedAt = wf.updatedAt
@@ -135,7 +459,7 @@ class SpecWorkflowPanel(
             }
             invokeLaterSafe {
                 listPanel.updateWorkflows(items)
-                statusLabel.text = SpecCodingBundle.message("spec.workflow.status.count", items.size)
+                setStatusText(null)
                 val targetSelection = selectWorkflowId
                     ?: selectedWorkflowId?.takeIf { target -> items.any { it.workflowId == target } }
                 if (targetSelection != null) {
@@ -152,6 +476,24 @@ class SpecWorkflowPanel(
                     archiveButton.isEnabled = false
                 }
             }
+        }
+    }
+
+    private fun onWorkflowSelectedByUser(workflowId: String) {
+        selectWorkflow(workflowId)
+        publishWorkflowSelection(workflowId)
+    }
+
+    private fun publishWorkflowSelection(workflowId: String) {
+        runCatching {
+            project.messageBus.syncPublisher(SpecWorkflowChangedListener.TOPIC).onWorkflowChanged(
+                SpecWorkflowChangedEvent(
+                    workflowId = workflowId,
+                    reason = SpecWorkflowChangedListener.REASON_WORKFLOW_SELECTED,
+                ),
+            )
+        }.onFailure { error ->
+            logger.warn("Failed to publish workflow selection event: $workflowId", error)
         }
     }
 
@@ -199,6 +541,54 @@ class SpecWorkflowPanel(
         }
     }
 
+    private fun onEditWorkflow(workflowId: String) {
+        scope.launch(Dispatchers.IO) {
+            val workflow = specEngine.loadWorkflow(workflowId).getOrNull()
+            if (workflow == null) {
+                invokeLaterSafe {
+                    setStatusText(SpecCodingBundle.message("spec.workflow.error", SpecCodingBundle.message("common.unknown")))
+                }
+                return@launch
+            }
+
+            invokeLaterSafe {
+                val dialog = EditSpecWorkflowDialog(
+                    initialTitle = workflow.title.ifBlank { workflow.id },
+                    initialDescription = workflow.description,
+                )
+                if (!dialog.showAndGet()) {
+                    return@invokeLaterSafe
+                }
+                val title = dialog.resultTitle ?: return@invokeLaterSafe
+                val description = dialog.resultDescription ?: ""
+
+                scope.launch(Dispatchers.IO) {
+                    val result = specEngine.updateWorkflowMetadata(
+                        workflowId = workflowId,
+                        title = title,
+                        description = description,
+                    )
+
+                    invokeLaterSafe {
+                        result.onSuccess { updated ->
+                            setStatusText(null)
+                            if (selectedWorkflowId == workflowId) {
+                                currentWorkflow = updated
+                                phaseIndicator.updatePhase(updated)
+                                detailPanel.updateWorkflow(updated)
+                                archiveButton.isEnabled = updated.status == WorkflowStatus.COMPLETED
+                            }
+                            refreshWorkflows(selectWorkflowId = workflowId)
+                        }.onFailure { error ->
+                            val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                            setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun onDeleteWorkflow(workflowId: String) {
         scope.launch(Dispatchers.IO) {
             specEngine.deleteWorkflow(workflowId)
@@ -221,7 +611,7 @@ class SpecWorkflowPanel(
     private fun onCreateWorktree() {
         val workflow = currentWorkflow
         if (workflow == null) {
-            statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.selectFirst")
+            setStatusText(SpecCodingBundle.message("spec.workflow.worktree.selectFirst"))
             return
         }
 
@@ -243,18 +633,22 @@ class SpecWorkflowPanel(
                 val switched = worktreeManager.switchWorktree(binding.id)
                 invokeLaterSafe {
                     if (switched.isSuccess) {
-                        statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.created", binding.branchName)
+                        setStatusText(SpecCodingBundle.message("spec.workflow.worktree.created", binding.branchName))
                     } else {
-                        val message = switched.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown")
-                        statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.switchFailed", message)
+                        val message = compactErrorMessage(
+                            switched.exceptionOrNull(),
+                            SpecCodingBundle.message("common.unknown"),
+                        )
+                        setStatusText(SpecCodingBundle.message("spec.workflow.worktree.switchFailed", message))
                     }
                 }
             }.onFailure { error ->
                 invokeLaterSafe {
-                    statusLabel.text = SpecCodingBundle.message(
+                    val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                    setStatusText(SpecCodingBundle.message(
                         "spec.workflow.worktree.createFailed",
-                        error.message ?: SpecCodingBundle.message("common.unknown"),
-                    )
+                        message,
+                    ))
                 }
             }
         }
@@ -263,7 +657,7 @@ class SpecWorkflowPanel(
     private fun onMergeWorktree() {
         val workflow = currentWorkflow
         if (workflow == null) {
-            statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.selectFirst")
+            setStatusText(SpecCodingBundle.message("spec.workflow.worktree.selectFirst"))
             return
         }
 
@@ -275,7 +669,7 @@ class SpecWorkflowPanel(
 
             if (binding == null) {
                 invokeLaterSafe {
-                    statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.noBinding")
+                    setStatusText(SpecCodingBundle.message("spec.workflow.worktree.noBinding"))
                 }
                 return@launch
             }
@@ -283,12 +677,13 @@ class SpecWorkflowPanel(
             val mergeResult = worktreeManager.mergeWorktree(binding.id, binding.baseBranch)
             invokeLaterSafe {
                 mergeResult.onSuccess {
-                    statusLabel.text = SpecCodingBundle.message("spec.workflow.worktree.merged", it.targetBranch)
+                    setStatusText(SpecCodingBundle.message("spec.workflow.worktree.merged", it.targetBranch))
                 }.onFailure { error ->
-                    statusLabel.text = SpecCodingBundle.message(
+                    val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                    setStatusText(SpecCodingBundle.message(
                         "spec.workflow.worktree.mergeFailed",
-                        error.message ?: SpecCodingBundle.message("common.unknown"),
-                    )
+                        message,
+                    ))
                 }
             }
         }
@@ -296,8 +691,24 @@ class SpecWorkflowPanel(
 
     private fun onGenerate(input: String) {
         val wfId = selectedWorkflowId ?: return
+        val providerId = providerComboBox.selectedItem as? String
+        if (providerId.isNullOrBlank()) {
+            setStatusText(SpecCodingBundle.message("spec.workflow.generation.providerRequired"))
+            return
+        }
+
+        val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id?.trim().orEmpty()
+        if (modelId.isBlank()) {
+            setStatusText(SpecCodingBundle.message("spec.workflow.generation.modelRequired", providerDisplayName(providerId)))
+            return
+        }
+
+        val options = GenerationOptions(
+            providerId = providerId,
+            model = modelId,
+        )
         scope.launch(Dispatchers.IO) {
-            specEngine.generateCurrentPhase(wfId, input).collect { progress ->
+            specEngine.generateCurrentPhase(wfId, input, options).collect { progress ->
                 invokeLaterSafe {
                     when (progress) {
                         is SpecGenerationProgress.Started ->
@@ -310,8 +721,10 @@ class SpecWorkflowPanel(
                         is SpecGenerationProgress.ValidationFailed -> {
                             reloadCurrentWorkflow()
                         }
-                        is SpecGenerationProgress.Failed ->
-                            statusLabel.text = SpecCodingBundle.message("spec.workflow.error", progress.error)
+                        is SpecGenerationProgress.Failed -> {
+                            detailPanel.showGenerationFailed()
+                            setStatusText(SpecCodingBundle.message("spec.workflow.error", progress.error))
+                        }
                     }
                 }
             }
@@ -321,7 +734,7 @@ class SpecWorkflowPanel(
     private fun onShowDelta() {
         val targetWorkflow = currentWorkflow
         if (targetWorkflow == null) {
-            statusLabel.text = SpecCodingBundle.message("spec.delta.error.noCurrentWorkflow")
+            setStatusText(SpecCodingBundle.message("spec.delta.error.noCurrentWorkflow"))
             return
         }
 
@@ -340,7 +753,7 @@ class SpecWorkflowPanel(
 
             if (candidateWorkflows.isEmpty()) {
                 invokeLaterSafe {
-                    statusLabel.text = SpecCodingBundle.message("spec.delta.emptyCandidates")
+                    setStatusText(SpecCodingBundle.message("spec.delta.emptyCandidates"))
                 }
                 return@launch
             }
@@ -356,7 +769,7 @@ class SpecWorkflowPanel(
 
                 val baselineWorkflowId = selectDialog.selectedBaselineWorkflowId
                 if (baselineWorkflowId.isNullOrBlank()) {
-                    statusLabel.text = SpecCodingBundle.message("spec.delta.selectBaseline.required")
+                    setStatusText(SpecCodingBundle.message("spec.delta.selectBaseline.required"))
                     return@invokeLaterSafe
                 }
 
@@ -379,12 +792,12 @@ class SpecWorkflowPanel(
                                     )
                                 },
                             ).show()
-                            statusLabel.text = SpecCodingBundle.message("spec.delta.generated")
+                            setStatusText(SpecCodingBundle.message("spec.delta.generated"))
                         }.onFailure { error ->
-                            statusLabel.text = SpecCodingBundle.message(
+                            setStatusText(SpecCodingBundle.message(
                                 "spec.workflow.error",
                                 error.message ?: SpecCodingBundle.message("common.unknown"),
-                            )
+                            ))
                         }
                     }
                 }
@@ -395,11 +808,11 @@ class SpecWorkflowPanel(
     private fun onArchiveWorkflow() {
         val workflow = currentWorkflow
         if (workflow == null) {
-            statusLabel.text = SpecCodingBundle.message("spec.workflow.archive.selectFirst")
+            setStatusText(SpecCodingBundle.message("spec.workflow.archive.selectFirst"))
             return
         }
         if (workflow.status != WorkflowStatus.COMPLETED) {
-            statusLabel.text = SpecCodingBundle.message("spec.workflow.archive.onlyCompleted")
+            setStatusText(SpecCodingBundle.message("spec.workflow.archive.onlyCompleted"))
             return
         }
 
@@ -418,41 +831,41 @@ class SpecWorkflowPanel(
                         archiveButton.isEnabled = false
                     }
                     refreshWorkflows()
-                    statusLabel.text = SpecCodingBundle.message("spec.workflow.archive.done", workflow.id)
+                    setStatusText(SpecCodingBundle.message("spec.workflow.archive.done", workflow.id))
                 }.onFailure { error ->
-                    statusLabel.text = SpecCodingBundle.message(
+                    setStatusText(SpecCodingBundle.message(
                         "spec.workflow.archive.failed",
                         error.message ?: SpecCodingBundle.message("common.unknown"),
-                    )
+                    ))
                 }
             }
         }
     }
 
     private fun onShowCodeGraph() {
-        statusLabel.text = SpecCodingBundle.message("code.graph.status.generating")
+        setStatusText(SpecCodingBundle.message("code.graph.status.generating"))
         scope.launch(Dispatchers.Default) {
             val result = codeGraphService.buildFromActiveEditor()
             invokeLaterSafe {
                 result.onSuccess { snapshot ->
                     if (snapshot.edges.isEmpty()) {
-                        statusLabel.text = SpecCodingBundle.message("code.graph.status.empty")
+                        setStatusText(SpecCodingBundle.message("code.graph.status.empty"))
                         return@onSuccess
                     }
 
                     val summary = CodeGraphRenderer.renderSummary(snapshot)
                     val mermaid = CodeGraphRenderer.renderMermaid(snapshot)
                     CodeGraphDialog(summary = summary, mermaid = mermaid).show()
-                    statusLabel.text = SpecCodingBundle.message(
+                    setStatusText(SpecCodingBundle.message(
                         "code.graph.status.generated",
                         snapshot.nodes.size,
                         snapshot.edges.size,
-                    )
+                    ))
                 }.onFailure { error ->
-                    statusLabel.text = SpecCodingBundle.message(
+                    setStatusText(SpecCodingBundle.message(
                         "code.graph.status.failed",
                         error.message ?: SpecCodingBundle.message("common.unknown"),
-                    )
+                    ))
                 }
             }
         }
@@ -465,10 +878,10 @@ class SpecWorkflowPanel(
                 invokeLaterSafe { reloadCurrentWorkflow() }
             }.onFailure { e ->
                 invokeLaterSafe {
-                    statusLabel.text = SpecCodingBundle.message(
+                    setStatusText(SpecCodingBundle.message(
                         "spec.workflow.error",
                         e.message ?: SpecCodingBundle.message("common.unknown")
-                    )
+                    ))
                 }
             }
         }
@@ -481,10 +894,10 @@ class SpecWorkflowPanel(
                 invokeLaterSafe { reloadCurrentWorkflow() }
             }.onFailure { e ->
                 invokeLaterSafe {
-                    statusLabel.text = SpecCodingBundle.message(
+                    setStatusText(SpecCodingBundle.message(
                         "spec.workflow.error",
                         e.message ?: SpecCodingBundle.message("common.unknown")
-                    )
+                    ))
                 }
             }
         }
@@ -508,6 +921,9 @@ class SpecWorkflowPanel(
             SpecWorkflowChangedListener.TOPIC,
             object : SpecWorkflowChangedListener {
                 override fun onWorkflowChanged(event: SpecWorkflowChangedEvent) {
+                    if (event.reason == SpecWorkflowChangedListener.REASON_WORKFLOW_SELECTED) {
+                        return
+                    }
                     refreshWorkflows(selectWorkflowId = event.workflowId)
                 }
             },
@@ -515,13 +931,24 @@ class SpecWorkflowPanel(
     }
 
     private fun refreshLocalizedTexts() {
-        refreshButton.text = SpecCodingBundle.message("spec.workflow.refresh")
-        createWorktreeButton.text = SpecCodingBundle.message("spec.workflow.createWorktree")
-        mergeWorktreeButton.text = SpecCodingBundle.message("spec.workflow.mergeWorktree")
-        deltaButton.text = SpecCodingBundle.message("spec.workflow.delta")
-        codeGraphButton.text = SpecCodingBundle.message("spec.workflow.codeGraph")
-        archiveButton.text = SpecCodingBundle.message("spec.workflow.archive")
-        statusLabel.text = SpecCodingBundle.message("spec.workflow.status.ready")
+        listPanel.refreshLocalizedTexts()
+        detailPanel.refreshLocalizedTexts()
+        refreshButton.text = SpecCodingBundle.message("spec.workflow.refresh.short")
+        createWorktreeButton.text = SpecCodingBundle.message("spec.workflow.createWorktree.short")
+        mergeWorktreeButton.text = SpecCodingBundle.message("spec.workflow.mergeWorktree.short")
+        deltaButton.text = SpecCodingBundle.message("spec.workflow.delta.short")
+        codeGraphButton.text = SpecCodingBundle.message("spec.workflow.codeGraph.short")
+        archiveButton.text = SpecCodingBundle.message("spec.workflow.archive.short")
+        providerLabel.text = SpecCodingBundle.message("toolwindow.provider.label")
+        modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
+        styleToolbarButton(refreshButton)
+        styleToolbarButton(createWorktreeButton)
+        styleToolbarButton(mergeWorktreeButton)
+        styleToolbarButton(deltaButton)
+        styleToolbarButton(codeGraphButton)
+        styleToolbarButton(archiveButton)
+        refreshProviderCombo(preserveSelection = true)
+        setStatusText(null)
     }
 
     private fun onComplete() {
@@ -572,13 +999,44 @@ class SpecWorkflowPanel(
         )
     }
 
+    private fun onSaveDocument(
+        phase: SpecPhase,
+        content: String,
+        onDone: (Result<SpecWorkflow>) -> Unit,
+    ) {
+        val wfId = selectedWorkflowId
+        if (wfId.isNullOrBlank()) {
+            onDone(Result.failure(IllegalStateException(SpecCodingBundle.message("spec.detail.noWorkflow"))))
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            val result = specEngine.updateDocumentContent(
+                workflowId = wfId,
+                phase = phase,
+                content = content,
+            )
+            currentWorkflow = result.getOrNull() ?: currentWorkflow
+            invokeLaterSafe {
+                result.onSuccess { wf ->
+                    phaseIndicator.updatePhase(wf)
+                    archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
+                    setStatusText(null)
+                }.onFailure { error ->
+                    val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                    setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                }
+                onDone(result)
+            }
+        }
+    }
+
     private fun onShowHistoryDiffForWorkflow(
         workflowId: String,
         phase: SpecPhase,
         currentDoc: SpecDocument?,
     ) {
         if (currentDoc == null) {
-            statusLabel.text = SpecCodingBundle.message("spec.history.noCurrentDocument")
+            setStatusText(SpecCodingBundle.message("spec.history.noCurrentDocument"))
             return
         }
 
@@ -596,7 +1054,7 @@ class SpecWorkflowPanel(
 
             invokeLaterSafe {
                 if (snapshots.isEmpty()) {
-                    statusLabel.text = SpecCodingBundle.message("spec.history.noSnapshot")
+                    setStatusText(SpecCodingBundle.message("spec.history.noSnapshot"))
                     return@invokeLaterSafe
                 }
 
@@ -615,11 +1073,11 @@ class SpecWorkflowPanel(
                     },
                 ).show()
 
-                statusLabel.text = SpecCodingBundle.message(
+                setStatusText(SpecCodingBundle.message(
                     "spec.history.diff.opened",
                     phase.displayName,
                     snapshots.size,
-                )
+                ))
             }
         }
     }
@@ -660,6 +1118,19 @@ class SpecWorkflowPanel(
         }
     }
 
+    private fun compactErrorMessage(error: Throwable?, fallback: String, maxLength: Int = 220): String {
+        val compact = error?.message
+            ?.replace('\n', ' ')
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.ifBlank { null }
+            ?: fallback
+        if (compact.length <= maxLength) {
+            return compact
+        }
+        return compact.take(maxLength - 1).trimEnd() + "…"
+    }
+
     private fun invokeLaterSafe(action: () -> Unit) {
         ApplicationManager.getApplication().invokeLater {
             if (!_isDisposed && !project.isDisposed) action()
@@ -669,5 +1140,18 @@ class SpecWorkflowPanel(
     override fun dispose() {
         _isDisposed = true
         scope.cancel()
+    }
+
+    companion object {
+        private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
+        private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
+        private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val STATUS_CHIP_BG = JBColor(Color(236, 244, 255), Color(66, 76, 91))
+        private val STATUS_CHIP_BORDER = JBColor(Color(178, 198, 226), Color(99, 116, 140))
+        private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
+        private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
     }
 }

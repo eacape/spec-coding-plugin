@@ -81,8 +81,10 @@ import com.intellij.ui.content.ContentManagerEvent
 import com.intellij.ui.content.ContentManagerListener
 import com.intellij.util.ui.JBDimension
 import com.intellij.util.ui.JBUI
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -203,11 +205,21 @@ class ImprovedChatPanel(
     private var currentSessionId: String? = null
     private var isGenerating = false
     private var isRestoringSession = false
+    @Volatile
+    private var activeOperationJob: Job? = null
+    @Volatile
+    private var activeLlmRequest: ActiveLlmRequest? = null
+    private val stopRequested = AtomicBoolean(false)
     private var activeSpecWorkflowId: String? = null
     private var specSidebarVisible = false
     private var specSidebarDividerLocation = SPEC_SIDEBAR_DEFAULT_DIVIDER
     @Volatile
     private var _isDisposed = false
+
+    private data class ActiveLlmRequest(
+        val providerId: String,
+        val requestId: String,
+    )
 
     private enum class ChatInteractionMode(
         val key: String,
@@ -217,10 +229,12 @@ class ImprovedChatPanel(
         SPEC("spec", "toolwindow.chat.mode.spec"),
     }
 
+    private var lastInteractionMode: ChatInteractionMode = ChatInteractionMode.VIBE
+
     init {
         inputField = SmartInputField(
             placeholder = SpecCodingBundle.message("toolwindow.input.placeholder"),
-            onSend = { sendCurrentInput() },
+            onSend = { handleSendOrStop() },
             onTrigger = { trigger ->
                 ApplicationManager.getApplication().executeOnPooledThread {
                     val items = completionProvider.getCompletions(trigger)
@@ -291,13 +305,24 @@ class ImprovedChatPanel(
                 override fun onWorkflowChanged(event: SpecWorkflowChangedEvent) {
                     ApplicationManager.getApplication().invokeLater {
                         if (project.isDisposed || _isDisposed) return@invokeLater
-                        event.workflowId?.let { workflowId ->
+                        val workflowId = event.workflowId?.trim()?.ifBlank { null }
+                        if (
+                            event.reason == SpecWorkflowChangedListener.REASON_WORKFLOW_SELECTED &&
+                            currentInteractionMode() == ChatInteractionMode.SPEC &&
+                            workflowId != null
+                        ) {
+                            startNewSession()
                             activeSpecWorkflowId = workflowId
+                            if (specSidebarVisible) {
+                                specSidebarPanel.focusWorkflow(workflowId)
+                            }
+                            return@invokeLater
                         }
+
+                        workflowId?.let { activeSpecWorkflowId = it }
                         if (!specSidebarVisible) return@invokeLater
-                        val eventWorkflowId = event.workflowId
-                        if (!eventWorkflowId.isNullOrBlank() && specSidebarPanel.hasFocusedWorkflow(eventWorkflowId)) {
-                            specSidebarPanel.focusWorkflow(eventWorkflowId)
+                        if (workflowId != null && specSidebarPanel.hasFocusedWorkflow(workflowId)) {
+                            specSidebarPanel.focusWorkflow(workflowId)
                         } else {
                             specSidebarPanel.refreshCurrentWorkflow()
                         }
@@ -369,6 +394,8 @@ class ImprovedChatPanel(
             label.text = if (value == null) "" else SpecCodingBundle.message(value.messageKey)
         }
         interactionModeComboBox.selectedItem = ChatInteractionMode.VIBE
+        lastInteractionMode = ChatInteractionMode.VIBE
+        interactionModeComboBox.addActionListener { onInteractionModeChanged() }
         interactionModeComboBox.toolTipText = SpecCodingBundle.message("toolwindow.chat.mode.tooltip")
         configureCompactCombo(interactionModeComboBox, 74)
         configureCompactCombo(providerComboBox, 72)
@@ -388,7 +415,7 @@ class ImprovedChatPanel(
         logPasteDiagnostic("paste diagnostics active; panel=${this::class.java.simpleName}")
         updateComboTooltips()
 
-        sendButton.addActionListener { sendCurrentInput() }
+        sendButton.addActionListener { handleSendOrStop() }
 
         // Conversation area fills the top
         conversationHostPanel.isOpaque = true
@@ -423,6 +450,7 @@ class ImprovedChatPanel(
             .takeIf { it > 0 }
             ?: SPEC_SIDEBAR_DEFAULT_DIVIDER
         applySpecSidebarVisibility(restoredWindowState.chatSpecSidebarVisible, persist = false)
+        applyInteractionModeUi(currentInteractionMode())
 
         // Composer area
         val inputScroll = JScrollPane(inputField)
@@ -495,6 +523,44 @@ class ImprovedChatPanel(
         add(content, BorderLayout.CENTER)
     }
 
+    private fun handleSendOrStop() {
+        if (project.isDisposed || _isDisposed) {
+            return
+        }
+        if (isRestoringSession) {
+            showStatus(SpecCodingBundle.message("toolwindow.status.session.restoring"))
+            return
+        }
+        if (isGenerating) {
+            requestStopActiveOperation()
+            return
+        }
+        sendCurrentInput()
+    }
+
+    private fun requestStopActiveOperation() {
+        if (project.isDisposed || _isDisposed) {
+            return
+        }
+        if (!isGenerating && !isRestoringSession) {
+            return
+        }
+        stopRequested.set(true)
+        showStatus(SpecCodingBundle.message("toolwindow.status.stopping"))
+        activeLlmRequest?.let { request ->
+            llmRouter.cancel(providerId = request.providerId, requestId = request.requestId)
+        }
+        activeOperationJob?.cancel(CancellationException("Stopped by user"))
+    }
+
+    private fun resolveProviderIdForRequest(providerId: String?): String {
+        val normalized = providerId?.trim().orEmpty()
+        if (normalized.isNotBlank()) {
+            return normalized
+        }
+        return llmRouter.defaultProviderId()
+    }
+
     private fun sendCurrentInput() {
         val rawInput = inputField.text.trim()
         val selectedImagePaths = imageAttachmentPreviewPanel.getImagePaths()
@@ -531,7 +597,7 @@ class ImprovedChatPanel(
             if (rawInput.isBlank()) {
                 return
             }
-            handleSpecCommand("/spec $rawInput")
+            handleSpecCommand("/spec $rawInput", sessionTitleSeed = rawInput)
             return
         }
 
@@ -566,53 +632,56 @@ class ImprovedChatPanel(
         inputField.text = ""
 
         val beforeSnapshot = captureWorkspaceSnapshot()
+        val requestId = UUID.randomUUID().toString()
+        val resolvedProviderId = resolveProviderIdForRequest(providerId)
+        stopRequested.set(false)
+        activeLlmRequest = ActiveLlmRequest(providerId = resolvedProviderId, requestId = requestId)
         setSendingState(true)
         currentAssistantPanel = addAssistantMessage()
 
-        scope.launch {
+        activeOperationJob = scope.launch {
             val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
-            try {
-                val assistantContent = StringBuilder()
-                val pendingDelta = StringBuilder()
-                val pendingEvents = mutableListOf<ChatStreamEvent>()
-                var pendingChunks = 0
-                var lastFlushAtNanos = System.nanoTime()
+            val assistantContent = StringBuilder()
+            val pendingDelta = StringBuilder()
+            val pendingEvents = mutableListOf<ChatStreamEvent>()
+            var pendingChunks = 0
+            var lastFlushAtNanos = System.nanoTime()
 
-                fun flushPending(force: Boolean = false) {
-                    val now = System.nanoTime()
-                    val dueByTime = now - lastFlushAtNanos >= STREAM_BATCH_INTERVAL_NANOS
-                    val shouldFlush = force ||
-                        dueByTime ||
-                        pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
-                        pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
-                        pendingDelta.contains('\n') ||
-                        pendingEvents.isNotEmpty()
-                    if (!shouldFlush) return
-                    if (pendingDelta.isEmpty() && pendingEvents.isEmpty()) {
-                        pendingChunks = 0
-                        return
-                    }
-
-                    val delta = pendingDelta.toString()
-                    val events = pendingEvents.toList()
-                    pendingDelta.setLength(0)
-                    pendingEvents.clear()
+            fun flushPending(force: Boolean = false) {
+                val now = System.nanoTime()
+                val dueByTime = now - lastFlushAtNanos >= STREAM_BATCH_INTERVAL_NANOS
+                val shouldFlush = force ||
+                    dueByTime ||
+                    pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
+                    pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
+                    pendingDelta.contains('\n') ||
+                    pendingEvents.isNotEmpty()
+                if (!shouldFlush) return
+                if (pendingDelta.isEmpty() && pendingEvents.isEmpty()) {
                     pendingChunks = 0
-                    lastFlushAtNanos = now
-
-                    ApplicationManager.getApplication().invokeLater {
-                        if (project.isDisposed || _isDisposed) {
-                            return@invokeLater
-                        }
-                        val panel = currentAssistantPanel ?: return@invokeLater
-                        val shouldAutoScroll = messagesPanel.isNearBottom(STREAM_AUTO_SCROLL_THRESHOLD_PX)
-                        panel.appendStreamContent(delta, events)
-                        if (shouldAutoScroll) {
-                            messagesPanel.scrollToBottom()
-                        }
-                    }
+                    return
                 }
 
+                val delta = pendingDelta.toString()
+                val events = pendingEvents.toList()
+                pendingDelta.setLength(0)
+                pendingEvents.clear()
+                pendingChunks = 0
+                lastFlushAtNanos = now
+
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || _isDisposed) {
+                        return@invokeLater
+                    }
+                    val panel = currentAssistantPanel ?: return@invokeLater
+                    val shouldAutoScroll = messagesPanel.isNearBottom(STREAM_AUTO_SCROLL_THRESHOLD_PX)
+                    panel.appendStreamContent(delta, events)
+                    if (shouldAutoScroll) {
+                        messagesPanel.scrollToBottom()
+                    }
+                }
+            }
+            try {
                 projectService.chat(
                     providerId = providerId,
                     userInput = chatInput,
@@ -621,6 +690,7 @@ class ImprovedChatPanel(
                     conversationHistory = conversationHistory.toList(),
                     operationMode = operationMode,
                     imagePaths = selectedImagePaths,
+                    requestId = requestId,
                 ) { chunk ->
                     if (chunk.delta.isNotEmpty()) {
                         assistantContent.append(chunk.delta)
@@ -660,15 +730,40 @@ class ImprovedChatPanel(
                 }
 
             } catch (error: Throwable) {
-                ApplicationManager.getApplication().invokeLater {
-                    if (project.isDisposed || _isDisposed) {
-                        return@invokeLater
+                val stopped = stopRequested.get() || error is CancellationException
+                if (!stopped) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        addErrorMessage(
+                            error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"),
+                        )
                     }
-                    addErrorMessage(
-                        error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"),
-                    )
+                } else {
+                    val partial = assistantContent.toString()
+                    if (partial.isNotBlank()) {
+                        val assistantMessage = LlmMessage(LlmRole.ASSISTANT, partial)
+                        appendToConversationHistory(assistantMessage)
+                        if (sessionId != null) {
+                            persistMessage(
+                                sessionId = sessionId,
+                                role = ConversationRole.ASSISTANT,
+                                content = assistantMessage.content,
+                                metadataJson = TraceEventMetadataCodec.encode(streamedTraceEvents),
+                            )
+                        }
+                    }
+                }
+                if (error is CancellationException) {
+                    throw error
                 }
             } finally {
+                activeOperationJob = null
+                activeLlmRequest = null
+                stopRequested.set(false)
+
+                flushPending(force = true)
                 persistAssistantResponseChangeset(
                     requestText = visibleInput,
                     providerId = providerId,
@@ -681,6 +776,7 @@ class ImprovedChatPanel(
                         return@invokeLater
                     }
                     cleanupTransientClipboardImages(selectedImagePaths)
+                    currentAssistantPanel?.finishMessage()
                     setSendingState(false)
                 }
             }
@@ -1269,9 +1365,11 @@ class ImprovedChatPanel(
             persistMessage(sessionId, ConversationRole.USER, command)
         }
 
+        stopRequested.set(false)
+        activeLlmRequest = null
         setSendingState(true)
 
-        scope.launch {
+        activeOperationJob = scope.launch {
             try {
                 val autoContext = contextCollector.collectContext()
                 val selectedCode = autoContext.items
@@ -1308,13 +1406,21 @@ class ImprovedChatPanel(
                     }
                 }
             } catch (error: Throwable) {
-                ApplicationManager.getApplication().invokeLater {
-                    if (project.isDisposed || _isDisposed) {
-                        return@invokeLater
+                val stopped = stopRequested.get() || error is CancellationException
+                if (!stopped) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
                     }
-                    addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
+                }
+                if (error is CancellationException) {
+                    throw error
                 }
             } finally {
+                activeOperationJob = null
+                stopRequested.set(false)
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
@@ -1325,9 +1431,17 @@ class ImprovedChatPanel(
         }
     }
 
-    private fun handleSpecCommand(command: String) {
+    private fun handleSpecCommand(command: String, sessionTitleSeed: String = command) {
         val providerId = providerComboBox.selectedItem as? String
-        val sessionId = ensureActiveSession(command, providerId)
+        val createsNewWorkflow = isSpecWorkflowCreateCommand(command)
+        if (createsNewWorkflow && currentInteractionMode() == ChatInteractionMode.SPEC) {
+            startNewSession()
+        }
+        val sessionId = ensureActiveSpecSession(
+            titleSeed = sessionTitleSeed,
+            providerId = providerId,
+            specTaskId = if (createsNewWorkflow) null else resolveMostRecentSpecWorkflowIdOrNull(),
+        )
         val progressPanel = addAssistantMessage()
         val hasProgressEvent = AtomicBoolean(false)
 
@@ -1337,9 +1451,11 @@ class ImprovedChatPanel(
             persistMessage(sessionId, ConversationRole.USER, command)
         }
 
+        stopRequested.set(false)
+        activeLlmRequest = null
         setSendingState(true)
 
-        scope.launch(Dispatchers.IO) {
+        activeOperationJob = scope.launch(Dispatchers.IO) {
             try {
                 val result = executeSpecCommand(command) { event ->
                     val sanitizedEvent = sanitizeStreamEvent(event) ?: return@executeSpecCommand
@@ -1355,6 +1471,7 @@ class ImprovedChatPanel(
                         }
                     }
                 }
+                bindSessionToSpecTaskIfNeeded(sessionId, result.metadata?.workflowId)
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
@@ -1371,23 +1488,32 @@ class ImprovedChatPanel(
                     )
                 }
             } catch (error: Throwable) {
-                ApplicationManager.getApplication().invokeLater {
-                    if (project.isDisposed || _isDisposed) {
-                        return@invokeLater
-                    }
-                    if (hasProgressEvent.get()) {
-                        progressPanel.finishMessage()
-                    } else {
-                        messagesPanel.removeMessage(progressPanel)
-                    }
-                    addErrorMessage(
-                        SpecCodingBundle.message(
-                            "toolwindow.spec.command.failed",
-                            error.message ?: SpecCodingBundle.message("common.unknown"),
+                val stopped = stopRequested.get() || error is CancellationException
+                if (!stopped) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        if (hasProgressEvent.get()) {
+                            progressPanel.finishMessage()
+                        } else {
+                            messagesPanel.removeMessage(progressPanel)
+                        }
+                        addErrorMessage(
+                            SpecCodingBundle.message(
+                                "toolwindow.spec.command.failed",
+                                error.message ?: SpecCodingBundle.message("common.unknown"),
+                            )
                         )
-                    )
+                    }
+                }
+                if (error is CancellationException) {
+                    throw error
                 }
             } finally {
+                activeOperationJob = null
+                activeLlmRequest = null
+                stopRequested.set(false)
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
@@ -1432,8 +1558,35 @@ class ImprovedChatPanel(
             "next" -> transitionSpecWorkflow(advance = true, sourceCommand = command)
             "back" -> transitionSpecWorkflow(advance = false, sourceCommand = command)
             "generate" -> {
+                val workflow = resolveActiveSpecWorkflow()
+                    ?: return plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.noActive"))
+
                 if (commandArg.isBlank()) {
-                    plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.inputRequired", "generate"))
+                    if (workflow.currentPhase == SpecPhase.SPECIFY) {
+                        plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.inputRequired", "generate"))
+                    } else {
+                        val previousPhase = workflow.currentPhase.previous()
+                        val previousContent = previousPhase
+                            ?.let(workflow::getDocument)
+                            ?.content
+                            ?.trim()
+                            .orEmpty()
+                        if (previousContent.isBlank()) {
+                            plainSpecResult(
+                                SpecCodingBundle.message(
+                                    "toolwindow.spec.command.previousRequired",
+                                    specPhaseDisplayName(workflow.currentPhase),
+                                    previousPhase?.let(::specPhaseDisplayName) ?: SpecCodingBundle.message("common.unknown"),
+                                ),
+                            )
+                        } else {
+                            generateSpecForActiveWorkflow(
+                                input = "",
+                                sourceCommand = command,
+                                onProgress = onProgress,
+                            )
+                        }
+                    }
                 } else {
                     generateSpecForActiveWorkflow(
                         input = commandArg,
@@ -1836,7 +1989,14 @@ class ImprovedChatPanel(
             }
         }
 
-        val latestId = specEngine.listWorkflows().lastOrNull() ?: return null
+        val latestId = runCatching {
+            specEngine.listWorkflows()
+                .asSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .sorted()
+                .lastOrNull()
+        }.getOrNull() ?: return null
         val workflow = specEngine.loadWorkflow(latestId).getOrNull() ?: return null
         activeSpecWorkflowId = workflow.id
         return workflow
@@ -1944,9 +2104,11 @@ class ImprovedChatPanel(
             persistMessage(sessionId, ConversationRole.USER, command)
         }
 
+        stopRequested.set(false)
+        activeLlmRequest = null
         setSendingState(true)
 
-        scope.launch {
+        activeOperationJob = scope.launch {
             try {
                 val autoContext = contextCollector.collectContext()
                 val selectedCode = autoContext.items
@@ -1984,13 +2146,21 @@ class ImprovedChatPanel(
                     }
                 }
             } catch (error: Throwable) {
-                ApplicationManager.getApplication().invokeLater {
-                    if (project.isDisposed || _isDisposed) {
-                        return@invokeLater
+                val stopped = stopRequested.get() || error is CancellationException
+                if (!stopped) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
                     }
-                    addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
+                }
+                if (error is CancellationException) {
+                    throw error
                 }
             } finally {
+                activeOperationJob = null
+                stopRequested.set(false)
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
@@ -2208,9 +2378,15 @@ class ImprovedChatPanel(
                     return@invokeLater
                 }
 
+                activeSpecWorkflowId = session.specTaskId?.trim()?.ifBlank { null }
                 restoreSessionMessages(messages)
                 currentSessionId = session.id
                 sessionIsolationService.activateSession(session.id)
+                activeSpecWorkflowId?.let { workflowId ->
+                    if (specSidebarVisible) {
+                        specSidebarPanel.focusWorkflow(workflowId)
+                    }
+                }
                 showStatus(
                     text = SpecCodingBundle.message("toolwindow.status.session.loaded.short"),
                     tooltip = SpecCodingBundle.message("toolwindow.status.session.loaded", session.title),
@@ -2294,6 +2470,82 @@ class ImprovedChatPanel(
             addSystemMessage(SpecCodingBundle.message("toolwindow.system.emptySessionLoaded"))
         }
         messagesPanel.scrollToBottom()
+    }
+
+    private fun ensureActiveSpecSession(titleSeed: String, providerId: String?, specTaskId: String?): String? {
+        currentSessionId?.let { return it }
+        sessionIsolationService.activeSessionId()?.let {
+            currentSessionId = it
+            return it
+        }
+
+        val normalizedSpecTaskId = specTaskId?.trim()?.ifBlank { null }
+        val workflowTitle = normalizedSpecTaskId
+            ?.let { id -> specEngine.loadWorkflow(id).getOrNull()?.title }
+            ?.trim()
+            ?.ifBlank { null }
+        val title = (workflowTitle ?: titleSeed.lines().firstOrNull().orEmpty().trim())
+            .ifBlank { SpecCodingBundle.message("toolwindow.session.defaultTitle") }
+            .take(80)
+
+        val created = sessionManager.createSession(
+            title = title,
+            specTaskId = normalizedSpecTaskId,
+            modelProvider = providerId,
+        )
+
+        return created.fold(
+            onSuccess = { session ->
+                currentSessionId = session.id
+                sessionIsolationService.activateSession(session.id)
+                session.id
+            },
+            onFailure = { error ->
+                logger.warn("Failed to create spec session", error)
+                ApplicationManager.getApplication().invokeLater {
+                    if (!project.isDisposed && !_isDisposed) {
+                        addErrorMessage(
+                            SpecCodingBundle.message(
+                                "toolwindow.error.session.createFailed.fallback",
+                                error.message ?: SpecCodingBundle.message("common.unknown"),
+                            )
+                        )
+                    }
+                }
+                null
+            },
+        )
+    }
+
+    private fun resolveMostRecentSpecWorkflowIdOrNull(): String? {
+        val explicitId = activeSpecWorkflowId?.trim()?.ifBlank { null }
+        if (!explicitId.isNullOrBlank()) {
+            return explicitId
+        }
+        return runCatching {
+            specEngine.listWorkflows()
+                .asSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .sorted()
+                .lastOrNull()
+        }.getOrNull()
+    }
+
+    private fun bindSessionToSpecTaskIfNeeded(sessionId: String?, workflowId: String?) {
+        val normalizedSessionId = sessionId?.trim()?.ifBlank { null } ?: return
+        val normalizedWorkflowId = workflowId?.trim()?.ifBlank { null } ?: return
+        val currentSpecTaskId = sessionManager.getSession(normalizedSessionId)
+            ?.specTaskId
+            ?.trim()
+            ?.ifBlank { null }
+        if (!currentSpecTaskId.isNullOrBlank()) {
+            return
+        }
+        sessionManager.updateSessionSpecTaskId(normalizedSessionId, normalizedWorkflowId)
+            .onFailure { error ->
+                logger.warn("Failed to bind session to spec workflow: $normalizedWorkflowId", error)
+            }
     }
 
     private fun ensureActiveSession(firstUserInput: String, providerId: String?): String? {
@@ -2609,9 +2861,11 @@ class ImprovedChatPanel(
         }
         activeSpecWorkflowId = metadata.workflowId
         val sessionId = currentSessionId
+        stopRequested.set(false)
+        activeLlmRequest = null
         setSendingState(true)
 
-        scope.launch(Dispatchers.IO) {
+        activeOperationJob = scope.launch(Dispatchers.IO) {
             try {
                 val result = transitionSpecWorkflow(
                     advance = true,
@@ -2628,18 +2882,27 @@ class ImprovedChatPanel(
                     )
                 }
             } catch (error: Throwable) {
-                ApplicationManager.getApplication().invokeLater {
-                    if (project.isDisposed || _isDisposed) {
-                        return@invokeLater
-                    }
-                    addErrorMessage(
-                        SpecCodingBundle.message(
-                            "toolwindow.spec.command.failed",
-                            error.message ?: SpecCodingBundle.message("common.unknown"),
+                val stopped = stopRequested.get() || error is CancellationException
+                if (!stopped) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        addErrorMessage(
+                            SpecCodingBundle.message(
+                                "toolwindow.spec.command.failed",
+                                error.message ?: SpecCodingBundle.message("common.unknown"),
+                            )
                         )
-                    )
+                    }
+                }
+                if (error is CancellationException) {
+                    throw error
                 }
             } finally {
+                activeOperationJob = null
+                activeLlmRequest = null
+                stopRequested.set(false)
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
@@ -2730,7 +2993,8 @@ class ImprovedChatPanel(
     }
 
     private fun refreshSendButtonState() {
-        sendButton.isEnabled = !isGenerating && !isRestoringSession
+        sendButton.isEnabled = !isRestoringSession
+        refreshActionButtonTexts()
     }
 
     private fun showStatus(
@@ -2765,8 +3029,20 @@ class ImprovedChatPanel(
     }
 
     private fun refreshActionButtonTexts() {
-        sendButton.toolTipText = SpecCodingBundle.message("toolwindow.send")
-        sendButton.accessibleContext.accessibleName = sendButton.toolTipText
+        val stopMode = isGenerating && !isRestoringSession
+        val tooltipKey = if (stopMode) {
+            "toolwindow.stop"
+        } else {
+            "toolwindow.send"
+        }
+        val tooltip = SpecCodingBundle.message(tooltipKey)
+        sendButton.toolTipText = tooltip
+        sendButton.accessibleContext.accessibleName = tooltip
+        sendButton.icon = if (stopMode) {
+            AllIcons.Actions.Close
+        } else {
+            AllIcons.Actions.Execute
+        }
     }
 
     private fun configureActionButtons() {
@@ -2783,7 +3059,7 @@ class ImprovedChatPanel(
     }
 
     private fun configureSpecSidebarToggleButton() {
-        specSidebarToggleButton.icon = AllIcons.Nodes.Folder
+        specSidebarToggleButton.icon = AllIcons.FileTypes.Text
         specSidebarToggleButton.isFocusable = false
         specSidebarToggleButton.isFocusPainted = false
         specSidebarToggleButton.margin = JBUI.emptyInsets()
@@ -2804,12 +3080,39 @@ class ImprovedChatPanel(
         }
         val tooltip = SpecCodingBundle.message(tooltipKey)
         specSidebarToggleButton.icon = if (specSidebarVisible) {
-            AllIcons.Actions.MenuOpen
+            AllIcons.Actions.Close
         } else {
-            AllIcons.Nodes.Folder
+            AllIcons.FileTypes.Text
         }
         specSidebarToggleButton.toolTipText = tooltip
         specSidebarToggleButton.accessibleContext.accessibleName = tooltip
+    }
+
+    private fun currentInteractionMode(): ChatInteractionMode {
+        return interactionModeComboBox.selectedItem as? ChatInteractionMode ?: ChatInteractionMode.VIBE
+    }
+
+    private fun onInteractionModeChanged() {
+        val mode = currentInteractionMode()
+        if (mode == lastInteractionMode) {
+            return
+        }
+        lastInteractionMode = mode
+        if (mode == ChatInteractionMode.SPEC) {
+            val workflowId = resolveMostRecentSpecWorkflowIdOrNull()
+            startNewSession()
+            activeSpecWorkflowId = workflowId
+        }
+        applyInteractionModeUi(mode)
+    }
+
+    private fun applyInteractionModeUi(mode: ChatInteractionMode) {
+        specSidebarToggleButton.isVisible = mode == ChatInteractionMode.SPEC
+        if (mode != ChatInteractionMode.SPEC) {
+            applySpecSidebarVisibility(visible = false, persist = false)
+            return
+        }
+        applySpecSidebarVisibility(visible = windowStateStore.snapshot().chatSpecSidebarVisible, persist = false)
     }
 
     private fun configureSplitPaneDivider() {
@@ -3639,59 +3942,63 @@ class ImprovedChatPanel(
         val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id
         val operationMode = modeManager.getCurrentMode()
         val beforeSnapshot = captureWorkspaceSnapshot()
+        val requestId = UUID.randomUUID().toString()
+        val resolvedProviderId = resolveProviderIdForRequest(providerId)
+        stopRequested.set(false)
+        activeLlmRequest = ActiveLlmRequest(providerId = resolvedProviderId, requestId = requestId)
         setSendingState(true)
         currentAssistantPanel = addAssistantMessage()
 
-        scope.launch {
+        activeOperationJob = scope.launch {
             val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
-            try {
-                val assistantContent = StringBuilder()
-                val pendingDelta = StringBuilder()
-                val pendingEvents = mutableListOf<ChatStreamEvent>()
-                var pendingChunks = 0
-                var lastFlushAtNanos = System.nanoTime()
+            val assistantContent = StringBuilder()
+            val pendingDelta = StringBuilder()
+            val pendingEvents = mutableListOf<ChatStreamEvent>()
+            var pendingChunks = 0
+            var lastFlushAtNanos = System.nanoTime()
 
-                fun flushPending(force: Boolean = false) {
-                    val now = System.nanoTime()
-                    val dueByTime = now - lastFlushAtNanos >= STREAM_BATCH_INTERVAL_NANOS
-                    val shouldFlush = force ||
-                        dueByTime ||
-                        pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
-                        pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
-                        pendingDelta.contains('\n') ||
-                        pendingEvents.isNotEmpty()
-                    if (!shouldFlush) return
-                    if (pendingDelta.isEmpty() && pendingEvents.isEmpty()) {
-                        pendingChunks = 0
-                        return
-                    }
-
-                    val delta = pendingDelta.toString()
-                    val events = pendingEvents.toList()
-                    pendingDelta.setLength(0)
-                    pendingEvents.clear()
+            fun flushPending(force: Boolean = false) {
+                val now = System.nanoTime()
+                val dueByTime = now - lastFlushAtNanos >= STREAM_BATCH_INTERVAL_NANOS
+                val shouldFlush = force ||
+                    dueByTime ||
+                    pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
+                    pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
+                    pendingDelta.contains('\n') ||
+                    pendingEvents.isNotEmpty()
+                if (!shouldFlush) return
+                if (pendingDelta.isEmpty() && pendingEvents.isEmpty()) {
                     pendingChunks = 0
-                    lastFlushAtNanos = now
-
-                    ApplicationManager.getApplication().invokeLater {
-                        if (project.isDisposed || _isDisposed) {
-                            return@invokeLater
-                        }
-                        val panelForUpdate = currentAssistantPanel ?: return@invokeLater
-                        val shouldAutoScroll = messagesPanel.isNearBottom(STREAM_AUTO_SCROLL_THRESHOLD_PX)
-                        panelForUpdate.appendStreamContent(delta, events)
-                        if (shouldAutoScroll) {
-                            messagesPanel.scrollToBottom()
-                        }
-                    }
+                    return
                 }
 
+                val delta = pendingDelta.toString()
+                val events = pendingEvents.toList()
+                pendingDelta.setLength(0)
+                pendingEvents.clear()
+                pendingChunks = 0
+                lastFlushAtNanos = now
+
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || _isDisposed) {
+                        return@invokeLater
+                    }
+                    val panelForUpdate = currentAssistantPanel ?: return@invokeLater
+                    val shouldAutoScroll = messagesPanel.isNearBottom(STREAM_AUTO_SCROLL_THRESHOLD_PX)
+                    panelForUpdate.appendStreamContent(delta, events)
+                    if (shouldAutoScroll) {
+                        messagesPanel.scrollToBottom()
+                    }
+                }
+            }
+            try {
                 projectService.chat(
                     providerId = providerId,
                     userInput = userInput,
                     modelId = modelId,
                     conversationHistory = conversationHistory.toList(),
                     operationMode = operationMode,
+                    requestId = requestId,
                 ) { chunk ->
                     if (chunk.delta.isNotEmpty()) {
                         assistantContent.append(chunk.delta)
@@ -3728,13 +4035,38 @@ class ImprovedChatPanel(
                     )
                 }
             } catch (error: Throwable) {
-                ApplicationManager.getApplication().invokeLater {
-                    if (project.isDisposed || _isDisposed) {
-                        return@invokeLater
+                val stopped = stopRequested.get() || error is CancellationException
+                if (!stopped) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
                     }
-                    addErrorMessage(error.message ?: SpecCodingBundle.message("toolwindow.error.unknown"))
+                } else {
+                    val partial = assistantContent.toString()
+                    if (partial.isNotBlank()) {
+                        val assistantMessage = LlmMessage(LlmRole.ASSISTANT, partial)
+                        appendToConversationHistory(assistantMessage)
+                        currentSessionId?.let { sessionId ->
+                            persistMessage(
+                                sessionId = sessionId,
+                                role = ConversationRole.ASSISTANT,
+                                content = assistantMessage.content,
+                                metadataJson = TraceEventMetadataCodec.encode(streamedTraceEvents),
+                            )
+                        }
+                    }
+                }
+                if (error is CancellationException) {
+                    throw error
                 }
             } finally {
+                activeOperationJob = null
+                activeLlmRequest = null
+                stopRequested.set(false)
+
+                flushPending(force = true)
                 persistAssistantResponseChangeset(
                     requestText = userInput,
                     providerId = providerId,
@@ -3746,6 +4078,7 @@ class ImprovedChatPanel(
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
+                    currentAssistantPanel?.finishMessage()
                     setSendingState(false)
                 }
             }
@@ -3878,6 +4211,15 @@ class ImprovedChatPanel(
                 }
             }
         }
+    }
+
+    private fun isSpecWorkflowCreateCommand(command: String): Boolean {
+        val args = command.removePrefix("/spec").trim()
+        if (args.isBlank() || args.equals("help", ignoreCase = true)) {
+            return false
+        }
+        val token = args.substringBefore(" ").trim().lowercase(Locale.ROOT)
+        return token !in setOf("status", "open", "next", "back", "generate", "complete")
     }
 
     companion object {

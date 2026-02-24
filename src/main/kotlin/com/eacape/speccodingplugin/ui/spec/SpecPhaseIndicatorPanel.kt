@@ -16,14 +16,15 @@ class SpecPhaseIndicatorPanel : JPanel() {
     private var currentPhase: SpecPhase = SpecPhase.SPECIFY
     private var completedPhases: Set<SpecPhase> = emptySet()
 
-    private val completedColor = JBColor(Color(76, 175, 80), Color(76, 175, 80))
-    private val activeColor = JBColor(Color(33, 150, 243), Color(78, 154, 241))
-    private val pendingColor = JBColor(Color(189, 189, 189), Color(100, 100, 100))
+    private val completedColor = JBColor(Color(99, 153, 230), Color(119, 160, 215))
+    private val activeColor = JBColor(Color(46, 123, 231), Color(135, 182, 243))
+    private val activeHaloColor = JBColor(Color(215, 231, 252), Color(80, 104, 136))
+    private val pendingColor = JBColor(Color(191, 201, 214), Color(105, 113, 126))
     private val textColor = JBColor.foreground()
 
     init {
-        preferredSize = Dimension(0, JBUI.scale(60))
-        minimumSize = Dimension(0, JBUI.scale(60))
+        preferredSize = Dimension(0, JBUI.scale(56))
+        minimumSize = Dimension(0, JBUI.scale(56))
         isOpaque = false
     }
 
@@ -47,13 +48,18 @@ class SpecPhaseIndicatorPanel : JPanel() {
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
         val phases = SpecPhase.entries
-        val circleRadius = JBUI.scale(14)
-        val totalWidth = width - JBUI.scale(40)
-        val startX = JBUI.scale(20)
-        val centerY = height / 2 - JBUI.scale(5)
+        val phaseLabels = phases.map { it.displayName.lowercase() }
+        val circleRadius = JBUI.scale(12)
+        val labelFont = g2.font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
+        g2.font = labelFont
+        val labelWidths = phaseLabels.map { g2.fontMetrics.stringWidth(it) }
+        val leftPadding = maxOf(JBUI.scale(18), (labelWidths.firstOrNull() ?: 0) / 2 + JBUI.scale(8))
+        val rightPadding = maxOf(JBUI.scale(18), (labelWidths.lastOrNull() ?: 0) / 2 + JBUI.scale(8))
+        val totalWidth = (width - leftPadding - rightPadding).coerceAtLeast(JBUI.scale(140))
+        val startX = leftPadding
+        val centerY = height / 2 - JBUI.scale(4)
         val spacing = totalWidth / (phases.size - 1).coerceAtLeast(1)
 
-        // 画连接线
         for (i in 0 until phases.size - 1) {
             val x1 = startX + i * spacing + circleRadius
             val x2 = startX + (i + 1) * spacing - circleRadius
@@ -63,7 +69,6 @@ class SpecPhaseIndicatorPanel : JPanel() {
             g2.drawLine(x1, centerY, x2, centerY)
         }
 
-        // 画圆圈和标签
         for ((i, phase) in phases.withIndex()) {
             val cx = startX + i * spacing
             val color = when {
@@ -72,24 +77,26 @@ class SpecPhaseIndicatorPanel : JPanel() {
                 else -> pendingColor
             }
 
-            // 圆圈
+            if (phase == currentPhase) {
+                g2.color = activeHaloColor
+                val haloRadius = circleRadius + JBUI.scale(4)
+                g2.fillOval(cx - haloRadius, centerY - haloRadius, haloRadius * 2, haloRadius * 2)
+            }
             g2.color = color
             g2.fillOval(cx - circleRadius, centerY - circleRadius, circleRadius * 2, circleRadius * 2)
 
-            // 圆圈内文字
             g2.color = Color.WHITE
             g2.font = g2.font.deriveFont(Font.BOLD, JBUI.scale(11).toFloat())
             val numStr = if (phase in completedPhases) "\u2713" else "${i + 1}"
             val fm = g2.fontMetrics
             g2.drawString(numStr, cx - fm.stringWidth(numStr) / 2, centerY + fm.ascent / 2 - 1)
 
-            // 标签
             g2.color = if (phase == currentPhase) textColor else pendingColor
             g2.font = g2.font.deriveFont(
                 if (phase == currentPhase) Font.BOLD else Font.PLAIN,
                 JBUI.scale(11).toFloat()
             )
-            val label = phase.displayName
+            val label = phaseLabels[i]
             val lm = g2.fontMetrics
             g2.drawString(label, cx - lm.stringWidth(label) / 2, centerY + circleRadius + lm.height)
         }

@@ -3,27 +3,33 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecPhase
+import com.eacape.speccodingplugin.ui.chat.MarkdownRenderer
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Font
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import javax.swing.BorderFactory
+import javax.swing.JButton
+import javax.swing.JCheckBox
 import javax.swing.JComboBox
 import javax.swing.JComponent
-import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.JSpinner
 import javax.swing.SpinnerNumberModel
 import com.intellij.ui.components.JBCheckBox
+import javax.swing.JTextPane
 
 class SpecHistoryDiffDialog(
     private val phase: SpecPhase,
@@ -75,13 +81,15 @@ class SpecHistoryDiffDialog(
     private val deleteSnapshotButton = JButton(SpecCodingBundle.message("spec.history.dialog.deleteSnapshot"))
     private val pruneSnapshotsButton = JButton(SpecCodingBundle.message("spec.history.dialog.pruneSnapshots"))
     private val exportSummaryButton = JButton(SpecCodingBundle.message("spec.history.dialog.exportSummary"))
-    private val baselineArea = JBTextArea()
-    private val targetArea = JBTextArea()
+    private val baselinePane = JTextPane()
+    private val targetPane = JTextPane()
     private val targetPanelTitle = JBLabel(SpecCodingBundle.message("spec.history.dialog.target"))
+    private val statusChipPanel = JPanel(BorderLayout())
     private var updatingCompareTargetOptions = false
 
     init {
         title = SpecCodingBundle.message("spec.history.dialog.title")
+        setupToolbarControls()
         setupAreas()
         rebuildCompareTargetOptions(preferredSnapshotId = null)
         snapshotCombo.addActionListener { refreshComparison() }
@@ -103,39 +111,62 @@ class SpecHistoryDiffDialog(
     }
 
     override fun createCenterPanel(): JComponent {
-        val panel = JPanel(BorderLayout())
-        panel.preferredSize = Dimension(JBUI.scale(860), JBUI.scale(520))
+        val panel = JPanel(BorderLayout(0, JBUI.scale(8)))
+        panel.preferredSize = Dimension(JBUI.scale(980), JBUI.scale(620))
         panel.border = JBUI.Borders.empty(8)
+        panel.isOpaque = false
 
-        val header = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
-        header.isOpaque = false
-        header.add(JBLabel(SpecCodingBundle.message("spec.history.dialog.phase", phase.displayName)))
-        header.add(JBLabel(SpecCodingBundle.message("spec.history.dialog.snapshot")))
-        header.add(snapshotCombo)
-        header.add(compareTargetLabel)
-        header.add(compareTargetCombo)
-        header.add(summaryOnlyCheckBox)
-        header.add(JBLabel(SpecCodingBundle.message("spec.history.dialog.summaryLines")))
-        header.add(summaryLinesSpinner)
-        header.add(exportSummaryButton)
-        header.add(deleteSnapshotButton)
-        header.add(JBLabel(SpecCodingBundle.message("spec.history.dialog.keepLatest")))
-        header.add(keepLatestSpinner)
-        header.add(pruneSnapshotsButton)
-        header.add(statusLabel)
+        val controlsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            add(createHeaderChipLabel(SpecCodingBundle.message("spec.history.dialog.phase", phase.displayName)))
+            add(JBLabel(SpecCodingBundle.message("spec.history.dialog.snapshot")))
+            add(snapshotCombo)
+            add(compareTargetLabel)
+            add(compareTargetCombo)
+            add(summaryOnlyCheckBox)
+            add(JBLabel(SpecCodingBundle.message("spec.history.dialog.summaryLines")))
+            add(summaryLinesSpinner)
+        }
+        val actionsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            add(exportSummaryButton)
+            add(deleteSnapshotButton)
+            add(JBLabel(SpecCodingBundle.message("spec.history.dialog.keepLatest")))
+            add(keepLatestSpinner)
+            add(pruneSnapshotsButton)
+            add(
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    border = JBUI.Borders.emptyLeft(JBUI.scale(4))
+                    add(statusChipPanel, BorderLayout.WEST)
+                },
+            )
+        }
+        val header = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            isOpaque = false
+            add(createSectionContainer(controlsRow, top = 6, left = 8, bottom = 6, right = 8), BorderLayout.NORTH)
+            add(createSectionContainer(actionsRow, top = 6, left = 8, bottom = 6, right = 8), BorderLayout.CENTER)
+        }
         panel.add(header, BorderLayout.NORTH)
 
-        val baselinePanel = JPanel(BorderLayout())
-        baselinePanel.add(JBLabel(SpecCodingBundle.message("spec.history.dialog.baseline")), BorderLayout.NORTH)
-        baselinePanel.add(JBScrollPane(baselineArea), BorderLayout.CENTER)
+        val baselinePanel = createContentPanel(
+            SpecCodingBundle.message("spec.history.dialog.baseline"),
+            baselinePane,
+        )
+        val targetPanel = createContentPanel(
+            targetPanelTitle.text,
+            targetPane,
+            targetPanelTitle,
+        )
 
-        val targetPanel = JPanel(BorderLayout())
-        targetPanel.add(targetPanelTitle, BorderLayout.NORTH)
-        targetPanel.add(JBScrollPane(targetArea), BorderLayout.CENTER)
-
-        val split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, baselinePanel, targetPanel)
+        val split = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, baselinePanel, targetPanel).apply {
+            dividerSize = JBUI.scale(6)
+            isContinuousLayout = true
+            border = JBUI.Borders.empty()
+            background = PANEL_BG
+        }
         split.resizeWeight = 0.5
-        split.dividerLocation = JBUI.scale(420)
+        split.dividerLocation = JBUI.scale(490)
         panel.add(split, BorderLayout.CENTER)
 
         refreshComparison()
@@ -145,20 +176,173 @@ class SpecHistoryDiffDialog(
     override fun createActions() = arrayOf(okAction)
 
     private fun setupAreas() {
-        baselineArea.isEditable = false
-        baselineArea.lineWrap = true
-        baselineArea.wrapStyleWord = true
+        baselinePane.isEditable = false
+        baselinePane.isOpaque = false
+        baselinePane.border = JBUI.Borders.empty(2, 4)
+        baselinePane.font = JBUI.Fonts.label()
 
-        targetArea.isEditable = false
-        targetArea.lineWrap = true
-        targetArea.wrapStyleWord = true
+        targetPane.isEditable = false
+        targetPane.isOpaque = false
+        targetPane.border = JBUI.Borders.empty(2, 4)
+        targetPane.font = JBUI.Fonts.label()
+
+        statusLabel.font = JBUI.Fonts.smallFont()
+        statusLabel.foreground = STATUS_TEXT_FG
+        statusChipPanel.isOpaque = true
+        statusChipPanel.background = STATUS_CHIP_BG
+        statusChipPanel.border = SpecUiStyle.roundedCardBorder(
+            lineColor = STATUS_CHIP_BORDER,
+            arc = JBUI.scale(12),
+            top = 3,
+            left = 8,
+            bottom = 3,
+            right = 8,
+        )
+        statusChipPanel.removeAll()
+        statusChipPanel.add(statusLabel, BorderLayout.CENTER)
+    }
+
+    private fun setupToolbarControls() {
+        styleCompactCombo(snapshotCombo, width = 250)
+        styleCompactCombo(compareTargetCombo, width = 250)
+        styleNumberSpinner(summaryLinesSpinner, width = 72)
+        styleNumberSpinner(keepLatestSpinner, width = 66)
+        styleToolbarCheckBox(summaryOnlyCheckBox)
+        styleToolbarButton(exportSummaryButton)
+        styleToolbarButton(deleteSnapshotButton)
+        styleToolbarButton(pruneSnapshotsButton)
+    }
+
+    private fun createContentPanel(
+        title: String,
+        pane: JTextPane,
+        titleLabel: JBLabel = JBLabel(title),
+    ): JPanel {
+        titleLabel.text = title
+        titleLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        titleLabel.foreground = TITLE_FG
+        return createSectionContainer(
+            JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+                isOpaque = false
+                add(titleLabel, BorderLayout.NORTH)
+                add(
+                    JBScrollPane(pane).apply {
+                        border = BorderFactory.createEmptyBorder()
+                        viewport.isOpaque = false
+                        isOpaque = false
+                    },
+                    BorderLayout.CENTER,
+                )
+            },
+            top = 6,
+            left = 8,
+            bottom = 8,
+            right = 8,
+        )
+    }
+
+    private fun createSectionContainer(
+        content: JComponent,
+        top: Int = 2,
+        left: Int = 2,
+        bottom: Int = 2,
+        right: Int = 2,
+    ): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = PANEL_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = PANEL_BORDER,
+                arc = JBUI.scale(12),
+                top = top,
+                left = left,
+                bottom = bottom,
+                right = right,
+            )
+            add(content, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createHeaderChipLabel(text: String): JBLabel {
+        return JBLabel(text).apply {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            foreground = TITLE_FG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = CHIP_BORDER,
+                arc = JBUI.scale(10),
+                top = 1,
+                left = 8,
+                bottom = 1,
+                right = 8,
+            )
+            isOpaque = true
+            background = CHIP_BG
+        }
+    }
+
+    private fun styleCompactCombo(combo: JComboBox<*>, width: Int) {
+        val scaledWidth = JBUI.scale(width)
+        val height = JBUI.scale(28)
+        combo.preferredSize = Dimension(scaledWidth, height)
+        combo.minimumSize = Dimension(JBUI.scale(120), height)
+        combo.maximumSize = Dimension(JBUI.scale(420), height)
+        combo.font = JBUI.Fonts.smallFont()
+        combo.background = CONTROL_BG
+        combo.foreground = CONTROL_FG
+        combo.putClientProperty("JComponent.roundRect", false)
+        combo.putClientProperty("JComboBox.isBorderless", true)
+        combo.putClientProperty("ComboBox.isBorderless", true)
+        combo.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(CONTROL_BORDER, JBUI.scale(10)),
+            JBUI.Borders.empty(0, 6, 0, 6),
+        )
+        combo.isOpaque = true
+    }
+
+    private fun styleNumberSpinner(spinner: JSpinner, width: Int) {
+        val height = JBUI.scale(28)
+        spinner.preferredSize = Dimension(JBUI.scale(width), height)
+        spinner.minimumSize = Dimension(JBUI.scale(width), height)
+        spinner.maximumSize = Dimension(JBUI.scale(width), height)
+        spinner.font = JBUI.Fonts.smallFont()
+    }
+
+    private fun styleToolbarCheckBox(checkBox: JCheckBox) {
+        checkBox.isOpaque = false
+        checkBox.font = JBUI.Fonts.smallFont()
+        checkBox.foreground = CONTROL_FG
+    }
+
+    private fun styleToolbarButton(button: JButton) {
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.isContentAreaFilled = true
+        button.font = button.font.deriveFont(Font.BOLD, 10f)
+        button.margin = JBUI.insets(1, 6, 1, 6)
+        button.isOpaque = true
+        button.foreground = BUTTON_FG
+        button.background = BUTTON_BG
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+            JBUI.Borders.empty(1, 7, 1, 7),
+        )
+        SpecUiStyle.applyRoundRect(button, arc = 10)
+        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
+        val insets = button.insets
+        val width = maxOf(
+            button.preferredSize?.width ?: 0,
+            textWidth + insets.left + insets.right + JBUI.scale(8),
+            JBUI.scale(76),
+        )
+        button.preferredSize = JBUI.size(width, JBUI.scale(28))
     }
 
     private fun refreshComparison() {
         val selected = snapshotCombo.selectedItem as? SnapshotVersion
         if (selected == null) {
-            baselineArea.text = ""
-            targetArea.text = buildDisplayContent(currentDocument.content)
+            targetPanelTitle.text = SpecCodingBundle.message("spec.history.dialog.target")
+            renderMarkdown(baselinePane, "")
+            renderMarkdown(targetPane, buildDisplayContent(currentDocument.content))
             statusLabel.text = SpecCodingBundle.message("spec.history.noSnapshot")
             deleteSnapshotButton.isEnabled = false
             pruneSnapshotsButton.isEnabled = false
@@ -195,11 +379,28 @@ class SpecHistoryDiffDialog(
             diffStats.addedLines,
             diffStats.removedLines,
         )
-        baselineArea.text = buildDisplayContent(baselineContent)
-        baselineArea.caretPosition = 0
+        renderMarkdown(baselinePane, buildDisplayContent(baselineContent))
+        renderMarkdown(targetPane, buildDisplayContent(targetContent))
+        targetPanelTitle.text = buildTargetPanelTitle(targetSelection.displayName)
+    }
 
-        targetArea.text = buildDisplayContent(targetContent)
-        targetArea.caretPosition = 0
+    private fun buildTargetPanelTitle(targetDisplayName: String): String {
+        val targetTitle = SpecCodingBundle.message("spec.history.dialog.target")
+        val currentLabel = SpecCodingBundle.message("spec.history.dialog.compareTarget.current")
+        if (targetDisplayName == currentLabel) {
+            return "$targetTitle · $currentLabel"
+        }
+        return "$targetTitle · $targetDisplayName"
+    }
+
+    private fun renderMarkdown(pane: JTextPane, markdown: String) {
+        runCatching {
+            MarkdownRenderer.render(pane, markdown)
+            pane.caretPosition = 0
+        }.onFailure {
+            pane.text = markdown
+            pane.caretPosition = 0
+        }
     }
 
     private fun onDeleteSnapshotClicked() {
@@ -426,6 +627,21 @@ class SpecHistoryDiffDialog(
     companion object {
         private const val DEFAULT_SUMMARY_LINES = 40
         private const val DEFAULT_KEEP_LATEST = 5
+
+        private val PANEL_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
+        private val PANEL_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val CONTROL_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val CONTROL_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
+        private val CONTROL_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
+        private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val TITLE_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val CHIP_BG = JBColor(Color(234, 243, 255), Color(61, 71, 84))
+        private val CHIP_BORDER = JBColor(Color(173, 194, 223), Color(96, 112, 132))
+        private val STATUS_CHIP_BG = JBColor(Color(236, 244, 255), Color(66, 76, 91))
+        private val STATUS_CHIP_BORDER = JBColor(Color(178, 198, 226), Color(99, 116, 140))
+        private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
 
         internal data class LineDiffStats(
             val addedLines: Int,

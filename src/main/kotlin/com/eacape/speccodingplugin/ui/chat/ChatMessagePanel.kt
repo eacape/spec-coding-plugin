@@ -254,6 +254,7 @@ open class ChatMessagePanel(
 
     private fun createTracePanel(items: List<StreamingTraceAssembler.TraceItem>): JPanel {
         val displayItems = mergeTraceItemsForDisplay(items)
+            .takeLast(MAX_TIMELINE_VISIBLE_ITEMS)
 
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = true
@@ -335,7 +336,10 @@ open class ChatMessagePanel(
     }
 
     private fun createOutputPanel(items: List<StreamingTraceAssembler.TraceItem>): JPanel {
-        val mergedOutput = mergeOutputItemsForDisplay(items, outputFilterLevel)
+        val mergedOutput = mergeOutputItemsForDisplay(
+            items = items.takeLast(MAX_TIMELINE_VISIBLE_ITEMS),
+            filterLevel = outputFilterLevel,
+        )
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = true
         wrapper.background = outputCardBackgroundColor()
@@ -1443,6 +1447,7 @@ open class ChatMessagePanel(
         private const val TRACE_OUTPUT_PREVIEW_LENGTH = 140
         private const val TRACE_GROUP_DETAIL_PREVIEW_LENGTH = 96
         private const val TRACE_GROUP_DETAIL_SAMPLE_COUNT = 2
+        private const val MAX_TIMELINE_VISIBLE_ITEMS = 10
         private const val OUTPUT_FILTER_MIN_LINES = 2
         private const val OUTPUT_FILTER_MAX_LINES = 24
         private const val OUTPUT_FILTER_FALLBACK_LINES = 6

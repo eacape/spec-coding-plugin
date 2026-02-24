@@ -11,6 +11,8 @@ interface SpecWorkflowChangedListener {
     fun onWorkflowChanged(event: SpecWorkflowChangedEvent) {}
 
     companion object {
+        const val REASON_WORKFLOW_SELECTED = "workflow_selected"
+
         val TOPIC: Topic<SpecWorkflowChangedListener> = Topic.create(
             "SpecCoding.SpecWorkflowChanged",
             SpecWorkflowChangedListener::class.java,
