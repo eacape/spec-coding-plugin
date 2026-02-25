@@ -8,6 +8,7 @@ import com.eacape.speccodingplugin.rollback.ChangesetStore
 import com.eacape.speccodingplugin.rollback.FileChange
 import com.eacape.speccodingplugin.rollback.RollbackManager
 import com.eacape.speccodingplugin.rollback.RollbackOptions
+import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -32,6 +33,7 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.Icon
 import javax.swing.JPanel
+import javax.swing.Scrollable
 import javax.swing.SwingUtilities
 import kotlin.math.max
 
@@ -45,8 +47,31 @@ class ChangesetTimelinePanel(
 
     private val store = ChangesetStore.getInstance(project)
     private val rollbackManager = RollbackManager.getInstance(project)
-    private val timelineContainer = JPanel()
+    private val timelineContainer = object : JPanel(), Scrollable {
+        override fun getPreferredScrollableViewportSize(): java.awt.Dimension = preferredSize
+
+        override fun getScrollableUnitIncrement(
+            visibleRect: java.awt.Rectangle,
+            orientation: Int,
+            direction: Int,
+        ): Int = JBUI.scale(16)
+
+        override fun getScrollableBlockIncrement(
+            visibleRect: java.awt.Rectangle,
+            orientation: Int,
+            direction: Int,
+        ): Int = if (orientation == javax.swing.SwingConstants.VERTICAL) {
+            visibleRect.height - JBUI.scale(16)
+        } else {
+            visibleRect.width - JBUI.scale(16)
+        }
+
+        override fun getScrollableTracksViewportWidth(): Boolean = true
+
+        override fun getScrollableTracksViewportHeight(): Boolean = false
+    }
     private val retentionHintLabel = JBLabel()
+    private val countLabel = JBLabel()
     private val formatter = DateTimeFormatter
         .ofPattern("HH:mm:ss")
         .withZone(ZoneId.systemDefault())
@@ -61,23 +86,35 @@ class ChangesetTimelinePanel(
     private fun setupUI() {
         retentionHintLabel.foreground = SECONDARY_TEXT_COLOR
         retentionHintLabel.font = JBUI.Fonts.smallFont()
-        retentionHintLabel.border = JBUI.Borders.emptyBottom(4)
         retentionHintLabel.text = SpecCodingBundle.message(
             "changeset.timeline.retentionHint",
             ChangesetStore.MAX_RETAINED_CHANGESETS,
         )
 
+        countLabel.foreground = SECONDARY_TEXT_COLOR
+        countLabel.font = JBUI.Fonts.smallFont()
+
+        val topMetaPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(0, 2, 6, 2)
+            add(retentionHintLabel, BorderLayout.WEST)
+            add(countLabel, BorderLayout.EAST)
+        }
+
         // 时间线容器
         timelineContainer.layout = BoxLayout(
             timelineContainer, BoxLayout.Y_AXIS
         )
-        timelineContainer.border = JBUI.Borders.empty(0, 2)
+        timelineContainer.border = JBUI.Borders.empty(0, 2, 2, 2)
+        timelineContainer.background = PANEL_BACKGROUND
+        timelineContainer.isOpaque = true
 
         val scrollPane = JBScrollPane(timelineContainer)
         scrollPane.border = JBUI.Borders.empty()
         scrollPane.verticalScrollBar.unitIncrement = 16
+        scrollPane.horizontalScrollBarPolicy = javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
 
-        add(retentionHintLabel, BorderLayout.NORTH)
+        add(topMetaPanel, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
     }
 
@@ -87,15 +124,19 @@ class ChangesetTimelinePanel(
     fun refresh() {
         val changesets = store.getRecent(ChangesetStore.MAX_RETAINED_CHANGESETS)
         timelineContainer.removeAll()
+        countLabel.text = SpecCodingBundle.message("changeset.timeline.count", changesets.size)
 
         if (changesets.isEmpty()) {
             val emptyLabel = JBLabel(SpecCodingBundle.message("changeset.timeline.empty"))
             emptyLabel.foreground = SECONDARY_TEXT_COLOR
-            emptyLabel.border = JBUI.Borders.empty(10)
+            emptyLabel.border = JBUI.Borders.empty(12, 10)
             timelineContainer.add(emptyLabel)
         } else {
             val total = changesets.size
             changesets.forEachIndexed { index, changeset ->
+                if (index > 0) {
+                    timelineContainer.add(Box.createVerticalStrut(JBUI.scale(6)))
+                }
                 timelineContainer.add(createChangesetRow(changeset, total - index))
             }
             timelineContainer.add(Box.createVerticalGlue())
@@ -112,29 +153,35 @@ class ChangesetTimelinePanel(
         val row = JPanel(BorderLayout())
         row.isOpaque = true
         row.background = ROW_BACKGROUND
-        row.border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(ROW_DIVIDER, 0, 0, 1, 0),
-            JBUI.Borders.empty(4, 8),
+        row.border = SpecUiStyle.roundedCardBorder(
+            lineColor = ROW_DIVIDER,
+            arc = JBUI.scale(10),
+            top = 6,
+            left = 8,
+            bottom = 6,
+            right = 8,
         )
 
         val header = JPanel(BorderLayout())
         header.isOpaque = false
-        val leftHeader = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+        val leftHeader = JPanel(BorderLayout(JBUI.scale(8), 0))
         leftHeader.isOpaque = false
 
-        val indexLabel = JBLabel("[$displayIndex]")
-        indexLabel.foreground = INDEX_COLOR
-        indexLabel.font = indexLabel.font.deriveFont(Font.BOLD, 12f)
-        leftHeader.add(indexLabel)
+        val indexLabel = JBLabel("[$displayIndex]").apply {
+            foreground = INDEX_COLOR
+            font = font.deriveFont(Font.BOLD, 11.5f)
+        }
+        leftHeader.add(indexLabel, BorderLayout.WEST)
 
         val descLabel = JBLabel(resolveDescription(changeset))
         descLabel.font = descLabel.font.deriveFont(
-            java.awt.Font.BOLD, 11.5f
+            java.awt.Font.BOLD, 12f
         )
-        leftHeader.add(descLabel)
-        header.add(leftHeader, BorderLayout.WEST)
+        descLabel.foreground = PRIMARY_TEXT_COLOR
+        leftHeader.add(descLabel, BorderLayout.CENTER)
+        header.add(leftHeader, BorderLayout.CENTER)
 
-        val rightHeader = JPanel(FlowLayout(FlowLayout.RIGHT, 2, 0))
+        val rightHeader = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
         rightHeader.isOpaque = false
         val timeStr = formatter.format(changeset.timestamp)
         val timeLabel = JBLabel(timeStr)
@@ -165,8 +212,8 @@ class ChangesetTimelinePanel(
 
         val secondaryLabel = JBLabel(buildSecondaryLineText(changeset)).apply {
             foreground = SECONDARY_TEXT_COLOR
-            font = font.deriveFont(Font.PLAIN, 10f)
-            border = JBUI.Borders.emptyTop(1)
+            font = font.deriveFont(Font.PLAIN, 10.5f)
+            border = JBUI.Borders.emptyTop(2)
             alignmentX = Component.LEFT_ALIGNMENT
         }
 
@@ -177,7 +224,7 @@ class ChangesetTimelinePanel(
 
         row.add(content, BorderLayout.CENTER)
         row.alignmentX = Component.LEFT_ALIGNMENT
-        row.maximumSize = java.awt.Dimension(Int.MAX_VALUE, row.preferredSize.height)
+        row.maximumSize = java.awt.Dimension(Int.MAX_VALUE, row.preferredSize.height + JBUI.scale(4))
         return row
     }
 
@@ -205,8 +252,8 @@ class ChangesetTimelinePanel(
         button.toolTipText = tooltip
         button.accessibleContext.accessibleName = tooltip
         button.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        button.preferredSize = JBUI.size(20, 20)
-        button.minimumSize = JBUI.size(20, 20)
+        button.preferredSize = JBUI.size(18, 18)
+        button.minimumSize = JBUI.size(18, 18)
     }
 
     private fun buildSecondaryLineText(changeset: Changeset): String {
@@ -233,7 +280,10 @@ class ChangesetTimelinePanel(
                 parts += SpecCodingBundle.message("changeset.timeline.more", more)
             }
         }
-        return parts.joinToString("  ·  ")
+        val normalized = parts
+            .map { compactText(it, SECONDARY_PART_MAX_LENGTH) }
+            .joinToString("  ·  ")
+        return compactText(normalized, SECONDARY_LINE_MAX_LENGTH)
     }
 
     private fun resolveFileTypeText(changeType: FileChange.ChangeType): String {
@@ -342,13 +392,21 @@ class ChangesetTimelinePanel(
     }
 
     companion object {
+        private val PANEL_BACKGROUND = JBColor(
+            java.awt.Color(246, 249, 255),
+            java.awt.Color(45, 49, 56),
+        )
         private val ROW_BACKGROUND = JBColor(
-            java.awt.Color(248, 249, 252),
-            java.awt.Color(50, 53, 60),
+            java.awt.Color(250, 252, 255),
+            java.awt.Color(52, 57, 65),
         )
         private val ROW_DIVIDER = JBColor(
-            java.awt.Color(214, 220, 230),
-            java.awt.Color(78, 84, 96),
+            java.awt.Color(206, 216, 232),
+            java.awt.Color(83, 92, 108),
+        )
+        private val PRIMARY_TEXT_COLOR = JBColor(
+            java.awt.Color(28, 38, 55),
+            java.awt.Color(220, 227, 238),
         )
         private val SECONDARY_TEXT_COLOR = JBColor(
             java.awt.Color(102, 111, 126),
@@ -359,7 +417,9 @@ class ChangesetTimelinePanel(
             java.awt.Color(111, 170, 255),
         )
         private const val DISPLAY_PATH_MAX_LENGTH = 96
-        private const val COMMAND_MAX_LENGTH = 80
+        private const val COMMAND_MAX_LENGTH = 56
+        private const val SECONDARY_PART_MAX_LENGTH = 72
+        private const val SECONDARY_LINE_MAX_LENGTH = 180
 
         fun getInstance(project: Project): RollbackManager {
             return RollbackManager.getInstance(project)

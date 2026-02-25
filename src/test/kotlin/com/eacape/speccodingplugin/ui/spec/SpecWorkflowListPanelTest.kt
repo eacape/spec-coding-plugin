@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.SpecChangeIntent
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -69,6 +70,35 @@ class SpecWorkflowListPanelTest {
 
         panel.clickEditForTest()
         assertEquals(listOf("wf-del"), editedIds)
+    }
+
+    @Test
+    fun `workflowOptionsForCreate should expose current list as dialog options`() {
+        val panel = SpecWorkflowListPanel(
+            onWorkflowSelected = {},
+            onCreateWorkflow = {},
+            onEditWorkflow = {},
+            onDeleteWorkflow = {},
+        )
+        panel.updateWorkflows(
+            listOf(
+                SpecWorkflowListPanel.WorkflowListItem(
+                    workflowId = "wf-incremental",
+                    title = "Incremental Workflow",
+                    description = "desc",
+                    currentPhase = SpecPhase.SPECIFY,
+                    status = WorkflowStatus.IN_PROGRESS,
+                    updatedAt = 1L,
+                    changeIntent = SpecChangeIntent.INCREMENTAL,
+                    baselineWorkflowId = "wf-base",
+                ),
+            ),
+        )
+
+        val options = panel.workflowOptionsForCreate()
+        assertEquals(1, options.size)
+        assertEquals("wf-incremental", options.first().workflowId)
+        assertEquals("Incremental Workflow", options.first().title)
     }
 
     @Test

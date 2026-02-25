@@ -453,7 +453,9 @@ class SpecWorkflowPanel(
                         description = wf.description,
                         currentPhase = wf.currentPhase,
                         status = wf.status,
-                        updatedAt = wf.updatedAt
+                        updatedAt = wf.updatedAt,
+                        changeIntent = wf.changeIntent,
+                        baselineWorkflowId = wf.baselineWorkflowId,
                     )
                 }
             }
@@ -523,12 +525,19 @@ class SpecWorkflowPanel(
     }
 
     private fun onCreateWorkflow() {
-        val dialog = NewSpecWorkflowDialog()
+        val dialog = NewSpecWorkflowDialog(workflowOptions = listPanel.workflowOptionsForCreate())
         if (dialog.showAndGet()) {
             val title = dialog.resultTitle ?: return
             val desc = dialog.resultDescription ?: ""
+            val changeIntent = dialog.resultChangeIntent
+            val baselineWorkflowId = dialog.resultBaselineWorkflowId
             scope.launch(Dispatchers.IO) {
-                specEngine.createWorkflow(title, desc).onSuccess { wf ->
+                specEngine.createWorkflow(
+                    title = title,
+                    description = desc,
+                    changeIntent = changeIntent,
+                    baselineWorkflowId = baselineWorkflowId,
+                ).onSuccess { wf ->
                     invokeLaterSafe {
                         refreshWorkflows()
                         selectWorkflow(wf.id)
@@ -536,6 +545,10 @@ class SpecWorkflowPanel(
                     }
                 }.onFailure { e ->
                     logger.warn("Failed to create workflow", e)
+                    invokeLaterSafe {
+                        val message = compactErrorMessage(e, SpecCodingBundle.message("common.unknown"))
+                        setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                    }
                 }
             }
         }
@@ -694,7 +707,7 @@ class SpecWorkflowPanel(
         requestClarificationDraft(
             context = context,
             input = input,
-            suggestedDetails = input,
+            suggestedDetails = "",
         )
     }
 
@@ -803,11 +816,11 @@ class SpecWorkflowPanel(
                         is SpecGenerationProgress.Generating ->
                             detailPanel.showGenerating(progress.progress)
                         is SpecGenerationProgress.Completed -> {
-                            detailPanel.exitClarificationMode(clearInput = false)
+                            detailPanel.exitClarificationMode(clearInput = true)
                             reloadCurrentWorkflow()
                         }
                         is SpecGenerationProgress.ValidationFailed -> {
-                            detailPanel.exitClarificationMode(clearInput = false)
+                            detailPanel.exitClarificationMode(clearInput = true)
                             setStatusText(buildValidationFailureStatus(progress.validation))
                             reloadCurrentWorkflow { updated ->
                                 detailPanel.showValidationFailureInteractive(
@@ -1021,7 +1034,10 @@ class SpecWorkflowPanel(
         val wfId = selectedWorkflowId ?: return
         scope.launch(Dispatchers.IO) {
             specEngine.proceedToNextPhase(wfId).onSuccess {
-                invokeLaterSafe { reloadCurrentWorkflow(followCurrentPhase = true) }
+                invokeLaterSafe {
+                    detailPanel.clearInput()
+                    reloadCurrentWorkflow(followCurrentPhase = true)
+                }
             }.onFailure { e ->
                 invokeLaterSafe {
                     setStatusText(SpecCodingBundle.message(
@@ -1037,7 +1053,10 @@ class SpecWorkflowPanel(
         val wfId = selectedWorkflowId ?: return
         scope.launch(Dispatchers.IO) {
             specEngine.goBackToPreviousPhase(wfId).onSuccess {
-                invokeLaterSafe { reloadCurrentWorkflow(followCurrentPhase = true) }
+                invokeLaterSafe {
+                    detailPanel.clearInput()
+                    reloadCurrentWorkflow(followCurrentPhase = true)
+                }
             }.onFailure { e ->
                 invokeLaterSafe {
                     setStatusText(SpecCodingBundle.message(

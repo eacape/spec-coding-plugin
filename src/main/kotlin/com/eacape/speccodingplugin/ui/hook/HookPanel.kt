@@ -7,9 +7,13 @@ import com.eacape.speccodingplugin.hook.HookExecutionLog
 import com.eacape.speccodingplugin.hook.HookManager
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
+import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -21,13 +25,21 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.FlowLayout
+import java.awt.Font
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.nio.file.StandardOpenOption
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import javax.swing.DefaultListCellRenderer
 import javax.swing.DefaultListModel
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.JSplitPane
@@ -57,10 +69,12 @@ class HookPanel(
     private val titleLabel = JBLabel(SpecCodingBundle.message("hook.panel.title"))
     private val statusLabel = JBLabel("")
     private val refreshButton = JButton(SpecCodingBundle.message("hook.action.refresh"))
+    private val openConfigButton = JButton(SpecCodingBundle.message("hook.action.openConfig"))
     private val enableButton = JButton(SpecCodingBundle.message("hook.action.enable"))
     private val disableButton = JButton(SpecCodingBundle.message("hook.action.disable"))
     private val refreshLogButton = JButton(SpecCodingBundle.message("hook.log.refresh"))
     private val clearLogButton = JButton(SpecCodingBundle.message("hook.log.clear"))
+    private val statusChipPanel = JPanel(BorderLayout())
 
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
         .withZone(ZoneId.systemDefault())
@@ -73,48 +87,149 @@ class HookPanel(
     }
 
     private fun setupUi() {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+        listOf(refreshButton, openConfigButton, enableButton, disableButton, refreshLogButton, clearLogButton)
+            .forEach(::styleActionButton)
+
+        val actionRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(4)
+            add(titleLabel)
+            add(refreshButton)
+            add(openConfigButton)
+            add(enableButton)
+            add(disableButton)
+            add(refreshLogButton)
+            add(clearLogButton)
         }
+        titleLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        titleLabel.foreground = STATUS_TEXT_FG
 
-        titleLabel.font = titleLabel.font.deriveFont(java.awt.Font.BOLD, 13f)
+        statusLabel.font = JBUI.Fonts.smallFont()
+        statusLabel.foreground = STATUS_TEXT_FG
 
-        toolbar.add(titleLabel)
-        toolbar.add(refreshButton)
-        toolbar.add(enableButton)
-        toolbar.add(disableButton)
-        toolbar.add(refreshLogButton)
-        toolbar.add(clearLogButton)
-        toolbar.add(statusLabel)
-        add(toolbar, BorderLayout.NORTH)
+        statusChipPanel.isOpaque = true
+        statusChipPanel.background = STATUS_CHIP_BG
+        statusChipPanel.border = SpecUiStyle.roundedCardBorder(
+            lineColor = STATUS_CHIP_BORDER,
+            arc = JBUI.scale(12),
+            top = 4,
+            left = 10,
+            bottom = 4,
+            right = 10,
+        )
+        statusChipPanel.add(statusLabel, BorderLayout.CENTER)
+
+        val toolbarCard = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+            isOpaque = true
+            background = TOOLBAR_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = TOOLBAR_BORDER,
+                arc = JBUI.scale(14),
+                top = 8,
+                left = 10,
+                bottom = 8,
+                right = 10,
+            )
+            add(actionRow, BorderLayout.CENTER)
+            add(
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    add(statusChipPanel, BorderLayout.WEST)
+                },
+                BorderLayout.SOUTH,
+            )
+        }
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyBottom(8)
+                add(toolbarCard, BorderLayout.CENTER)
+            },
+            BorderLayout.NORTH,
+        )
 
         hooksList.selectionMode = javax.swing.ListSelectionModel.SINGLE_SELECTION
         hooksList.cellRenderer = HookListRenderer()
         hooksList.addListSelectionListener { updateButtonState() }
 
+        hooksList.background = PANEL_SECTION_BG
+        hooksList.fixedCellHeight = JBUI.scale(24)
+
         logArea.isEditable = false
         logArea.lineWrap = true
         logArea.wrapStyleWord = true
+        logArea.background = PANEL_SECTION_BG
         logArea.text = SpecCodingBundle.message("hook.log.empty")
+
+        val hooksScroll = JBScrollPane(hooksList).apply {
+            border = JBUI.Borders.empty()
+        }
+        val logsScroll = JBScrollPane(logArea).apply {
+            border = JBUI.Borders.empty()
+        }
 
         val splitPane = JSplitPane(
             JSplitPane.HORIZONTAL_SPLIT,
-            JBScrollPane(hooksList),
-            JBScrollPane(logArea),
+            createSectionContainer(hooksScroll),
+            createSectionContainer(logsScroll),
         ).apply {
             dividerLocation = 320
             dividerSize = JBUI.scale(4)
+            border = JBUI.Borders.empty()
+            isContinuousLayout = true
+            background = PANEL_SECTION_BG
         }
         add(splitPane, BorderLayout.CENTER)
 
         refreshButton.addActionListener { refreshData() }
+        openConfigButton.addActionListener { openHookConfig() }
         refreshLogButton.addActionListener { refreshLogs() }
         enableButton.addActionListener { updateSelectedHookEnabled(true) }
         disableButton.addActionListener { updateSelectedHookEnabled(false) }
         clearLogButton.addActionListener { clearLogs() }
 
         updateButtonState()
+    }
+
+    private fun styleActionButton(button: JButton) {
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.isContentAreaFilled = true
+        button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.isOpaque = true
+        button.foreground = BUTTON_FG
+        button.background = BUTTON_BG
+        button.border = javax.swing.BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+            JBUI.Borders.empty(1, 5, 1, 5),
+        )
+        SpecUiStyle.applyRoundRect(button, arc = 10)
+        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
+        val insets = button.insets
+        val lafWidth = button.preferredSize?.width ?: 0
+        val width = maxOf(
+            lafWidth,
+            textWidth + insets.left + insets.right + JBUI.scale(10),
+            JBUI.scale(40),
+        )
+        button.preferredSize = JBUI.size(width, JBUI.scale(28))
+        button.minimumSize = button.preferredSize
+    }
+
+    private fun createSectionContainer(content: JComponent): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = PANEL_SECTION_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = PANEL_SECTION_BORDER,
+                arc = JBUI.scale(12),
+                top = 6,
+                left = 6,
+                bottom = 6,
+                right = 6,
+            )
+            add(content, BorderLayout.CENTER)
+        }
     }
 
     private fun subscribeToEvents() {
@@ -196,6 +311,69 @@ class HookPanel(
         }
     }
 
+    private fun openHookConfig() {
+        runBackground {
+            val result = runCatching {
+                ensureHookConfigFile()
+            }
+            invokeLaterSafe {
+                result
+                    .onSuccess { target ->
+                        val opened = openHookConfigInEditor(target.path)
+                        if (opened) {
+                            statusLabel.text = if (target.created) {
+                                SpecCodingBundle.message("hook.status.config.created", target.path.fileName.toString())
+                            } else {
+                                SpecCodingBundle.message("hook.status.config.opened", target.path.fileName.toString())
+                            }
+                            refreshHooks()
+                        } else {
+                            statusLabel.text = SpecCodingBundle.message(
+                                "hook.status.config.openFailed",
+                                SpecCodingBundle.message("common.unknown"),
+                            )
+                        }
+                    }
+                    .onFailure { error ->
+                        statusLabel.text = SpecCodingBundle.message(
+                            "hook.status.config.openFailed",
+                            error.message ?: SpecCodingBundle.message("common.unknown"),
+                        )
+                    }
+            }
+        }
+    }
+
+    private fun ensureHookConfigFile(): HookConfigTarget {
+        val path = hookConfigPath()
+        if (Files.exists(path)) {
+            return HookConfigTarget(path = path, created = false)
+        }
+
+        path.parent?.let { Files.createDirectories(it) }
+        Files.writeString(
+            path,
+            DEFAULT_HOOK_CONFIG_TEMPLATE,
+            StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE_NEW,
+        )
+        return HookConfigTarget(path = path, created = true)
+    }
+
+    private fun hookConfigPath(): Path {
+        val basePath = project.basePath
+            ?: throw IllegalStateException(SpecCodingBundle.message("hook.error.projectBasePathUnavailable"))
+        return Paths.get(basePath).resolve(".spec-coding").resolve("hooks.yaml")
+    }
+
+    private fun openHookConfigInEditor(path: Path): Boolean {
+        val virtualFile = LocalFileSystem.getInstance()
+            .refreshAndFindFileByPath(path.toString().replace('\\', '/'))
+            ?: return false
+        FileEditorManager.getInstance(project).openFile(virtualFile, true)
+        return true
+    }
+
     private fun updateSelectedHookEnabled(enabled: Boolean) {
         val selected = hooksList.selectedValue ?: return
 
@@ -220,10 +398,17 @@ class HookPanel(
     private fun refreshLocalizedTexts() {
         titleLabel.text = SpecCodingBundle.message("hook.panel.title")
         refreshButton.text = SpecCodingBundle.message("hook.action.refresh")
+        openConfigButton.text = SpecCodingBundle.message("hook.action.openConfig")
         enableButton.text = SpecCodingBundle.message("hook.action.enable")
         disableButton.text = SpecCodingBundle.message("hook.action.disable")
         refreshLogButton.text = SpecCodingBundle.message("hook.log.refresh")
         clearLogButton.text = SpecCodingBundle.message("hook.log.clear")
+        styleActionButton(refreshButton)
+        styleActionButton(openConfigButton)
+        styleActionButton(enableButton)
+        styleActionButton(disableButton)
+        styleActionButton(refreshLogButton)
+        styleActionButton(clearLogButton)
         hooksList.repaint()
         if (logArea.text == SpecCodingBundle.message("hook.log.empty")) {
             logArea.text = SpecCodingBundle.message("hook.log.empty")
@@ -302,6 +487,10 @@ class HookPanel(
         refreshButton.doClick()
     }
 
+    internal fun clickOpenConfigForTest() {
+        openConfigButton.doClick()
+    }
+
     internal fun clickClearLogsForTest() {
         clearLogButton.doClick()
     }
@@ -332,5 +521,38 @@ class HookPanel(
                 enabledText,
             )
         }
+    }
+
+    private data class HookConfigTarget(
+        val path: Path,
+        val created: Boolean,
+    )
+
+    companion object {
+        private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
+        private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
+        private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val STATUS_CHIP_BG = JBColor(Color(236, 244, 255), Color(66, 76, 91))
+        private val STATUS_CHIP_BORDER = JBColor(Color(178, 198, 226), Color(99, 116, 140))
+        private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
+        private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+
+        private val DEFAULT_HOOK_CONFIG_TEMPLATE = """
+            version: 1
+            hooks:
+              - id: sample-notify
+                name: Sample Notify
+                event: FILE_SAVED
+                enabled: true
+                conditions:
+                  filePattern: "**/*.md"
+                actions:
+                  - type: SHOW_NOTIFICATION
+                    message: "Hook triggered: {{file.path}}"
+                    level: INFO
+        """.trimIndent() + "\n"
     }
 }

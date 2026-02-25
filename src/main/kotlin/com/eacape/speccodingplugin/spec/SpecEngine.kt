@@ -66,8 +66,26 @@ class SpecEngine(private val project: Project) {
     /**
      * 创建新的工作流
      */
-    fun createWorkflow(title: String, description: String): Result<SpecWorkflow> {
+    fun createWorkflow(
+        title: String,
+        description: String,
+        changeIntent: SpecChangeIntent = SpecChangeIntent.FULL,
+        baselineWorkflowId: String? = null,
+    ): Result<SpecWorkflow> {
         return runCatching {
+            val normalizedBaselineWorkflowId = baselineWorkflowId
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+            if (changeIntent == SpecChangeIntent.INCREMENTAL) {
+                val baselineId = requireNotNull(normalizedBaselineWorkflowId) {
+                    "Incremental workflow requires a baseline workflow ID"
+                }
+                val baselineExists = activeWorkflows.containsKey(baselineId) ||
+                    storageDelegate.loadWorkflow(baselineId).isSuccess
+                require(baselineExists) {
+                    "Baseline workflow not found: $baselineId"
+                }
+            }
             val workflowId = generateWorkflowId()
             val workflow = SpecWorkflow(
                 id = workflowId,
@@ -76,6 +94,12 @@ class SpecEngine(private val project: Project) {
                 status = WorkflowStatus.IN_PROGRESS,
                 title = title,
                 description = description,
+                changeIntent = changeIntent,
+                baselineWorkflowId = if (changeIntent == SpecChangeIntent.INCREMENTAL) {
+                    normalizedBaselineWorkflowId
+                } else {
+                    null
+                },
             )
 
             activeWorkflows[workflowId] = workflow
@@ -164,11 +188,12 @@ class SpecEngine(private val project: Project) {
 
         val previousPhase = workflow.currentPhase.previous()
         val previousDocument = previousPhase?.let { workflow.getDocument(it) }
+        val effectiveOptions = enrichGenerationOptions(workflow, options)
         val request = SpecGenerationRequest(
             phase = workflow.currentPhase,
             input = input,
             previousDocument = previousDocument,
-            options = options,
+            options = effectiveOptions,
         )
         return clarificationHandler(request)
     }
@@ -187,13 +212,14 @@ class SpecEngine(private val project: Project) {
             // 获取前一阶段的文档（如果有）
             val previousPhase = workflow.currentPhase.previous()
             val previousDocument = previousPhase?.let { workflow.getDocument(it) }
+            val effectiveOptions = enrichGenerationOptions(workflow, options)
 
             // 构建生成请求
             val request = SpecGenerationRequest(
                 phase = workflow.currentPhase,
                 input = input,
                 previousDocument = previousDocument,
-                options = options
+                options = effectiveOptions
             )
 
             emit(SpecGenerationProgress.Generating(workflow.currentPhase, 0.3))
@@ -526,6 +552,75 @@ class SpecEngine(private val project: Project) {
             activeWorkflows.remove(workflowId)
             logger.info("Workflow $workflowId archived to ${result.archivePath}")
             result
+        }
+    }
+
+    private fun enrichGenerationOptions(
+        workflow: SpecWorkflow,
+        options: GenerationOptions,
+    ): GenerationOptions {
+        val baselineContext = buildIncrementalBaselineContext(workflow) ?: return options
+        val existingContext = options.confirmedContext
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            .orEmpty()
+        val mergedContext = if (existingContext.isBlank()) {
+            baselineContext
+        } else {
+            buildString {
+                appendLine(existingContext)
+                appendLine()
+                appendLine("---")
+                appendLine()
+                appendLine(baselineContext)
+            }.trim()
+        }
+        return options.copy(confirmedContext = mergedContext)
+    }
+
+    private fun buildIncrementalBaselineContext(workflow: SpecWorkflow): String? {
+        if (!workflow.isIncrementalWorkflow()) {
+            return null
+        }
+        val baselineWorkflowId = workflow.baselineWorkflowId?.trim().orEmpty()
+        if (baselineWorkflowId.isBlank()) {
+            return null
+        }
+        val baseline = activeWorkflows[baselineWorkflowId]
+            ?: storageDelegate.loadWorkflow(baselineWorkflowId).getOrElse { error ->
+                logger.warn("Failed to load baseline workflow for incremental generation: $baselineWorkflowId", error)
+                return null
+            }
+        activeWorkflows[baselineWorkflowId] = baseline
+
+        fun baselineDoc(phase: SpecPhase): String {
+            return baseline.getDocument(phase)?.content?.trim().takeUnless { it.isNullOrEmpty() } ?: "(无)"
+        }
+
+        return buildString {
+            appendLine("## 增量需求基线上下文")
+            appendLine("当前工作流是增量需求，请在输出中明确区分“新增 / 修改 / 保持不变”。")
+            appendLine("基线工作流 ID: ${baseline.id}")
+            appendLine("基线标题: ${baseline.title.ifBlank { baseline.id }}")
+            if (workflow.description.isNotBlank()) {
+                appendLine("当前工作流描述（变更目标）: ${workflow.description.trim()}")
+            }
+            appendLine()
+            appendLine("## 基线 requirements.md")
+            appendLine("```")
+            appendLine(baselineDoc(SpecPhase.SPECIFY))
+            appendLine("```")
+            appendLine()
+            appendLine("## 基线 design.md")
+            appendLine("```")
+            appendLine(baselineDoc(SpecPhase.DESIGN))
+            appendLine("```")
+            appendLine()
+            appendLine("## 基线 tasks.md")
+            appendLine("```")
+            appendLine(baselineDoc(SpecPhase.IMPLEMENT))
+            appendLine("```")
         }
     }
 

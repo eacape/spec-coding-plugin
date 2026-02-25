@@ -65,6 +65,8 @@ class SpecDetailPanel(
     private val editorArea = JBTextArea(14, 40)
     private val validationLabel = JBLabel("")
     private val inputArea = JBTextArea(3, 40)
+    private lateinit var clarificationSplitPane: JSplitPane
+    private lateinit var clarificationPreviewSection: JPanel
 
     private val generateButton = JButton(SpecCodingBundle.message("spec.detail.generate"))
     private val nextPhaseButton = JButton(SpecCodingBundle.message("spec.detail.nextPhase"))
@@ -269,6 +271,7 @@ class SpecDetailPanel(
             val allowBlank = phase == SpecPhase.DESIGN || phase == SpecPhase.IMPLEMENT
             if (text.isNotBlank() || allowBlank) {
                 onGenerate(text)
+                clearInput()
             }
         }
         nextPhaseButton.addActionListener { onNextPhase() }
@@ -380,7 +383,7 @@ class SpecDetailPanel(
             )
         }
 
-        val previewSection = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+        clarificationPreviewSection = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
             isOpaque = false
             add(clarificationPreviewLabel, BorderLayout.NORTH)
             add(
@@ -395,15 +398,15 @@ class SpecDetailPanel(
 
         return JPanel(BorderLayout(0, JBUI.scale(8))).apply {
             isOpaque = false
-            val split = JSplitPane(JSplitPane.VERTICAL_SPLIT).apply {
+            clarificationSplitPane = JSplitPane(JSplitPane.VERTICAL_SPLIT).apply {
                 topComponent = questionsSection
-                bottomComponent = previewSection
+                bottomComponent = clarificationPreviewSection
                 resizeWeight = 0.58
                 dividerSize = JBUI.scale(6)
                 border = JBUI.Borders.empty()
                 background = PANEL_BG
             }
-            add(split, BorderLayout.CENTER)
+            add(clarificationSplitPane, BorderLayout.CENTER)
         }
     }
 
@@ -529,6 +532,7 @@ class SpecDetailPanel(
         } else {
             clarificationState?.let { renderClarificationQuestions(it.questionsMarkdown) }
         }
+        setClarificationPreviewVisible(!isClarificationGenerating)
         updateClarificationPreview()
         if (currentWorkflow == null) {
             validationLabel.text = SpecCodingBundle.message("spec.detail.noWorkflow")
@@ -553,6 +557,9 @@ class SpecDetailPanel(
         isGeneratingActive = false
         isClarificationGenerating = false
         stopGeneratingAnimation()
+        if (followCurrentPhase) {
+            clearInput()
+        }
         rebuildTree(workflow)
         updateInputPlaceholder(workflow.currentPhase)
         val preservedPhase = selectedPhase?.takeIf { !followCurrentPhase && previousWorkflowId == workflow.id }
@@ -560,9 +567,11 @@ class SpecDetailPanel(
         updateTreeSelection(selectedPhase)
         updateButtonStates(workflow)
         if (clarificationState == null) {
+            setClarificationPreviewVisible(true)
             switchPreviewCard(CARD_PREVIEW)
             showDocumentPreview(selectedPhase ?: workflow.currentPhase, keepGeneratingIndicator = false)
         } else {
+            setClarificationPreviewVisible(!isClarificationGenerating)
             updateClarificationPreview()
             switchPreviewCard(CARD_CLARIFY)
         }
@@ -578,6 +587,7 @@ class SpecDetailPanel(
         clarificationState = null
         treeRoot.removeAllChildren()
         treeModel.reload()
+        setClarificationPreviewVisible(true)
         switchPreviewCard(CARD_PREVIEW)
         documentTree.isEnabled = true
         previewSourceText = ""
@@ -705,6 +715,7 @@ class SpecDetailPanel(
         inputArea.text = suggestedDetails
         inputArea.caretPosition = 0
         updateInputPlaceholder(phase)
+        setClarificationPreviewVisible(false)
         switchPreviewCard(CARD_CLARIFY)
         updateClarificationPreview()
 
@@ -734,6 +745,7 @@ class SpecDetailPanel(
         inputArea.text = suggestedDetails
         inputArea.caretPosition = 0
         updateInputPlaceholder(phase)
+        setClarificationPreviewVisible(true)
         switchPreviewCard(CARD_CLARIFY)
         updateClarificationPreview()
         validationLabel.text = SpecCodingBundle.message("spec.workflow.clarify.hint")
@@ -748,6 +760,7 @@ class SpecDetailPanel(
         clarificationState = null
         clarificationQuestionsPane.text = ""
         clarificationPreviewPane.text = ""
+        setClarificationPreviewVisible(true)
         updateInputPlaceholder(currentWorkflow?.currentPhase)
         if (clearInput) {
             inputArea.text = ""
@@ -789,6 +802,27 @@ class SpecDetailPanel(
         }
     }
 
+    private fun setClarificationPreviewVisible(visible: Boolean) {
+        if (!::clarificationSplitPane.isInitialized) {
+            return
+        }
+        if (visible) {
+            if (clarificationSplitPane.bottomComponent == null) {
+                clarificationSplitPane.bottomComponent = clarificationPreviewSection
+            }
+            clarificationPreviewSection.isVisible = true
+            clarificationSplitPane.resizeWeight = 0.58
+            clarificationSplitPane.dividerSize = JBUI.scale(6)
+        } else {
+            clarificationPreviewSection.isVisible = false
+            clarificationSplitPane.bottomComponent = null
+            clarificationSplitPane.resizeWeight = 1.0
+            clarificationSplitPane.dividerSize = 0
+        }
+        clarificationSplitPane.revalidate()
+        clarificationSplitPane.repaint()
+    }
+
     fun showGenerating(progress: Double) {
         generatingPercent = (progress * 100).toInt().coerceIn(0, 100)
         isClarificationGenerating = false
@@ -810,6 +844,7 @@ class SpecDetailPanel(
         }
         updateButtonStates(workflow)
         if (clarificationState != null) {
+            setClarificationPreviewVisible(!isClarificationGenerating)
             switchPreviewCard(CARD_CLARIFY)
             updateClarificationPreview()
         } else {
@@ -1035,12 +1070,39 @@ class SpecDetailPanel(
         cancelClarificationButton.isEnabled = false
     }
 
+    fun clearInput() {
+        inputArea.text = ""
+        inputArea.caretPosition = 0
+        if (clarificationState != null) {
+            updateClarificationPreview()
+        }
+    }
+
     internal fun currentPreviewTextForTest(): String {
         return previewSourceText
     }
 
     internal fun currentValidationTextForTest(): String {
         return validationLabel.text
+    }
+
+    internal fun currentInputTextForTest(): String {
+        return inputArea.text
+    }
+
+    internal fun setInputTextForTest(text: String) {
+        inputArea.text = text
+        inputArea.caretPosition = inputArea.text.length
+    }
+
+    internal fun clickGenerateForTest() {
+        generateButton.doClick()
+    }
+
+    internal fun isClarificationPreviewVisibleForTest(): Boolean {
+        return ::clarificationSplitPane.isInitialized &&
+            clarificationSplitPane.bottomComponent != null &&
+            clarificationPreviewSection.isVisible
     }
 
     internal fun buttonStatesForTest(): Map<String, Any> {

@@ -112,13 +112,16 @@ class SpecDetailPanelTest {
         )
         panel.updateWorkflow(initial)
         assertEquals(specifyContent, panel.currentPreviewTextForTest())
+        panel.setInputTextForTest("temporary user input")
 
         val moved = initial.copy(currentPhase = SpecPhase.DESIGN, updatedAt = 3L)
         panel.updateWorkflow(moved)
         assertEquals(specifyContent, panel.currentPreviewTextForTest())
+        assertEquals("temporary user input", panel.currentInputTextForTest())
 
         panel.updateWorkflow(moved, followCurrentPhase = true)
         assertEquals(designContent, panel.currentPreviewTextForTest())
+        assertEquals("", panel.currentInputTextForTest())
     }
 
     @Test
@@ -221,6 +224,7 @@ class SpecDetailPanelTest {
         )
 
         assertTrue(panel.currentValidationTextForTest().contains("Generating clarification questions..."))
+        assertFalse(panel.isClarificationPreviewVisibleForTest())
         val generatingStates = panel.buttonStatesForTest()
         assertFalse(generatingStates["confirmGenerateEnabled"] as Boolean)
         assertFalse(generatingStates["regenerateClarificationEnabled"] as Boolean)
@@ -237,11 +241,43 @@ class SpecDetailPanelTest {
         val readyStatus = panel.currentValidationTextForTest()
         assertTrue(readyStatus.contains("Review clarification questions"))
         assertFalse(readyStatus.contains("◐"))
+        assertTrue(panel.isClarificationPreviewVisibleForTest())
         val readyStates = panel.buttonStatesForTest()
         assertTrue(readyStates["confirmGenerateEnabled"] as Boolean)
         assertTrue(readyStates["regenerateClarificationEnabled"] as Boolean)
         assertTrue(readyStates["skipClarificationEnabled"] as Boolean)
         assertTrue(readyStates["cancelClarificationEnabled"] as Boolean)
+    }
+
+    @Test
+    fun `clicking generate should clear input area`() {
+        var generatedInput: String? = null
+        val panel = createPanel(
+            onGenerate = { generatedInput = it },
+        )
+        val workflow = SpecWorkflow(
+            id = "wf-generate-clear",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements content",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Generate",
+            description = "Generate workflow",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.setInputTextForTest("new requirements input")
+
+        panel.clickGenerateForTest()
+
+        assertEquals("new requirements input", generatedInput)
+        assertEquals("", panel.currentInputTextForTest())
     }
 
     @Test
@@ -285,9 +321,11 @@ class SpecDetailPanelTest {
         assertTrue(states["generateEnabled"] as Boolean)
     }
 
-    private fun createPanel(): SpecDetailPanel {
+    private fun createPanel(
+        onGenerate: (String) -> Unit = {},
+    ): SpecDetailPanel {
         return SpecDetailPanel(
-            onGenerate = {},
+            onGenerate = onGenerate,
             onClarificationConfirm = { _, _ -> },
             onClarificationRegenerate = { _, _ -> },
             onClarificationSkip = {},

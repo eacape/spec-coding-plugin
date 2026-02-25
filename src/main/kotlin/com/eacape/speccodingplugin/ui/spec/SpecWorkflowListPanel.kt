@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.SpecChangeIntent
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.intellij.icons.AllIcons
@@ -13,6 +14,7 @@ import java.awt.Color
 import java.awt.Component
 import java.awt.Cursor
 import java.awt.Font
+import java.awt.FontMetrics
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Point
@@ -44,7 +46,9 @@ class SpecWorkflowListPanel(
         val description: String,
         val currentPhase: SpecPhase,
         val status: WorkflowStatus,
-        val updatedAt: Long
+        val updatedAt: Long,
+        val changeIntent: SpecChangeIntent = SpecChangeIntent.FULL,
+        val baselineWorkflowId: String? = null,
     )
 
     private val listModel = DefaultListModel<WorkflowListItem>()
@@ -141,6 +145,17 @@ class SpecWorkflowListPanel(
             }
         } finally {
             suppressSelectionEvents = false
+        }
+    }
+
+    fun workflowOptionsForCreate(): List<NewSpecWorkflowDialog.WorkflowOption> {
+        return (0 until listModel.size()).map { index ->
+            val item = listModel[index]
+            NewSpecWorkflowDialog.WorkflowOption(
+                workflowId = item.workflowId,
+                title = item.title,
+                description = item.description,
+            )
         }
     }
 
@@ -280,6 +295,7 @@ class SpecWorkflowListPanel(
         ): Component {
             if (value == null) return rowPanel
 
+            val textAreaWidth = estimateTextAreaWidth(list)
             val titleColor = if (isSelected) {
                 JBColor(Color(28, 45, 70), Color(230, 236, 244))
             } else {
@@ -301,21 +317,57 @@ class SpecWorkflowListPanel(
                 JBColor(Color(219, 226, 238), Color(74, 80, 90))
             }
 
-            titleLabel.text = value.title.lowercase()
+            val fullTitleText = value.title.lowercase()
+            val titleText = truncateByPixel(
+                value = fullTitleText,
+                fontMetrics = titleLabel.getFontMetrics(titleLabel.font),
+                maxWidthPx = textAreaWidth,
+            )
+            titleLabel.text = titleText
             titleLabel.foreground = titleColor
+            titleLabel.toolTipText = if (titleText != fullTitleText) value.title else null
+
+            val statusText = localizeStatus(value.status).lowercase()
+            statusLabel.text = statusText
+
             val description = value.description.trim()
             descriptionLabel.isVisible = description.isNotBlank()
             if (descriptionLabel.isVisible) {
-                descriptionLabel.text = truncateSingleLine(description, maxChars = 60)
+                val descriptionText = truncateByPixel(
+                    value = description,
+                    fontMetrics = descriptionLabel.getFontMetrics(descriptionLabel.font),
+                    maxWidthPx = textAreaWidth,
+                )
+                descriptionLabel.text = descriptionText
                 descriptionLabel.foreground = phaseColor
-                descriptionLabel.toolTipText = description
+                descriptionLabel.toolTipText = if (descriptionText != description) description else null
             } else {
                 descriptionLabel.text = ""
                 descriptionLabel.toolTipText = null
             }
-            phaseLabel.text = value.currentPhase.displayName.lowercase()
+            val intentLabelText = when (value.changeIntent) {
+                SpecChangeIntent.FULL -> SpecCodingBundle.message("spec.workflow.intent.full.short")
+                SpecChangeIntent.INCREMENTAL -> SpecCodingBundle.message("spec.workflow.intent.incremental.short")
+            }
+            val fullPhaseText = "${value.currentPhase.displayName.lowercase()} · $intentLabelText"
+            val statusWidth = statusLabel.getFontMetrics(statusLabel.font).stringWidth(statusText)
+            val phaseWidth = (textAreaWidth - statusWidth - META_STATUS_GAP).coerceAtLeast(MIN_PHASE_TEXT_WIDTH)
+            val phaseText = truncateByPixel(
+                value = fullPhaseText,
+                fontMetrics = phaseLabel.getFontMetrics(phaseLabel.font),
+                maxWidthPx = phaseWidth,
+            )
+            phaseLabel.text = phaseText
             phaseLabel.foreground = phaseColor
-            statusLabel.text = localizeStatus(value.status).lowercase()
+            val baselineTooltip = value.baselineWorkflowId?.takeIf { it.isNotBlank() }?.let {
+                SpecCodingBundle.message("spec.workflow.intent.incremental.tooltip", it)
+            }
+            phaseLabel.toolTipText = when {
+                baselineTooltip != null && phaseText != fullPhaseText -> "$fullPhaseText\n$baselineTooltip"
+                baselineTooltip != null -> baselineTooltip
+                phaseText != fullPhaseText -> fullPhaseText
+                else -> null
+            }
             editActionLabel.toolTipText = SpecCodingBundle.message("spec.workflow.edit")
             deleteActionLabel.toolTipText = SpecCodingBundle.message("spec.workflow.delete")
             statusLabel.foreground = if (isSelected) {
@@ -329,10 +381,49 @@ class SpecWorkflowListPanel(
             return rowPanel
         }
 
-        private fun truncateSingleLine(value: String, maxChars: Int): String {
+        private fun estimateTextAreaWidth(list: JList<*>): Int {
+            val listWidth = when {
+                list.width > 0 -> list.width
+                list.visibleRect.width > 0 -> list.visibleRect.width
+                else -> list.preferredSize.width.takeIf { it > 0 } ?: JBUI.scale(188)
+            }
+            val reservedWidth = CARD_LEFT_PAD +
+                CARD_RIGHT_PAD +
+                ACTION_PANEL_LEFT_PAD +
+                ACTION_PANEL_RIGHT_PAD +
+                ACTION_ICON_SIZE * 2 +
+                ACTION_ICON_GAP +
+                ACTION_SAFE_GAP
+            return (listWidth - reservedWidth).coerceAtLeast(MIN_TEXT_WIDTH)
+        }
+
+        private fun truncateByPixel(
+            value: String,
+            fontMetrics: FontMetrics,
+            maxWidthPx: Int,
+        ): String {
             val normalized = value.replace(Regex("\\s+"), " ").trim()
-            if (normalized.length <= maxChars) return normalized
-            return normalized.take(maxChars - 1).trimEnd() + "…"
+            if (normalized.isEmpty()) return normalized
+            if (fontMetrics.stringWidth(normalized) <= maxWidthPx) return normalized
+
+            val ellipsis = "…"
+            val ellipsisWidth = fontMetrics.stringWidth(ellipsis)
+            if (maxWidthPx <= ellipsisWidth) return ellipsis
+
+            var low = 0
+            var high = normalized.length
+            while (low < high) {
+                val mid = (low + high + 1) / 2
+                val prefix = normalized.substring(0, mid).trimEnd()
+                val width = fontMetrics.stringWidth(prefix) + ellipsisWidth
+                if (width <= maxWidthPx) {
+                    low = mid
+                } else {
+                    high = mid - 1
+                }
+            }
+            val kept = normalized.substring(0, low).trimEnd()
+            return if (kept.isEmpty()) ellipsis else "$kept$ellipsis"
         }
 
         private fun getStatusColor(status: WorkflowStatus): Color = when (status) {
@@ -386,8 +477,12 @@ class SpecWorkflowListPanel(
             private val ACTION_PANEL_RIGHT_PAD = JBUI.scale(4)
             private val ACTION_ICON_SIZE = JBUI.scale(16)
             private val ACTION_ICON_GAP = JBUI.scale(6)
+            private val ACTION_SAFE_GAP = JBUI.scale(10)
             private val ACTION_RIGHT_PAD = CARD_RIGHT_PAD + ACTION_PANEL_RIGHT_PAD
             private val ACTION_HIT_SLOP = JBUI.scale(3)
+            private val MIN_TEXT_WIDTH = JBUI.scale(76)
+            private val META_STATUS_GAP = JBUI.scale(10)
+            private val MIN_PHASE_TEXT_WIDTH = JBUI.scale(36)
 
             fun resolveRowAction(cellBounds: Rectangle, point: Point): RowAction? {
                 if (!cellBounds.contains(point)) {

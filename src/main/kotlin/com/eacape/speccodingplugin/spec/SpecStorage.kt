@@ -184,6 +184,7 @@ class SpecStorage(private val project: Project) {
                 details = mapOf(
                     "status" to workflow.status.name,
                     "phase" to workflow.currentPhase.name,
+                    "changeIntent" to workflow.changeIntent.name,
                 ),
             )
             logger.info("Saved workflow metadata to $metadataPath")
@@ -277,6 +278,7 @@ class SpecStorage(private val project: Project) {
                     "status" to workflow.status.name,
                     "phase" to workflow.currentPhase.name,
                     "title" to workflow.title,
+                    "changeIntent" to workflow.changeIntent.name,
                 ),
             )
 
@@ -392,6 +394,10 @@ class SpecStorage(private val project: Project) {
             appendLine("id: ${workflow.id}")
             appendLine("title: ${workflow.title}")
             appendLine("description: ${workflow.description.replace("\n", " ")}")
+            appendLine("changeIntent: ${workflow.changeIntent.name}")
+            workflow.baselineWorkflowId?.takeIf { it.isNotBlank() }?.let {
+                appendLine("baselineWorkflowId: $it")
+            }
             appendLine("currentPhase: ${workflow.currentPhase.name}")
             appendLine("status: ${workflow.status.name}")
             appendLine("createdAt: ${workflow.createdAt}")
@@ -414,6 +420,8 @@ class SpecStorage(private val project: Project) {
         var status = WorkflowStatus.IN_PROGRESS
         var title = workflowId
         var description = ""
+        var changeIntent = SpecChangeIntent.FULL
+        var baselineWorkflowId: String? = null
         var createdAt = System.currentTimeMillis()
         var updatedAt = System.currentTimeMillis()
 
@@ -431,6 +439,13 @@ class SpecStorage(private val project: Project) {
                 }
                 trimmed.startsWith("description:") -> {
                     description = trimmed.substringAfter(":").trim()
+                }
+                trimmed.startsWith("changeIntent:") -> {
+                    val value = trimmed.substringAfter(":").trim()
+                    changeIntent = runCatching { SpecChangeIntent.valueOf(value) }.getOrDefault(SpecChangeIntent.FULL)
+                }
+                trimmed.startsWith("baselineWorkflowId:") -> {
+                    baselineWorkflowId = trimmed.substringAfter(":").trim().takeIf { it.isNotBlank() }
                 }
                 trimmed.startsWith("status:") -> {
                     val value = trimmed.substringAfter(":").trim()
@@ -460,6 +475,8 @@ class SpecStorage(private val project: Project) {
             status = status,
             title = title,
             description = description,
+            changeIntent = changeIntent,
+            baselineWorkflowId = baselineWorkflowId,
             createdAt = createdAt,
             updatedAt = updatedAt
         )

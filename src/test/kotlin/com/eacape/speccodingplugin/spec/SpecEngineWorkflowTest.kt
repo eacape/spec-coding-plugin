@@ -334,4 +334,78 @@ class SpecEngineWorkflowTest {
 
         assertEquals("API 必须支持幂等 key；数据库使用 PostgreSQL", capturedConfirmedContext)
     }
+
+    @Test
+    fun `createWorkflow should require baseline when change intent is incremental`() {
+        val engine = SpecEngine(project, storage) {
+            SpecGenerationResult.Failure("not used")
+        }
+
+        val result = engine.createWorkflow(
+            title = "Incremental without baseline",
+            description = "should fail",
+            changeIntent = SpecChangeIntent.INCREMENTAL,
+            baselineWorkflowId = null,
+        )
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("baseline", ignoreCase = true) == true)
+    }
+
+    @Test
+    fun `generateCurrentPhase should inject baseline context for incremental workflow`() {
+        var capturedConfirmedContext: String? = null
+        val engine = SpecEngine(project, storage) { request ->
+            capturedConfirmedContext = request.options.confirmedContext
+            val content = """
+                ## 功能需求
+                - 用户可以创建任务
+
+                ## 非功能需求
+                - 响应时间 < 1s
+
+                ## 用户故事
+                As a user, I want to create tasks, so that I can track work.
+
+                ## 验收标准
+                - [ ] 创建成功
+            """.trimIndent()
+            val candidate = SpecDocument(
+                id = "doc-specify",
+                phase = request.phase,
+                content = content,
+                metadata = SpecMetadata(
+                    title = "${request.phase.displayName} Document",
+                    description = "Generated ${request.phase.displayName} document",
+                ),
+            )
+            SpecGenerationResult.Success(candidate.copy(validationResult = SpecValidator.validate(candidate)))
+        }
+
+        val baseline = engine.createWorkflow(
+            title = "Baseline",
+            description = "base workflow",
+        ).getOrThrow()
+        val incremental = engine.createWorkflow(
+            title = "Incremental",
+            description = "补充风控字段",
+            changeIntent = SpecChangeIntent.INCREMENTAL,
+            baselineWorkflowId = baseline.id,
+        ).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(
+                workflowId = incremental.id,
+                input = "extend requirements",
+                options = GenerationOptions(
+                    confirmedContext = "用户确认：只做后端改造",
+                ),
+            ).collect()
+        }
+
+        assertNotNull(capturedConfirmedContext)
+        assertTrue(capturedConfirmedContext!!.contains("用户确认：只做后端改造"))
+        assertTrue(capturedConfirmedContext!!.contains("增量需求基线上下文"))
+        assertTrue(capturedConfirmedContext!!.contains("基线工作流 ID: ${baseline.id}"))
+    }
 }

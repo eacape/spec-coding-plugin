@@ -147,6 +147,21 @@ data class ValidationResult(
 }
 
 /**
+ * Spec 工作流需求意图
+ */
+enum class SpecChangeIntent {
+    /**
+     * 全量需求，从零开始
+     */
+    FULL,
+
+    /**
+     * 增量需求，基于已有规格演进
+     */
+    INCREMENTAL,
+}
+
+/**
  * Spec 工作流状态
  */
 data class SpecWorkflow(
@@ -156,6 +171,8 @@ data class SpecWorkflow(
     val status: WorkflowStatus,
     val title: String = "",
     val description: String = "",
+    val changeIntent: SpecChangeIntent = SpecChangeIntent.FULL,
+    val baselineWorkflowId: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {
@@ -195,6 +212,13 @@ data class SpecWorkflow(
      */
     fun isCompleted(): Boolean {
         return status == WorkflowStatus.COMPLETED
+    }
+
+    /**
+     * 是否是增量需求工作流
+     */
+    fun isIncrementalWorkflow(): Boolean {
+        return changeIntent == SpecChangeIntent.INCREMENTAL && !baselineWorkflowId.isNullOrBlank()
     }
 }
 
