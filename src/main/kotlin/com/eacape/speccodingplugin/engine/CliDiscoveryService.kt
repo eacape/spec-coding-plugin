@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.util.EnvironmentUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -11,6 +12,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
@@ -191,8 +193,9 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
      * - 如果配置的是裸命令名，在 PATH 中查找
      */
     private fun resolveCliPath(configuredPath: String, toolName: String): String {
-        if (configuredPath.isNotBlank()) {
-            val configFile = File(configuredPath)
+        val normalizedConfiguredPath = normalizePathInput(configuredPath)
+        if (normalizedConfiguredPath.isNotBlank()) {
+            val configFile = File(normalizedConfiguredPath)
 
             // 用户配置的是可执行文件路径
             if (configFile.isFile) {
@@ -204,13 +207,15 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
                 val found = findExecutableInDir(configFile, toolName)
                 if (found != null) return found
                 // 目录下没找到，继续用 toolName 在 PATH 中查找
-                logger.info("No executable '$toolName' found in directory: $configuredPath, falling back to PATH")
+                logger.info("No executable '$toolName' found in directory: $normalizedConfiguredPath, falling back to PATH")
             }
 
             // 配置的路径可能是裸命令名（如 "claude"），尝试在 PATH 中查找
-            if (!configuredPath.contains(File.separator) && !configuredPath.contains("/")) {
-                val found = findInPath(configuredPath)
+            if (!normalizedConfiguredPath.contains(File.separator) && !normalizedConfiguredPath.contains("/")) {
+                val found = findInPath(normalizedConfiguredPath)
                 if (found != null) return found
+                val shellFound = findInLoginShellPath(normalizedConfiguredPath)
+                if (shellFound != null) return shellFound
             }
 
             // 配置的路径无效（目录下没找到、不是文件、不是裸命令名），
@@ -220,6 +225,7 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
         // 在 PATH 和常见安装位置中查找
         return findInPath(toolName)
             ?: findInCommonLocations(toolName)
+            ?: findInLoginShellPath(toolName)
             ?: toolName
     }
 
@@ -317,17 +323,25 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
 
     private fun parseClaudeModelsFromLocalCliPackage(cliPath: String): List<String> {
         return try {
-            val candidates = mutableListOf<File>()
-            val normalizedPath = cliPath.trim().trim('"')
-            val exeFile = File(normalizedPath)
-            val parent = exeFile.parentFile
-            if (parent != null) {
-                candidates.add(File(parent, "node_modules/@anthropic-ai/claude-code/cli.js"))
-            }
+            val userHome = System.getProperty("user.home")
+            val env = effectiveEnvironment()
+            val candidates = buildClaudeCliPackageCandidates(
+                cliPath = cliPath,
+                userHome = userHome,
+                env = env,
+                isMac = isMac(),
+            ).map(::File).toMutableList()
 
-            val appData = System.getenv("APPDATA")
-            if (!appData.isNullOrBlank()) {
-                candidates.add(File(appData, "npm/node_modules/@anthropic-ai/claude-code/cli.js"))
+            // nvm installs packages under ~/.nvm/versions/node/<version>/lib/node_modules.
+            if (!userHome.isNullOrBlank()) {
+                val nvmVersionsDir = File(userHome, ".nvm/versions/node")
+                if (nvmVersionsDir.isDirectory) {
+                    nvmVersionsDir.listFiles()
+                        ?.asSequence()
+                        ?.filter { it.isDirectory }
+                        ?.map { versionDir -> File(versionDir, CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH) }
+                        ?.forEach { candidates.add(it) }
+                }
             }
 
             val cliJs = candidates.firstOrNull { it.isFile } ?: return emptyList()
@@ -492,7 +506,7 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
     }
 
     private fun resolveCodexHomeDir(): File {
-        val envHome = System.getenv("CODEX_HOME")?.trim()?.trim('"')
+        val envHome = normalizePathInput(effectiveEnvironment()["CODEX_HOME"].orEmpty())
         if (!envHome.isNullOrBlank()) {
             return File(envHome)
         }
@@ -568,12 +582,44 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
     }
 
     private fun configureCommandEnvironment(builder: ProcessBuilder, executable: String) {
+        ensureExecutableParentOnPath(builder, executable)
         if (isWindows() && executable.contains("claude", ignoreCase = true)) {
             val env = builder.environment()
-            val configuredBash = env["CLAUDE_CODE_GIT_BASH_PATH"] ?: System.getenv("CLAUDE_CODE_GIT_BASH_PATH")
+            val configuredBash = env["CLAUDE_CODE_GIT_BASH_PATH"] ?: effectiveEnvironment()["CLAUDE_CODE_GIT_BASH_PATH"]
             if (configuredBash.isNullOrBlank() || !File(configuredBash).isFile) {
                 findGitBashPath()?.let { env["CLAUDE_CODE_GIT_BASH_PATH"] = it }
             }
+        }
+    }
+
+    private fun ensureExecutableParentOnPath(builder: ProcessBuilder, executable: String) {
+        val normalizedExecutable = normalizePathInput(executable)
+        val executableFile = File(normalizedExecutable)
+        val parent = executableFile.parentFile ?: return
+        if (!parent.isDirectory) return
+
+        val env = builder.environment()
+        val pathKey = resolveEnvKey(env, "PATH")
+        val currentPath = env[pathKey].orEmpty()
+        val normalizedParent = normalizePathForComparison(parent.path)
+        val hasParentInPath = currentPath.split(File.pathSeparator)
+            .asSequence()
+            .map { normalizePathForComparison(normalizePathInput(it)) }
+            .any { it == normalizedParent }
+        if (hasParentInPath) return
+
+        env[pathKey] = if (currentPath.isBlank()) {
+            parent.path
+        } else {
+            parent.path + File.pathSeparator + currentPath
+        }
+    }
+
+    private fun normalizePathForComparison(path: String): String {
+        return if (isWindows()) {
+            path.replace('\\', '/').trimEnd('/').lowercase()
+        } else {
+            path.replace('\\', '/').trimEnd('/')
         }
     }
 
@@ -581,7 +627,7 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
      * 在 PATH 中查找可执行文件
      */
     private fun findInPath(name: String): String? {
-        val pathEnv = System.getenv("PATH") ?: return null
+        val pathEnv = envValue(effectiveEnvironment(), "PATH") ?: return null
         val extensions = if (isWindows()) {
             listOf(".cmd", ".exe", ".bat", "")
         } else {
@@ -589,8 +635,10 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
         }
 
         for (dir in pathEnv.split(File.pathSeparator)) {
+            val normalizedDir = normalizePathInput(dir)
+            if (normalizedDir.isBlank()) continue
             for (ext in extensions) {
-                val file = File(dir, name + ext)
+                val file = File(normalizedDir, name + ext)
                 if (isExecutable(file)) {
                     return file.absolutePath
                 }
@@ -603,36 +651,120 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
      * 在常见安装位置查找 CLI 工具（npm 全局安装等）
      */
     private fun findInCommonLocations(toolName: String): String? {
-        val candidates = mutableListOf<File>()
+        val userHome = System.getProperty("user.home")
+        val env = effectiveEnvironment()
+        val candidates = buildCommonLocationCandidates(
+            toolName = toolName,
+            userHome = userHome,
+            env = env,
+            isWindows = isWindows(),
+            isMac = isMac(),
+        ).toMutableList()
+        candidates += findInNodeVersionManagers(toolName, userHome)
 
-        if (isWindows()) {
-            // npm 全局安装目录
-            val appData = System.getenv("APPDATA")
-            if (appData != null) {
-                candidates.add(File(appData, "npm/$toolName.cmd"))
-                candidates.add(File(appData, "npm/$toolName.exe"))
-            }
-            // nvm for Windows
-            val nvmHome = System.getenv("NVM_HOME")
-            if (nvmHome != null) {
-                candidates.add(File(nvmHome, "$toolName.cmd"))
-            }
-            // 用户 home 下的 .local/bin
-            val userHome = System.getProperty("user.home")
-            if (userHome != null) {
-                candidates.add(File(userHome, ".local/bin/$toolName.exe"))
-                candidates.add(File(userHome, ".local/bin/$toolName.cmd"))
-            }
-        } else {
-            val userHome = System.getProperty("user.home")
-            if (userHome != null) {
-                candidates.add(File(userHome, ".local/bin/$toolName"))
-                candidates.add(File(userHome, ".npm-global/bin/$toolName"))
-            }
-            candidates.add(File("/usr/local/bin/$toolName"))
+        return candidates.asSequence()
+            .map(::File)
+            .firstOrNull { isExecutable(it) }
+            ?.absolutePath
+    }
+
+    private fun findInNodeVersionManagers(toolName: String, userHome: String?): List<String> {
+        if (userHome.isNullOrBlank()) return emptyList()
+        val candidates = mutableListOf<String>()
+
+        val nvmVersionsDir = File(userHome, ".nvm/versions/node")
+        if (nvmVersionsDir.isDirectory) {
+            nvmVersionsDir.listFiles()
+                ?.asSequence()
+                ?.filter { it.isDirectory }
+                ?.sortedByDescending { it.name }
+                ?.map { versionDir -> File(versionDir, "bin/$toolName").path }
+                ?.forEach { candidates += it }
         }
 
-        return candidates.firstOrNull { isExecutable(it) }?.absolutePath
+        val fnmVersionsDir = File(userHome, ".fnm/node-versions")
+        if (fnmVersionsDir.isDirectory) {
+            fnmVersionsDir.listFiles()
+                ?.asSequence()
+                ?.filter { it.isDirectory }
+                ?.sortedByDescending { it.name }
+                ?.map { versionDir -> File(versionDir, "installation/bin/$toolName").path }
+                ?.forEach { candidates += it }
+        }
+
+        return candidates
+    }
+
+    private fun findInLoginShellPath(toolName: String): String? {
+        if (isWindows()) return null
+        if (!toolName.matches(Regex("^[A-Za-z0-9._-]+$"))) return null
+
+        val shell = when {
+            isMac() && File("/bin/zsh").isFile -> "/bin/zsh"
+            File("/bin/bash").isFile -> "/bin/bash"
+            else -> "/bin/sh"
+        }
+
+        return try {
+            val process = ProcessBuilder(shell, "-lc", "command -v $toolName")
+                .redirectErrorStream(true)
+                .start()
+            val finished = process.waitFor(4, TimeUnit.SECONDS)
+            if (!finished) {
+                process.destroyForcibly()
+                process.waitFor(1, TimeUnit.SECONDS)
+                return null
+            }
+            if (process.exitValue() != 0) return null
+            process.inputStream.bufferedReader().use { reader ->
+                reader.lineSequence()
+                    .map { it.trim() }
+                    .firstOrNull { candidate ->
+                        candidate.isNotBlank() &&
+                            (candidate.startsWith("/") || candidate.contains(File.separator)) &&
+                            File(candidate).isFile
+                    }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun normalizePathInput(value: String): String {
+        val raw = value.trim().trim('"', '\'')
+        if (raw.isBlank()) return ""
+        val userHome = System.getProperty("user.home").orEmpty()
+        if (raw == "~") return userHome
+        if (raw.startsWith("~/") || raw.startsWith("~\\")) {
+            return File(userHome, raw.substring(2)).path
+        }
+        return raw
+    }
+
+    private fun effectiveEnvironment(): Map<String, String> {
+        val merged = linkedMapOf<String, String>()
+
+        fun addEntry(key: String, value: String?) {
+            if (value.isNullOrBlank()) return
+            merged[key] = value
+            merged[key.uppercase(Locale.ROOT)] = value
+        }
+
+        System.getenv().forEach { (key, value) -> addEntry(key, value) }
+        runCatching { EnvironmentUtil.getEnvironmentMap() }
+            .getOrNull()
+            ?.forEach { (key, value) -> addEntry(key, value) }
+        return merged
+    }
+
+    private fun envValue(env: Map<String, String>, key: String): String? {
+        return env[key]
+            ?: env[key.uppercase(Locale.ROOT)]
+            ?: env.entries.firstOrNull { it.key.equals(key, ignoreCase = true) }?.value
+    }
+
+    private fun resolveEnvKey(env: MutableMap<String, String>, key: String): String {
+        return env.keys.firstOrNull { it.equals(key, ignoreCase = true) } ?: key
     }
 
     /**
@@ -651,6 +783,9 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
     private fun isWindows(): Boolean =
         System.getProperty("os.name").lowercase().contains("win")
 
+    private fun isMac(): Boolean =
+        System.getProperty("os.name").lowercase().contains("mac")
+
     private fun findGitBashPath(): String? {
         val candidates = listOf(
             "C:\\Program Files\\Git\\bin\\bash.exe",
@@ -667,6 +802,8 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
 
     companion object {
         fun getInstance(): CliDiscoveryService = service()
+        private const val CLAUDE_LOCAL_PACKAGE_CLI_JS_RELATIVE_PATH = "node_modules/@anthropic-ai/claude-code/cli.js"
+        private const val CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH = "lib/node_modules/@anthropic-ai/claude-code/cli.js"
         private val CLAUDE_MODEL_ID_REGEX = Regex("""\bclaude-[a-z0-9][a-z0-9.-]*\b""", RegexOption.IGNORE_CASE)
         private val CLAUDE_MODEL_ALIAS_REGEX = Regex("""\b(sonnet|opus|haiku)\b""", RegexOption.IGNORE_CASE)
         private val CLAUDE_CANONICAL_MODEL_OBJECT_REGEX = Regex(
@@ -695,5 +832,132 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
         private const val CODEX_SESSION_FILES_TO_SCAN = 12
         private const val CODEX_SESSION_LINES_PER_FILE = 2000
         private const val CODEX_SESSION_MAX_DEPTH = 8
+
+        internal fun buildCommonLocationCandidates(
+            toolName: String,
+            userHome: String?,
+            env: Map<String, String>,
+            isWindows: Boolean,
+            isMac: Boolean,
+        ): List<String> {
+            val candidates = mutableListOf<String>()
+            val dedupe = linkedSetOf<String>()
+
+            fun addPath(path: String?) {
+                val raw = path?.trim()?.trim('"', '\'') ?: return
+                if (raw.isBlank()) return
+                val key = raw.replace('\\', '/').trimEnd('/').lowercase()
+                if (key.isBlank()) return
+                if (dedupe.add(key)) candidates.add(raw)
+            }
+
+            fun addUnder(base: String?, child: String) {
+                val normalizedBase = base?.trim()?.trim('"', '\'') ?: return
+                if (normalizedBase.isBlank()) return
+                addPath(File(normalizedBase, child).path)
+            }
+
+            if (isWindows) {
+                addUnder(env["APPDATA"], "npm/$toolName.cmd")
+                addUnder(env["APPDATA"], "npm/$toolName.exe")
+                addUnder(env["APPDATA"], "npm/$toolName.bat")
+                addUnder(env["NVM_HOME"], "$toolName.cmd")
+                addUnder(env["NVM_HOME"], "$toolName.exe")
+                addUnder(userHome, "AppData/Roaming/npm/$toolName.cmd")
+                addUnder(userHome, "AppData/Roaming/npm/$toolName.exe")
+                addUnder(userHome, ".local/bin/$toolName.exe")
+                addUnder(userHome, ".local/bin/$toolName.cmd")
+                return candidates
+            }
+
+            val npmPrefix = env["NPM_CONFIG_PREFIX"] ?: env["PREFIX"]
+            addUnder(env["NVM_BIN"], toolName)
+            addUnder(env["PNPM_HOME"], toolName)
+            addUnder(env["VOLTA_HOME"], "bin/$toolName")
+            addUnder(npmPrefix, "bin/$toolName")
+
+            addUnder(userHome, ".local/bin/$toolName")
+            addUnder(userHome, ".npm-global/bin/$toolName")
+            addUnder(userHome, ".yarn/bin/$toolName")
+            addUnder(userHome, ".volta/bin/$toolName")
+            addUnder(userHome, ".asdf/shims/$toolName")
+            addUnder(userHome, ".fnm/current/bin/$toolName")
+            addUnder(userHome, ".nvm/current/bin/$toolName")
+
+            if (isMac) {
+                addUnder(userHome, "Library/pnpm/$toolName")
+                addPath("/opt/homebrew/bin/$toolName")
+                addPath("/opt/local/bin/$toolName")
+            }
+            addPath("/usr/local/bin/$toolName")
+            addPath("/usr/bin/$toolName")
+
+            return candidates
+        }
+
+        internal fun buildClaudeCliPackageCandidates(
+            cliPath: String,
+            userHome: String?,
+            env: Map<String, String>,
+            isMac: Boolean,
+        ): List<String> {
+            val candidates = mutableListOf<String>()
+            val dedupe = linkedSetOf<String>()
+
+            fun addPath(path: String?) {
+                val raw = path?.trim()?.trim('"', '\'') ?: return
+                if (raw.isBlank()) return
+                val key = raw.replace('\\', '/').trimEnd('/').lowercase()
+                if (key.isBlank()) return
+                if (dedupe.add(key)) candidates.add(raw)
+            }
+
+            fun addUnder(base: String?, child: String) {
+                val normalizedBase = base?.trim()?.trim('"', '\'') ?: return
+                if (normalizedBase.isBlank()) return
+                addPath(File(normalizedBase, child).path)
+            }
+
+            val normalizedCliPath = cliPath.trim().trim('"', '\'')
+            val cliExecutable = File(normalizedCliPath)
+            val executableParent = cliExecutable.parentFile
+            if (executableParent != null) {
+                addPath(File(executableParent, CLAUDE_LOCAL_PACKAGE_CLI_JS_RELATIVE_PATH).path)
+                executableParent.parentFile?.let { parent ->
+                    addPath(File(parent, CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH).path)
+                    addPath(File(parent, CLAUDE_LOCAL_PACKAGE_CLI_JS_RELATIVE_PATH).path)
+                }
+            }
+
+            addUnder(env["APPDATA"], "npm/$CLAUDE_LOCAL_PACKAGE_CLI_JS_RELATIVE_PATH")
+
+            val npmPrefix = env["NPM_CONFIG_PREFIX"] ?: env["PREFIX"]
+            addUnder(npmPrefix, CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH)
+            addUnder(userHome, ".npm-global/$CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH")
+            addUnder(userHome, ".local/$CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH")
+
+            val nvmBin = env["NVM_BIN"]?.trim()?.trim('"', '\'')
+            if (!nvmBin.isNullOrBlank()) {
+                val nvmBinDir = File(nvmBin)
+                val nodeVersionDir = nvmBinDir.parentFile
+                if (nodeVersionDir != null) {
+                    addPath(File(nodeVersionDir, CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH).path)
+                }
+            }
+
+            val voltaHome = env["VOLTA_HOME"]
+            addUnder(
+                voltaHome,
+                "tools/image/packages/@anthropic-ai/claude-code/$CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH",
+            )
+
+            addPath("/usr/local/$CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH")
+            if (isMac) {
+                addPath("/opt/homebrew/$CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH")
+                addPath("/opt/local/$CLAUDE_GLOBAL_PACKAGE_CLI_JS_RELATIVE_PATH")
+            }
+
+            return candidates
+        }
     }
 }

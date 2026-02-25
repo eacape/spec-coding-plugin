@@ -112,10 +112,10 @@ class SpecDetailPanel(
 
         val topSplit = JSplitPane(JSplitPane.HORIZONTAL_SPLIT).apply {
             dividerLocation = 176
-            dividerSize = JBUI.scale(6)
             isContinuousLayout = true
             border = JBUI.Borders.empty()
             background = PANEL_BG
+            SpecUiStyle.applySplitPaneDivider(this, dividerSize = JBUI.scale(8))
         }
 
         documentTree.isRootVisible = false
@@ -135,11 +135,14 @@ class SpecDetailPanel(
         topSplit.leftComponent = createSectionContainer(
             JBScrollPane(documentTree).apply {
                 border = JBUI.Borders.empty()
-            }
+            },
+            backgroundColor = TREE_SECTION_BG,
+            borderColor = TREE_SECTION_BORDER,
         )
 
         val previewPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
-            isOpaque = false
+            isOpaque = true
+            background = PREVIEW_COLUMN_BG
         }
         previewPane.isEditable = false
         previewPane.isOpaque = false
@@ -150,7 +153,9 @@ class SpecDetailPanel(
             createSectionContainer(
                 JBScrollPane(previewPane).apply {
                     border = JBUI.Borders.empty()
-                }
+                },
+                backgroundColor = PREVIEW_SECTION_BG,
+                borderColor = PREVIEW_SECTION_BORDER,
             ),
             CARD_PREVIEW,
         )
@@ -162,7 +167,9 @@ class SpecDetailPanel(
                     border = JBUI.Borders.empty()
                     horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                }
+                },
+                backgroundColor = PREVIEW_SECTION_BG,
+                borderColor = PREVIEW_SECTION_BORDER,
             ),
             CARD_EDIT,
         )
@@ -194,7 +201,8 @@ class SpecDetailPanel(
         topSplit.rightComponent = previewPanel
 
         val bottomPanel = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
-            isOpaque = false
+            isOpaque = true
+            background = INPUT_COLUMN_BG
             border = JBUI.Borders.emptyTop(8)
         }
 
@@ -211,7 +219,14 @@ class SpecDetailPanel(
         val inputScroll = JBScrollPane(inputArea)
         inputScroll.border = JBUI.Borders.empty()
         inputScroll.preferredSize = java.awt.Dimension(0, JBUI.scale(80))
-        bottomPanel.add(createSectionContainer(inputScroll), BorderLayout.CENTER)
+        bottomPanel.add(
+            createSectionContainer(
+                inputScroll,
+                backgroundColor = INPUT_SECTION_BG,
+                borderColor = INPUT_SECTION_BORDER,
+            ),
+            BorderLayout.CENTER,
+        )
 
         val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
             isOpaque = false
@@ -228,6 +243,8 @@ class SpecDetailPanel(
                     isOpaque = false
                     SpecUiStyle.applySlimHorizontalScrollBar(this, height = 7)
                 },
+                backgroundColor = ACTIONS_SECTION_BG,
+                borderColor = ACTIONS_SECTION_BORDER,
             ),
             BorderLayout.SOUTH,
         )
@@ -236,9 +253,9 @@ class SpecDetailPanel(
             topComponent = topSplit
             bottomComponent = bottomPanel
             resizeWeight = 0.67
-            dividerSize = JBUI.scale(6)
             border = JBUI.Borders.empty()
             background = PANEL_BG
+            SpecUiStyle.applySplitPaneDivider(this, dividerSize = JBUI.scale(8))
         }
         add(mainSplit, BorderLayout.CENTER)
     }
@@ -378,6 +395,8 @@ class SpecDetailPanel(
                     JBScrollPane(clarificationQuestionsPane).apply {
                         border = JBUI.Borders.empty()
                     },
+                    backgroundColor = CLARIFICATION_QUESTIONS_BG,
+                    borderColor = CLARIFICATION_QUESTIONS_BORDER,
                 ),
                 BorderLayout.CENTER,
             )
@@ -391,20 +410,23 @@ class SpecDetailPanel(
                     JBScrollPane(clarificationPreviewPane).apply {
                         border = JBUI.Borders.empty()
                     },
+                    backgroundColor = CLARIFICATION_PREVIEW_BG,
+                    borderColor = CLARIFICATION_PREVIEW_BORDER,
                 ),
                 BorderLayout.CENTER,
             )
         }
 
         return JPanel(BorderLayout(0, JBUI.scale(8))).apply {
-            isOpaque = false
+            isOpaque = true
+            background = CLARIFICATION_CARD_BG
             clarificationSplitPane = JSplitPane(JSplitPane.VERTICAL_SPLIT).apply {
                 topComponent = questionsSection
                 bottomComponent = clarificationPreviewSection
                 resizeWeight = 0.58
-                dividerSize = JBUI.scale(6)
                 border = JBUI.Borders.empty()
                 background = PANEL_BG
+                SpecUiStyle.applySplitPaneDivider(this, dividerSize = JBUI.scale(8))
             }
             add(clarificationSplitPane, BorderLayout.CENTER)
         }
@@ -440,12 +462,16 @@ class SpecDetailPanel(
         validationLabel.foreground = GENERATING_FG
     }
 
-    private fun createSectionContainer(content: java.awt.Component): JPanel {
+    private fun createSectionContainer(
+        content: java.awt.Component,
+        backgroundColor: Color = PANEL_BG,
+        borderColor: Color = PANEL_BORDER,
+    ): JPanel {
         return JPanel(BorderLayout()).apply {
             isOpaque = true
-            background = PANEL_BG
+            background = backgroundColor
             border = SpecUiStyle.roundedCardBorder(
-                lineColor = PANEL_BORDER,
+                lineColor = borderColor,
                 arc = JBUI.scale(14),
                 top = 2,
                 left = 2,
@@ -812,7 +838,7 @@ class SpecDetailPanel(
             }
             clarificationPreviewSection.isVisible = true
             clarificationSplitPane.resizeWeight = 0.58
-            clarificationSplitPane.dividerSize = JBUI.scale(6)
+            clarificationSplitPane.dividerSize = JBUI.scale(8)
         } else {
             clarificationPreviewSection.isVisible = false
             clarificationSplitPane.bottomComponent = null
@@ -1180,6 +1206,21 @@ class SpecDetailPanel(
         private val GENERATING_FRAMES = listOf("◐", "◓", "◑", "◒")
         private val PANEL_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
         private val PANEL_BORDER = JBColor(Color(205, 216, 234), Color(84, 92, 106))
+        private val TREE_SECTION_BG = JBColor(Color(241, 247, 255), Color(60, 67, 78))
+        private val TREE_SECTION_BORDER = JBColor(Color(196, 211, 233), Color(92, 103, 121))
+        private val PREVIEW_COLUMN_BG = JBColor(Color(244, 249, 255), Color(55, 61, 71))
+        private val PREVIEW_SECTION_BG = JBColor(Color(250, 253, 255), Color(49, 55, 64))
+        private val PREVIEW_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(83, 93, 109))
+        private val INPUT_COLUMN_BG = JBColor(Color(239, 245, 253), Color(58, 65, 75))
+        private val INPUT_SECTION_BG = JBColor(Color(247, 251, 255), Color(52, 58, 68))
+        private val INPUT_SECTION_BORDER = JBColor(Color(200, 214, 234), Color(86, 97, 113))
+        private val ACTIONS_SECTION_BG = JBColor(Color(236, 244, 255), Color(63, 70, 81))
+        private val ACTIONS_SECTION_BORDER = JBColor(Color(190, 208, 234), Color(95, 108, 126))
+        private val CLARIFICATION_CARD_BG = JBColor(Color(244, 249, 255), Color(56, 62, 72))
+        private val CLARIFICATION_QUESTIONS_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
+        private val CLARIFICATION_QUESTIONS_BORDER = JBColor(Color(203, 216, 235), Color(84, 95, 110))
+        private val CLARIFICATION_PREVIEW_BG = JBColor(Color(242, 248, 255), Color(60, 67, 78))
+        private val CLARIFICATION_PREVIEW_BORDER = JBColor(Color(194, 210, 233), Color(92, 104, 121))
         private val STATUS_BG = JBColor(Color(235, 244, 255), Color(62, 68, 80))
         private val STATUS_BORDER = JBColor(Color(183, 199, 224), Color(98, 109, 125))
         private val GENERATING_FG = JBColor(Color(46, 90, 162), Color(171, 201, 248))

@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.spec
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Insets
@@ -11,9 +12,11 @@ import java.awt.geom.RoundRectangle2D
 import javax.swing.AbstractButton
 import javax.swing.BorderFactory
 import javax.swing.JScrollPane
+import javax.swing.JSplitPane
 import javax.swing.border.AbstractBorder
 import javax.swing.border.Border
 import javax.swing.border.CompoundBorder
+import javax.swing.plaf.basic.BasicSplitPaneUI
 
 internal object SpecUiStyle {
     fun roundedLineBorder(
@@ -66,6 +69,29 @@ internal object SpecUiStyle {
             putClientProperty("JScrollBar.thumbColor", thumbColor)
         }
         scrollPane.putClientProperty("JScrollPane.smoothScrolling", true)
+    }
+
+    fun applySplitPaneDivider(
+        splitPane: JSplitPane,
+        dividerSize: Int = JBUI.scale(8),
+        dividerBackground: Color = JBColor(Color(236, 240, 246), Color(74, 80, 89)),
+        dividerBorderColor: Color = JBColor(Color(217, 223, 232), Color(87, 94, 105)),
+    ) {
+        val horizontal = splitPane.orientation == JSplitPane.HORIZONTAL_SPLIT
+        val cursorType = if (horizontal) Cursor.E_RESIZE_CURSOR else Cursor.N_RESIZE_CURSOR
+        val cursor = Cursor.getPredefinedCursor(cursorType)
+        splitPane.dividerSize = dividerSize
+        splitPane.isOneTouchExpandable = false
+        splitPane.cursor = cursor
+        (splitPane.ui as? BasicSplitPaneUI)?.divider?.let { divider ->
+            divider.cursor = cursor
+            divider.background = dividerBackground
+            divider.border = if (horizontal) {
+                JBUI.Borders.customLine(dividerBorderColor, 0, 1, 0, 1)
+            } else {
+                JBUI.Borders.customLine(dividerBorderColor, 1, 0, 1, 0)
+            }
+        }
     }
 
     private class RoundedLineBorder(

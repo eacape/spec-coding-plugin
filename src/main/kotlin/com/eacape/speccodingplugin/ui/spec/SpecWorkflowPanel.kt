@@ -227,22 +227,42 @@ class SpecWorkflowPanel(
         )
 
         val rightPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
-            isOpaque = false
-            add(createSectionContainer(phaseIndicator, padding = 4), BorderLayout.NORTH)
-            add(createSectionContainer(detailPanel), BorderLayout.CENTER)
+            isOpaque = true
+            background = DETAIL_COLUMN_BG
+            add(
+                createSectionContainer(
+                    phaseIndicator,
+                    padding = 4,
+                    backgroundColor = PHASE_SECTION_BG,
+                    borderColor = PHASE_SECTION_BORDER,
+                ),
+                BorderLayout.NORTH,
+            )
+            add(
+                createSectionContainer(
+                    detailPanel,
+                    backgroundColor = DETAIL_SECTION_BG,
+                    borderColor = DETAIL_SECTION_BORDER,
+                ),
+                BorderLayout.CENTER,
+            )
         }
 
         val split = JSplitPane(
             JSplitPane.HORIZONTAL_SPLIT,
-            createSectionContainer(listPanel),
+            createSectionContainer(
+                listPanel,
+                backgroundColor = LIST_SECTION_BG,
+                borderColor = LIST_SECTION_BORDER,
+            ),
             rightPanel,
         ).apply {
             dividerLocation = 210
             resizeWeight = 0.26
-            dividerSize = JBUI.scale(6)
             isContinuousLayout = true
             border = JBUI.Borders.empty()
             background = PANEL_SECTION_BG
+            SpecUiStyle.applySplitPaneDivider(this, dividerSize = JBUI.scale(8))
         }
         split.addComponentListener(
             object : ComponentAdapter() {
@@ -426,12 +446,17 @@ class SpecWorkflowPanel(
         statusChipPanel.repaint()
     }
 
-    private fun createSectionContainer(content: Component, padding: Int = 2): JPanel {
+    private fun createSectionContainer(
+        content: Component,
+        padding: Int = 2,
+        backgroundColor: Color = PANEL_SECTION_BG,
+        borderColor: Color = PANEL_SECTION_BORDER,
+    ): JPanel {
         return JPanel(BorderLayout()).apply {
             isOpaque = true
-            background = PANEL_SECTION_BG
+            background = backgroundColor
             border = SpecUiStyle.roundedCardBorder(
-                lineColor = PANEL_SECTION_BORDER,
+                lineColor = borderColor,
                 arc = JBUI.scale(14),
                 top = padding,
                 left = padding,
@@ -779,14 +804,15 @@ class SpecWorkflowPanel(
             }
 
             val draft = draftResult.getOrNull()
+            val draftError = draftResult.exceptionOrNull()
             if (draft == null) {
-                logger.warn("Failed to draft clarification for workflow=${context.workflowId}", draftResult.exceptionOrNull())
+                logger.warn("Failed to draft clarification for workflow=${context.workflowId}", draftError)
             }
             invokeLaterSafe {
                 if (selectedWorkflowId != context.workflowId) {
                     return@invokeLaterSafe
                 }
-                val markdown = buildClarificationMarkdown(draft)
+                val markdown = buildClarificationMarkdown(draft, draftError)
                 detailPanel.showClarificationDraft(
                     phase = draft?.phase ?: fallbackPhase,
                     input = input,
@@ -794,7 +820,8 @@ class SpecWorkflowPanel(
                     suggestedDetails = safeSuggestedDetails,
                 )
                 if (draft == null) {
-                    setStatusText(SpecCodingBundle.message("spec.workflow.clarify.unavailableProceed"))
+                    val errorText = compactErrorMessage(draftError, SpecCodingBundle.message("common.unknown"))
+                    setStatusText(SpecCodingBundle.message("spec.workflow.error", errorText))
                 } else {
                     setStatusText(null)
                 }
@@ -866,9 +893,20 @@ class SpecWorkflowPanel(
         )
     }
 
-    private fun buildClarificationMarkdown(draft: SpecClarificationDraft?): String {
+    private fun buildClarificationMarkdown(
+        draft: SpecClarificationDraft?,
+        error: Throwable? = null,
+    ): String {
         if (draft == null) {
-            return SpecCodingBundle.message("spec.workflow.clarify.noQuestions")
+            val base = SpecCodingBundle.message("spec.workflow.clarify.noQuestions")
+            val reason = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+            return buildString {
+                appendLine(base)
+                appendLine()
+                appendLine("```text")
+                appendLine(reason)
+                appendLine("```")
+            }.trimEnd()
         }
         if (draft.rawContent.isNotBlank()) {
             return draft.rawContent
@@ -1303,16 +1341,34 @@ class SpecWorkflowPanel(
     }
 
     private fun compactErrorMessage(error: Throwable?, fallback: String, maxLength: Int = 220): String {
-        val compact = error?.message
-            ?.replace('\n', ' ')
-            ?.replace(Regex("\\s+"), " ")
-            ?.trim()
-            ?.ifBlank { null }
+        val compact = generateSequence(error) { it.cause }
+            .mapNotNull { throwable ->
+                throwable.message
+                    ?.replace('\n', ' ')
+                    ?.replace(Regex("\\s+"), " ")
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+            }
+            .firstOrNull { candidate -> isMeaningfulErrorMessage(candidate) }
             ?: fallback
         if (compact.length <= maxLength) {
             return compact
         }
         return compact.take(maxLength - 1).trimEnd() + "…"
+    }
+
+    private fun isMeaningfulErrorMessage(message: String): Boolean {
+        val normalized = message.trim()
+        if (normalized.isBlank()) {
+            return false
+        }
+        if (normalized.lowercase(Locale.ROOT) in PLACEHOLDER_ERROR_MESSAGES) {
+            return false
+        }
+        if (normalized.length <= 3 && PLACEHOLDER_SYMBOLS_REGEX.matches(normalized)) {
+            return false
+        }
+        return ERROR_TEXT_CONTENT_REGEX.containsMatchIn(normalized)
     }
 
     private fun invokeLaterSafe(action: () -> Unit) {
@@ -1337,5 +1393,15 @@ class SpecWorkflowPanel(
         private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
         private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
         private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val DETAIL_COLUMN_BG = JBColor(Color(244, 249, 255), Color(56, 62, 72))
+        private val LIST_SECTION_BG = JBColor(Color(242, 248, 255), Color(59, 66, 77))
+        private val LIST_SECTION_BORDER = JBColor(Color(198, 212, 234), Color(89, 100, 117))
+        private val PHASE_SECTION_BG = JBColor(Color(240, 246, 255), Color(62, 69, 80))
+        private val PHASE_SECTION_BORDER = JBColor(Color(191, 208, 233), Color(93, 106, 124))
+        private val DETAIL_SECTION_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
+        private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
+        private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
+        private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
+        private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")
     }
 }

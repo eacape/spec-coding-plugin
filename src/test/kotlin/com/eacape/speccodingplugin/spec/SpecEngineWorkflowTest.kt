@@ -336,20 +336,19 @@ class SpecEngineWorkflowTest {
     }
 
     @Test
-    fun `createWorkflow should require baseline when change intent is incremental`() {
+    fun `createWorkflow should allow incremental intent without baseline`() {
         val engine = SpecEngine(project, storage) {
             SpecGenerationResult.Failure("not used")
         }
 
-        val result = engine.createWorkflow(
+        val workflow = engine.createWorkflow(
             title = "Incremental without baseline",
-            description = "should fail",
+            description = "allowed",
             changeIntent = SpecChangeIntent.INCREMENTAL,
             baselineWorkflowId = null,
-        )
-
-        assertTrue(result.isFailure)
-        assertTrue(result.exceptionOrNull()?.message?.contains("baseline", ignoreCase = true) == true)
+        ).getOrThrow()
+        assertEquals(SpecChangeIntent.INCREMENTAL, workflow.changeIntent)
+        assertEquals(null, workflow.baselineWorkflowId)
     }
 
     @Test

@@ -122,6 +122,15 @@ class ClaudeCliLlmProvider(
             options["allow_dangerously_skip_permissions"] = "true"
             options["dangerously_skip_permissions"] = "true"
         }
+        val isSpecRequest =
+            request.metadata[SPEC_WORKFLOW_METADATA_KEY]?.equals("true", ignoreCase = true) == true ||
+                request.metadata[SPEC_CLARIFICATION_METADATA_KEY]?.equals("true", ignoreCase = true) == true
+        if (isSpecRequest) {
+            // Spec workflow only needs pure text generation; disable tools to avoid unnecessary CLI tool execution paths.
+            options.putIfAbsent("permission_mode", "plan")
+            options["tools"] = ""
+            options["prompt_via_stdin"] = "true"
+        }
 
         return EngineRequest(
             prompt = effectivePrompt,
@@ -173,5 +182,7 @@ class ClaudeCliLlmProvider(
         private const val IMAGE_FALLBACK_NOTICE_OPTION_KEY = "image_fallback_notice"
         private const val IMAGE_FALLBACK_NOTICE =
             "当前 Claude CLI 暂不支持 --image，已降级为图片路径提示。可升级 Claude CLI 以启用原生图片输入。"
+        private const val SPEC_WORKFLOW_METADATA_KEY = "specWorkflow"
+        private const val SPEC_CLARIFICATION_METADATA_KEY = "specClarification"
     }
 }

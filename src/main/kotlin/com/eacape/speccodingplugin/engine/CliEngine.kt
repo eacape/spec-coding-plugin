@@ -101,7 +101,11 @@ abstract class CliEngine(
                         content = "",
                         engineId = id,
                         success = false,
-                        error = stderr.ifBlank { timeoutMessage(timeoutSeconds) },
+                        error = resolveProcessFailureMessage(
+                            stderr = stderr,
+                            stdout = output,
+                            fallback = timeoutMessage(timeoutSeconds),
+                        ),
                     )
                 }
 
@@ -116,7 +120,11 @@ abstract class CliEngine(
                         content = "",
                         engineId = id,
                         success = false,
-                        error = stderr.ifBlank { "Exit code: $exitCode" }
+                        error = resolveProcessFailureMessage(
+                            stderr = stderr,
+                            stdout = output,
+                            fallback = "Exit code: $exitCode",
+                        ),
                     )
                 }
             } finally {
@@ -147,6 +155,7 @@ abstract class CliEngine(
             val stdoutDone = AtomicBoolean(false)
             val stderrDone = AtomicBoolean(false)
             val stderrText = StringBuilder()
+            val stdoutText = StringBuilder()
 
             val stdoutPump = startLinePump(
                 stream = process.inputStream,
@@ -172,6 +181,9 @@ abstract class CliEngine(
                         )
                         StreamSource.STDERR -> parseProgressLine(frame.line)
                     }
+                    if (frame.source == StreamSource.STDOUT && frame.line.isNotBlank()) {
+                        appendDiagnostic(stdoutText, frame.line)
+                    }
                     if (parsed != null) {
                         emittedChunk = true
                         emit(parsed)
@@ -189,19 +201,32 @@ abstract class CliEngine(
 
             val exitCode = process.waitFor()
             val stderr = sanitizeProcessError(stderrText.toString())
+            val stdout = sanitizeProcessError(stdoutText.toString())
             if (timedOut.get()) {
-                val resolvedTimeoutMessage = if (stderr.isBlank()) {
-                    timeoutMessage(timeoutSeconds)
-                } else {
-                    "${timeoutMessage(timeoutSeconds)}: $stderr"
-                }
+                val resolvedTimeoutMessage = resolveProcessFailureMessage(
+                    stderr = stderr,
+                    stdout = stdout,
+                    fallback = timeoutMessage(timeoutSeconds),
+                )
                 throw RuntimeException(resolvedTimeoutMessage)
             }
             if (exitCode != 0) {
-                throw RuntimeException(stderr.ifBlank { "CLI exited with code: $exitCode" })
+                throw RuntimeException(
+                    resolveProcessFailureMessage(
+                        stderr = stderr,
+                        stdout = stdout,
+                        fallback = "CLI exited with code: $exitCode",
+                    )
+                )
             }
             if (!emittedChunk && stderr.isNotBlank()) {
-                throw RuntimeException(stderr)
+                throw RuntimeException(
+                    resolveProcessFailureMessage(
+                        stderr = stderr,
+                        stdout = stdout,
+                        fallback = "CLI returned no content",
+                    )
+                )
             }
             emit(EngineChunk(delta = "", isLast = true))
         } finally {
@@ -356,6 +381,8 @@ abstract class CliEngine(
             builder.directory(java.io.File(workingDir))
         }
 
+        ensureExecutableParentOnPath(builder, cliPath)
+
         if (isWindows() && cliPath.contains("claude", ignoreCase = true)) {
             val env = builder.environment()
             val configuredBash = env["CLAUDE_CODE_GIT_BASH_PATH"] ?: System.getenv("CLAUDE_CODE_GIT_BASH_PATH")
@@ -365,6 +392,37 @@ abstract class CliEngine(
         }
 
         builder.redirectErrorStream(false)
+    }
+
+    private fun ensureExecutableParentOnPath(builder: ProcessBuilder, executable: String) {
+        val sanitized = executable.trim().trim('"', '\'')
+        val executableFile = File(sanitized)
+        val parent = executableFile.parentFile ?: return
+        if (!parent.isDirectory) return
+
+        val env = builder.environment()
+        val pathKey = env.keys.firstOrNull { it.equals("PATH", ignoreCase = true) } ?: "PATH"
+        val currentPath = env[pathKey].orEmpty()
+        val normalizedParent = normalizePathForComparison(parent.path)
+        val hasParentInPath = currentPath.split(File.pathSeparator)
+            .asSequence()
+            .map { normalizePathForComparison(it.trim().trim('"', '\'')) }
+            .any { it == normalizedParent }
+        if (hasParentInPath) return
+
+        env[pathKey] = if (currentPath.isBlank()) {
+            parent.path
+        } else {
+            parent.path + File.pathSeparator + currentPath
+        }
+    }
+
+    private fun normalizePathForComparison(path: String): String {
+        return if (isWindows()) {
+            path.replace('\\', '/').trimEnd('/').lowercase()
+        } else {
+            path.replace('\\', '/').trimEnd('/')
+        }
     }
 
     private fun isWindows(): Boolean =
@@ -478,16 +536,64 @@ abstract class CliEngine(
         return ratio >= ERROR_MOJIBAKE_MIN_RATIO
     }
 
+    private fun resolveProcessFailureMessage(
+        stderr: String,
+        stdout: String,
+        fallback: String,
+    ): String {
+        val stderrMessage = stderr.trim()
+        if (isMeaningfulErrorText(stderrMessage)) {
+            return stderrMessage
+        }
+        val stdoutMessage = stdout.trim()
+        if (isMeaningfulErrorText(stdoutMessage)) {
+            return stdoutMessage
+        }
+        return fallback
+    }
+
+    private fun isMeaningfulErrorText(text: String): Boolean {
+        val normalized = text.trim()
+        if (normalized.isBlank()) {
+            return false
+        }
+        if (normalized.lowercase() in PLACEHOLDER_ERROR_MESSAGES) {
+            return false
+        }
+        if (normalized.length <= 3 && PLACEHOLDER_SYMBOLS_REGEX.matches(normalized)) {
+            return false
+        }
+        return ERROR_TEXT_CONTENT_REGEX.containsMatchIn(normalized)
+    }
+
+    private fun appendDiagnostic(buffer: StringBuilder, line: String) {
+        if (line.isBlank() || buffer.length >= MAX_DIAGNOSTIC_TEXT_LENGTH) {
+            return
+        }
+        if (buffer.isNotEmpty()) {
+            buffer.appendLine()
+        }
+        val remaining = MAX_DIAGNOSTIC_TEXT_LENGTH - buffer.length
+        if (remaining <= 0) {
+            return
+        }
+        buffer.append(line.take(remaining))
+    }
+
     companion object {
         private const val STREAM_POLL_MILLIS = 120L
         private const val STREAM_PUMP_JOIN_MILLIS = 500L
         private const val STREAM_PROGRESS_FLUSH_CHARS = 120
         private const val STREAM_STDOUT_FLUSH_CHARS = 64
+        private const val MAX_DIAGNOSTIC_TEXT_LENGTH = 2000
         private val ERROR_ANSI_REGEX = Regex("""\u001B\[[;\d]*[ -/]*[@-~]""")
         private val ERROR_REPLACEMENT_CHAR_REGEX = Regex("""\uFFFD+""")
         private val ERROR_BOX_DRAWING_REGEX = Regex("""[\u2500-\u259F]""")
         private val ERROR_CJK_REGEX = Regex("""\p{IsHan}""")
         private val ERROR_SUSPICIOUS_MOJIBAKE_REGEX = Regex("""[\u00C0-\u024F\u2500-\u259F]""")
+        private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
+        private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
+        private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")
         private const val ERROR_MOJIBAKE_MIN_COUNT = 4
         private const val ERROR_MOJIBAKE_MIN_RATIO = 0.15
     }

@@ -6,6 +6,8 @@ import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.Key
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.content.ContentManagerEvent
@@ -19,7 +21,7 @@ import com.intellij.ui.content.ContentManagerListener
 class OpenSpecCodingSettingsAction : AnAction() {
 
     companion object {
-        private const val SETTINGS_CONTENT_KEY = "SpecCoding.SettingsContent"
+        private val SETTINGS_CONTENT_KEY = Key.create<Boolean>("SpecCoding.SettingsContent")
     }
 
     override fun actionPerformed(e: AnActionEvent) {
@@ -31,8 +33,7 @@ class OpenSpecCodingSettingsAction : AnAction() {
 
             // 检查是否已存在 settings content
             val existing = contentManager.contents.firstOrNull {
-                it.getUserData(com.intellij.openapi.util.Key.create<String>(SETTINGS_CONTENT_KEY)) == SETTINGS_CONTENT_KEY
-                        || it.displayName == settingsTitle
+                it.getUserData(SETTINGS_CONTENT_KEY) == true || it.displayName == settingsTitle
             }
 
             if (existing != null) {
@@ -41,10 +42,12 @@ class OpenSpecCodingSettingsAction : AnAction() {
             }
 
             // 动态创建 Settings content
-            val settingsPanel = SettingsPanel()
+            val settingsPanel = SettingsPanel(project)
             val settingsContent = ContentFactory.getInstance().createContent(
                 settingsPanel, settingsTitle, false
             )
+            settingsContent.putUserData(SETTINGS_CONTENT_KEY, true)
+            Disposer.register(settingsContent, settingsPanel)
 
             contentManager.addContent(settingsContent)
             contentManager.setSelectedContent(settingsContent)

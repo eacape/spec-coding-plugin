@@ -270,6 +270,8 @@ data class GenerationOptions(
     val validateOutput: Boolean = true,
     val confirmedContext: String? = null,
     val clarificationQuestionBudget: Int = 5,
+    val workingDirectory: String? = null,
+    val operationMode: String? = null,
 )
 
 /**

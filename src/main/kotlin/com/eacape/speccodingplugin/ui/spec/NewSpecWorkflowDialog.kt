@@ -37,7 +37,11 @@ class NewSpecWorkflowDialog(
     private val fullIntentRadio = JBRadioButton(SpecCodingBundle.message("spec.dialog.intent.full"), true)
     private val incrementalIntentRadio = JBRadioButton(SpecCodingBundle.message("spec.dialog.intent.incremental"), false)
     private val baselineLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.baseline"))
-    private val baselineCombo = JComboBox(CollectionComboBoxModel(workflowOptions))
+    private val baselineCombo = JComboBox(
+        CollectionComboBoxModel(
+            buildBaselineOptions(workflowOptions),
+        ),
+    )
 
     var resultTitle: String? = null
         private set
@@ -121,18 +125,6 @@ class NewSpecWorkflowDialog(
                     descriptionArea,
                 )
             }
-            if (baselineCombo.itemCount == 0) {
-                return ValidationInfo(
-                    SpecCodingBundle.message("spec.dialog.validation.noBaselineCandidates"),
-                    incrementalIntentRadio,
-                )
-            }
-            if (baselineCombo.selectedItem !is WorkflowOption) {
-                return ValidationInfo(
-                    SpecCodingBundle.message("spec.dialog.validation.baselineRequired"),
-                    baselineCombo,
-                )
-            }
         }
         return null
     }
@@ -157,10 +149,13 @@ class NewSpecWorkflowDialog(
         val incremental = incrementalIntentRadio.isSelected
         baselineLabel.isVisible = incremental
         baselineCombo.isVisible = incremental
-        baselineCombo.isEnabled = incremental && baselineCombo.itemCount > 0
-        if (incremental && baselineCombo.itemCount > 0 && baselineCombo.selectedItem == null) {
-            baselineCombo.selectedIndex = 0
-        }
+        baselineCombo.isEnabled = incremental
+    }
+
+    private fun buildBaselineOptions(workflowOptions: List<WorkflowOption>): List<Any> {
+        val candidates = workflowOptions.filter { it.workflowId.isNotBlank() }
+        val noneOption = SpecCodingBundle.message("spec.dialog.baseline.none")
+        return listOf(noneOption) + candidates
     }
 
     override fun getPreferredFocusedComponent() = titleField

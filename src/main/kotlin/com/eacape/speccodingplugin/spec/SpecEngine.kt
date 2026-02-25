@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.spec
 
+import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.llm.LlmRouter
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -76,10 +77,8 @@ class SpecEngine(private val project: Project) {
             val normalizedBaselineWorkflowId = baselineWorkflowId
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
-            if (changeIntent == SpecChangeIntent.INCREMENTAL) {
-                val baselineId = requireNotNull(normalizedBaselineWorkflowId) {
-                    "Incremental workflow requires a baseline workflow ID"
-                }
+            if (changeIntent == SpecChangeIntent.INCREMENTAL && normalizedBaselineWorkflowId != null) {
+                val baselineId = normalizedBaselineWorkflowId
                 val baselineExists = activeWorkflows.containsKey(baselineId) ||
                     storageDelegate.loadWorkflow(baselineId).isSuccess
                 require(baselineExists) {
@@ -559,8 +558,23 @@ class SpecEngine(private val project: Project) {
         workflow: SpecWorkflow,
         options: GenerationOptions,
     ): GenerationOptions {
-        val baselineContext = buildIncrementalBaselineContext(workflow) ?: return options
-        val existingContext = options.confirmedContext
+        val normalizedWorkingDirectory = options.workingDirectory
+            ?.trim()
+            ?.ifBlank { null }
+            ?: project.basePath
+                ?.trim()
+                ?.ifBlank { null }
+        val normalizedOperationMode = options.operationMode
+            ?.trim()
+            ?.ifBlank { null }
+            ?: OperationMode.PLAN.name
+        val enrichedOptions = options.copy(
+            workingDirectory = normalizedWorkingDirectory,
+            operationMode = normalizedOperationMode,
+        )
+
+        val baselineContext = buildIncrementalBaselineContext(workflow) ?: return enrichedOptions
+        val existingContext = enrichedOptions.confirmedContext
             ?.replace("\r\n", "\n")
             ?.replace('\r', '\n')
             ?.trim()
@@ -576,7 +590,7 @@ class SpecEngine(private val project: Project) {
                 appendLine(baselineContext)
             }.trim()
         }
-        return options.copy(confirmedContext = mergedContext)
+        return enrichedOptions.copy(confirmedContext = mergedContext)
     }
 
     private fun buildIncrementalBaselineContext(workflow: SpecWorkflow): String? {

@@ -68,9 +68,14 @@ class ClaudeCodeEngine(
         verbose: Boolean,
     ): List<String> {
         val args = mutableListOf<String>()
+        val promptViaStdin = request.options["prompt_via_stdin"]?.equals("true", ignoreCase = true) == true
         args.add("--print")
         args.add("--output-format")
         args.add(outputFormat)
+        if (promptViaStdin) {
+            args.add("--input-format")
+            args.add("text")
+        }
 
         if (verbose) {
             args.add("--verbose")
@@ -92,6 +97,11 @@ class ClaudeCodeEngine(
 
         request.options["add_dir"]?.let {
             args.add("--add-dir")
+            args.add(it)
+        }
+
+        request.options["tools"]?.let {
+            args.add("--tools")
             args.add(it)
         }
 
@@ -119,8 +129,15 @@ class ClaudeCodeEngine(
             args.add(it)
         }
 
-        args.add(request.prompt)
+        if (!promptViaStdin) {
+            args.add(request.prompt)
+        }
         return args
+    }
+
+    protected override fun stdinPayload(request: EngineRequest): String? {
+        val promptViaStdin = request.options["prompt_via_stdin"]?.equals("true", ignoreCase = true) == true
+        return if (promptViaStdin) request.prompt else null
     }
 
     private fun detectImageFlagSupport(): Boolean {

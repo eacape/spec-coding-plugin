@@ -385,7 +385,7 @@ class SpecWorkflowListPanel(
             val listWidth = when {
                 list.width > 0 -> list.width
                 list.visibleRect.width > 0 -> list.visibleRect.width
-                else -> list.preferredSize.width.takeIf { it > 0 } ?: JBUI.scale(188)
+                else -> JBUI.scale(188)
             }
             val reservedWidth = CARD_LEFT_PAD +
                 CARD_RIGHT_PAD +

@@ -34,9 +34,16 @@ class SpecGenerator(
                 temperature = request.options.temperature,
                 maxTokens = request.options.maxTokens,
                 metadata = buildRequestMetadata(request.options),
+                workingDirectory = request.options.workingDirectory,
             )
 
-            val response = runCatching { llmRouter.generate(providerId = request.options.providerId, request = llmRequest) }
+            val response = runCatching {
+                requestLlmResponse(
+                    providerId = request.options.providerId,
+                    llmRequest = llmRequest,
+                    requestTag = "${request.phase} document generation",
+                )
+            }
 
             if (response.isFailure) {
                 return@withContext SpecGenerationResult.Failure(
@@ -103,9 +110,14 @@ class SpecGenerator(
                 temperature = request.options.temperature,
                 maxTokens = request.options.maxTokens,
                 metadata = buildRequestMetadata(request.options) + ("specClarification" to "true"),
+                workingDirectory = request.options.workingDirectory,
             )
 
-            val response = llmRouter.generate(providerId = request.options.providerId, request = llmRequest)
+            val response = requestLlmResponse(
+                providerId = request.options.providerId,
+                llmRequest = llmRequest,
+                requestTag = "${request.phase} clarification draft",
+            )
             parseClarificationDraft(
                 phase = request.phase,
                 rawContent = response.content,
@@ -283,7 +295,91 @@ class SpecGenerator(
             if (requestId.isNotBlank()) {
                 put("requestId", requestId)
             }
+            put(METADATA_SPEC_WORKFLOW_KEY, "true")
+            val workingDirectory = options.workingDirectory
+                ?.trim()
+                ?.ifBlank { null }
+            if (workingDirectory != null) {
+                put(LlmRequestContext.WORKING_DIRECTORY_METADATA_KEY, workingDirectory)
+            }
+            val operationMode = options.operationMode
+                ?.trim()
+                ?.ifBlank { null }
+            if (operationMode != null) {
+                put(LlmRequestContext.OPERATION_MODE_METADATA_KEY, operationMode)
+            }
         }
+    }
+
+    private suspend fun requestLlmResponse(
+        providerId: String?,
+        llmRequest: LlmRequest,
+        requestTag: String,
+    ): LlmResponse {
+        val primary = runCatching { llmRouter.generate(providerId = providerId, request = llmRequest) }
+        val primaryResponse = primary.getOrNull()
+        if (primaryResponse != null && primaryResponse.content.isNotBlank()) {
+            return primaryResponse
+        }
+        val primaryError = primary.exceptionOrNull()
+
+        primaryError?.let { error ->
+            logger.warn("Primary LLM request failed for $requestTag, fallback to stream mode", error)
+        } ?: logger.info("Primary LLM request returned blank content for $requestTag, fallback to stream mode")
+
+        val streamAttempt = runCatching {
+            val streamedChunks = StringBuilder()
+            val streamResponse = llmRouter.stream(providerId = providerId, request = llmRequest) { chunk ->
+                if (chunk.delta.isNotEmpty()) {
+                    streamedChunks.append(chunk.delta)
+                }
+            }
+            val mergedContent = streamedChunks.toString().ifBlank { streamResponse.content }
+            streamResponse.copy(content = mergedContent)
+        }
+        val streamResponse = streamAttempt.getOrNull()
+        if (streamResponse != null) {
+            if (streamResponse.content.isBlank() && primaryError != null) {
+                val primaryMessage = primaryError.message.orEmpty().trim()
+                if (isMeaningfulErrorMessage(primaryMessage)) {
+                    throw primaryError
+                }
+            }
+            return streamResponse
+        }
+
+        val streamError = streamAttempt.exceptionOrNull()
+        if (primaryError != null && streamError != null) {
+            val primaryMessage = primaryError.message.orEmpty().trim()
+            val streamMessage = streamError.message.orEmpty().trim()
+            if (isMeaningfulErrorMessage(primaryMessage) && !isMeaningfulErrorMessage(streamMessage)) {
+                throw primaryError
+            }
+            if (isMeaningfulErrorMessage(primaryMessage) && isMeaningfulErrorMessage(streamMessage) && primaryMessage != streamMessage) {
+                val merged = RuntimeException(
+                    "Primary request failed: $primaryMessage; stream fallback failed: $streamMessage",
+                    streamError,
+                )
+                merged.addSuppressed(primaryError)
+                throw merged
+            }
+        }
+
+        throw streamError ?: primaryError ?: IllegalStateException("LLM request failed for $requestTag")
+    }
+
+    private fun isMeaningfulErrorMessage(message: String): Boolean {
+        val normalized = message.trim()
+        if (normalized.isBlank()) {
+            return false
+        }
+        if (normalized.lowercase() in PLACEHOLDER_ERROR_MESSAGES) {
+            return false
+        }
+        if (normalized.length <= 3 && PLACEHOLDER_SYMBOLS_REGEX.matches(normalized)) {
+            return false
+        }
+        return ERROR_TEXT_CONTENT_REGEX.containsMatchIn(normalized)
     }
 
     /**
@@ -371,7 +467,7 @@ class SpecGenerator(
         }
 
         return lines.asSequence()
-            .mapNotNull(::normalizeQuestionLine)
+            .mapNotNull { normalizeQuestionLine(it) }
             .distinct()
             .take(budget)
             .toList()
@@ -386,36 +482,105 @@ class SpecGenerator(
             if (line.isBlank()) {
                 continue
             }
-            if (line.startsWith("##")) {
-                inQuestionSection = line.contains("需要确认的问题") || line.contains("clarification questions", ignoreCase = true)
+            if (isQuestionSectionHeader(line)) {
+                inQuestionSection = true
+                continue
+            }
+            if (inQuestionSection && isSectionBoundary(line)) {
+                inQuestionSection = false
                 continue
             }
             if (!inQuestionSection) {
                 continue
             }
-            normalizeQuestionLine(line)?.let { questions += it }
+            normalizeQuestionLine(line, allowQuestionLikeLine = true)?.let { questions += it }
         }
 
         return questions.distinct()
     }
 
-    private fun normalizeQuestionLine(rawLine: String): String? {
-        val line = rawLine.trim()
-        if (line.isBlank()) {
+    private fun normalizeQuestionLine(
+        rawLine: String,
+        allowQuestionLikeLine: Boolean = false,
+    ): String? {
+        val line = rawLine
+            .trim()
+            .removePrefix("> ")
+            .trim()
+        if (line.isBlank() || line.startsWith("```")) {
             return null
         }
 
         val numbered = NUMBERED_QUESTION_REGEX.find(line)?.groupValues?.get(1)
         if (!numbered.isNullOrBlank()) {
-            return numbered.trim()
+            return normalizeQuestionText(numbered)
         }
 
         val bulleted = BULLET_QUESTION_REGEX.find(line)?.groupValues?.get(1)
         if (!bulleted.isNullOrBlank()) {
-            return bulleted.trim()
+            return normalizeQuestionText(bulleted)
         }
 
-        return if (line.endsWith("?") || line.endsWith("？")) line else null
+        val labeled = QUESTION_LABEL_REGEX.find(line)?.groupValues?.get(1)
+        if (!labeled.isNullOrBlank()) {
+            return normalizeQuestionText(labeled)
+        }
+
+        if (line.endsWith("?") || line.endsWith("？")) {
+            return normalizeQuestionText(line)
+        }
+
+        if (allowQuestionLikeLine && QUESTION_LIKE_LINE_REGEX.containsMatchIn(line)) {
+            return normalizeQuestionText(line.trimEnd('。', '；', ';', '：', ':'))
+        }
+
+        return null
+    }
+
+    private fun normalizeQuestionText(rawText: String): String? {
+        val normalized = rawText
+            .trim()
+            .removePrefix("[ ]")
+            .removePrefix("[x]")
+            .removePrefix("[X]")
+            .trim()
+            .trim('`')
+            .trim()
+        return normalized.takeIf { it.isNotBlank() }
+    }
+
+    private fun isQuestionSectionHeader(line: String): Boolean {
+        val normalized = normalizeSectionHeader(line) ?: return false
+        return QUESTION_SECTION_KEYWORDS.any { normalized.contains(it) }
+    }
+
+    private fun isSectionBoundary(line: String): Boolean {
+        if (MARKDOWN_HEADING_REGEX.matches(line)) {
+            return !isQuestionSectionHeader(line)
+        }
+        val normalized = normalizeSectionHeader(line) ?: return false
+        return NON_QUESTION_SECTION_KEYWORDS.any { normalized.contains(it) }
+    }
+
+    private fun normalizeSectionHeader(rawLine: String): String? {
+        val normalized = rawLine
+            .trim()
+            .removePrefix("> ")
+            .trim()
+            .let { MARKDOWN_HEADING_PREFIX_REGEX.replace(it, "") }
+            .trim()
+            .trimEnd(':', '：')
+            .lowercase()
+        if (normalized.isBlank()) {
+            return null
+        }
+        if (normalized.length > MAX_SECTION_HEADER_LENGTH) {
+            return null
+        }
+        if (normalized.startsWith("-") || normalized.startsWith("*") || normalized.startsWith("•")) {
+            return null
+        }
+        return normalized
     }
 
     /**
@@ -531,7 +696,47 @@ class SpecGenerator(
     companion object {
         private const val DEFAULT_CLARIFICATION_QUESTION_BUDGET = 5
         private const val MAX_CLARIFICATION_QUESTION_BUDGET = 8
-        private val NUMBERED_QUESTION_REGEX = Regex("""^\d+[.)、]\s*(.+)$""")
-        private val BULLET_QUESTION_REGEX = Regex("""^[-*]\s+(.+)$""")
+        private const val MAX_SECTION_HEADER_LENGTH = 80
+        private val NUMBERED_QUESTION_REGEX =
+            Regex("""^(?:(?:[0-9０-９]+[.)）])|(?:[0-9０-９]+[、.:：-])|(?:[（(][0-9０-９]+[)）]))\s*(.+)$""")
+        private val BULLET_QUESTION_REGEX = Regex("""^(?:[-*+]|[•·●▪◦])\s+(?:\[[ xX]\]\s*)?(.+)$""")
+        private val QUESTION_LABEL_REGEX =
+            Regex("""^(?:(?:q|question)\s*[0-9０-９]*[.:：-]|问题\s*[0-9０-９]*[.:：-])\s*(.+)$""", RegexOption.IGNORE_CASE)
+        private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s*.+$""")
+        private val MARKDOWN_HEADING_PREFIX_REGEX = Regex("""^#{1,6}\s*""")
+        private val QUESTION_LIKE_LINE_REGEX = Regex(
+            """^(?:是否|需不需要|需否|能否|可否|要不要|有没有|哪些|哪种|哪类|何时|何种|如何|why\b|what\b|which\b|who\b|when\b|where\b|how\b|is\b|are\b|can\b|could\b|would\b|should\b|do\b|does\b|did\b|will\b)""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val QUESTION_SECTION_KEYWORDS = setOf(
+            "需要确认的问题",
+            "需要澄清的问题",
+            "澄清问题",
+            "待确认问题",
+            "待澄清问题",
+            "clarification questions",
+            "questions to clarify",
+            "questions for clarification",
+            "open questions",
+        )
+        private val NON_QUESTION_SECTION_KEYWORDS = setOf(
+            "已有信息摘要",
+            "信息摘要",
+            "背景信息",
+            "约束",
+            "假设",
+            "总结",
+            "下一步",
+            "existing context",
+            "context summary",
+            "summary",
+            "constraints",
+            "assumptions",
+            "known information",
+        )
+        private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
+        private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
+        private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")
+        private const val METADATA_SPEC_WORKFLOW_KEY = "specWorkflow"
     }
 }
