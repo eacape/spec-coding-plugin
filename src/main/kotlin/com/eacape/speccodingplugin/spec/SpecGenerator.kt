@@ -32,7 +32,8 @@ class SpecGenerator(
                 ),
                 model = request.options.model,
                 temperature = request.options.temperature,
-                maxTokens = request.options.maxTokens
+                maxTokens = request.options.maxTokens,
+                metadata = buildRequestMetadata(request.options),
             )
 
             val response = runCatching { llmRouter.generate(providerId = request.options.providerId, request = llmRequest) }
@@ -80,6 +81,38 @@ class SpecGenerator(
                 error = "生成失败: ${e.message}",
                 details = e.stackTraceToString()
             )
+        }
+    }
+
+    /**
+     * 在正式生成前草拟澄清问题，供用户确认需求/研发细节。
+     */
+    suspend fun draftClarification(request: SpecGenerationRequest): Result<SpecClarificationDraft> = withContext(Dispatchers.IO) {
+        runCatching {
+            logger.info("Drafting clarification questions for ${request.phase}")
+            val prompt = buildClarificationPrompt(request)
+            val budget = request.options.clarificationQuestionBudget
+                .coerceIn(1, MAX_CLARIFICATION_QUESTION_BUDGET)
+
+            val llmRequest = LlmRequest(
+                messages = listOf(
+                    LlmMessage(LlmRole.SYSTEM, getClarificationSystemPrompt(request.phase)),
+                    LlmMessage(LlmRole.USER, prompt),
+                ),
+                model = request.options.model,
+                temperature = request.options.temperature,
+                maxTokens = request.options.maxTokens,
+                metadata = buildRequestMetadata(request.options) + ("specClarification" to "true"),
+            )
+
+            val response = llmRouter.generate(providerId = request.options.providerId, request = llmRequest)
+            parseClarificationDraft(
+                phase = request.phase,
+                rawContent = response.content,
+                maxQuestions = budget,
+            )
+        }.onFailure { error ->
+            logger.warn("Failed to draft clarification for ${request.phase}", error)
         }
     }
 

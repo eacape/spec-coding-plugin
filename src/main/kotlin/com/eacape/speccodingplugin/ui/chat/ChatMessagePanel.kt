@@ -41,7 +41,7 @@ open class ChatMessagePanel(
     initialContent: String = "",
     private val onDelete: ((ChatMessagePanel) -> Unit)? = null,
     private val onRegenerate: ((ChatMessagePanel) -> Unit)? = null,
-    private val onContinue: ((ChatMessagePanel) -> Unit)? = null,
+    private var onContinue: ((ChatMessagePanel) -> Unit)? = null,
     private val onWorkflowFileOpen: ((WorkflowQuickActionParser.FileAction) -> Unit)? = null,
     private val onWorkflowCommandExecute: ((String) -> Unit)? = null,
 ) : JPanel(BorderLayout()) {
@@ -126,6 +126,16 @@ open class ChatMessagePanel(
      * 获取消息的原始文本内容
      */
     fun getContent(): String = contentBuilder.toString()
+
+    open fun updateContinueAction(onContinue: ((ChatMessagePanel) -> Unit)?) {
+        if (this.onContinue === onContinue) {
+            return
+        }
+        this.onContinue = onContinue
+        if (messageFinished) {
+            addActionButtons()
+        }
+    }
 
     /**
      * 完成消息（流式结束后调用）
@@ -946,14 +956,15 @@ open class ChatMessagePanel(
         }
         buttonPanel.add(copyAllBtn)
 
-        if (role == MessageRole.ASSISTANT && onContinue != null) {
+        val continueHandler = onContinue
+        if (role == MessageRole.ASSISTANT && continueHandler != null) {
             val continueBtn = JButton()
             styleIconActionButton(
                 button = continueBtn,
                 icon = AllIcons.Actions.Execute,
                 tooltip = SpecCodingBundle.message("chat.message.continue"),
             )
-            continueBtn.addActionListener { onContinue.invoke(this) }
+            continueBtn.addActionListener { continueHandler.invoke(this) }
             buttonPanel.add(continueBtn)
         }
 

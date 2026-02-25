@@ -69,7 +69,6 @@ class SpecWorkflowPanel(
     private val detailPanel: SpecDetailPanel
     private val statusLabel = JBLabel("")
     private val statusChipPanel = JPanel(BorderLayout())
-    private val providerLabel = JBLabel(SpecCodingBundle.message("toolwindow.provider.label"))
     private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))
     private val providerComboBox = ComboBox<String>()
     private val modelComboBox = ComboBox<ModelInfo>()
@@ -137,7 +136,6 @@ class SpecWorkflowPanel(
         val modelRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
             border = JBUI.Borders.emptyBottom(JBUI.scale(6))
-            add(providerLabel)
             add(providerComboBox)
             add(modelLabel)
             add(modelComboBox)
@@ -294,9 +292,7 @@ class SpecWorkflowPanel(
     }
 
     private fun setupGenerationControls() {
-        providerLabel.font = JBUI.Fonts.smallFont()
         modelLabel.font = JBUI.Fonts.smallFont()
-        providerLabel.foreground = STATUS_TEXT_FG
         modelLabel.foreground = STATUS_TEXT_FG
 
         providerComboBox.renderer = SimpleListCellRenderer.create<String> { label, value, _ ->
@@ -939,7 +935,6 @@ class SpecWorkflowPanel(
         deltaButton.text = SpecCodingBundle.message("spec.workflow.delta.short")
         codeGraphButton.text = SpecCodingBundle.message("spec.workflow.codeGraph.short")
         archiveButton.text = SpecCodingBundle.message("spec.workflow.archive.short")
-        providerLabel.text = SpecCodingBundle.message("toolwindow.provider.label")
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
         styleToolbarButton(refreshButton)
         styleToolbarButton(createWorktreeButton)

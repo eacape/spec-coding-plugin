@@ -54,6 +54,7 @@ import com.eacape.speccodingplugin.ui.input.ContextPreviewPanel
 import com.eacape.speccodingplugin.ui.input.ImageAttachmentPreviewPanel
 import com.eacape.speccodingplugin.ui.input.SmartInputField
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
+import com.eacape.speccodingplugin.ui.spec.EditSpecWorkflowDialog
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedEvent
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedListener
 import com.eacape.speccodingplugin.window.WindowSessionIsolationService
@@ -90,6 +91,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Dimension
+import java.awt.Font
+import java.awt.FontMetrics
 import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Graphics
@@ -118,7 +122,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.imageio.ImageIO
 import javax.swing.AbstractAction
 import javax.swing.BoxLayout
+import javax.swing.DefaultListCellRenderer
 import javax.swing.JButton
+import javax.swing.JLabel
+import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JSplitPane
@@ -176,6 +183,13 @@ class ImprovedChatPanel(
     private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))
     private val providerComboBox = ComboBox<String>()
     private val modelComboBox = ComboBox<ModelInfo>()
+    private data class SpecWorkflowOption(
+        val workflowId: String,
+        val title: String,
+        val updatedAt: Long,
+    )
+
+    private val specWorkflowComboBox = ComboBox<SpecWorkflowOption>()
     private val interactionModeComboBox = ComboBox(ChatInteractionMode.entries.toTypedArray())
     private val statusLabel = JBLabel()
     private val messagesPanel = ChatMessagesListPanel()
@@ -185,14 +199,19 @@ class ImprovedChatPanel(
         loadWorkflow = { workflowId -> specEngine.loadWorkflow(workflowId) },
         listWorkflows = { specEngine.listWorkflows() },
         onOpenDocument = ::openSpecWorkflowDocument,
+        onEditWorkflow = ::editSpecWorkflowMetadata,
     )
     private val chatSplitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
     private val specSidebarToggleButton = JButton()
     private val contextPreviewPanel = ContextPreviewPanel(project)
     private val imageAttachmentPreviewPanel = ImageAttachmentPreviewPanel(onRemove = ::removeTransientClipboardImageIfNeeded)
     private val composerHintLabel = JBLabel(SpecCodingBundle.message("toolwindow.composer.hint"))
+    private val specModeComboForeground = JBColor(
+        Color(0x4A4F59), // #4A4F59
+        Color(0xC6CBD3),
+    )
     private lateinit var inputField: SmartInputField
-    private val sendButton = JButton()
+    private val sendButton = StopAwareButton()
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var statusAutoHideTimer: Timer? = null
     private var dividerPersistTimer: Timer? = null
@@ -205,6 +224,7 @@ class ImprovedChatPanel(
     private var currentSessionId: String? = null
     private var isGenerating = false
     private var isRestoringSession = false
+    private var suppressSpecWorkflowSelectionEvents = false
     @Volatile
     private var activeOperationJob: Job? = null
     @Volatile
@@ -306,26 +326,28 @@ class ImprovedChatPanel(
                     ApplicationManager.getApplication().invokeLater {
                         if (project.isDisposed || _isDisposed) return@invokeLater
                         val workflowId = event.workflowId?.trim()?.ifBlank { null }
-                        if (
+                        val isWorkflowSelected =
                             event.reason == SpecWorkflowChangedListener.REASON_WORKFLOW_SELECTED &&
-                            currentInteractionMode() == ChatInteractionMode.SPEC &&
-                            workflowId != null
-                        ) {
+                                currentInteractionMode() == ChatInteractionMode.SPEC &&
+                                workflowId != null
+                        if (isWorkflowSelected) {
                             startNewSession()
                             activeSpecWorkflowId = workflowId
                             if (specSidebarVisible) {
                                 specSidebarPanel.focusWorkflow(workflowId)
                             }
-                            return@invokeLater
+                        } else {
+                            workflowId?.let { activeSpecWorkflowId = it }
+                            if (specSidebarVisible) {
+                                if (workflowId != null && specSidebarPanel.hasFocusedWorkflow(workflowId)) {
+                                    specSidebarPanel.focusWorkflow(workflowId)
+                                } else {
+                                    specSidebarPanel.refreshCurrentWorkflow()
+                                }
+                            }
                         }
 
-                        workflowId?.let { activeSpecWorkflowId = it }
-                        if (!specSidebarVisible) return@invokeLater
-                        if (workflowId != null && specSidebarPanel.hasFocusedWorkflow(workflowId)) {
-                            specSidebarPanel.focusWorkflow(workflowId)
-                        } else {
-                            specSidebarPanel.refreshCurrentWorkflow()
-                        }
+                        refreshSpecWorkflowComboBox(selectWorkflowId = workflowId)
                     }
                 }
             },
@@ -390,16 +412,71 @@ class ImprovedChatPanel(
         modelComboBox.addActionListener { updateComboTooltips() }
         refreshProviderCombo(preserveSelection = false)
 
-        interactionModeComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create<ChatInteractionMode> { label, value, _ ->
-            label.text = if (value == null) "" else SpecCodingBundle.message(value.messageKey)
+        specWorkflowComboBox.renderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean,
+            ): java.awt.Component {
+                val component = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                val label = component as? JLabel ?: return component
+                val option = value as? SpecWorkflowOption
+                val title = option?.title?.trim().orEmpty()
+                label.font = specWorkflowComboBox.font
+                label.text = if (index == -1) {
+                    val maxTextWidth = (specWorkflowComboBox.preferredSize?.width ?: 0) - JBUI.scale(SPEC_WORKFLOW_COMBO_TEXT_OVERHEAD_PX)
+                    ellipsizeToWidth(title, maxWidth = maxTextWidth, metrics = label.getFontMetrics(label.font))
+                } else {
+                    title
+                }
+                if (!isSelected) {
+                    label.foreground = specModeComboForeground
+                }
+                return label
+            }
+        }
+        specWorkflowComboBox.addActionListener {
+            if (suppressSpecWorkflowSelectionEvents) return@addActionListener
+            if (currentInteractionMode() != ChatInteractionMode.SPEC) return@addActionListener
+            val option = specWorkflowComboBox.selectedItem as? SpecWorkflowOption ?: return@addActionListener
+            switchActiveSpecWorkflowFromUser(option.workflowId)
+            updateSpecWorkflowComboSize()
+            updateComboTooltips()
+        }
+        specWorkflowComboBox.isVisible = false
+
+        interactionModeComboBox.renderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean,
+            ): java.awt.Component {
+                val component = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                val label = component as? JLabel ?: return component
+                val mode = value as? ChatInteractionMode
+                label.font = interactionModeComboBox.font
+                label.text = if (mode == null) "" else SpecCodingBundle.message(mode.messageKey)
+                if (!isSelected) {
+                    label.foreground = specModeComboForeground
+                }
+                return label
+            }
         }
         interactionModeComboBox.selectedItem = ChatInteractionMode.VIBE
         lastInteractionMode = ChatInteractionMode.VIBE
         interactionModeComboBox.addActionListener { onInteractionModeChanged() }
         interactionModeComboBox.toolTipText = SpecCodingBundle.message("toolwindow.chat.mode.tooltip")
         configureCompactCombo(interactionModeComboBox, 74)
+        configureCompactCombo(specWorkflowComboBox, SPEC_WORKFLOW_COMBO_MIN_WIDTH)
         configureCompactCombo(providerComboBox, 72)
         configureCompactCombo(modelComboBox, 136)
+        val italicSmallFont = JBUI.Fonts.smallFont().deriveFont(Font.ITALIC)
+        specWorkflowComboBox.font = italicSmallFont
+        interactionModeComboBox.font = italicSmallFont
         providerLabel.font = JBUI.Fonts.smallFont()
         modelLabel.font = JBUI.Fonts.smallFont()
         providerLabel.foreground = JBColor.GRAY
@@ -463,6 +540,7 @@ class ImprovedChatPanel(
         composerMetaRow.add(composerHintLabel, BorderLayout.WEST)
         val composerMetaActions = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
         composerMetaActions.isOpaque = false
+        composerMetaActions.add(specWorkflowComboBox)
         composerMetaActions.add(interactionModeComboBox)
         composerMetaRow.add(composerMetaActions, BorderLayout.EAST)
 
@@ -521,6 +599,80 @@ class ImprovedChatPanel(
         content.add(bottomPanel, BorderLayout.SOUTH)
 
         add(content, BorderLayout.CENTER)
+    }
+
+    private fun switchActiveSpecWorkflowFromUser(workflowId: String) {
+        val normalizedId = workflowId.trim()
+        if (normalizedId.isBlank()) return
+        if (currentInteractionMode() != ChatInteractionMode.SPEC) return
+        if (normalizedId == activeSpecWorkflowId?.trim()?.ifBlank { null }) {
+            return
+        }
+        publishSpecWorkflowChanged(normalizedId, reason = SpecWorkflowChangedListener.REASON_WORKFLOW_SELECTED)
+    }
+
+    private fun refreshSpecWorkflowComboBox(selectWorkflowId: String?) {
+        if (project.isDisposed || _isDisposed) return
+        if (currentInteractionMode() != ChatInteractionMode.SPEC) {
+            specWorkflowComboBox.isVisible = false
+            return
+        }
+
+        val targetWorkflowId = selectWorkflowId?.trim()?.ifBlank { null }
+        scope.launch(Dispatchers.IO) {
+            val options = runCatching { specEngine.listWorkflows() }
+                .getOrDefault(emptyList())
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .map { workflowId ->
+                    val workflow = specEngine.loadWorkflow(workflowId).getOrNull()
+                    SpecWorkflowOption(
+                        workflowId = workflowId,
+                        title = workflow?.title?.ifBlank { workflowId } ?: workflowId,
+                        updatedAt = workflow?.updatedAt ?: 0L,
+                    )
+                }
+                .sortedWith(
+                    compareByDescending<SpecWorkflowOption> { it.updatedAt }
+                        .thenBy { it.title }
+                        .thenBy { it.workflowId },
+                )
+
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed || _isDisposed) return@invokeLater
+                if (currentInteractionMode() != ChatInteractionMode.SPEC) {
+                    specWorkflowComboBox.isVisible = false
+                    return@invokeLater
+                }
+
+                suppressSpecWorkflowSelectionEvents = true
+                try {
+                    val previousSelection = (specWorkflowComboBox.selectedItem as? SpecWorkflowOption)?.workflowId
+                    specWorkflowComboBox.removeAllItems()
+                    options.forEach { option -> specWorkflowComboBox.addItem(option) }
+
+                    val candidateSelection = targetWorkflowId
+                        ?: activeSpecWorkflowId?.trim()?.ifBlank { null }
+                        ?: previousSelection?.trim()?.ifBlank { null }
+                    val selectedId = candidateSelection
+                        ?.takeIf { desired -> options.any { it.workflowId == desired } }
+                        ?: options.firstOrNull()?.workflowId
+                    val selectedOption = options.firstOrNull { it.workflowId == selectedId }
+                    if (selectedOption != null) {
+                        specWorkflowComboBox.selectedItem = selectedOption
+                        activeSpecWorkflowId = selectedOption.workflowId
+                    }
+
+                    specWorkflowComboBox.isVisible = options.isNotEmpty()
+                    specWorkflowComboBox.isEnabled = options.size > 1
+                } finally {
+                    suppressSpecWorkflowSelectionEvents = false
+                }
+
+                updateSpecWorkflowComboSize()
+                updateComboTooltips()
+            }
+        }
     }
 
     private fun handleSendOrStop() {
@@ -585,20 +737,26 @@ class ImprovedChatPanel(
             return
         }
 
-        val interactionMode = interactionModeComboBox.selectedItem as? ChatInteractionMode ?: ChatInteractionMode.VIBE
+        val interactionMode = currentInteractionMode()
         if (interactionMode == ChatInteractionMode.SPEC) {
-            if (selectedImagePaths.isNotEmpty()) {
-                clearImageAttachments()
-                showStatus(
-                    SpecCodingBundle.message("toolwindow.image.attach.ignored.spec"),
-                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
-                )
-            }
-            if (rawInput.isBlank()) {
+            val normalizedInput = rawInput.trim()
+            val token = normalizedInput.substringBefore(" ").trim().lowercase(Locale.ROOT)
+            val workflowId = resolveMostRecentSpecWorkflowIdOrNull()?.also { activeSpecWorkflowId = it }
+            val isBareSpecCommand = token in setOf("status", "open", "next", "back", "generate", "complete", "help")
+            if (isBareSpecCommand || workflowId == null) {
+                if (selectedImagePaths.isNotEmpty()) {
+                    clearImageAttachments()
+                    showStatus(
+                        SpecCodingBundle.message("toolwindow.image.attach.ignored.spec"),
+                        autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                    )
+                }
+                if (normalizedInput.isBlank()) {
+                    return
+                }
+                handleSpecCommand("/spec $normalizedInput", sessionTitleSeed = normalizedInput)
                 return
             }
-            handleSpecCommand("/spec $rawInput", sessionTitleSeed = rawInput)
-            return
         }
 
         val promptReference = resolvePromptReferences(rawInput)
@@ -615,7 +773,20 @@ class ImprovedChatPanel(
         val providerId = providerComboBox.selectedItem as? String
         val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id
         val operationMode = modeManager.getCurrentMode()
-        val sessionId = ensureActiveSession(visibleInput, providerId)
+        val sessionId = if (interactionMode == ChatInteractionMode.SPEC) {
+            val workflowId = resolveMostRecentSpecWorkflowIdOrNull()
+            if (workflowId.isNullOrBlank()) {
+                showStatus(
+                    SpecCodingBundle.message("toolwindow.spec.command.noActive"),
+                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                )
+                return
+            }
+            activeSpecWorkflowId = workflowId
+            ensureActiveSpecSession(titleSeed = visibleInput, providerId = providerId, specTaskId = workflowId)
+        } else {
+            ensureActiveSession(visibleInput, providerId)
+        }
         val explicitItems = loadExplicitItemContents(contextPreviewPanel.getItems())
         val contextSnapshot = contextCollector.collectForItems(explicitItems)
         contextPreviewPanel.clear()
@@ -1273,11 +1444,14 @@ class ImprovedChatPanel(
     }
 
     private fun buildSpecModePrompt(input: String): String {
-        val workflow = resolveActiveSpecWorkflow()
-        val workflowHint = if (workflow != null) {
-            "Workflow=${workflow.id}, phase=${workflow.currentPhase.name.lowercase(Locale.ROOT)}, status=${workflow.status.name.lowercase(Locale.ROOT)}"
+        val workflowId = activeSpecWorkflowId?.trim()?.ifBlank { null }
+        val workflowHint = if (workflowId != null) {
+            buildString {
+                append("Workflow=$workflowId")
+                append(" (docs: .spec-coding/specs/$workflowId/{requirements,design,tasks}.md)")
+            }
         } else {
-            "No active workflow. Infer phase from context and keep outputs aligned with requirements/design/tasks."
+            "No active workflow. If needed, run /spec <requirements> first."
         }
         return buildString {
             appendLine("Interaction mode: spec")
@@ -2387,6 +2561,7 @@ class ImprovedChatPanel(
                         specSidebarPanel.focusWorkflow(workflowId)
                     }
                 }
+                refreshSpecWorkflowComboBox(selectWorkflowId = activeSpecWorkflowId)
                 showStatus(
                     text = SpecCodingBundle.message("toolwindow.status.session.loaded.short"),
                     tooltip = SpecCodingBundle.message("toolwindow.status.session.loaded", session.title),
@@ -2432,15 +2607,15 @@ class ImprovedChatPanel(
                             metadata = restoredSpecMetadata,
                         )
                     } else {
-                        val panel = ChatMessagePanel(
-                            ChatMessagePanel.MessageRole.ASSISTANT,
-                            restoredContent,
-                            onDelete = ::handleDeleteMessage,
-                            onRegenerate = ::handleRegenerateMessage,
-                            onContinue = ::handleContinueMessage,
-                            onWorkflowFileOpen = ::handleWorkflowFileOpen,
-                            onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
-                        )
+                         val panel = ChatMessagePanel(
+                             ChatMessagePanel.MessageRole.ASSISTANT,
+                             restoredContent,
+                             onDelete = ::handleDeleteMessage,
+                             onRegenerate = ::handleRegenerateMessage,
+                             onContinue = continueHandlerFor(currentInteractionMode()),
+                             onWorkflowFileOpen = ::handleWorkflowFileOpen,
+                             onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
+                         )
                         if (restoredTraceEvents.isNotEmpty()) {
                             panel.appendStreamContent(text = "", events = restoredTraceEvents)
                         }
@@ -2635,7 +2810,7 @@ class ImprovedChatPanel(
             ChatMessagePanel.MessageRole.ASSISTANT,
             onDelete = ::handleDeleteMessage,
             onRegenerate = ::handleRegenerateMessage,
-            onContinue = ::handleContinueMessage,
+            onContinue = continueHandlerFor(currentInteractionMode()),
             onWorkflowFileOpen = ::handleWorkflowFileOpen,
             onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
         )
@@ -2653,7 +2828,7 @@ class ImprovedChatPanel(
             cardMarkdown = cardMarkdown,
             initialDocumentContent = initialState.documentContent,
             onDeleteMessage = ::handleDeleteMessage,
-            onContinueMessage = ::handleContinueMessage,
+            onContinueMessage = continueHandlerFor(currentInteractionMode()),
             onOpenSpecTab = ::openSpecTab,
             onOpenDocument = ::openSpecWorkflowDocument,
             onFocusSpecSidebar = ::focusSpecSidebarForCard,
@@ -2740,6 +2915,75 @@ class ImprovedChatPanel(
             return
         }
         OpenFileDescriptor(project, vf, 0, 0).navigate(true)
+    }
+
+    private fun editSpecWorkflowMetadata(workflowId: String) {
+        val normalizedId = workflowId.trim()
+        if (normalizedId.isBlank() || project.isDisposed || _isDisposed) {
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val workflowResult = specEngine.loadWorkflow(normalizedId)
+            val workflow = workflowResult.getOrNull()
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed || _isDisposed) {
+                    return@invokeLater
+                }
+                if (workflow == null) {
+                    showStatus(
+                        SpecCodingBundle.message(
+                            "toolwindow.spec.sidebar.loadFailed",
+                            workflowResult.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown"),
+                        ),
+                        autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                    )
+                    return@invokeLater
+                }
+
+                val dialog = EditSpecWorkflowDialog(
+                    initialTitle = workflow.title.ifBlank { workflow.id },
+                    initialDescription = workflow.description,
+                )
+                if (!dialog.showAndGet()) {
+                    return@invokeLater
+                }
+                val title = dialog.resultTitle ?: return@invokeLater
+                val description = dialog.resultDescription ?: ""
+
+                scope.launch(Dispatchers.IO) {
+                    val updateResult = specEngine.updateWorkflowMetadata(
+                        workflowId = normalizedId,
+                        title = title,
+                        description = description,
+                    )
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        updateResult.onSuccess { updated ->
+                            activeSpecWorkflowId = updated.id
+                            if (specSidebarVisible) {
+                                if (specSidebarPanel.hasFocusedWorkflow(updated.id)) {
+                                    specSidebarPanel.focusWorkflow(updated.id)
+                                } else {
+                                    specSidebarPanel.refreshCurrentWorkflow()
+                                }
+                            }
+                            publishSpecWorkflowChanged(updated.id, reason = "workflow_metadata_updated")
+                        }.onFailure { error ->
+                            showStatus(
+                                SpecCodingBundle.message(
+                                    "spec.workflow.error",
+                                    error.message ?: SpecCodingBundle.message("common.unknown"),
+                                ),
+                                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun publishSpecWorkflowChanged(workflowId: String?, reason: String) {
@@ -3038,8 +3282,9 @@ class ImprovedChatPanel(
         val tooltip = SpecCodingBundle.message(tooltipKey)
         sendButton.toolTipText = tooltip
         sendButton.accessibleContext.accessibleName = tooltip
+        sendButton.stopMode = stopMode
         sendButton.icon = if (stopMode) {
-            AllIcons.Actions.Close
+            null
         } else {
             AllIcons.Actions.Execute
         }
@@ -3050,12 +3295,77 @@ class ImprovedChatPanel(
         sendButton.text = ""
         sendButton.isFocusable = false
         sendButton.isFocusPainted = false
+        sendButton.isBorderPainted = false
+        sendButton.isOpaque = false
+        sendButton.isRolloverEnabled = true
         sendButton.margin = JBUI.emptyInsets()
         sendButton.preferredSize = ACTION_ICON_BUTTON_SIZE
         sendButton.minimumSize = ACTION_ICON_BUTTON_SIZE
         sendButton.maximumSize = ACTION_ICON_BUTTON_SIZE
         sendButton.putClientProperty("JButton.buttonType", "toolbar")
         refreshActionButtonTexts()
+    }
+
+    private class StopAwareButton : JButton() {
+        private val stopFill = JBColor(
+            Color(231, 72, 64),
+            Color(205, 63, 55),
+        )
+        private val stopBorder = JBColor(
+            Color(0, 0, 0, 30),
+            Color(0, 0, 0, 96),
+        )
+
+        var stopMode: Boolean = false
+            set(value) {
+                if (field == value) return
+                field = value
+                isContentAreaFilled = !value
+                repaint()
+            }
+
+        override fun paintComponent(g: Graphics) {
+            if (!stopMode) {
+                super.paintComponent(g)
+                return
+            }
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+
+                val bgSize = minOf(width, height, JBUI.scale(20))
+                val bgX = (width - bgSize) / 2
+                val bgY = (height - bgSize) / 2
+                val arc = JBUI.scale(6)
+
+                g2.color = stopFill
+                g2.fillRoundRect(bgX, bgY, bgSize, bgSize, arc, arc)
+
+                g2.color = stopBorder
+                g2.drawRoundRect(bgX, bgY, bgSize - 1, bgSize - 1, arc, arc)
+
+                if (!isEnabled) {
+                    g2.color = Color(255, 255, 255, 110)
+                    g2.fillRoundRect(bgX, bgY, bgSize, bgSize, arc, arc)
+                } else if (model.isPressed) {
+                    g2.color = Color(0, 0, 0, 56)
+                    g2.fillRoundRect(bgX, bgY, bgSize, bgSize, arc, arc)
+                } else if (model.isRollover) {
+                    g2.color = Color(255, 255, 255, 32)
+                    g2.fillRoundRect(bgX, bgY, bgSize, bgSize, arc, arc)
+                }
+
+                val glyphSize = minOf(JBUI.scale(9), bgSize - JBUI.scale(8))
+                val glyphX = bgX + (bgSize - glyphSize) / 2
+                val glyphY = bgY + (bgSize - glyphSize) / 2
+                val glyphArc = JBUI.scale(2)
+                g2.color = Color(255, 255, 255, 245)
+                g2.fillRoundRect(glyphX, glyphY, glyphSize, glyphSize, glyphArc, glyphArc)
+            }
+            finally {
+                g2.dispose()
+            }
+        }
     }
 
     private fun configureSpecSidebarToggleButton() {
@@ -3092,6 +3402,19 @@ class ImprovedChatPanel(
         return interactionModeComboBox.selectedItem as? ChatInteractionMode ?: ChatInteractionMode.VIBE
     }
 
+    private fun continueHandlerFor(mode: ChatInteractionMode): ((ChatMessagePanel) -> Unit)? {
+        return if (mode == ChatInteractionMode.SPEC) ::handleContinueMessage else null
+    }
+
+    private fun refreshContinueActions(mode: ChatInteractionMode) {
+        val handler = continueHandlerFor(mode)
+        messagesPanel.getAllMessages()
+            .filter { message -> message.role == ChatMessagePanel.MessageRole.ASSISTANT }
+            .forEach { message ->
+                message.updateContinueAction(handler)
+            }
+    }
+
     private fun onInteractionModeChanged() {
         val mode = currentInteractionMode()
         if (mode == lastInteractionMode) {
@@ -3102,12 +3425,15 @@ class ImprovedChatPanel(
             val workflowId = resolveMostRecentSpecWorkflowIdOrNull()
             startNewSession()
             activeSpecWorkflowId = workflowId
+            refreshSpecWorkflowComboBox(selectWorkflowId = workflowId)
         }
         applyInteractionModeUi(mode)
     }
 
     private fun applyInteractionModeUi(mode: ChatInteractionMode) {
+        refreshContinueActions(mode)
         specSidebarToggleButton.isVisible = mode == ChatInteractionMode.SPEC
+        specWorkflowComboBox.isVisible = mode == ChatInteractionMode.SPEC && specWorkflowComboBox.itemCount > 0
         if (mode != ChatInteractionMode.SPEC) {
             applySpecSidebarVisibility(visible = false, persist = false)
             return
@@ -3241,10 +3567,70 @@ class ImprovedChatPanel(
         comboBox.font = JBUI.Fonts.smallFont()
     }
 
+    private fun updateSpecWorkflowComboSize() {
+        if (currentInteractionMode() != ChatInteractionMode.SPEC) {
+            return
+        }
+        val title = (specWorkflowComboBox.selectedItem as? SpecWorkflowOption)
+            ?.title
+            ?.trim()
+            .orEmpty()
+        val metrics = specWorkflowComboBox.getFontMetrics(specWorkflowComboBox.font)
+        val padding = JBUI.scale(SPEC_WORKFLOW_COMBO_TEXT_OVERHEAD_PX)
+        val desiredWidth = if (title.isBlank()) {
+            JBUI.scale(SPEC_WORKFLOW_COMBO_MIN_WIDTH)
+        } else {
+            (metrics.stringWidth(title) + padding).coerceIn(
+                JBUI.scale(SPEC_WORKFLOW_COMBO_MIN_WIDTH),
+                JBUI.scale(SPEC_WORKFLOW_COMBO_MAX_WIDTH),
+            )
+        }
+        val height = JBUI.scale(28)
+        val size = Dimension(desiredWidth, height)
+        specWorkflowComboBox.preferredSize = size
+        specWorkflowComboBox.minimumSize = size
+        specWorkflowComboBox.maximumSize = size
+        specWorkflowComboBox.revalidate()
+        specWorkflowComboBox.repaint()
+    }
+
+    private fun ellipsizeToWidth(text: String, maxWidth: Int, metrics: FontMetrics): String {
+        if (maxWidth <= 0) return ""
+        val normalized = text.replace(Regex("\\s+"), " ").trim()
+        if (normalized.isBlank()) return ""
+        if (metrics.stringWidth(normalized) <= maxWidth) return normalized
+        val ellipsis = "…"
+        val ellipsisWidth = metrics.stringWidth(ellipsis)
+        val available = (maxWidth - ellipsisWidth).coerceAtLeast(0)
+        var low = 0
+        var high = normalized.length
+        while (low < high) {
+            val mid = (low + high + 1) / 2
+            val width = metrics.stringWidth(normalized.substring(0, mid))
+            if (width <= available) {
+                low = mid
+            } else {
+                high = mid - 1
+            }
+        }
+        val prefix = normalized.substring(0, low).trimEnd()
+        return if (prefix.isEmpty()) ellipsis else prefix + ellipsis
+    }
+
     private fun updateComboTooltips() {
         providerComboBox.toolTipText = providerDisplayName(providerComboBox.selectedItem as? String)
         modelComboBox.toolTipText = (modelComboBox.selectedItem as? ModelInfo)?.name
         interactionModeComboBox.toolTipText = SpecCodingBundle.message("toolwindow.chat.mode.tooltip")
+        val selectedWorkflow = specWorkflowComboBox.selectedItem as? SpecWorkflowOption
+        val workflowId = selectedWorkflow?.workflowId?.trim().orEmpty()
+        val workflowTitle = selectedWorkflow?.title?.trim().orEmpty()
+        specWorkflowComboBox.toolTipText = workflowId.ifBlank { null }?.let { id ->
+            if (workflowTitle.isBlank() || workflowTitle == id) {
+                SpecCodingBundle.message("toolwindow.spec.sidebar.workflow", id)
+            } else {
+                "$workflowTitle\n${SpecCodingBundle.message("toolwindow.spec.sidebar.workflow", id)}"
+            }
+        }
     }
 
     private fun providerDisplayName(providerId: String?): String {
@@ -3260,7 +3646,17 @@ class ImprovedChatPanel(
 
     private fun handleContinueMessage(panel: ChatMessagePanel) {
         if (isGenerating || isRestoringSession || project.isDisposed || _isDisposed) return
-        val focus = resolveContinueFocus(panel)
+        val focus = if (currentInteractionMode() == ChatInteractionMode.SPEC) {
+            resolveMostRecentSpecWorkflowIdOrNull()
+                ?.let { workflowId ->
+                    sanitizeContinueFocus(
+                        "读 .spec-coding/specs/$workflowId/tasks.md，执行第一个未完成任务(- [ ])并更新勾选",
+                    )
+                }
+                ?: resolveContinueFocus(panel)
+        } else {
+            resolveContinueFocus(panel)
+        }
         val continuePrompt = if (!focus.isNullOrBlank()) {
             SpecCodingBundle.message("toolwindow.continue.dynamicPrompt", focus)
         } else {
@@ -4226,6 +4622,9 @@ class ImprovedChatPanel(
         private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"
         private val HISTORY_CONTENT_DATA_KEY = Key.create<String>(HISTORY_CONTENT_KEY)
         private val ACTION_ICON_BUTTON_SIZE = JBDimension(28, 24)
+        private const val SPEC_WORKFLOW_COMBO_MIN_WIDTH = 120
+        private const val SPEC_WORKFLOW_COMBO_MAX_WIDTH = 220
+        private const val SPEC_WORKFLOW_COMBO_TEXT_OVERHEAD_PX = 56
         private const val MAX_CONVERSATION_HISTORY = 240
         private const val MAX_RESTORED_MESSAGES = 240
         private const val SESSION_LOAD_FETCH_LIMIT = 5000

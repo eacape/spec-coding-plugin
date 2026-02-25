@@ -52,7 +52,7 @@ internal class SpecCardMessagePanel(
     cardMarkdown: String,
     initialDocumentContent: String,
     private val onDeleteMessage: ((ChatMessagePanel) -> Unit)? = null,
-    private val onContinueMessage: ((ChatMessagePanel) -> Unit)? = null,
+    private var onContinueMessage: ((ChatMessagePanel) -> Unit)? = null,
     private val onOpenSpecTab: (() -> Unit)? = null,
     private val onOpenDocument: ((SpecCardMetadata) -> Unit)? = null,
     private val onFocusSpecSidebar: ((SpecCardMetadata) -> Unit)? = null,
@@ -143,6 +143,14 @@ internal class SpecCardMessagePanel(
 
         add(wrapper, BorderLayout.CENTER)
         renderCard()
+    }
+
+    override fun updateContinueAction(onContinue: ((ChatMessagePanel) -> Unit)?) {
+        if (onContinueMessage === onContinue) {
+            return
+        }
+        onContinueMessage = onContinue
+        rebuildActionRow()
     }
 
     private fun createHeader(): JPanel {
@@ -329,7 +337,8 @@ internal class SpecCardMessagePanel(
         }
         actionButtons.add(copyButton)
 
-        if (onContinueMessage != null) {
+        val continueHandler = onContinueMessage
+        if (continueHandler != null) {
             val continueButton = JButton()
             styleIconActionButton(
                 button = continueButton,
@@ -337,7 +346,7 @@ internal class SpecCardMessagePanel(
                 tooltip = SpecCodingBundle.message("chat.message.continue"),
             )
             continueButton.isEnabled = !busy
-            continueButton.addActionListener { onContinueMessage.invoke(this) }
+            continueButton.addActionListener { continueHandler.invoke(this) }
             actionButtons.add(continueButton)
         }
 

@@ -198,6 +198,7 @@ class SpecWorkflowListPanel(
         val cellBounds = workflowList.getCellBounds(index, index) ?: return
         if (!cellBounds.contains(event.point)) return
         val selectedId = listModel.getElementAt(index).workflowId
+        workflowList.selectedIndex = index
         when (WorkflowCellRenderer.resolveRowAction(cellBounds, event.point)) {
             WorkflowCellRenderer.RowAction.DELETE -> onDeleteWorkflow(selectedId)
             WorkflowCellRenderer.RowAction.EDIT -> onEditWorkflow(selectedId)
@@ -235,7 +236,7 @@ class SpecWorkflowListPanel(
             rowPanel.border = JBUI.Borders.empty(0, 0, ROW_BOTTOM_GAP, 0)
 
             cardPanel.layout = BorderLayout()
-            cardPanel.border = JBUI.Borders.empty(8, 10, 8, 12)
+            cardPanel.border = JBUI.Borders.empty(CARD_VERTICAL_PAD, CARD_LEFT_PAD, CARD_VERTICAL_PAD, CARD_RIGHT_PAD)
 
             titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 12f)
             descriptionLabel.font = descriptionLabel.font.deriveFont(Font.PLAIN, 10.5f)
@@ -253,7 +254,7 @@ class SpecWorkflowListPanel(
             metaRow.add(statusLabel, BorderLayout.EAST)
 
             actionPanel.isOpaque = false
-            actionPanel.border = JBUI.Borders.empty(0, 8, 0, 4)
+            actionPanel.border = JBUI.Borders.empty(0, ACTION_PANEL_LEFT_PAD, 0, ACTION_PANEL_RIGHT_PAD)
             editActionLabel.preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
             editActionLabel.minimumSize = editActionLabel.preferredSize
             deleteActionLabel.preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
@@ -378,21 +379,38 @@ class SpecWorkflowListPanel(
 
         companion object {
             private val ROW_BOTTOM_GAP = JBUI.scale(8)
+            private val CARD_VERTICAL_PAD = JBUI.scale(8)
+            private val CARD_LEFT_PAD = JBUI.scale(10)
+            private val CARD_RIGHT_PAD = JBUI.scale(12)
+            private val ACTION_PANEL_LEFT_PAD = JBUI.scale(8)
+            private val ACTION_PANEL_RIGHT_PAD = JBUI.scale(4)
             private val ACTION_ICON_SIZE = JBUI.scale(16)
             private val ACTION_ICON_GAP = JBUI.scale(6)
-            private val ACTION_RIGHT_PAD = JBUI.scale(12)
+            private val ACTION_RIGHT_PAD = CARD_RIGHT_PAD + ACTION_PANEL_RIGHT_PAD
+            private val ACTION_HIT_SLOP = JBUI.scale(3)
 
             fun resolveRowAction(cellBounds: Rectangle, point: Point): RowAction? {
                 if (!cellBounds.contains(point)) {
                     return null
                 }
-                val iconZoneHeight = (cellBounds.height - ROW_BOTTOM_GAP).coerceAtLeast(ACTION_ICON_SIZE)
-                val centerY = cellBounds.y + iconZoneHeight / 2
+                val iconZoneHeight = (cellBounds.height - ROW_BOTTOM_GAP - CARD_VERTICAL_PAD * 2)
+                    .coerceAtLeast(ACTION_ICON_SIZE)
+                val centerY = cellBounds.y + CARD_VERTICAL_PAD + iconZoneHeight / 2
                 val topY = centerY - ACTION_ICON_SIZE / 2
                 val deleteX = cellBounds.x + cellBounds.width - ACTION_RIGHT_PAD - ACTION_ICON_SIZE
                 val editX = deleteX - ACTION_ICON_GAP - ACTION_ICON_SIZE
-                val editRect = Rectangle(editX, topY, ACTION_ICON_SIZE, ACTION_ICON_SIZE)
-                val deleteRect = Rectangle(deleteX, topY, ACTION_ICON_SIZE, ACTION_ICON_SIZE)
+                val editRect = Rectangle(
+                    editX - ACTION_HIT_SLOP,
+                    topY - ACTION_HIT_SLOP,
+                    ACTION_ICON_SIZE + ACTION_HIT_SLOP * 2,
+                    ACTION_ICON_SIZE + ACTION_HIT_SLOP * 2,
+                )
+                val deleteRect = Rectangle(
+                    deleteX - ACTION_HIT_SLOP,
+                    topY - ACTION_HIT_SLOP,
+                    ACTION_ICON_SIZE + ACTION_HIT_SLOP * 2,
+                    ACTION_ICON_SIZE + ACTION_HIT_SLOP * 2,
+                )
                 return when {
                     deleteRect.contains(point) -> RowAction.DELETE
                     editRect.contains(point) -> RowAction.EDIT

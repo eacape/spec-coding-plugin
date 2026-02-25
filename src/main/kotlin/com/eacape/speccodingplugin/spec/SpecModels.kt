@@ -241,9 +241,23 @@ data class GenerationOptions(
     val model: String? = null,
     val temperature: Double? = null,
     val maxTokens: Int? = null,
+    val requestId: String? = null,
     val includeExamples: Boolean = true,
-    val validateOutput: Boolean = true
+    val validateOutput: Boolean = true,
+    val confirmedContext: String? = null,
+    val clarificationQuestionBudget: Int = 5,
 )
+
+/**
+ * 规格澄清草稿（由 AI 反提问生成）
+ */
+data class SpecClarificationDraft(
+    val phase: SpecPhase,
+    val questions: List<String>,
+    val rawContent: String,
+) {
+    fun hasQuestions(): Boolean = questions.isNotEmpty()
+}
 
 /**
  * Spec 生成结果

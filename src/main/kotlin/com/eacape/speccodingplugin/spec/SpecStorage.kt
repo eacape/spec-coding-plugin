@@ -418,7 +418,9 @@ class SpecStorage(private val project: Project) {
         var updatedAt = System.currentTimeMillis()
 
         for (line in lines) {
-            val trimmed = line.trim()
+            // Only parse top-level fields (no indentation). Nested "documents" entries also contain
+            // keys like `title:` and would otherwise override workflow metadata.
+            val trimmed = line.trimEnd()
             when {
                 trimmed.startsWith("currentPhase:") -> {
                     val value = trimmed.substringAfter(":").trim()
