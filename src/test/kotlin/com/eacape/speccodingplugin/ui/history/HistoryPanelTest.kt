@@ -1,7 +1,5 @@
 package com.eacape.speccodingplugin.ui.history
 
-import com.eacape.speccodingplugin.session.ConversationMessage
-import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.ConversationSession
 import com.eacape.speccodingplugin.session.SessionContextSnapshot
 import com.eacape.speccodingplugin.session.SessionFilter
@@ -33,7 +31,6 @@ class HistoryPanelTest {
                     summary(id = "s-2", title = "Worktree flow"),
                 )
             },
-            listMessages = { _, _ -> emptyList() },
             deleteSession = { Result.success(Unit) },
             runSynchronously = true,
         )
@@ -52,7 +49,7 @@ class HistoryPanelTest {
     }
 
     @Test
-    fun `open action should publish message bus event and load details`() {
+    fun `open action should publish message bus event`() {
         val messageBus = mockk<MessageBus>(relaxed = true)
         val listener = mockk<HistorySessionOpenListener>(relaxed = true)
         every { messageBus.syncPublisher(any<Topic<HistorySessionOpenListener>>()) } returns listener
@@ -65,13 +62,6 @@ class HistoryPanelTest {
         val panel = HistoryPanel(
             project = project,
             searchSessions = { _, _, _ -> listOf(summary(id = "open-1", title = "Open me")) },
-            listMessages = { sessionId, _ ->
-                if (sessionId == "open-1") {
-                    listOf(message(sessionId, ConversationRole.USER, "hello"))
-                } else {
-                    emptyList()
-                }
-            },
             deleteSession = { Result.success(Unit) },
             runSynchronously = true,
         )
@@ -82,7 +72,6 @@ class HistoryPanelTest {
 
         verify(exactly = 1) { listener.onSessionOpenRequested("open-1") }
         assertTrue(panel.statusTextForTest().isNotBlank())
-        assertTrue(panel.detailTextForTest().contains("hello"))
 
         panel.dispose()
     }
@@ -92,7 +81,6 @@ class HistoryPanelTest {
         val panel = HistoryPanel(
             project = fakeProject(),
             searchSessions = { _, _, _ -> listOf(summary(id = "del-1", title = "Delete me")) },
-            listMessages = { _, _ -> emptyList() },
             deleteSession = { Result.failure(IllegalStateException("db down")) },
             runSynchronously = true,
         )
@@ -117,7 +105,6 @@ class HistoryPanelTest {
         val panel = HistoryPanel(
             project = fakeProject(),
             searchSessions = { _, _, _ -> sessions.toList() },
-            listMessages = { _, _ -> emptyList() },
             deleteSession = { Result.success(Unit) },
             forkSession = { sourceSessionId, fromMessageId, _ ->
                 forkedMessages += sourceSessionId to fromMessageId
@@ -166,7 +153,6 @@ class HistoryPanelTest {
         val panel = HistoryPanel(
             project = fakeProject(),
             searchSessions = { _, _, _ -> sessions.toList() },
-            listMessages = { _, _ -> emptyList() },
             deleteSession = { Result.success(Unit) },
             saveContextSnapshot = { sessionId, _, _, _ ->
                 snapshots += sessionId
@@ -252,15 +238,4 @@ class HistoryPanelTest {
         )
     }
 
-    private fun message(sessionId: String, role: ConversationRole, content: String): ConversationMessage {
-        return ConversationMessage(
-            id = "m-$sessionId",
-            sessionId = sessionId,
-            role = role,
-            content = content,
-            tokenCount = null,
-            createdAt = 1L,
-            metadataJson = null,
-        )
-    }
 }

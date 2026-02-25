@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.history
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.session.SessionSummary
+import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -9,13 +10,15 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Cursor
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
-import java.awt.GridLayout
-import java.awt.Insets
+import java.awt.Point
 import java.awt.RenderingHints
-import java.awt.geom.RoundRectangle2D
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import java.awt.event.MouseMotionAdapter
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -23,7 +26,7 @@ import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.DefaultListModel
-import javax.swing.JButton
+import javax.swing.Icon
 import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.ListCellRenderer
@@ -31,9 +34,6 @@ import javax.swing.ListSelectionModel
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
-import javax.swing.JTextArea
-import javax.swing.border.AbstractBorder
-import javax.swing.border.CompoundBorder
 
 class HistorySessionListPanel(
     private val onSessionSelected: (String) -> Unit,
@@ -45,13 +45,10 @@ class HistorySessionListPanel(
 
     private val listModel = DefaultListModel<SessionSummary>()
     private val sessionList = HoverInfoSessionList(listModel)
-    private val openButton = JButton(SpecCodingBundle.message("history.action.open"))
-    private val continueButton = JButton(SpecCodingBundle.message("history.action.continue"))
-    private val branchButton = JButton(SpecCodingBundle.message("history.action.branch"))
-    private val deleteButton = JButton(SpecCodingBundle.message("history.action.delete"))
-    private val selectionInfoCard = RoundedCardPanel(JBUI.scale(12))
-    private val selectionInfoTitle = JLabel(SpecCodingBundle.message("history.info.title"))
-    private val selectionInfoArea = JTextArea()
+
+    private var selectionInfoText: String = SpecCodingBundle.message("history.info.empty")
+    private var hoverIndex: Int = -1
+    private var hoverAction: RowAction? = null
 
     init {
         border = JBUI.Borders.empty(4)
@@ -59,31 +56,6 @@ class HistorySessionListPanel(
     }
 
     private fun setupUi() {
-        val toolbar = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            border = JBUI.Borders.emptyBottom(8)
-        }
-        val actionsRow = JPanel(GridLayout(1, 4, JBUI.scale(6), 0)).apply {
-            isOpaque = false
-        }
-
-        styleActionButton(openButton)
-        styleActionButton(continueButton)
-        styleActionButton(branchButton)
-        styleActionButton(deleteButton)
-
-        openButton.addActionListener { selectedSessionId()?.let(onOpenSession) }
-        continueButton.addActionListener { selectedSessionId()?.let(onContinueSession) }
-        branchButton.addActionListener { selectedSessionId()?.let(onBranchSession) }
-        deleteButton.addActionListener { selectedSessionId()?.let(onDeleteSession) }
-
-        actionsRow.add(openButton)
-        actionsRow.add(continueButton)
-        actionsRow.add(branchButton)
-        actionsRow.add(deleteButton)
-        toolbar.add(actionsRow, BorderLayout.CENTER)
-        add(toolbar, BorderLayout.NORTH)
-
         sessionList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         sessionList.cellRenderer = SessionCellRenderer()
         sessionList.fixedCellHeight = -1
@@ -92,26 +64,24 @@ class HistorySessionListPanel(
         sessionList.setExpandableItemsEnabled(false)
         sessionList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
-                updateButtonStates()
                 val selected = sessionList.selectedValue
                 updateSelectionInfo(selected)
                 selected?.id?.let(onSessionSelected)
             }
         }
-        updateButtonStates()
+        installMouseInteractions()
+        updateSelectionInfo(null)
 
-        setupSelectionInfoCard()
         val listScrollPane = JBScrollPane(sessionList).apply {
             border = JBUI.Borders.empty()
             horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
             verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
         }
         add(
-            JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            JPanel(BorderLayout()).apply {
                 isOpaque = false
                 border = JBUI.Borders.empty()
                 add(listScrollPane, BorderLayout.CENTER)
-                add(selectionInfoCard, BorderLayout.SOUTH)
             },
             BorderLayout.CENTER,
         )
@@ -122,97 +92,62 @@ class HistorySessionListPanel(
         items.forEach(listModel::addElement)
         sessionList.revalidate()
         sessionList.repaint()
-
-        if (sessionList.selectedValue == null) {
-            updateButtonStates()
-        }
         updateSelectionInfo(sessionList.selectedValue)
     }
 
     fun setSelectedSession(sessionId: String?) {
         if (sessionId == null) {
             sessionList.clearSelection()
-            updateButtonStates()
             updateSelectionInfo(null)
             return
         }
 
         for (i in 0 until listModel.size()) {
-            if (listModel[i].id == sessionId) {
+            val summary = listModel.getElementAt(i)
+            if (summary.id == sessionId) {
                 sessionList.selectedIndex = i
-                updateButtonStates()
-                updateSelectionInfo(listModel[i])
+                updateSelectionInfo(summary)
                 return
             }
         }
 
         sessionList.clearSelection()
-        updateButtonStates()
         updateSelectionInfo(null)
     }
 
     internal fun selectedSessionIdForTest(): String? = selectedSessionId()
 
-    internal fun sessionsForTest(): List<SessionSummary> = (0 until listModel.size()).map { listModel[it] }
+    internal fun sessionsForTest(): List<SessionSummary> = (0 until listModel.size()).map { listModel.getElementAt(it) }
 
     internal fun buttonStatesForTest(): Map<String, Boolean> {
+        val hasSelection = selectedSessionId() != null
         return mapOf(
-            "openEnabled" to openButton.isEnabled,
-            "continueEnabled" to continueButton.isEnabled,
-            "branchEnabled" to branchButton.isEnabled,
-            "deleteEnabled" to deleteButton.isEnabled,
+            "openEnabled" to hasSelection,
+            "continueEnabled" to hasSelection,
+            "branchEnabled" to hasSelection,
+            "deleteEnabled" to hasSelection,
         )
     }
 
     internal fun clickOpenForTest() {
-        openButton.doClick()
+        selectedSessionId()?.let(onOpenSession)
     }
 
     internal fun clickDeleteForTest() {
-        deleteButton.doClick()
+        selectedSessionId()?.let(onDeleteSession)
     }
 
     internal fun clickContinueForTest() {
-        continueButton.doClick()
+        selectedSessionId()?.let(onContinueSession)
     }
 
     internal fun clickBranchForTest() {
-        branchButton.doClick()
+        selectedSessionId()?.let(onBranchSession)
     }
 
-    internal fun selectedInfoTextForTest(): String = selectionInfoArea.text
+    internal fun selectedInfoTextForTest(): String = selectionInfoText
 
     private fun selectedSessionId(): String? = sessionList.selectedValue?.id
-
-    private fun updateButtonStates() {
-        val hasSelection = selectedSessionId() != null
-        openButton.isEnabled = hasSelection
-        continueButton.isEnabled = hasSelection
-        branchButton.isEnabled = hasSelection
-        deleteButton.isEnabled = hasSelection
-    }
-
-    private fun styleActionButton(button: JButton) {
-        button.isFocusable = false
-        button.isFocusPainted = false
-        button.font = button.font.deriveFont(Font.BOLD, 11f)
-        button.margin = JBUI.emptyInsets()
-        button.isOpaque = true
-        button.isContentAreaFilled = true
-        button.background = ACTION_BUTTON_BG
-        button.foreground = ACTION_BUTTON_FG
-        button.border = CompoundBorder(
-            RoundedLineBorder(
-                lineColor = ACTION_BUTTON_BORDER,
-                arc = JBUI.scale(12),
-            ),
-            JBUI.Borders.empty(3, 10, 3, 10),
-        )
-        button.preferredSize = JBUI.size(0, 30)
-        button.minimumSize = JBUI.size(0, 30)
-        button.putClientProperty("JButton.buttonType", "roundRect")
-        button.putClientProperty("JComponent.roundRectArc", JBUI.scale(12))
-    }
 
     private fun isSpecSession(summary: SessionSummary): Boolean {
         if (!summary.specTaskId.isNullOrBlank()) return true
@@ -222,44 +157,6 @@ class HistorySessionListPanel(
 
     private fun formatTimestamp(timestamp: Long): String {
         return timestampFormatter.format(Instant.ofEpochMilli(timestamp))
-    }
-
-    private fun setupSelectionInfoCard() {
-        selectionInfoCard.layout = BorderLayout()
-        selectionInfoCard.border = JBUI.Borders.empty(8, 10)
-        selectionInfoCard.updateColors(INFO_CARD_BG, INFO_CARD_BORDER)
-        selectionInfoCard.preferredSize = JBUI.size(0, 134)
-
-        selectionInfoTitle.font = selectionInfoTitle.font.deriveFont(Font.BOLD, 11.5f)
-        selectionInfoTitle.foreground = INFO_TITLE_FG
-
-        selectionInfoArea.isEditable = false
-        selectionInfoArea.isFocusable = false
-        selectionInfoArea.isOpaque = false
-        selectionInfoArea.lineWrap = true
-        selectionInfoArea.wrapStyleWord = true
-        selectionInfoArea.border = JBUI.Borders.empty()
-        selectionInfoArea.font = JBUI.Fonts.smallFont()
-        selectionInfoArea.foreground = INFO_TEXT_FG
-        selectionInfoArea.rows = 6
-
-        val infoScrollPane = JBScrollPane(selectionInfoArea).apply {
-            border = JBUI.Borders.empty()
-            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-            verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-            viewport.isOpaque = false
-            isOpaque = false
-        }
-
-        selectionInfoCard.add(
-            JPanel(BorderLayout(0, JBUI.scale(4))).apply {
-                isOpaque = false
-                add(selectionInfoTitle, BorderLayout.NORTH)
-                add(infoScrollPane, BorderLayout.CENTER)
-            },
-            BorderLayout.CENTER,
-        )
-        updateSelectionInfo(null)
     }
 
     private fun buildBindingText(summary: SessionSummary): String {
@@ -291,40 +188,112 @@ class HistorySessionListPanel(
     }
 
     private fun updateSelectionInfo(summary: SessionSummary?) {
-        if (summary == null) {
-            selectionInfoArea.text = SpecCodingBundle.message("history.info.empty")
-            selectionInfoArea.caretPosition = 0
-            return
+        selectionInfoText = if (summary == null) {
+            SpecCodingBundle.message("history.info.empty")
+        } else {
+            buildString {
+                appendLine(SpecCodingBundle.message("history.info.titleLine", summary.title))
+                append(SpecCodingBundle.message("history.tooltip.id", summary.id))
+            }
+        }
+    }
+
+    private fun installMouseInteractions() {
+        sessionList.addMouseMotionListener(
+            object : MouseMotionAdapter() {
+                override fun mouseMoved(event: MouseEvent) {
+                    updateHoverState(event.point)
+                }
+
+                override fun mouseDragged(event: MouseEvent) {
+                    updateHoverState(event.point)
+                }
+            },
+        )
+        sessionList.addMouseListener(
+            object : MouseAdapter() {
+                override fun mouseExited(event: MouseEvent?) {
+                    clearHoverState()
+                }
+
+                override fun mouseClicked(event: MouseEvent) {
+                    val actionHit = resolveActionHit(event.point) ?: return
+                    sessionList.selectedIndex = actionHit.index
+                    val sessionId = listModel.getElementAt(actionHit.index).id
+                    when (actionHit.action) {
+                        RowAction.OPEN -> onOpenSession(sessionId)
+                        RowAction.CONTINUE -> onContinueSession(sessionId)
+                        RowAction.BRANCH -> onBranchSession(sessionId)
+                        RowAction.DELETE -> onDeleteSession(sessionId)
+                    }
+                    event.consume()
+                }
+            },
+        )
+    }
+
+    private fun updateHoverState(point: Point) {
+        val oldIndex = hoverIndex
+        val oldAction = hoverAction
+        val hit = resolveActionHit(point)
+        hoverIndex = hit?.index ?: -1
+        hoverAction = hit?.action
+        sessionList.cursor = if (hoverAction != null) {
+            Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        } else {
+            Cursor.getDefaultCursor()
         }
 
-        val modeText = SpecCodingBundle.message(
-            if (isSpecSession(summary)) "history.mode.spec" else "history.mode.vibe"
-        )
-        selectionInfoArea.text = buildString {
-            appendLine(SpecCodingBundle.message("history.info.titleLine", summary.title))
-            appendLine(SpecCodingBundle.message("history.tooltip.mode", modeText))
-            appendLine(SpecCodingBundle.message("history.tooltip.id", summary.id))
-            appendLine(
-                SpecCodingBundle.message(
-                    "history.binding.detail",
-                    buildBindingText(summary),
-                    summary.messageCount,
-                )
-            )
-            appendLine(SpecCodingBundle.message("history.tooltip.provider", resolveProviderText(summary)))
-            append(SpecCodingBundle.message("history.tooltip.updated", formatTimestamp(summary.updatedAt)))
+        if (oldIndex != hoverIndex || oldAction != hoverAction) {
+            if (oldIndex >= 0) {
+                sessionList.repaint(sessionList.getCellBounds(oldIndex, oldIndex))
+            }
+            if (hoverIndex >= 0) {
+                sessionList.repaint(sessionList.getCellBounds(hoverIndex, hoverIndex))
+            }
         }
-        selectionInfoArea.caretPosition = 0
+    }
+
+    private fun clearHoverState() {
+        val oldIndex = hoverIndex
+        hoverIndex = -1
+        hoverAction = null
+        sessionList.cursor = Cursor.getDefaultCursor()
+        if (oldIndex >= 0) {
+            sessionList.repaint(sessionList.getCellBounds(oldIndex, oldIndex))
+        }
+    }
+
+    private fun resolveActionHit(point: Point): ActionHit? {
+        val index = sessionList.locationToIndex(point)
+        if (index < 0) return null
+        val cellBounds = sessionList.getCellBounds(index, index) ?: return null
+        if (!cellBounds.contains(point)) return null
+
+        val zoneTop = cellBounds.y + ACTION_ZONE_TOP
+        val zoneBottom = zoneTop + ACTION_ICON_SIZE
+        if (point.y < zoneTop || point.y > zoneBottom) return null
+
+        val startX = cellBounds.x + cellBounds.width - ACTION_STRIP_WIDTH
+        val endX = cellBounds.x + cellBounds.width - ACTION_STRIP_RIGHT_PADDING
+        if (point.x < startX || point.x > endX) return null
+
+        var iconLeft = startX + ACTION_STRIP_LEFT_PADDING
+        RowAction.entries.forEach { action ->
+            val iconRight = iconLeft + ACTION_ICON_SIZE
+            if (point.x in iconLeft..iconRight) {
+                return ActionHit(index = index, action = action)
+            }
+            iconLeft += ACTION_ICON_SIZE + ACTION_ICON_GAP
+        }
+        return null
     }
 
     private inner class HoverInfoSessionList(model: DefaultListModel<SessionSummary>) : JBList<SessionSummary>(model) {
-        init {
-            // Keep hover behavior visually stable: no cross-pane tooltip popup.
-            toolTipText = null
-        }
-
-        override fun getToolTipText(event: java.awt.event.MouseEvent?): String? {
-            return null
+        override fun getToolTipText(event: MouseEvent?): String? {
+            if (event == null) return null
+            val action = resolveActionHit(event.point)?.action ?: return null
+            return SpecCodingBundle.message(action.tooltipKey)
         }
     }
 
@@ -332,24 +301,31 @@ class HistorySessionListPanel(
         private val rowPanel = JPanel(BorderLayout())
         private val cardPanel = RoundedCardPanel(JBUI.scale(12))
         private val topRow = JPanel(BorderLayout(6, 0))
-        private val modeBadge = JLabel()
+        private val modeLabel = JLabel()
         private val titleLabel = JLabel()
+        private val actionPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.empty(0, ACTION_STRIP_LEFT_PADDING, 0, ACTION_STRIP_RIGHT_PADDING)
+        }
+        private val actionHosts = mutableMapOf<RowAction, JPanel>()
         private val detailLabel = JLabel()
         private val providerLabel = JLabel()
         private val updatedLabel = JLabel()
+        private val accentStripe = JPanel()
 
         init {
             rowPanel.isOpaque = false
-            rowPanel.border = JBUI.Borders.empty(0, 0, 8, 0)
+            rowPanel.border = JBUI.Borders.empty(0, 0, 9, 0)
 
             cardPanel.layout = BorderLayout()
-            cardPanel.border = JBUI.Borders.empty(8, 10)
+            cardPanel.border = JBUI.Borders.empty(8, 8, 8, 10)
 
             topRow.isOpaque = false
 
-            modeBadge.font = modeBadge.font.deriveFont(Font.BOLD, 10f)
-            modeBadge.border = JBUI.Borders.empty(1, 6, 1, 6)
-            modeBadge.isOpaque = true
+            modeLabel.font = modeLabel.font.deriveFont(Font.BOLD, 11f)
+            modeLabel.horizontalAlignment = SwingConstants.LEFT
+            modeLabel.border = JBUI.Borders.empty()
 
             titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 12.5f)
             titleLabel.horizontalAlignment = SwingConstants.LEFT
@@ -359,13 +335,36 @@ class HistorySessionListPanel(
             providerLabel.horizontalAlignment = SwingConstants.LEFT
             updatedLabel.font = updatedLabel.font.deriveFont(Font.PLAIN, 10.5f)
             updatedLabel.horizontalAlignment = SwingConstants.LEFT
-            topRow.alignmentX = Component.LEFT_ALIGNMENT
-            detailLabel.alignmentX = Component.LEFT_ALIGNMENT
-            providerLabel.alignmentX = Component.LEFT_ALIGNMENT
-            updatedLabel.alignmentX = Component.LEFT_ALIGNMENT
 
-            topRow.add(modeBadge, BorderLayout.WEST)
+            RowAction.entries.forEachIndexed { idx, action ->
+                val iconLabel = JLabel(action.icon).apply {
+                    horizontalAlignment = SwingConstants.CENTER
+                    verticalAlignment = SwingConstants.CENTER
+                    preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
+                }
+                val host = JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    border = JBUI.Borders.empty(1)
+                    preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
+                    minimumSize = preferredSize
+                    maximumSize = preferredSize
+                    add(iconLabel, BorderLayout.CENTER)
+                }
+                actionHosts[action] = host
+                actionPanel.add(host)
+                if (idx < RowAction.entries.size - 1) {
+                    actionPanel.add(Box.createHorizontalStrut(ACTION_ICON_GAP))
+                }
+            }
+
+            topRow.add(modeLabel, BorderLayout.WEST)
             topRow.add(titleLabel, BorderLayout.CENTER)
+            topRow.add(actionPanel, BorderLayout.EAST)
+
+            accentStripe.isOpaque = true
+            accentStripe.preferredSize = JBUI.size(4, 0)
+            accentStripe.minimumSize = JBUI.size(4, 0)
+            accentStripe.maximumSize = JBUI.size(4, Int.MAX_VALUE)
 
             val content = JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -379,7 +378,15 @@ class HistorySessionListPanel(
                 add(Box.createVerticalStrut(2))
                 add(updatedLabel)
             }
-            cardPanel.add(content, BorderLayout.CENTER)
+            cardPanel.add(accentStripe, BorderLayout.WEST)
+            cardPanel.add(
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    border = JBUI.Borders.emptyLeft(8)
+                    add(content, BorderLayout.CENTER)
+                },
+                BorderLayout.CENTER,
+            )
             rowPanel.add(cardPanel, BorderLayout.CENTER)
         }
 
@@ -392,45 +399,28 @@ class HistorySessionListPanel(
         ): Component {
             if (value != null) {
                 val isSpec = isSpecSession(value)
-                val modeTag = if (isSpec) {
+                modeLabel.text = if (isSpec) {
                     SpecCodingBundle.message("history.mode.spec")
                 } else {
                     SpecCodingBundle.message("history.mode.vibe")
                 }
-                modeBadge.text = modeTag
                 val bindingDetail = SpecCodingBundle.message(
                     "history.binding.detail",
                     buildBindingText(value),
                     value.messageCount,
                 )
-                val updated = timestampFormatter.format(Instant.ofEpochMilli(value.updatedAt))
+                val updated = formatTimestamp(value.updatedAt)
                 titleLabel.text = value.title
                 detailLabel.text = bindingDetail
                 providerLabel.text = SpecCodingBundle.message("history.tooltip.provider", resolveProviderText(value))
                 updatedLabel.text = SpecCodingBundle.message("history.tooltip.updated", updated)
 
-                modeBadge.background = if (isSpec) {
-                    MODE_SPEC_BADGE_BG
-                } else {
-                    MODE_VIBE_BADGE_BG
-                }
-                modeBadge.foreground = if (isSpec) {
-                    MODE_SPEC_BADGE_FG
-                } else {
-                    MODE_VIBE_BADGE_FG
-                }
+                modeLabel.foreground = if (isSpec) MODE_SPEC_TEXT else MODE_VIBE_TEXT
+                accentStripe.background = if (isSpec) CARD_ACCENT_SPEC else CARD_ACCENT_VIBE
             }
 
-            val cardBackground = if (isSelected) {
-                CARD_BG_SELECTED
-            } else {
-                CARD_BG_DEFAULT
-            }
-            val cardBorder = if (isSelected) {
-                CARD_BORDER_SELECTED
-            } else {
-                CARD_BORDER_DEFAULT
-            }
+            val cardBackground = if (isSelected) CARD_BG_SELECTED else CARD_BG_DEFAULT
+            val cardBorder = if (isSelected) CARD_BORDER_SELECTED else CARD_BORDER_DEFAULT
             val textColor = if (isSelected) {
                 JBColor(Color(25, 41, 64), Color(224, 234, 247))
             } else {
@@ -441,21 +431,36 @@ class HistorySessionListPanel(
             } else {
                 JBColor(Color(96, 103, 114), Color(157, 164, 174))
             }
-            val badgeBorder = if (isSelected) {
-                JBColor(Color(120, 150, 189), Color(150, 175, 208))
-            } else {
-                JBColor(Color(173, 187, 207), Color(116, 126, 141))
-            }
 
             cardPanel.updateColors(cardBackground, cardBorder)
             titleLabel.foreground = textColor
             detailLabel.foreground = subTextColor
             providerLabel.foreground = subTextColor
             updatedLabel.foreground = subTextColor
-            modeBadge.border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(badgeBorder, 1),
-                JBUI.Borders.empty(1, 6, 1, 6),
-            )
+
+            RowAction.entries.forEach { action ->
+                val host = actionHosts[action] ?: return@forEach
+                val hovered = hoverIndex == index && hoverAction == action
+                host.isOpaque = hovered
+                if (hovered) {
+                    host.background = if (isSelected) ACTION_ICON_HOVER_BG_SELECTED else ACTION_ICON_HOVER_BG
+                    host.border = BorderFactory.createLineBorder(
+                        if (isSelected) ACTION_ICON_HOVER_BORDER_SELECTED else ACTION_ICON_HOVER_BORDER,
+                        1,
+                    )
+                } else {
+                    host.background = JBUI.CurrentTheme.List.BACKGROUND
+                    host.border = JBUI.Borders.empty(1)
+                }
+            }
+
+            if (isSelected) {
+                accentStripe.background = if (value?.let(::isSpecSession) == true) {
+                    CARD_ACCENT_SPEC_SELECTED
+                } else {
+                    CARD_ACCENT_VIBE_SELECTED
+                }
+            }
 
             return rowPanel
         }
@@ -489,83 +494,46 @@ class HistorySessionListPanel(
         }
     }
 
+    private data class ActionHit(
+        val index: Int,
+        val action: RowAction,
+    )
+
+    private enum class RowAction(val icon: Icon, val tooltipKey: String) {
+        OPEN(AllIcons.Actions.MenuOpen, "history.action.open"),
+        CONTINUE(AllIcons.Actions.Execute, "history.action.continue"),
+        BRANCH(AllIcons.Vcs.Branch, "history.action.branch"),
+        DELETE(AllIcons.Actions.GC, "history.action.delete"),
+    }
+
     companion object {
         private val timestampFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
             .withZone(ZoneId.systemDefault())
+
         private val CARD_BG_DEFAULT = JBColor(Color(247, 249, 252), Color(55, 59, 67))
         private val CARD_BORDER_DEFAULT = JBColor(Color(219, 226, 238), Color(74, 80, 90))
-        private val CARD_BG_SELECTED = JBColor(Color(220, 234, 253), Color(67, 86, 112))
-        private val CARD_BORDER_SELECTED = JBColor(Color(129, 167, 225), Color(100, 130, 167))
-        private val MODE_SPEC_BADGE_BG = JBColor(Color(224, 236, 255), Color(77, 95, 130))
-        private val MODE_SPEC_BADGE_FG = JBColor(Color(36, 73, 133), Color(214, 226, 250))
-        private val MODE_VIBE_BADGE_BG = JBColor(Color(230, 245, 233), Color(74, 107, 81))
-        private val MODE_VIBE_BADGE_FG = JBColor(Color(44, 96, 56), Color(204, 236, 210))
-        private val ACTION_BUTTON_BG = JBColor(Color(245, 248, 253), Color(62, 67, 77))
-        private val ACTION_BUTTON_BORDER = JBColor(Color(194, 206, 224), Color(95, 106, 123))
-        private val ACTION_BUTTON_FG = JBColor(Color(58, 78, 107), Color(199, 211, 230))
-        private val INFO_CARD_BG = JBColor(Color(242, 246, 253), Color(49, 53, 61))
-        private val INFO_CARD_BORDER = JBColor(Color(210, 220, 236), Color(76, 82, 93))
-        private val INFO_TITLE_FG = JBColor(Color(58, 74, 101), Color(196, 207, 224))
-        private val INFO_TEXT_FG = JBColor(Color(74, 88, 112), Color(174, 186, 204))
-    }
+        private val CARD_BG_SELECTED = JBColor(Color(221, 235, 254), Color(66, 84, 108))
+        private val CARD_BORDER_SELECTED = JBColor(Color(123, 162, 224), Color(96, 127, 166))
+        private val CARD_ACCENT_SPEC = JBColor(Color(89, 132, 208), Color(117, 145, 192))
+        private val CARD_ACCENT_SPEC_SELECTED = JBColor(Color(63, 110, 196), Color(143, 173, 220))
+        private val CARD_ACCENT_VIBE = JBColor(Color(106, 154, 115), Color(117, 153, 124))
+        private val CARD_ACCENT_VIBE_SELECTED = JBColor(Color(73, 136, 83), Color(146, 185, 153))
+        private val MODE_SPEC_TEXT = JBColor(Color(48, 92, 165), Color(185, 210, 244))
+        private val MODE_VIBE_TEXT = JBColor(Color(47, 117, 63), Color(185, 228, 193))
 
-    private class RoundedLineBorder(
-        private val lineColor: Color,
-        private val arc: Int,
-        private val thickness: Int = 1,
-    ) : AbstractBorder() {
-        override fun paintBorder(
-            c: Component?,
-            g: Graphics?,
-            x: Int,
-            y: Int,
-            width: Int,
-            height: Int,
-        ) {
-            val graphics = g as? Graphics2D ?: return
-            val g2 = graphics.create() as Graphics2D
-            try {
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
-                g2.color = lineColor
-                val safeThickness = thickness.coerceAtLeast(1)
-                repeat(safeThickness) { index ->
-                    val offset = index + 0.5f
-                    val drawWidth = width - index * 2 - 1f
-                    val drawHeight = height - index * 2 - 1f
-                    if (drawWidth <= 0f || drawHeight <= 0f) return@repeat
-                    val arcSize = (arc - index * 2).coerceAtLeast(2).toFloat()
-                    g2.draw(
-                        RoundRectangle2D.Float(
-                            x + offset,
-                            y + offset,
-                            drawWidth,
-                            drawHeight,
-                            arcSize,
-                            arcSize,
-                        ),
-                    )
-                }
-            } finally {
-                g2.dispose()
-            }
-        }
+        private val ACTION_ICON_HOVER_BG = JBColor(Color(231, 239, 252), Color(82, 96, 116))
+        private val ACTION_ICON_HOVER_BORDER = JBColor(Color(158, 184, 226), Color(122, 145, 175))
+        private val ACTION_ICON_HOVER_BG_SELECTED = JBColor(Color(206, 224, 251), Color(92, 112, 139))
+        private val ACTION_ICON_HOVER_BORDER_SELECTED = JBColor(Color(120, 156, 219), Color(139, 167, 201))
 
-        override fun getBorderInsets(c: Component?): Insets = Insets(
-            thickness,
-            thickness,
-            thickness,
-            thickness,
-        )
-
-        override fun getBorderInsets(c: Component?, insets: Insets): Insets {
-            insets.set(
-                thickness,
-                thickness,
-                thickness,
-                thickness,
-            )
-            return insets
-        }
+        private val ACTION_ICON_SIZE = JBUI.scale(16)
+        private val ACTION_ICON_GAP = JBUI.scale(6)
+        private val ACTION_STRIP_LEFT_PADDING = JBUI.scale(6)
+        private val ACTION_STRIP_RIGHT_PADDING = JBUI.scale(10)
+        private val ACTION_ZONE_TOP = JBUI.scale(7)
+        private val ACTION_STRIP_WIDTH = ACTION_STRIP_LEFT_PADDING +
+            ACTION_STRIP_RIGHT_PADDING +
+            RowAction.entries.size * ACTION_ICON_SIZE +
+            (RowAction.entries.size - 1) * ACTION_ICON_GAP
     }
 }

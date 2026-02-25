@@ -37,6 +37,7 @@ class ChatToolWindowFactory : ToolWindowFactory {
         val newSessionTitleAction = object : DumbAwareAction() {
             override fun actionPerformed(e: AnActionEvent) {
                 if (project.isDisposed) return
+                focusChatTab(toolWindow)
                 project.messageBus.syncPublisher(ChatToolWindowControlListener.TOPIC).onNewSessionRequested()
             }
 
@@ -81,7 +82,7 @@ class ChatToolWindowFactory : ToolWindowFactory {
 
             override fun update(e: AnActionEvent) {
                 val text = SpecCodingBundle.message("toolwindow.changes.open.tooltip")
-                e.presentation.icon = AllIcons.Toolwindows.ToolWindowChanges
+                e.presentation.icon = AllIcons.Actions.Undo
                 e.presentation.text = text
                 e.presentation.description = text
                 e.presentation.isEnabledAndVisible = !project.isDisposed
@@ -181,6 +182,14 @@ class ChatToolWindowFactory : ToolWindowFactory {
 
     override fun shouldBeAvailable(project: Project): Boolean {
         return true
+    }
+
+    private fun focusChatTab(toolWindow: ToolWindow) {
+        val chatTitle = SpecCodingBundle.message("toolwindow.tab.chat")
+        toolWindow.contentManager.contents
+            .firstOrNull { it.displayName == chatTitle }
+            ?.let(toolWindow.contentManager::setSelectedContent)
+        toolWindow.activate(null)
     }
 
     private fun openOrSelectTransientContent(

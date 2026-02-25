@@ -25,6 +25,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.awt.FlowLayout
+import java.util.Locale
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
@@ -85,9 +86,9 @@ class SpecCodingSettingsConfigurable : Configurable {
         router.availableUiProviders().forEach { defaultProviderCombo.addItem(it) }
         defaultProviderCombo.renderer = SimpleListCellRenderer.create<String> { label, value, _ ->
             label.text = when (value) {
-                ClaudeCliLlmProvider.ID -> SpecCodingBundle.message("statusbar.modelSelector.provider.claudeCli")
-                CodexCliLlmProvider.ID -> SpecCodingBundle.message("statusbar.modelSelector.provider.codexCli")
-                else -> value ?: ""
+                ClaudeCliLlmProvider.ID -> lowerUiText(SpecCodingBundle.message("statusbar.modelSelector.provider.claudeCli"))
+                CodexCliLlmProvider.ID -> lowerUiText(SpecCodingBundle.message("statusbar.modelSelector.provider.codexCli"))
+                else -> lowerUiText(value ?: "")
             }
         }
         defaultProviderCombo.selectedItem = settings.defaultProvider
@@ -95,7 +96,7 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         // Model ComboBox
         defaultModelCombo.renderer = SimpleListCellRenderer.create<ModelInfo> { label, value, _ ->
-            label.text = value?.name ?: ""
+            label.text = lowerUiText(value?.name ?: "")
         }
         refreshModelCombo()
 
@@ -118,8 +119,8 @@ class SpecCodingSettingsConfigurable : Configurable {
             .addLabeledComponent(SpecCodingBundle.message("settings.engine.claudePath"), claudeCodeCliPathField)
             .addLabeledComponent(SpecCodingBundle.message("settings.engine.codexPath"), codexCliPathField)
             .addComponent(cliDetectPanel)
-            .addLabeledComponent("Claude CLI:", claudeCliStatusLabel)
-            .addLabeledComponent("Codex CLI:", codexCliStatusLabel)
+            .addLabeledComponent("claude cli:", claudeCliStatusLabel)
+            .addLabeledComponent("codex cli:", codexCliStatusLabel)
             .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.general")}</b></html>"))
             .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderCombo)
@@ -165,7 +166,7 @@ class SpecCodingSettingsConfigurable : Configurable {
         if (maxHistorySizeField.text != settings.maxHistorySize.toString()) return true
         if (codexCliPathField.text != settings.codexCliPath) return true
         if (claudeCodeCliPathField.text != settings.claudeCodeCliPath) return true
-        if (defaultModeField.text != settings.defaultOperationMode) return true
+        if (normalizeOperationMode(defaultModeField.text) != settings.defaultOperationMode.uppercase(Locale.ROOT)) return true
         return false
     }
 
@@ -189,7 +190,7 @@ class SpecCodingSettingsConfigurable : Configurable {
         settings.codexCliPath = codexCliPathField.text
         settings.claudeCodeCliPath = claudeCodeCliPathField.text
 
-        settings.defaultOperationMode = defaultModeField.text
+        settings.defaultOperationMode = normalizeOperationMode(defaultModeField.text)
 
         globalConfigSyncService.notifyGlobalConfigChanged(
             sourceProject = null,
@@ -216,7 +217,7 @@ class SpecCodingSettingsConfigurable : Configurable {
         codexCliPathField.text = settings.codexCliPath
         claudeCodeCliPathField.text = settings.claudeCodeCliPath
 
-        defaultModeField.text = settings.defaultOperationMode
+        defaultModeField.text = settings.defaultOperationMode.lowercase(Locale.ROOT)
     }
 
     override fun disposeUIResources() {
@@ -266,7 +267,8 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         val claudeInfo = discoveryService.claudeInfo
         if (claudeInfo.available) {
-            claudeCliStatusLabel.text = SpecCodingBundle.message("settings.cli.claude.found", claudeInfo.version ?: "unknown")
+            val version = lowerUiText(claudeInfo.version ?: "unknown")
+            claudeCliStatusLabel.text = SpecCodingBundle.message("settings.cli.claude.found", version)
             claudeCliStatusLabel.foreground = JBColor.GREEN.darker()
         } else {
             claudeCliStatusLabel.text = SpecCodingBundle.message("settings.cli.claude.notFound")
@@ -275,7 +277,8 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         val codexInfo = discoveryService.codexInfo
         if (codexInfo.available) {
-            codexCliStatusLabel.text = SpecCodingBundle.message("settings.cli.codex.found", codexInfo.version ?: "unknown")
+            val version = lowerUiText(codexInfo.version ?: "unknown")
+            codexCliStatusLabel.text = SpecCodingBundle.message("settings.cli.codex.found", version)
             codexCliStatusLabel.foreground = JBColor.GREEN.darker()
         } else {
             codexCliStatusLabel.text = SpecCodingBundle.message("settings.cli.codex.notFound")
@@ -305,8 +308,17 @@ class SpecCodingSettingsConfigurable : Configurable {
         fun create(): SimpleListCellRenderer<InterfaceLanguage> {
             return SimpleListCellRenderer.create<InterfaceLanguage> { label, value, _ ->
                 val text = value?.let { SpecCodingBundle.messageOrDefault(it.labelKey, it.code) } ?: ""
-                label.text = text
+                label.text = text.lowercase(Locale.ROOT)
             }
         }
+    }
+
+    private fun lowerUiText(text: String): String = text.lowercase(Locale.ROOT)
+
+    private fun normalizeOperationMode(input: String): String {
+        return input
+            .trim()
+            .ifBlank { "default" }
+            .uppercase(Locale.ROOT)
     }
 }

@@ -1,7 +1,6 @@
 package com.eacape.speccodingplugin.ui.history
 
 import com.eacape.speccodingplugin.SpecCodingBundle
-import com.eacape.speccodingplugin.session.ConversationMessage
 import com.eacape.speccodingplugin.session.ConversationSession
 import com.eacape.speccodingplugin.session.SessionContextSnapshot
 import com.eacape.speccodingplugin.session.SessionFilter
@@ -30,15 +29,11 @@ import javax.swing.BorderFactory
 import javax.swing.DefaultListCellRenderer
 import javax.swing.JComboBox
 import javax.swing.JPanel
-import javax.swing.JSplitPane
 
 class HistoryPanel(
     private val project: Project,
     private val searchSessions: (query: String, filter: SessionFilter, limit: Int) -> List<SessionSummary> = { query, filter, limit ->
         SessionManager.getInstance(project).searchSessions(query = query, filter = filter, limit = limit)
-    },
-    private val listMessages: (sessionId: String, limit: Int) -> List<ConversationMessage> = { sessionId, limit ->
-        SessionManager.getInstance(project).listMessages(sessionId, limit)
     },
     private val deleteSession: (sessionId: String) -> Result<Unit> = { sessionId ->
         SessionManager.getInstance(project).deleteSession(sessionId)
@@ -77,7 +72,6 @@ class HistoryPanel(
         onDeleteSession = ::onDeleteSession,
         onBranchSession = ::onBranchSession,
     )
-    private val detailPanel = HistoryDetailPanel()
 
     private var selectedSessionId: String? = null
 
@@ -89,20 +83,7 @@ class HistoryPanel(
 
     private fun setupUi() {
         add(buildToolbar(), BorderLayout.NORTH)
-
-        val splitPane = JSplitPane(
-            JSplitPane.HORIZONTAL_SPLIT,
-            createSectionContainer(listPanel),
-            createSectionContainer(detailPanel),
-        ).apply {
-            dividerLocation = 340
-            resizeWeight = 0.36
-            dividerSize = JBUI.scale(6)
-            isContinuousLayout = true
-            border = JBUI.Borders.empty()
-            background = PANEL_SECTION_BG
-        }
-        add(splitPane, BorderLayout.CENTER)
+        add(createSectionContainer(listPanel), BorderLayout.CENTER)
     }
 
     private fun buildToolbar(): JPanel {
@@ -137,9 +118,12 @@ class HistoryPanel(
         statusLabel.font = JBUI.Fonts.smallFont()
         statusLabel.foreground = STATUS_TEXT_FG
         val statusChip = JPanel(BorderLayout()).apply {
-            isOpaque = false
+            isOpaque = true
             background = STATUS_CHIP_BG
-            border = JBUI.Borders.empty(4, 6)
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(STATUS_CHIP_BORDER, 1),
+                JBUI.Borders.empty(3, 8),
+            )
             add(statusLabel, BorderLayout.CENTER)
         }
 
@@ -219,26 +203,12 @@ class HistoryPanel(
                     ?: sessions.firstOrNull()
                 selectedSessionId = selected?.id
                 listPanel.setSelectedSession(selected?.id)
-                if (selected == null) {
-                    if (sessions.isEmpty() && (query.isNotBlank() || filter != SessionFilter.ALL)) {
-                        detailPanel.showText(renderFilteredEmptyText(query, filter))
-                    } else {
-                        detailPanel.showEmpty()
-                    }
-                }
             }
         }
     }
 
     private fun onSessionSelected(sessionId: String) {
         selectedSessionId = sessionId
-        runBackground {
-            val messages = listMessages(sessionId, SESSION_MESSAGES_FETCH_LIMIT)
-                .takeLast(SESSION_MESSAGES_RENDER_LIMIT)
-            invokeLaterSafe {
-                detailPanel.showMessages(messages)
-            }
-        }
     }
 
     private fun onOpenSession(sessionId: String) {
@@ -268,7 +238,6 @@ class HistoryPanel(
                 result.onSuccess {
                     if (selectedSessionId == sessionId) {
                         selectedSessionId = null
-                        detailPanel.showEmpty()
                     }
                     refreshSessions()
                 }.onFailure { error ->
@@ -336,17 +305,6 @@ class HistoryPanel(
         }
     }
 
-    private fun renderFilteredEmptyText(query: String, filter: SessionFilter): String {
-        val queryText = query.trim().ifBlank {
-            SpecCodingBundle.message("history.empty.filtered.query.none")
-        }
-        return buildString {
-            appendLine("### ${SpecCodingBundle.message("history.empty.filtered.title")}")
-            appendLine()
-            appendLine(SpecCodingBundle.message("history.empty.filtered.desc", filter.name, queryText))
-        }.trim()
-    }
-
     private fun invokeLaterSafe(action: () -> Unit) {
         if (runSynchronously) {
             if (!isDisposed && !project.isDisposed) {
@@ -385,10 +343,6 @@ class HistoryPanel(
 
     internal fun sessionsForTest(): List<SessionSummary> = listPanel.sessionsForTest()
 
-    internal fun detailTextForTest(): String = detailPanel.displayedTextForTest()
-
-    internal fun isDetailEmptyForTest(): Boolean = detailPanel.isShowingEmptyForTest()
-
     internal fun selectSessionForTest(sessionId: String?) {
         listPanel.setSelectedSession(sessionId)
         selectedSessionId = sessionId
@@ -416,8 +370,6 @@ class HistoryPanel(
     }
 
     companion object {
-        private const val SESSION_MESSAGES_FETCH_LIMIT = 5000
-        private const val SESSION_MESSAGES_RENDER_LIMIT = 600
         private val TOOLBAR_BG = JBColor(Color(248, 250, 253), Color(58, 63, 71))
         private val TOOLBAR_BORDER = JBColor(Color(214, 222, 236), Color(82, 90, 102))
         private val TOOLBAR_LABEL_FG = JBColor(Color(82, 92, 108), Color(171, 180, 194))

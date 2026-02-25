@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.context.ContextConfig
 import com.eacape.speccodingplugin.context.ContextCollector
 import com.eacape.speccodingplugin.context.ContextItem
 import com.eacape.speccodingplugin.context.ContextType
@@ -788,7 +789,10 @@ class ImprovedChatPanel(
             ensureActiveSession(visibleInput, providerId)
         }
         val explicitItems = loadExplicitItemContents(contextPreviewPanel.getItems())
-        val contextSnapshot = contextCollector.collectForItems(explicitItems)
+        val contextSnapshot = contextCollector.collectForItems(
+            explicitItems = explicitItems,
+            config = CHAT_CONTEXT_CONFIG,
+        )
         contextPreviewPanel.clear()
         clearImageAttachments(purgeTransientFiles = false)
 
@@ -4619,6 +4623,13 @@ class ImprovedChatPanel(
     }
 
     companion object {
+        private val CHAT_CONTEXT_CONFIG = ContextConfig(
+            includeCurrentFile = false,
+            includeSelectedCode = false,
+            includeContainingScope = false,
+            preferGraphRelatedContext = false,
+        )
+
         private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"
         private val HISTORY_CONTENT_DATA_KEY = Key.create<String>(HISTORY_CONTENT_KEY)
         private val ACTION_ICON_BUTTON_SIZE = JBDimension(28, 24)
