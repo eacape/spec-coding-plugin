@@ -12,15 +12,19 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
+import com.intellij.ui.JBColor
+import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.awt.Color
 import java.awt.BorderLayout
-import java.awt.FlowLayout
-import javax.swing.JButton
+import java.awt.Component
+import java.awt.Font
+import javax.swing.BorderFactory
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 
@@ -73,32 +77,80 @@ class WorktreePanel(
     )
     private val detailPanel = WorktreeDetailPanel()
 
-    private val refreshButton = JButton(SpecCodingBundle.message("worktree.action.refresh"))
+    private val titleLabel = JBLabel(SpecCodingBundle.message("worktree.panel.title"))
+    private val statusLabel = JBLabel(SpecCodingBundle.message("worktree.status.count", 0))
 
     private var selectedWorktreeId: String? = null
     private var currentItems: List<WorktreeListItem> = emptyList()
 
     init {
-        border = JBUI.Borders.empty(4)
+        border = JBUI.Borders.empty(8)
         setupUI()
         subscribeToLocaleEvents()
         refreshWorktrees()
     }
 
     private fun setupUI() {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
-            isOpaque = false
-            border = JBUI.Borders.emptyBottom(4)
-        }
-        refreshButton.addActionListener { refreshWorktrees() }
-        toolbar.add(refreshButton)
-        add(toolbar, BorderLayout.NORTH)
+        add(buildHeader(), BorderLayout.NORTH)
 
-        val splitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, listPanel, detailPanel).apply {
-            dividerLocation = 260
-            dividerSize = JBUI.scale(4)
+        val splitPane = JSplitPane(
+            JSplitPane.HORIZONTAL_SPLIT,
+            createSectionContainer(listPanel),
+            createSectionContainer(detailPanel),
+        ).apply {
+            dividerLocation = 320
+            resizeWeight = 0.38
+            dividerSize = JBUI.scale(6)
+            isContinuousLayout = true
+            border = JBUI.Borders.empty()
+            background = PANEL_SECTION_BG
         }
         add(splitPane, BorderLayout.CENTER)
+    }
+
+    private fun buildHeader(): JPanel {
+        titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 13f)
+        statusLabel.font = JBUI.Fonts.smallFont()
+        statusLabel.foreground = STATUS_TEXT_FG
+
+        val statusChip = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = STATUS_CHIP_BG
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(STATUS_CHIP_BORDER, 1),
+                JBUI.Borders.empty(3, 8),
+            )
+            add(statusLabel, BorderLayout.CENTER)
+        }
+
+        val headerCard = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = HEADER_BG
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(HEADER_BORDER, 1),
+                JBUI.Borders.empty(8, 10),
+            )
+            add(titleLabel, BorderLayout.WEST)
+            add(statusChip, BorderLayout.EAST)
+        }
+
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(8)
+            add(headerCard, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createSectionContainer(content: Component): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = PANEL_SECTION_BG
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(PANEL_SECTION_BORDER, 1),
+                JBUI.Borders.empty(2),
+            )
+            add(content, BorderLayout.CENTER)
+        }
     }
 
     fun refreshWorktrees() {
@@ -127,6 +179,7 @@ class WorktreePanel(
             invokeLaterSafe {
                 currentItems = items
                 listPanel.updateWorktrees(items)
+                statusLabel.text = SpecCodingBundle.message("worktree.status.count", items.size)
 
                 val selected = selectedWorktreeId?.let { id -> items.firstOrNull { it.id == id } }
                     ?: items.firstOrNull()
@@ -226,7 +279,8 @@ class WorktreePanel(
     }
 
     private fun refreshLocalizedTexts() {
-        refreshButton.text = SpecCodingBundle.message("worktree.action.refresh")
+        titleLabel.text = SpecCodingBundle.message("worktree.panel.title")
+        statusLabel.text = SpecCodingBundle.message("worktree.status.count", currentItems.size)
         listPanel.refreshLocalizedTexts()
         detailPanel.refreshLocalizedTexts()
     }
@@ -270,5 +324,15 @@ class WorktreePanel(
     override fun dispose() {
         isDisposed = true
         scope.cancel()
+    }
+
+    companion object {
+        private val HEADER_BG = JBColor(Color(248, 250, 253), Color(58, 63, 71))
+        private val HEADER_BORDER = JBColor(Color(214, 222, 236), Color(82, 90, 102))
+        private val STATUS_CHIP_BG = JBColor(Color(239, 245, 253), Color(64, 74, 88))
+        private val STATUS_CHIP_BORDER = JBColor(Color(186, 201, 224), Color(96, 111, 131))
+        private val STATUS_TEXT_FG = JBColor(Color(60, 76, 100), Color(194, 207, 225))
+        private val PANEL_SECTION_BG = JBColor(Color(251, 252, 254), Color(50, 54, 61))
+        private val PANEL_SECTION_BORDER = JBColor(Color(211, 218, 232), Color(79, 85, 96))
     }
 }

@@ -286,4 +286,52 @@ class SpecEngineWorkflowTest {
             conflict.exceptionOrNull()?.message?.contains("revision conflict", ignoreCase = true) == true
         )
     }
+
+    @Test
+    fun `generateCurrentPhase should forward confirmed clarification context to generator`() {
+        var capturedConfirmedContext: String? = null
+        val engine = SpecEngine(project, storage, generationHandler = { request ->
+            capturedConfirmedContext = request.options.confirmedContext
+            val content = """
+                ## 功能需求
+                - 用户可以创建任务
+                
+                ## 非功能需求
+                - 响应时间 < 1s
+                
+                ## 用户故事
+                As a user, I want to create tasks, so that I can track work.
+                
+                ## 验收标准
+                - [ ] 创建成功
+            """.trimIndent()
+            val candidate = SpecDocument(
+                id = "doc-specify",
+                phase = request.phase,
+                content = content,
+                metadata = SpecMetadata(
+                    title = "${request.phase.displayName} Document",
+                    description = "Generated ${request.phase.displayName} document",
+                ),
+            )
+            SpecGenerationResult.Success(candidate.copy(validationResult = SpecValidator.validate(candidate)))
+        })
+
+        val workflow = engine.createWorkflow(
+            title = "Clarify Context",
+            description = "Forward confirmed context",
+        ).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(
+                workflowId = workflow.id,
+                input = "build a todo app",
+                options = GenerationOptions(
+                    confirmedContext = "API 必须支持幂等 key；数据库使用 PostgreSQL",
+                ),
+            ).collect()
+        }
+
+        assertEquals("API 必须支持幂等 key；数据库使用 PostgreSQL", capturedConfirmedContext)
+    }
 }

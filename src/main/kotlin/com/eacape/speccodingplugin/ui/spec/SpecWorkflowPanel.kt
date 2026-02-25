@@ -94,6 +94,10 @@ class SpecWorkflowPanel(
 
         detailPanel = SpecDetailPanel(
             onGenerate = ::onGenerate,
+            onClarificationConfirm = ::onClarificationConfirm,
+            onClarificationRegenerate = ::onClarificationRegenerate,
+            onClarificationSkip = ::onClarificationSkip,
+            onClarificationCancel = ::onClarificationCancel,
             onNextPhase = ::onNextPhase,
             onGoBack = ::onGoBack,
             onComplete = ::onComplete,
@@ -686,25 +690,112 @@ class SpecWorkflowPanel(
     }
 
     private fun onGenerate(input: String) {
-        val wfId = selectedWorkflowId ?: return
-        val providerId = providerComboBox.selectedItem as? String
-        if (providerId.isNullOrBlank()) {
-            setStatusText(SpecCodingBundle.message("spec.workflow.generation.providerRequired"))
-            return
-        }
-
-        val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id?.trim().orEmpty()
-        if (modelId.isBlank()) {
-            setStatusText(SpecCodingBundle.message("spec.workflow.generation.modelRequired", providerDisplayName(providerId)))
-            return
-        }
-
-        val options = GenerationOptions(
-            providerId = providerId,
-            model = modelId,
+        val context = resolveGenerationContext() ?: return
+        requestClarificationDraft(
+            context = context,
+            input = input,
+            suggestedDetails = input,
         )
+    }
+
+    private fun onClarificationConfirm(
+        input: String,
+        confirmedContext: String,
+    ) {
+        val context = resolveGenerationContext() ?: return
+        runGeneration(
+            workflowId = context.workflowId,
+            input = input,
+            options = context.options.copy(confirmedContext = confirmedContext),
+        )
+    }
+
+    private fun onClarificationRegenerate(
+        input: String,
+        currentDraft: String,
+    ) {
+        val context = resolveGenerationContext() ?: return
+        requestClarificationDraft(
+            context = context,
+            input = input,
+            options = context.options.copy(confirmedContext = currentDraft),
+            suggestedDetails = currentDraft,
+        )
+    }
+
+    private fun onClarificationSkip(input: String) {
+        val context = resolveGenerationContext() ?: return
+        setStatusText(SpecCodingBundle.message("spec.workflow.clarify.skippedProceed"))
+        runGeneration(
+            workflowId = context.workflowId,
+            input = input,
+            options = context.options,
+        )
+    }
+
+    private fun onClarificationCancel() {
+        setStatusText(SpecCodingBundle.message("spec.workflow.clarify.cancelled"))
+    }
+
+    private fun requestClarificationDraft(
+        context: GenerationContext,
+        input: String,
+        options: GenerationOptions = context.options,
+        suggestedDetails: String = input,
+    ) {
         scope.launch(Dispatchers.IO) {
-            specEngine.generateCurrentPhase(wfId, input, options).collect { progress ->
+            val safeSuggestedDetails = suggestedDetails.ifBlank { input }
+            val fallbackPhase = context.phase
+            invokeLaterSafe {
+                if (selectedWorkflowId != context.workflowId) {
+                    return@invokeLaterSafe
+                }
+                detailPanel.showClarificationGenerating(
+                    phase = fallbackPhase,
+                    input = input,
+                    suggestedDetails = safeSuggestedDetails,
+                )
+                setStatusText(SpecCodingBundle.message("spec.workflow.clarify.generating"))
+            }
+            val draftResult = runCatching {
+                specEngine.draftCurrentPhaseClarification(
+                    workflowId = context.workflowId,
+                    input = input,
+                    options = options,
+                ).getOrThrow()
+            }
+
+            val draft = draftResult.getOrNull()
+            if (draft == null) {
+                logger.warn("Failed to draft clarification for workflow=${context.workflowId}", draftResult.exceptionOrNull())
+            }
+            invokeLaterSafe {
+                if (selectedWorkflowId != context.workflowId) {
+                    return@invokeLaterSafe
+                }
+                val markdown = buildClarificationMarkdown(draft)
+                detailPanel.showClarificationDraft(
+                    phase = draft?.phase ?: fallbackPhase,
+                    input = input,
+                    questionsMarkdown = markdown,
+                    suggestedDetails = safeSuggestedDetails,
+                )
+                if (draft == null) {
+                    setStatusText(SpecCodingBundle.message("spec.workflow.clarify.unavailableProceed"))
+                } else {
+                    setStatusText(null)
+                }
+            }
+        }
+    }
+
+    private fun runGeneration(
+        workflowId: String,
+        input: String,
+        options: GenerationOptions,
+    ) {
+        scope.launch(Dispatchers.IO) {
+            specEngine.generateCurrentPhase(workflowId, input, options).collect { progress ->
                 invokeLaterSafe {
                     when (progress) {
                         is SpecGenerationProgress.Started ->
@@ -712,10 +803,18 @@ class SpecWorkflowPanel(
                         is SpecGenerationProgress.Generating ->
                             detailPanel.showGenerating(progress.progress)
                         is SpecGenerationProgress.Completed -> {
+                            detailPanel.exitClarificationMode(clearInput = false)
                             reloadCurrentWorkflow()
                         }
                         is SpecGenerationProgress.ValidationFailed -> {
-                            reloadCurrentWorkflow()
+                            detailPanel.exitClarificationMode(clearInput = false)
+                            setStatusText(buildValidationFailureStatus(progress.validation))
+                            reloadCurrentWorkflow { updated ->
+                                detailPanel.showValidationFailureInteractive(
+                                    phase = updated.currentPhase,
+                                    validation = progress.validation,
+                                )
+                            }
                         }
                         is SpecGenerationProgress.Failed -> {
                             detailPanel.showGenerationFailed()
@@ -726,6 +825,57 @@ class SpecWorkflowPanel(
             }
         }
     }
+
+    private fun resolveGenerationContext(): GenerationContext? {
+        val wfId = selectedWorkflowId ?: return null
+        val workflow = currentWorkflow?.takeIf { it.id == wfId }
+        if (workflow == null) {
+            setStatusText(SpecCodingBundle.message("spec.workflow.error", SpecCodingBundle.message("common.unknown")))
+            return null
+        }
+        val providerId = providerComboBox.selectedItem as? String
+        if (providerId.isNullOrBlank()) {
+            setStatusText(SpecCodingBundle.message("spec.workflow.generation.providerRequired"))
+            return null
+        }
+        val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id?.trim().orEmpty()
+        if (modelId.isBlank()) {
+            setStatusText(SpecCodingBundle.message("spec.workflow.generation.modelRequired", providerDisplayName(providerId)))
+            return null
+        }
+        return GenerationContext(
+            workflowId = wfId,
+            phase = workflow.currentPhase,
+            options = GenerationOptions(
+                providerId = providerId,
+                model = modelId,
+            ),
+        )
+    }
+
+    private fun buildClarificationMarkdown(draft: SpecClarificationDraft?): String {
+        if (draft == null) {
+            return SpecCodingBundle.message("spec.workflow.clarify.noQuestions")
+        }
+        if (draft.rawContent.isNotBlank()) {
+            return draft.rawContent
+        }
+        if (draft.questions.isNotEmpty()) {
+            return buildString {
+                appendLine("## ${SpecCodingBundle.message("spec.detail.clarify.questions.title")}")
+                draft.questions.forEachIndexed { index, q ->
+                    appendLine("${index + 1}. $q")
+                }
+            }.trimEnd()
+        }
+        return SpecCodingBundle.message("spec.workflow.clarify.noQuestions")
+    }
+
+    private data class GenerationContext(
+        val workflowId: String,
+        val phase: SpecPhase,
+        val options: GenerationOptions,
+    )
 
     private fun onShowDelta() {
         val targetWorkflow = currentWorkflow
@@ -871,7 +1021,7 @@ class SpecWorkflowPanel(
         val wfId = selectedWorkflowId ?: return
         scope.launch(Dispatchers.IO) {
             specEngine.proceedToNextPhase(wfId).onSuccess {
-                invokeLaterSafe { reloadCurrentWorkflow() }
+                invokeLaterSafe { reloadCurrentWorkflow(followCurrentPhase = true) }
             }.onFailure { e ->
                 invokeLaterSafe {
                     setStatusText(SpecCodingBundle.message(
@@ -887,7 +1037,7 @@ class SpecWorkflowPanel(
         val wfId = selectedWorkflowId ?: return
         scope.launch(Dispatchers.IO) {
             specEngine.goBackToPreviousPhase(wfId).onSuccess {
-                invokeLaterSafe { reloadCurrentWorkflow() }
+                invokeLaterSafe { reloadCurrentWorkflow(followCurrentPhase = true) }
             }.onFailure { e ->
                 invokeLaterSafe {
                     setStatusText(SpecCodingBundle.message(
@@ -1096,7 +1246,10 @@ class SpecWorkflowPanel(
         }
     }
 
-    private fun reloadCurrentWorkflow() {
+    private fun reloadCurrentWorkflow(
+        followCurrentPhase: Boolean = false,
+        onUpdated: ((SpecWorkflow) -> Unit)? = null,
+    ) {
         val wfId = selectedWorkflowId ?: return
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.loadWorkflow(wfId).getOrNull()
@@ -1104,12 +1257,29 @@ class SpecWorkflowPanel(
             invokeLaterSafe {
                 if (wf != null) {
                     phaseIndicator.updatePhase(wf)
-                    detailPanel.updateWorkflow(wf)
+                    detailPanel.updateWorkflow(wf, followCurrentPhase = followCurrentPhase)
                     archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
+                    onUpdated?.invoke(wf)
                 } else {
                     archiveButton.isEnabled = false
                 }
             }
+        }
+    }
+
+    private fun buildValidationFailureStatus(validation: ValidationResult): String {
+        val firstError = validation.errors.firstOrNull()
+        if (firstError.isNullOrBlank()) {
+            return SpecCodingBundle.message("spec.workflow.validation.failed.unknown")
+        }
+        return if (validation.errors.size > 1) {
+            SpecCodingBundle.message(
+                "spec.workflow.validation.failed.more",
+                firstError,
+                validation.errors.size - 1,
+            )
+        } else {
+            SpecCodingBundle.message("spec.workflow.validation.failed", firstError)
         }
     }
 

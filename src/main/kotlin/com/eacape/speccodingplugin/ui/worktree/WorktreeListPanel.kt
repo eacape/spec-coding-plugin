@@ -10,8 +10,10 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
-import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.GridLayout
+import javax.swing.BorderFactory
+import javax.swing.BoxLayout
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JList
@@ -35,29 +37,54 @@ class WorktreeListPanel(
     private val cleanupButton = JButton(SpecCodingBundle.message("worktree.action.cleanup"))
 
     init {
-        border = JBUI.Borders.empty(4)
+        border = JBUI.Borders.empty(8)
+        minimumSize = JBUI.size(JBUI.scale(220), 0)
         setupUI()
     }
 
     private fun setupUI() {
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+        val toolbar = JPanel(GridLayout(1, 0, 6, 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(4)
         }
 
         createButton.addActionListener { onCreateWorktree() }
         switchButton.addActionListener { selectedId()?.let(onSwitchWorktree) }
         mergeButton.addActionListener { selectedId()?.let(onMergeWorktree) }
         cleanupButton.addActionListener { selectedId()?.let(onCleanupWorktree) }
+        styleToolbarButton(createButton)
+        styleToolbarButton(switchButton)
+        styleToolbarButton(mergeButton)
+        styleToolbarButton(cleanupButton)
 
         toolbar.add(createButton)
         toolbar.add(switchButton)
         toolbar.add(mergeButton)
         toolbar.add(cleanupButton)
-        add(toolbar, BorderLayout.NORTH)
+
+        val toolbarCard = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = TOOLBAR_BG
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(TOOLBAR_BORDER, 1),
+                JBUI.Borders.empty(8),
+            )
+            add(toolbar, BorderLayout.CENTER)
+        }
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyBottom(8)
+                add(toolbarCard, BorderLayout.CENTER)
+            },
+            BorderLayout.NORTH,
+        )
 
         worktreeList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         worktreeList.cellRenderer = WorktreeCellRenderer()
+        worktreeList.fixedCellHeight = -1
+        worktreeList.visibleRowCount = -1
+        worktreeList.border = JBUI.Borders.empty()
+        worktreeList.emptyText.text = SpecCodingBundle.message("worktree.list.empty")
         worktreeList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
                 updateButtonStates(worktreeList.selectedValue)
@@ -66,7 +93,17 @@ class WorktreeListPanel(
         }
 
         updateButtonStates(null)
-        add(JBScrollPane(worktreeList), BorderLayout.CENTER)
+        add(
+            JBScrollPane(worktreeList).apply {
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(LIST_BORDER, 1),
+                    JBUI.Borders.empty(2),
+                )
+                viewport.isOpaque = false
+                isOpaque = false
+            },
+            BorderLayout.CENTER,
+        )
     }
 
     fun updateWorktrees(items: List<WorktreeListItem>) {
@@ -87,6 +124,7 @@ class WorktreeListPanel(
         switchButton.text = SpecCodingBundle.message("worktree.action.switch")
         mergeButton.text = SpecCodingBundle.message("worktree.action.merge")
         cleanupButton.text = SpecCodingBundle.message("worktree.action.cleanup")
+        worktreeList.emptyText.text = SpecCodingBundle.message("worktree.list.empty")
         worktreeList.repaint()
     }
 
@@ -137,6 +175,13 @@ class WorktreeListPanel(
 
     private fun selectedId(): String? = worktreeList.selectedValue?.id
 
+    private fun styleToolbarButton(button: JButton) {
+        button.isFocusable = false
+        button.putClientProperty("JButton.buttonType", "roundRect")
+        button.putClientProperty("JComponent.roundRectArc", JBUI.scale(10))
+        button.margin = JBUI.insets(4, 8, 4, 8)
+    }
+
     private fun updateButtonStates(selected: WorktreeListItem?) {
         val hasSelection = selected != null
         val isActive = selected?.status == WorktreeStatus.ACTIVE
@@ -146,17 +191,30 @@ class WorktreeListPanel(
     }
 
     private class WorktreeCellRenderer : ListCellRenderer<WorktreeListItem> {
-        private val panel = JPanel(BorderLayout())
+        private val panel = JPanel(BorderLayout(0, JBUI.scale(4)))
         private val titleLabel = JBLabel()
+        private val subtitleLabel = JBLabel()
         private val detailLabel = JBLabel()
+        private val textPanel = JPanel()
 
         init {
-            panel.border = JBUI.Borders.empty(6, 8)
-            titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 13f)
-            detailLabel.font = detailLabel.font.deriveFont(Font.PLAIN, 11f)
-            detailLabel.foreground = JBColor.GRAY
-            panel.add(titleLabel, BorderLayout.NORTH)
-            panel.add(detailLabel, BorderLayout.SOUTH)
+            panel.isOpaque = true
+            panel.border = JBUI.Borders.empty(8, 10)
+
+            titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 12.5f)
+
+            subtitleLabel.font = subtitleLabel.font.deriveFont(Font.PLAIN, 11f)
+            subtitleLabel.foreground = SUBTITLE_FG
+
+            detailLabel.font = detailLabel.font.deriveFont(Font.PLAIN, 10.5f)
+
+            textPanel.isOpaque = false
+            textPanel.layout = BoxLayout(textPanel, BoxLayout.Y_AXIS)
+            textPanel.add(titleLabel)
+            textPanel.add(subtitleLabel)
+            textPanel.add(detailLabel)
+
+            panel.add(textPanel, BorderLayout.CENTER)
         }
 
         override fun getListCellRendererComponent(
@@ -179,12 +237,18 @@ class WorktreeListPanel(
                     WorktreeStatus.ERROR -> SpecCodingBundle.message("worktree.status.error")
                 }
                 titleLabel.text = "${value.specTaskId}$activeMarker"
+                subtitleLabel.text = value.specTitle
                 detailLabel.text = SpecCodingBundle.message("worktree.list.detail", statusText, value.branchName)
-                detailLabel.foreground = statusColor(value.status)
+            } else {
+                titleLabel.text = ""
+                subtitleLabel.text = ""
+                detailLabel.text = ""
             }
 
             panel.background = if (isSelected) list.selectionBackground else list.background
             titleLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
+            subtitleLabel.foreground = if (isSelected) list.selectionForeground else SUBTITLE_FG
+            detailLabel.foreground = if (isSelected) list.selectionForeground else statusColor(value?.status ?: WorktreeStatus.ACTIVE)
             return panel
         }
 
@@ -196,5 +260,15 @@ class WorktreeListPanel(
                 WorktreeStatus.ERROR -> JBColor(Color(244, 67, 54), Color(239, 83, 80))
             }
         }
+
+        companion object {
+            private val SUBTITLE_FG = JBColor(Color(88, 98, 113), Color(168, 176, 189))
+        }
+    }
+
+    companion object {
+        private val TOOLBAR_BG = JBColor(Color(248, 250, 253), Color(58, 63, 71))
+        private val TOOLBAR_BORDER = JBColor(Color(214, 222, 236), Color(82, 90, 102))
+        private val LIST_BORDER = JBColor(Color(211, 218, 232), Color(79, 85, 96))
     }
 }

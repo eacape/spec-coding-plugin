@@ -20,20 +20,45 @@ class SpecEngine(private val project: Project) {
     // Overridable by test constructor; lazy to avoid service lookups during construction
     private var _storageOverride: SpecStorage? = null
     private var _generationOverride: (suspend (SpecGenerationRequest) -> SpecGenerationResult)? = null
+    private var _clarificationOverride: (suspend (SpecGenerationRequest) -> Result<SpecClarificationDraft>)? = null
 
     private val storageDelegate: SpecStorage by lazy { _storageOverride ?: SpecStorage.getInstance(project) }
     private val generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult by lazy {
         _generationOverride ?: SpecGenerator(LlmRouter.getInstance())::generate
     }
+    private val clarificationHandler: suspend (SpecGenerationRequest) -> Result<SpecClarificationDraft> by lazy {
+        _clarificationOverride ?: SpecGenerator(LlmRouter.getInstance())::draftClarification
+    }
 
     internal constructor(
         project: Project,
         storage: SpecStorage,
-        generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult
+        generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult,
+        clarificationHandler: suspend (SpecGenerationRequest) -> Result<SpecClarificationDraft>,
     ) : this(project) {
         this._storageOverride = storage
         this._generationOverride = generationHandler
+        this._clarificationOverride = clarificationHandler
     }
+
+    internal constructor(
+        project: Project,
+        storage: SpecStorage,
+        generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult,
+    ) : this(
+        project = project,
+        storage = storage,
+        generationHandler = generationHandler,
+        clarificationHandler = {
+            Result.success(
+                SpecClarificationDraft(
+                    phase = it.phase,
+                    questions = emptyList(),
+                    rawContent = "",
+                )
+            )
+        },
+    )
 
     // 当前活跃的工作流
     private val activeWorkflows = mutableMapOf<String, SpecWorkflow>()
@@ -126,6 +151,26 @@ class SpecEngine(private val project: Project) {
             input = input,
             options = GenerationOptions(),
         )
+    }
+
+    suspend fun draftCurrentPhaseClarification(
+        workflowId: String,
+        input: String,
+        options: GenerationOptions = GenerationOptions(),
+    ): Result<SpecClarificationDraft> {
+        val workflow = activeWorkflows[workflowId]
+            ?: storageDelegate.loadWorkflow(workflowId).getOrElse { return Result.failure(it) }
+        activeWorkflows[workflowId] = workflow
+
+        val previousPhase = workflow.currentPhase.previous()
+        val previousDocument = previousPhase?.let { workflow.getDocument(it) }
+        val request = SpecGenerationRequest(
+            phase = workflow.currentPhase,
+            input = input,
+            previousDocument = previousDocument,
+            options = options,
+        )
+        return clarificationHandler(request)
     }
 
     suspend fun generateCurrentPhase(

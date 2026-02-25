@@ -1,11 +1,15 @@
 package com.eacape.speccodingplugin.ui.worktree
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.worktree.WorktreeStatus
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Font
+import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JPanel
@@ -16,6 +20,8 @@ class WorktreeDetailPanel : JPanel(BorderLayout()) {
 
     private val emptyLabel = JBLabel(SpecCodingBundle.message("worktree.empty.select"), SwingConstants.CENTER)
 
+    private val summaryTaskLabel = JBLabel()
+    private val summaryTitleLabel = JBLabel()
     private val specTaskIdLabel = JBLabel()
     private val specTitleLabel = JBLabel()
     private val statusLabel = JBLabel()
@@ -35,62 +41,108 @@ class WorktreeDetailPanel : JPanel(BorderLayout()) {
         currentItem = item
         removeAll()
 
-        val content = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-        }
+        summaryTaskLabel.text = item.specTaskId
+        summaryTaskLabel.font = summaryTaskLabel.font.deriveFont(Font.BOLD, 14f)
+        summaryTitleLabel.text = item.specTitle
+        summaryTitleLabel.font = summaryTitleLabel.font.deriveFont(Font.PLAIN, 12f)
+        summaryTitleLabel.foreground = SUBTITLE_FG
 
-        specTaskIdLabel.text = SpecCodingBundle.message("worktree.detail.specTaskIdValue", item.specTaskId)
-        specTaskIdLabel.font = specTaskIdLabel.font.deriveFont(Font.BOLD, 14f)
-        specTitleLabel.text = SpecCodingBundle.message("worktree.detail.specTitleValue", item.specTitle)
+        specTaskIdLabel.text = item.specTaskId
+        specTitleLabel.text = item.specTitle
         val statusText = when (item.status) {
-            com.eacape.speccodingplugin.worktree.WorktreeStatus.ACTIVE -> SpecCodingBundle.message("worktree.status.active")
-            com.eacape.speccodingplugin.worktree.WorktreeStatus.MERGED -> SpecCodingBundle.message("worktree.status.merged")
-            com.eacape.speccodingplugin.worktree.WorktreeStatus.REMOVED -> SpecCodingBundle.message("worktree.status.removed")
-            com.eacape.speccodingplugin.worktree.WorktreeStatus.ERROR -> SpecCodingBundle.message("worktree.status.error")
+            WorktreeStatus.ACTIVE -> SpecCodingBundle.message("worktree.status.active")
+            WorktreeStatus.MERGED -> SpecCodingBundle.message("worktree.status.merged")
+            WorktreeStatus.REMOVED -> SpecCodingBundle.message("worktree.status.removed")
+            WorktreeStatus.ERROR -> SpecCodingBundle.message("worktree.status.error")
         }
         statusLabel.text = if (item.isActive) {
-            SpecCodingBundle.message("worktree.detail.statusValue.active", statusText, SpecCodingBundle.message("worktree.detail.active"))
+            "$statusText (${SpecCodingBundle.message("worktree.detail.active")})"
         } else {
-            SpecCodingBundle.message("worktree.detail.statusValue", statusText)
+            statusText
         }
-        branchLabel.text = SpecCodingBundle.message("worktree.detail.branchValue", item.branchName)
-        baseBranchLabel.text = SpecCodingBundle.message("worktree.detail.baseBranchValue", item.baseBranch)
-        pathLabel.text = SpecCodingBundle.message("worktree.detail.pathValue", item.worktreePath)
-        updatedAtLabel.text = SpecCodingBundle.message("worktree.detail.updatedAtValue", item.updatedAt)
+        branchLabel.text = item.branchName
+        baseBranchLabel.text = item.baseBranch
+        pathLabel.text = item.worktreePath
+        pathLabel.toolTipText = item.worktreePath
+        updatedAtLabel.text = item.updatedAt.toString()
 
-        content.add(specTaskIdLabel)
-        content.add(Box.createVerticalStrut(4))
-        content.add(specTitleLabel)
-        content.add(Box.createVerticalStrut(4))
-        content.add(statusLabel)
-        content.add(Box.createVerticalStrut(4))
-        content.add(branchLabel)
-        content.add(Box.createVerticalStrut(4))
-        content.add(baseBranchLabel)
-        content.add(Box.createVerticalStrut(4))
-        content.add(pathLabel)
-        content.add(Box.createVerticalStrut(4))
-        content.add(updatedAtLabel)
+        val summaryPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(summaryTaskLabel)
+            add(Box.createVerticalStrut(2))
+            add(summaryTitleLabel)
+        }
 
-        add(content, BorderLayout.NORTH)
+        val fieldsPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(8)
+            add(createFieldRow("worktree.detail.specTaskId", specTaskIdLabel))
+            add(createFieldRow("worktree.detail.specTitle", specTitleLabel))
+            add(createFieldRow("worktree.detail.status", statusLabel))
+            add(createFieldRow("worktree.detail.branch", branchLabel))
+            add(createFieldRow("worktree.detail.baseBranch", baseBranchLabel))
+            add(createFieldRow("worktree.detail.path", pathLabel))
+            add(createFieldRow("worktree.detail.updatedAt", updatedAtLabel))
+        }
+
+        val summaryCard = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = CARD_BG
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(CARD_BORDER, 1),
+                JBUI.Borders.empty(10, 12),
+            )
+            add(summaryPanel, BorderLayout.NORTH)
+            add(fieldsPanel, BorderLayout.CENTER)
+        }
+        add(summaryCard, BorderLayout.NORTH)
 
         errorArea.isEditable = false
         errorArea.lineWrap = true
         errorArea.wrapStyleWord = true
-        errorArea.border = JBUI.Borders.empty(4)
+        errorArea.background = ERROR_BG
+        errorArea.border = JBUI.Borders.empty(6, 8)
         errorArea.text = item.lastError ?: SpecCodingBundle.message("worktree.detail.noError")
 
         val errorPanel = JPanel(BorderLayout()).apply {
             isOpaque = false
             border = JBUI.Borders.emptyTop(8)
-            add(JBLabel(SpecCodingBundle.message("worktree.detail.lastError")), BorderLayout.NORTH)
-            add(JScrollPane(errorArea), BorderLayout.CENTER)
+            add(
+                JBLabel(SpecCodingBundle.message("worktree.detail.lastError")).apply {
+                    font = JBUI.Fonts.smallFont()
+                    foreground = FIELD_NAME_FG
+                    border = JBUI.Borders.emptyBottom(4)
+                },
+                BorderLayout.NORTH,
+            )
+            add(
+                JScrollPane(errorArea).apply {
+                    border = BorderFactory.createLineBorder(CARD_BORDER, 1)
+                    viewportBorder = null
+                },
+                BorderLayout.CENTER,
+            )
         }
         add(errorPanel, BorderLayout.CENTER)
 
         revalidate()
         repaint()
+    }
+
+    private fun createFieldRow(nameKey: String, valueLabel: JBLabel): JPanel {
+        val nameLabel = JBLabel(SpecCodingBundle.message(nameKey)).apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = FIELD_NAME_FG
+        }
+        valueLabel.font = valueLabel.font.deriveFont(Font.PLAIN, 12f)
+        return JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(4)
+            add(nameLabel, BorderLayout.WEST)
+            add(valueLabel, BorderLayout.CENTER)
+        }
     }
 
     fun showEmpty() {
@@ -113,4 +165,12 @@ class WorktreeDetailPanel : JPanel(BorderLayout()) {
     internal fun displayedLastErrorForTest(): String = errorArea.text
 
     internal fun isShowingEmptyForTest(): Boolean = components.contains(emptyLabel)
+
+    companion object {
+        private val CARD_BG = JBColor(Color(251, 252, 254), Color(50, 54, 61))
+        private val CARD_BORDER = JBColor(Color(211, 218, 232), Color(79, 85, 96))
+        private val SUBTITLE_FG = JBColor(Color(88, 98, 113), Color(168, 176, 189))
+        private val FIELD_NAME_FG = JBColor(Color(82, 92, 108), Color(171, 180, 194))
+        private val ERROR_BG = JBColor(Color(248, 250, 253), Color(58, 63, 71))
+    }
 }

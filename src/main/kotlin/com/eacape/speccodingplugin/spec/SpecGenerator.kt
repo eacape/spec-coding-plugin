@@ -127,6 +127,52 @@ class SpecGenerator(
         }
     }
 
+    private fun buildClarificationPrompt(request: SpecGenerationRequest): String {
+        val budget = request.options.clarificationQuestionBudget
+            .coerceIn(1, MAX_CLARIFICATION_QUESTION_BUDGET)
+
+        return buildString {
+            appendLine("你需要在生成 ${request.phase.displayName} 阶段文档前先做澄清。")
+            appendLine("请提出最关键的澄清问题，用于确认需求或研发细节。")
+            appendLine("问题数量上限：$budget。")
+            appendLine()
+            appendLine("## 当前阶段")
+            appendLine(request.phase.displayName)
+            appendLine()
+            appendLine("## 用户输入")
+            appendLine("```")
+            appendLine(request.input.ifBlank { "(本阶段没有额外补充输入)" })
+            appendLine("```")
+            appendLine()
+            appendLine("## 已有文档上下文")
+            appendLine("```")
+            appendLine(request.previousDocument?.content?.ifBlank { "(空)" } ?: "(无)")
+            appendLine("```")
+            val confirmedContext = request.options.confirmedContext
+                ?.replace("\r\n", "\n")
+                ?.replace('\r', '\n')
+                ?.trim()
+                .orEmpty()
+            if (confirmedContext.isNotBlank()) {
+                appendLine()
+                appendLine("## 用户已确认的细节草稿")
+                appendLine("```")
+                appendLine(confirmedContext)
+                appendLine("```")
+            }
+            appendLine()
+            appendLine("请严格使用以下 Markdown 输出：")
+            appendLine("## 需要确认的问题")
+            appendLine("1. ...")
+            appendLine("2. ...")
+            appendLine()
+            appendLine("## 已有信息摘要")
+            appendLine("- ...")
+            appendLine()
+            appendLine("要求：优先关注范围边界、验收标准、技术约束、数据口径、依赖、风险。")
+        }
+    }
+
     /**
      * 构建 Specify 阶段 Prompt
      */
@@ -137,6 +183,7 @@ class SpecGenerator(
             appendLine("```")
             appendLine(request.input)
             appendLine("```")
+            appendConfirmedContext(request.options.confirmedContext)
             appendLine()
             appendLine("要求：")
             appendLine("1. 提取功能需求（Functional Requirements）")
@@ -165,6 +212,7 @@ class SpecGenerator(
             appendLine("```")
             appendLine(request.previousDocument?.content ?: request.input)
             appendLine("```")
+            appendConfirmedContext(request.options.confirmedContext)
             appendLine()
             appendLine("要求：")
             appendLine("1. 设计系统架构（Architecture Design）")
@@ -193,6 +241,7 @@ class SpecGenerator(
             appendLine("```")
             appendLine(request.previousDocument?.content ?: request.input)
             appendLine("```")
+            appendConfirmedContext(request.options.confirmedContext)
             appendLine()
             appendLine("要求：")
             appendLine("1. 将设计拆解为具体的开发任务")
@@ -207,6 +256,32 @@ class SpecGenerator(
                 appendLine()
                 appendLine("参考格式：")
                 appendLine(getImplementTemplate())
+            }
+        }
+    }
+
+    private fun StringBuilder.appendConfirmedContext(confirmedContext: String?) {
+        val normalized = confirmedContext
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            .orEmpty()
+        if (normalized.isBlank()) {
+            return
+        }
+
+        appendLine()
+        appendLine("## 已确认的补充信息（优先级高于原输入）")
+        appendLine("```")
+        appendLine(normalized)
+        appendLine("```")
+    }
+
+    private fun buildRequestMetadata(options: GenerationOptions): Map<String, String> {
+        return linkedMapOf<String, String>().apply {
+            val requestId = options.requestId?.trim().orEmpty()
+            if (requestId.isNotBlank()) {
+                put("requestId", requestId)
             }
         }
     }
@@ -246,6 +321,101 @@ class SpecGenerator(
                 - 制定测试计划
             """.trimIndent()
         }
+    }
+
+    private fun getClarificationSystemPrompt(phase: SpecPhase): String {
+        return when (phase) {
+            SpecPhase.SPECIFY -> """
+                你是资深需求分析师，负责在需求文档生成前做澄清。
+                你的输出必须是高价值、可回答的问题，避免空泛提问。
+            """.trimIndent()
+
+            SpecPhase.DESIGN -> """
+                你是系统架构师，负责在设计文档生成前确认研发细节。
+                你的问题应聚焦架构约束、数据一致性、扩展性与边界条件。
+            """.trimIndent()
+
+            SpecPhase.IMPLEMENT -> """
+                你是技术负责人，负责在任务拆解前确认实施细节。
+                你的问题应聚焦交付范围、优先级、依赖、验收与测试策略。
+            """.trimIndent()
+        }
+    }
+
+    internal fun parseClarificationDraft(
+        phase: SpecPhase,
+        rawContent: String,
+        maxQuestions: Int = DEFAULT_CLARIFICATION_QUESTION_BUDGET,
+    ): SpecClarificationDraft {
+        return SpecClarificationDraft(
+            phase = phase,
+            questions = extractClarificationQuestions(rawContent, maxQuestions),
+            rawContent = rawContent.trim(),
+        )
+    }
+
+    internal fun extractClarificationQuestions(rawContent: String, maxQuestions: Int): List<String> {
+        if (rawContent.isBlank()) {
+            return emptyList()
+        }
+        val budget = maxQuestions.coerceIn(1, MAX_CLARIFICATION_QUESTION_BUDGET)
+        val lines = rawContent
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .toList()
+
+        val sectionQuestions = extractQuestionsFromSection(lines)
+        if (sectionQuestions.isNotEmpty()) {
+            return sectionQuestions.take(budget)
+        }
+
+        return lines.asSequence()
+            .mapNotNull(::normalizeQuestionLine)
+            .distinct()
+            .take(budget)
+            .toList()
+    }
+
+    private fun extractQuestionsFromSection(lines: List<String>): List<String> {
+        var inQuestionSection = false
+        val questions = mutableListOf<String>()
+
+        for (rawLine in lines) {
+            val line = rawLine.trim()
+            if (line.isBlank()) {
+                continue
+            }
+            if (line.startsWith("##")) {
+                inQuestionSection = line.contains("需要确认的问题") || line.contains("clarification questions", ignoreCase = true)
+                continue
+            }
+            if (!inQuestionSection) {
+                continue
+            }
+            normalizeQuestionLine(line)?.let { questions += it }
+        }
+
+        return questions.distinct()
+    }
+
+    private fun normalizeQuestionLine(rawLine: String): String? {
+        val line = rawLine.trim()
+        if (line.isBlank()) {
+            return null
+        }
+
+        val numbered = NUMBERED_QUESTION_REGEX.find(line)?.groupValues?.get(1)
+        if (!numbered.isNullOrBlank()) {
+            return numbered.trim()
+        }
+
+        val bulleted = BULLET_QUESTION_REGEX.find(line)?.groupValues?.get(1)
+        if (!bulleted.isNullOrBlank()) {
+            return bulleted.trim()
+        }
+
+        return if (line.endsWith("?") || line.endsWith("？")) line else null
     }
 
     /**
@@ -356,5 +526,12 @@ class SpecGenerator(
             - [ ] 集成测试：登录 API 测试
             - [ ] E2E 测试：完整登录流程测试
         """.trimIndent()
+    }
+
+    companion object {
+        private const val DEFAULT_CLARIFICATION_QUESTION_BUDGET = 5
+        private const val MAX_CLARIFICATION_QUESTION_BUDGET = 8
+        private val NUMBERED_QUESTION_REGEX = Regex("""^\d+[.)、]\s*(.+)$""")
+        private val BULLET_QUESTION_REGEX = Regex("""^[-*]\s+(.+)$""")
     }
 }
