@@ -7,7 +7,6 @@ import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.ui.chat.MarkdownRenderer
-import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -17,6 +16,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
+import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Font
 import javax.swing.BorderFactory
@@ -30,8 +30,8 @@ import javax.swing.Timer
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import javax.swing.tree.DefaultMutableTreeNode
-import javax.swing.tree.DefaultTreeCellRenderer
 import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreeCellRenderer
 
 class SpecDetailPanel(
     private val onGenerate: (String) -> Unit,
@@ -111,7 +111,7 @@ class SpecDetailPanel(
         border = JBUI.Borders.empty(2)
 
         val topSplit = JSplitPane(JSplitPane.HORIZONTAL_SPLIT).apply {
-            dividerLocation = 176
+            dividerLocation = JBUI.scale(252)
             isContinuousLayout = true
             border = JBUI.Borders.empty()
             background = PANEL_BG
@@ -120,10 +120,11 @@ class SpecDetailPanel(
 
         documentTree.isRootVisible = false
         documentTree.showsRootHandles = false
-        documentTree.rowHeight = JBUI.scale(22)
-        documentTree.border = JBUI.Borders.empty(2, 0)
+        documentTree.rowHeight = JBUI.scale(48)
+        documentTree.border = JBUI.Borders.empty(8, 6, 8, 6)
         documentTree.cellRenderer = PhaseTreeCellRenderer()
         documentTree.putClientProperty("JTree.lineStyle", "None")
+        documentTree.isOpaque = false
         documentTree.addTreeSelectionListener {
             val node = documentTree.lastSelectedPathComponent as? DefaultMutableTreeNode
             val phase = node?.userObject as? PhaseNode
@@ -135,6 +136,8 @@ class SpecDetailPanel(
         topSplit.leftComponent = createSectionContainer(
             JBScrollPane(documentTree).apply {
                 border = JBUI.Borders.empty()
+                viewport.isOpaque = false
+                isOpaque = false
             },
             backgroundColor = TREE_SECTION_BG,
             borderColor = TREE_SECTION_BORDER,
@@ -1163,7 +1166,40 @@ class SpecDetailPanel(
         }
     }
 
-    private inner class PhaseTreeCellRenderer : DefaultTreeCellRenderer() {
+    private inner class PhaseTreeCellRenderer : JPanel(BorderLayout()), TreeCellRenderer {
+        private val accentStrip = JPanel()
+        private val headerRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
+        private val phaseLabel = JBLabel()
+        private val statusInlineLabel = JBLabel()
+        private val fileLabel = JBLabel()
+
+        init {
+            isOpaque = true
+            accentStrip.isOpaque = true
+            accentStrip.preferredSize = JBUI.size(2, 0)
+            accentStrip.minimumSize = JBUI.size(2, 0)
+
+            phaseLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            phaseLabel.border = JBUI.Borders.empty()
+            statusInlineLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.PLAIN)
+            statusInlineLabel.isOpaque = false
+            fileLabel.font = JBUI.Fonts.smallFont()
+
+            headerRow.isOpaque = false
+            headerRow.add(phaseLabel)
+            headerRow.add(statusInlineLabel)
+
+            val content = JPanel(BorderLayout(0, JBUI.scale(3))).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(6, 12, 6, 12)
+                add(headerRow, BorderLayout.NORTH)
+                add(fileLabel, BorderLayout.CENTER)
+            }
+
+            add(accentStrip, BorderLayout.WEST)
+            add(content, BorderLayout.CENTER)
+        }
+
         override fun getTreeCellRendererComponent(
             tree: JTree?,
             value: Any?,
@@ -1172,31 +1208,94 @@ class SpecDetailPanel(
             leaf: Boolean,
             row: Int,
             hasFocus: Boolean,
-        ): java.awt.Component {
-            val component = super.getTreeCellRendererComponent(
-                tree,
-                value,
-                selected,
-                expanded,
-                leaf,
-                row,
-                hasFocus,
-            ) as DefaultTreeCellRenderer
-
-            val node = value as? DefaultMutableTreeNode
-            val phaseNode = node?.userObject as? PhaseNode
-            if (phaseNode != null) {
-                icon = when {
-                    phaseNode.document?.validationResult?.valid == true -> AllIcons.General.InspectionsOK
-                    else -> AllIcons.FileTypes.Text
-                }
-                foreground = if (selected) TREE_TEXT_SELECTED else TREE_TEXT
-            } else {
-                icon = null
+        ): Component {
+            val phaseNode = (value as? DefaultMutableTreeNode)?.userObject as? PhaseNode
+            if (phaseNode == null) {
+                border = JBUI.Borders.empty()
+                background = TREE_ROW_BG_NEUTRAL
+                phaseLabel.text = ""
+                fileLabel.text = ""
+                statusInlineLabel.text = ""
+                return this
             }
-            border = JBUI.Borders.empty(1, 0, 1, 0)
-            iconTextGap = JBUI.scale(6)
-            return component
+
+            val phase = phaseNode.phase
+            val document = phaseNode.document
+            val status = when {
+                document?.validationResult?.valid == true -> PhaseDocStatus.DONE
+                document != null -> PhaseDocStatus.DRAFT
+                else -> PhaseDocStatus.PENDING
+            }
+            val badgeColor = phaseBadgeColor(phase, selected)
+
+            phaseLabel.text = phase.displayName.lowercase()
+            phaseLabel.foreground = badgeColor
+            statusInlineLabel.text = "· ${status.badgeText}"
+            statusInlineLabel.foreground = statusTextColor(status, selected)
+            fileLabel.text = phase.outputFileName
+            fileLabel.foreground = if (selected) TREE_FILE_TEXT_SELECTED else TREE_FILE_TEXT
+
+            accentStrip.background = badgeColor
+            background = phaseRowBackground(phase, selected)
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = phaseRowBorder(phase, selected),
+                arc = JBUI.scale(10),
+                top = 1,
+                left = 1,
+                bottom = 1,
+                right = 1,
+            )
+            return this
+        }
+    }
+
+    private enum class PhaseDocStatus(
+        val badgeTextKey: String,
+    ) {
+        DONE(
+            badgeTextKey = "spec.detail.tree.badge.done",
+        ),
+        DRAFT(
+            badgeTextKey = "spec.detail.tree.badge.draft",
+        ),
+        PENDING(
+            badgeTextKey = "spec.detail.tree.badge.pending",
+        ),
+        ;
+
+        val badgeText: String
+            get() = SpecCodingBundle.message(badgeTextKey)
+    }
+
+    private fun phaseBadgeColor(phase: SpecPhase, selected: Boolean): Color {
+        return when (phase) {
+            SpecPhase.SPECIFY -> if (selected) TREE_PHASE_SPECIFY_SELECTED else TREE_PHASE_SPECIFY
+            SpecPhase.DESIGN -> if (selected) TREE_PHASE_DESIGN_SELECTED else TREE_PHASE_DESIGN
+            SpecPhase.IMPLEMENT -> if (selected) TREE_PHASE_IMPLEMENT_SELECTED else TREE_PHASE_IMPLEMENT
+        }
+    }
+
+    private fun phaseRowBackground(phase: SpecPhase, selected: Boolean): Color {
+        return when (phase) {
+            SpecPhase.SPECIFY -> if (selected) TREE_ROW_SPECIFY_BG_SELECTED else TREE_ROW_SPECIFY_BG
+            SpecPhase.DESIGN -> if (selected) TREE_ROW_DESIGN_BG_SELECTED else TREE_ROW_DESIGN_BG
+            SpecPhase.IMPLEMENT -> if (selected) TREE_ROW_IMPLEMENT_BG_SELECTED else TREE_ROW_IMPLEMENT_BG
+        }
+    }
+
+    private fun phaseRowBorder(phase: SpecPhase, selected: Boolean): Color {
+        return when (phase) {
+            SpecPhase.SPECIFY -> if (selected) TREE_ROW_SPECIFY_BORDER_SELECTED else TREE_ROW_SPECIFY_BORDER
+            SpecPhase.DESIGN -> if (selected) TREE_ROW_DESIGN_BORDER_SELECTED else TREE_ROW_DESIGN_BORDER
+            SpecPhase.IMPLEMENT -> if (selected) TREE_ROW_IMPLEMENT_BORDER_SELECTED else TREE_ROW_IMPLEMENT_BORDER
+        }
+    }
+
+    private fun statusTextColor(status: PhaseDocStatus, selected: Boolean): Color {
+        return when (status) {
+            PhaseDocStatus.DONE -> if (selected) TREE_STATUS_DONE_TEXT_SELECTED else TREE_STATUS_DONE_TEXT
+            PhaseDocStatus.DRAFT -> if (selected) TREE_STATUS_DRAFT_TEXT_SELECTED else TREE_STATUS_DRAFT_TEXT
+            PhaseDocStatus.PENDING -> if (selected) TREE_STATUS_PENDING_TEXT_SELECTED else TREE_STATUS_PENDING_TEXT
         }
     }
 
@@ -1206,8 +1305,8 @@ class SpecDetailPanel(
         private val GENERATING_FRAMES = listOf("◐", "◓", "◑", "◒")
         private val PANEL_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
         private val PANEL_BORDER = JBColor(Color(205, 216, 234), Color(84, 92, 106))
-        private val TREE_SECTION_BG = JBColor(Color(241, 247, 255), Color(60, 67, 78))
-        private val TREE_SECTION_BORDER = JBColor(Color(196, 211, 233), Color(92, 103, 121))
+        private val TREE_SECTION_BG = JBColor(Color(246, 249, 253), Color(60, 67, 78))
+        private val TREE_SECTION_BORDER = JBColor(Color(214, 223, 236), Color(92, 103, 121))
         private val PREVIEW_COLUMN_BG = JBColor(Color(244, 249, 255), Color(55, 61, 71))
         private val PREVIEW_SECTION_BG = JBColor(Color(250, 253, 255), Color(49, 55, 64))
         private val PREVIEW_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(83, 93, 109))
@@ -1225,7 +1324,33 @@ class SpecDetailPanel(
         private val STATUS_BORDER = JBColor(Color(183, 199, 224), Color(98, 109, 125))
         private val GENERATING_FG = JBColor(Color(46, 90, 162), Color(171, 201, 248))
         private val TREE_TEXT = JBColor(Color(34, 54, 88), Color(214, 224, 238))
-        private val TREE_TEXT_SELECTED = JBColor(Color(24, 43, 75), Color(235, 242, 252))
+        private val TREE_ROW_BG_NEUTRAL = JBColor(Color(250, 252, 254), Color(64, 71, 82))
+        private val TREE_ROW_SPECIFY_BG = JBColor(Color(248, 251, 255), Color(67, 74, 86))
+        private val TREE_ROW_SPECIFY_BG_SELECTED = JBColor(Color(236, 243, 252), Color(79, 95, 120))
+        private val TREE_ROW_SPECIFY_BORDER = JBColor(Color(219, 229, 242), Color(102, 118, 140))
+        private val TREE_ROW_SPECIFY_BORDER_SELECTED = JBColor(Color(184, 201, 224), Color(128, 149, 179))
+        private val TREE_ROW_DESIGN_BG = JBColor(Color(251, 249, 245), Color(70, 73, 80))
+        private val TREE_ROW_DESIGN_BG_SELECTED = JBColor(Color(246, 239, 228), Color(84, 90, 103))
+        private val TREE_ROW_DESIGN_BORDER = JBColor(Color(231, 221, 206), Color(111, 112, 121))
+        private val TREE_ROW_DESIGN_BORDER_SELECTED = JBColor(Color(205, 184, 153), Color(140, 129, 109))
+        private val TREE_ROW_IMPLEMENT_BG = JBColor(Color(247, 251, 248), Color(66, 74, 80))
+        private val TREE_ROW_IMPLEMENT_BG_SELECTED = JBColor(Color(235, 243, 236), Color(78, 93, 102))
+        private val TREE_ROW_IMPLEMENT_BORDER = JBColor(Color(214, 227, 218), Color(100, 117, 124))
+        private val TREE_ROW_IMPLEMENT_BORDER_SELECTED = JBColor(Color(173, 202, 181), Color(123, 145, 128))
+        private val TREE_FILE_TEXT = JBColor(Color(83, 97, 121), Color(184, 197, 218))
+        private val TREE_FILE_TEXT_SELECTED = JBColor(Color(64, 78, 101), Color(217, 228, 243))
+        private val TREE_PHASE_SPECIFY = JBColor(Color(93, 129, 176), Color(167, 197, 242))
+        private val TREE_PHASE_SPECIFY_SELECTED = JBColor(Color(75, 112, 161), Color(198, 216, 246))
+        private val TREE_PHASE_DESIGN = JBColor(Color(153, 126, 92), Color(226, 194, 149))
+        private val TREE_PHASE_DESIGN_SELECTED = JBColor(Color(133, 109, 81), Color(242, 210, 165))
+        private val TREE_PHASE_IMPLEMENT = JBColor(Color(85, 138, 106), Color(173, 217, 185))
+        private val TREE_PHASE_IMPLEMENT_SELECTED = JBColor(Color(72, 121, 91), Color(201, 232, 209))
+        private val TREE_STATUS_DONE_TEXT = JBColor(Color(108, 136, 115), Color(205, 232, 210))
+        private val TREE_STATUS_DONE_TEXT_SELECTED = JBColor(Color(89, 122, 98), Color(220, 237, 223))
+        private val TREE_STATUS_DRAFT_TEXT = JBColor(Color(144, 122, 95), Color(239, 213, 174))
+        private val TREE_STATUS_DRAFT_TEXT_SELECTED = JBColor(Color(124, 102, 77), Color(246, 223, 187))
+        private val TREE_STATUS_PENDING_TEXT = JBColor(Color(120, 132, 149), Color(196, 210, 230))
+        private val TREE_STATUS_PENDING_TEXT_SELECTED = JBColor(Color(100, 113, 131), Color(215, 224, 239))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))

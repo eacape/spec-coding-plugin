@@ -3,8 +3,9 @@ package com.eacape.speccodingplugin.ui.completion
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.context.ContextItem
 import com.eacape.speccodingplugin.context.ContextType
+import com.eacape.speccodingplugin.engine.CliDiscoveryService
+import com.eacape.speccodingplugin.engine.CliSlashCommandInfo
 import com.eacape.speccodingplugin.prompt.PromptManager
-import com.eacape.speccodingplugin.skill.SkillRegistry
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
@@ -20,45 +21,59 @@ import com.intellij.psi.search.PsiShortNamesCache
 @Service(Service.Level.PROJECT)
 class CompletionProvider internal constructor(
     private val project: Project,
-    private val skillRegistryProvider: () -> SkillRegistry,
     private val promptManagerProvider: () -> PromptManager,
     private val fileCompletionsProvider: (String) -> List<CompletionItem>,
     private val isDumbModeProvider: () -> Boolean,
     private val classNamesProvider: () -> Array<String>,
+    private val cliSlashCommandsProvider: () -> List<CliSlashCommandInfo> = { emptyList() },
 ) {
 
     constructor(project: Project) : this(
         project = project,
-        skillRegistryProvider = { SkillRegistry.getInstance(project) },
         promptManagerProvider = { PromptManager.getInstance(project) },
         fileCompletionsProvider = { query -> defaultFileCompletions(project, query) },
         isDumbModeProvider = { DumbService.isDumb(project) },
         classNamesProvider = { PsiShortNamesCache.getInstance(project).allClassNames },
+        cliSlashCommandsProvider = { CliDiscoveryService.getInstance().listSlashCommands() },
     )
 
-    private val skillRegistry by lazy { skillRegistryProvider() }
     private val promptManager by lazy { promptManagerProvider() }
 
     /**
      * 根据触发解析结果获取补全项
      */
-    fun getCompletions(trigger: TriggerParseResult): List<CompletionItem> {
+    fun getCompletions(
+        trigger: TriggerParseResult,
+        selectedProviderId: String? = null,
+    ): List<CompletionItem> {
         return when (trigger.triggerType) {
-            TriggerType.SLASH -> getSlashCompletions(trigger.query)
+            TriggerType.SLASH -> getSlashCompletions(trigger.query, selectedProviderId)
             TriggerType.AT -> getFileCompletions(trigger.query)
             TriggerType.HASH -> getHashCompletions(trigger.query)
             TriggerType.ANGLE -> getTemplateCompletions(trigger.query)
         }
     }
 
-    private fun getSlashCompletions(query: String): List<CompletionItem> {
-        return skillRegistry.searchSkills(query).map { skill ->
-            CompletionItem(
-                displayText = "/${skill.slashCommand}",
-                insertText = "/${skill.slashCommand}",
-                description = skill.description,
-            )
-        }
+    private fun getSlashCompletions(query: String, selectedProviderId: String?): List<CompletionItem> {
+        val normalizedQuery = query.trim().lowercase()
+        return cliSlashCommandsProvider()
+            .asSequence()
+            .filter { item -> shouldIncludeSlashCommandForProvider(item, selectedProviderId) }
+            .filter { item ->
+                normalizedQuery.isBlank() ||
+                    item.command.lowercase().contains(normalizedQuery) ||
+                    item.description.lowercase().contains(normalizedQuery)
+            }
+            .sortedBy { it.command }
+            .map { item ->
+                CompletionItem(
+                    displayText = "/${item.command}",
+                    insertText = "/${item.command}",
+                    description = formatCliSlashDescription(item),
+                )
+            }
+            .toList()
+            .take(MAX_SLASH_COMPLETIONS)
     }
 
     private fun getFileCompletions(query: String): List<CompletionItem> {
@@ -133,6 +148,9 @@ class CompletionProvider internal constructor(
     }
 
     companion object {
+        private const val MAX_SLASH_COMPLETIONS = 60
+        private const val CLAUDE_PROVIDER_ID = "claude-cli"
+        private const val CODEX_PROVIDER_ID = "codex-cli"
         private const val MAX_DEPTH = 6
 
         private val IGNORED_DIRS = setOf(
@@ -212,6 +230,32 @@ class CompletionProvider internal constructor(
 
         private fun isIgnoredDir(name: String): Boolean {
             return name in IGNORED_DIRS
+        }
+
+        private fun formatCliSlashDescription(item: CliSlashCommandInfo): String {
+            val source = when (item.providerId) {
+                CLAUDE_PROVIDER_ID -> "Claude CLI"
+                CODEX_PROVIDER_ID -> "Codex CLI"
+                else -> item.providerId
+            }
+            if (item.description.isBlank()) {
+                return source
+            }
+            return "$source · ${item.description}"
+        }
+
+        private fun shouldIncludeSlashCommandForProvider(
+            item: CliSlashCommandInfo,
+            selectedProviderId: String?,
+        ): Boolean {
+            val provider = selectedProviderId?.trim().orEmpty()
+            if (provider.equals(CLAUDE_PROVIDER_ID, ignoreCase = true)) {
+                return item.providerId.equals(CLAUDE_PROVIDER_ID, ignoreCase = true)
+            }
+            if (provider.equals(CODEX_PROVIDER_ID, ignoreCase = true)) {
+                return item.providerId.equals(CODEX_PROVIDER_ID, ignoreCase = true)
+            }
+            return true
         }
 
         fun getInstance(project: Project): CompletionProvider {

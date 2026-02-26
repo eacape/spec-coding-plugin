@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.context.ContextConfig
 import com.eacape.speccodingplugin.context.ContextCollector
 import com.eacape.speccodingplugin.context.ContextItem
+import com.eacape.speccodingplugin.context.ContextTrimmer
 import com.eacape.speccodingplugin.context.ContextType
 import com.eacape.speccodingplugin.core.Operation
 import com.eacape.speccodingplugin.core.OperationMode
@@ -12,6 +13,8 @@ import com.eacape.speccodingplugin.core.OperationRequest
 import com.eacape.speccodingplugin.core.OperationResult
 import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.engine.CliDiscoveryService
+import com.eacape.speccodingplugin.engine.CliSlashCommandInfo
+import com.eacape.speccodingplugin.engine.CliSlashInvocationKind
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
@@ -257,8 +260,12 @@ class ImprovedChatPanel(
             placeholder = SpecCodingBundle.message("toolwindow.input.placeholder"),
             onSend = { handleSendOrStop() },
             onTrigger = { trigger ->
+                val selectedProviderId = providerComboBox.selectedItem as? String
                 ApplicationManager.getApplication().executeOnPooledThread {
-                    val items = completionProvider.getCompletions(trigger)
+                    val items = completionProvider.getCompletions(
+                        trigger = trigger,
+                        selectedProviderId = selectedProviderId,
+                    )
                     ApplicationManager.getApplication().invokeLater {
                         if (!project.isDisposed && !_isDisposed) {
                             inputField.showCompletions(items)
@@ -789,10 +796,7 @@ class ImprovedChatPanel(
             ensureActiveSession(visibleInput, providerId)
         }
         val explicitItems = loadExplicitItemContents(contextPreviewPanel.getItems())
-        val contextSnapshot = contextCollector.collectForItems(
-            explicitItems = explicitItems,
-            config = CHAT_CONTEXT_CONFIG,
-        )
+        val contextSnapshot = collectContextSnapshotSafely(explicitItems)
         contextPreviewPanel.clear()
         clearImageAttachments(purgeTransientFiles = false)
 
@@ -1529,12 +1533,49 @@ class ImprovedChatPanel(
             return
         }
 
+        val slashToken = extractSlashCommandToken(trimmedCommand)
+        val providerId = providerComboBox.selectedItem as? String
+        val providerSlashCommand = resolveProviderSlashCommand(trimmedCommand, providerId)
+        if (providerSlashCommand != null) {
+            executeProviderSlashCommand(
+                slashCommand = trimmedCommand,
+                providerId = providerId,
+                commandInfo = providerSlashCommand,
+            )
+            return
+        }
+
+        if (slashToken != null && isInteractiveOnlySessionSlashCommand(providerId, slashToken)) {
+            addErrorMessage(
+                SpecCodingBundle.message(
+                    "toolwindow.slash.command.interactive.only",
+                    providerDisplayName(providerId).ifBlank { SpecCodingBundle.message("common.unknown") },
+                    "/$slashToken",
+                )
+            )
+            return
+        }
+
+        if (!isRegisteredSkillSlashCommand(trimmedCommand)) {
+            addErrorMessage(
+                SpecCodingBundle.message(
+                    "toolwindow.slash.command.unsupported.provider",
+                    providerDisplayName(providerId).ifBlank { SpecCodingBundle.message("common.unknown") },
+                    trimmedCommand,
+                )
+            )
+            return
+        }
+
         val operation = mapSlashCommandToOperation(trimmedCommand)
         if (operation != null && !checkOperationPermission(operation, trimmedCommand)) {
             return
         }
 
-        val providerId = providerComboBox.selectedItem as? String
+        executeLocalSkillSlashCommand(command = trimmedCommand, providerId = providerId)
+    }
+
+    private fun executeLocalSkillSlashCommand(command: String, providerId: String?) {
         val sessionId = ensureActiveSession(command, providerId)
 
         inputField.text = ""
@@ -1549,19 +1590,7 @@ class ImprovedChatPanel(
 
         activeOperationJob = scope.launch {
             try {
-                val autoContext = contextCollector.collectContext()
-                val selectedCode = autoContext.items
-                    .firstOrNull { it.type == ContextType.SELECTED_CODE }
-                    ?.content
-                val currentFile = autoContext.items
-                    .firstOrNull { it.type == ContextType.CURRENT_FILE }
-                    ?.filePath
-
-                val context = SkillContext(
-                    selectedCode = selectedCode,
-                    currentFile = currentFile,
-                )
-
+                val context = buildSkillContextForSlashCommand()
                 val result = skillExecutor.executeFromCommand(command, context)
 
                 ApplicationManager.getApplication().invokeLater {
@@ -2793,12 +2822,28 @@ class ImprovedChatPanel(
             }
             val vf = LocalFileSystem.getInstance().findFileByPath(item.filePath)
                 ?: return@map item
-            val content = ReadAction.compute<String, Throwable> {
-                String(vf.contentsToByteArray(), Charsets.UTF_8)
+            val content = runCatching {
+                ReadAction.compute<String, Throwable> {
+                    String(vf.contentsToByteArray(), Charsets.UTF_8)
+                }
+            }.getOrElse { error ->
+                logger.warn("Failed to read explicit context file: ${item.filePath}", error)
+                return@map item
             }
             item.copy(content = content, tokenEstimate = content.length / 4)
         }
     }
+
+    private fun collectContextSnapshotSafely(explicitItems: List<ContextItem>) =
+        runCatching {
+            contextCollector.collectForItems(
+                explicitItems = explicitItems,
+                config = CHAT_CONTEXT_CONFIG,
+            )
+        }.getOrElse { error ->
+            logger.warn("Failed to collect auto context; fallback to explicit context only", error)
+            ContextTrimmer.trim(explicitItems, CHAT_CONTEXT_CONFIG.tokenBudget)
+        }
 
     private fun appendUserMessage(content: String) {
         val panel = ChatMessagePanel(
@@ -2987,6 +3032,194 @@ class ImprovedChatPanel(
                     }
                 }
             }
+        }
+    }
+
+    private fun buildSkillContextForSlashCommand(): SkillContext {
+        val autoContext = contextCollector.collectContext()
+        val selectedCode = autoContext.items
+            .firstOrNull { it.type == ContextType.SELECTED_CODE }
+            ?.content
+        val currentFile = autoContext.items
+            .firstOrNull { it.type == ContextType.CURRENT_FILE }
+            ?.filePath
+        return SkillContext(
+            selectedCode = selectedCode,
+            currentFile = currentFile,
+        )
+    }
+
+    private fun resolveProviderSlashCommand(command: String, providerId: String?): CliSlashCommandInfo? {
+        val normalizedProvider = providerId?.trim().orEmpty()
+        if (normalizedProvider.isBlank()) {
+            return null
+        }
+        val slashToken = extractSlashCommandToken(command) ?: return null
+        return CliDiscoveryService.getInstance().listSlashCommands()
+            .firstOrNull { item ->
+                item.providerId.equals(normalizedProvider, ignoreCase = true) &&
+                    item.command.equals(slashToken, ignoreCase = true)
+            }
+    }
+
+    private fun extractSlashCommandToken(command: String): String? {
+        val trimmed = command.trim()
+        if (!trimmed.startsWith("/")) {
+            return null
+        }
+        return trimmed
+            .removePrefix("/")
+            .substringBefore(" ")
+            .trim()
+            .lowercase(Locale.ROOT)
+            .ifBlank { null }
+    }
+
+    private fun isRegisteredSkillSlashCommand(command: String): Boolean {
+        val token = extractSlashCommandToken(command) ?: return false
+        return skillExecutor.listAvailableSkills()
+            .any { it.slashCommand.equals(token, ignoreCase = true) }
+    }
+
+    private fun executeProviderSlashCommand(
+        slashCommand: String,
+        providerId: String?,
+        commandInfo: CliSlashCommandInfo,
+    ) {
+        if (isInteractiveOnlyProviderSlashCommand(providerId, commandInfo)) {
+            addErrorMessage(
+                SpecCodingBundle.message(
+                    "toolwindow.slash.command.interactive.only",
+                    providerDisplayName(providerId).ifBlank { SpecCodingBundle.message("common.unknown") },
+                    "/${commandInfo.command}",
+                )
+            )
+            return
+        }
+        val shellCommand = buildProviderSlashShellCommand(
+            slashCommand = slashCommand,
+            providerId = providerId,
+            commandInfo = commandInfo,
+        ) ?: run {
+            addErrorMessage(
+                SpecCodingBundle.message(
+                    "toolwindow.slash.command.unsupported.provider",
+                    providerDisplayName(providerId).ifBlank { SpecCodingBundle.message("common.unknown") },
+                    slashCommand,
+                )
+            )
+            return
+        }
+        val sessionId = ensureActiveSession(slashCommand, providerId)
+        inputField.text = ""
+        appendUserMessage(slashCommand)
+        if (sessionId != null) {
+            persistMessage(sessionId, ConversationRole.USER, slashCommand)
+        }
+        executeShellCommand(
+            command = shellCommand,
+            requestDescription = "Provider slash command: $slashCommand",
+        )
+    }
+
+    private fun isInteractiveOnlyProviderSlashCommand(providerId: String?, commandInfo: CliSlashCommandInfo): Boolean {
+        val provider = providerId?.trim().orEmpty()
+        val command = commandInfo.command.trim().lowercase(Locale.ROOT)
+        if (command.isBlank()) {
+            return false
+        }
+        return when {
+            provider.equals(ClaudeCliLlmProvider.ID, ignoreCase = true) -> {
+                command in CLAUDE_INTERACTIVE_ONLY_CLI_COMMANDS
+            }
+
+            provider.equals(CodexCliLlmProvider.ID, ignoreCase = true) -> {
+                command in CODEX_INTERACTIVE_ONLY_CLI_COMMANDS
+            }
+
+            else -> false
+        }
+    }
+
+    private fun isInteractiveOnlySessionSlashCommand(providerId: String?, slashToken: String): Boolean {
+        val normalizedToken = slashToken.trim().lowercase(Locale.ROOT)
+        if (normalizedToken.isBlank()) {
+            return false
+        }
+        val provider = providerId?.trim().orEmpty()
+        return when {
+            provider.equals(ClaudeCliLlmProvider.ID, ignoreCase = true) -> {
+                normalizedToken in CLAUDE_SESSION_ONLY_SLASH_COMMANDS
+            }
+
+            provider.equals(CodexCliLlmProvider.ID, ignoreCase = true) -> {
+                normalizedToken in CODEX_SESSION_ONLY_SLASH_COMMANDS
+            }
+
+            else -> false
+        }
+    }
+
+    private fun buildProviderSlashShellCommand(
+        slashCommand: String,
+        providerId: String?,
+        commandInfo: CliSlashCommandInfo,
+    ): String? {
+        val normalizedProvider = providerId?.trim().orEmpty()
+        if (normalizedProvider.isBlank()) {
+            return null
+        }
+        val slashToken = extractSlashCommandToken(slashCommand) ?: return null
+        val args = slashCommand.removePrefix("/")
+            .trim()
+            .substringAfter(" ", "")
+            .trim()
+
+        val cliExecutable = when {
+            normalizedProvider.equals(ClaudeCliLlmProvider.ID, ignoreCase = true) -> {
+                CliDiscoveryService.getInstance().claudeInfo.path.ifBlank { "claude" }
+            }
+
+            normalizedProvider.equals(CodexCliLlmProvider.ID, ignoreCase = true) -> {
+                CliDiscoveryService.getInstance().codexInfo.path.ifBlank { "codex" }
+            }
+
+            else -> {
+                return null
+            }
+        }
+        val invocationToken = if (
+            normalizedProvider.equals(ClaudeCliLlmProvider.ID, ignoreCase = true) &&
+            commandInfo.invocationKind == CliSlashInvocationKind.OPTION
+        ) {
+            "--$slashToken"
+        } else {
+            slashToken
+        }
+        val executable = quoteShellTokenIfNeeded(cliExecutable)
+        return buildString {
+            append(executable)
+            append(' ')
+            append(invocationToken)
+            if (args.isNotBlank()) {
+                append(' ')
+                append(args)
+            }
+        }.trim()
+    }
+
+    private fun quoteShellTokenIfNeeded(value: String): String {
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) {
+            return trimmed
+        }
+        if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+            return trimmed
+        }
+        return if (trimmed.any { it.isWhitespace() }) {
+            "\"$trimmed\""
+        } else {
+            trimmed
         }
     }
 
@@ -3311,13 +3544,25 @@ class ImprovedChatPanel(
     }
 
     private class StopAwareButton : JButton() {
-        private val stopFill = JBColor(
-            Color(231, 72, 64),
-            Color(205, 63, 55),
+        private val stopGlyph = JBColor(
+            Color(194, 66, 56),
+            Color(235, 118, 109),
         )
-        private val stopBorder = JBColor(
-            Color(0, 0, 0, 30),
-            Color(0, 0, 0, 96),
+        private val stopGlyphDisabled = JBColor(
+            Color(170, 170, 170),
+            Color(126, 126, 126),
+        )
+        private val stopBgIdle = JBColor(
+            Color(194, 66, 56, 24),
+            Color(235, 118, 109, 36),
+        )
+        private val stopBgHover = JBColor(
+            Color(194, 66, 56, 34),
+            Color(235, 118, 109, 50),
+        )
+        private val stopBgPressed = JBColor(
+            Color(194, 66, 56, 48),
+            Color(235, 118, 109, 64),
         )
 
         var stopMode: Boolean = false
@@ -3337,33 +3582,23 @@ class ImprovedChatPanel(
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
 
-                val bgSize = minOf(width, height, JBUI.scale(20))
+                val bgSize = minOf(width, height, JBUI.scale(18))
                 val bgX = (width - bgSize) / 2
                 val bgY = (height - bgSize) / 2
-                val arc = JBUI.scale(6)
-
-                g2.color = stopFill
+                val arc = JBUI.scale(8)
+                g2.color = when {
+                    !isEnabled -> stopBgIdle
+                    model.isPressed -> stopBgPressed
+                    model.isRollover -> stopBgHover
+                    else -> stopBgIdle
+                }
                 g2.fillRoundRect(bgX, bgY, bgSize, bgSize, arc, arc)
 
-                g2.color = stopBorder
-                g2.drawRoundRect(bgX, bgY, bgSize - 1, bgSize - 1, arc, arc)
-
-                if (!isEnabled) {
-                    g2.color = Color(255, 255, 255, 110)
-                    g2.fillRoundRect(bgX, bgY, bgSize, bgSize, arc, arc)
-                } else if (model.isPressed) {
-                    g2.color = Color(0, 0, 0, 56)
-                    g2.fillRoundRect(bgX, bgY, bgSize, bgSize, arc, arc)
-                } else if (model.isRollover) {
-                    g2.color = Color(255, 255, 255, 32)
-                    g2.fillRoundRect(bgX, bgY, bgSize, bgSize, arc, arc)
-                }
-
-                val glyphSize = minOf(JBUI.scale(9), bgSize - JBUI.scale(8))
+                val glyphSize = maxOf(JBUI.scale(6), minOf(JBUI.scale(8), bgSize - JBUI.scale(8)))
                 val glyphX = bgX + (bgSize - glyphSize) / 2
                 val glyphY = bgY + (bgSize - glyphSize) / 2
                 val glyphArc = JBUI.scale(2)
-                g2.color = Color(255, 255, 255, 245)
+                g2.color = if (isEnabled) stopGlyph else stopGlyphDisabled
                 g2.fillRoundRect(glyphX, glyphY, glyphSize, glyphSize, glyphArc, glyphArc)
             }
             finally {
@@ -3826,9 +4061,20 @@ class ImprovedChatPanel(
             return
         }
 
+        executeShellCommand(
+            command = normalizedCommand,
+            requestDescription = "Workflow quick action command: $normalizedCommand",
+        )
+    }
+
+    private fun executeShellCommand(command: String, requestDescription: String) {
+        val normalizedCommand = command.trim()
+        if (normalizedCommand.isBlank() || project.isDisposed || _isDisposed) {
+            return
+        }
         val request = OperationRequest(
             operation = Operation.EXECUTE_COMMAND,
-            description = "Workflow quick action command: $normalizedCommand",
+            description = requestDescription,
             details = mapOf("command" to normalizedCommand),
         )
         if (!checkWorkflowCommandPermission(request, normalizedCommand)) {
@@ -4628,6 +4874,36 @@ class ImprovedChatPanel(
             includeSelectedCode = false,
             includeContainingScope = false,
             preferGraphRelatedContext = false,
+        )
+        private val CLAUDE_INTERACTIVE_ONLY_CLI_COMMANDS = setOf(
+            "agents",
+            "auth",
+            "doctor",
+            "install",
+            "mcp",
+            "plugin",
+            "setup-token",
+            "update",
+            "upgrade",
+        )
+        private val CODEX_INTERACTIVE_ONLY_CLI_COMMANDS = setOf(
+            "app-server",
+            "cloud",
+            "completion",
+            "debug",
+            "fork",
+            "login",
+            "logout",
+            "mcp",
+            "mcp-server",
+            "resume",
+            "sandbox",
+        )
+        private val CLAUDE_SESSION_ONLY_SLASH_COMMANDS = setOf(
+            "compact",
+        )
+        private val CODEX_SESSION_ONLY_SLASH_COMMANDS = setOf(
+            "compact",
         )
 
         private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"

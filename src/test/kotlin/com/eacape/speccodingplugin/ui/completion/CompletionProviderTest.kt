@@ -3,11 +3,10 @@ package com.eacape.speccodingplugin.ui.completion
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.context.ContextItem
 import com.eacape.speccodingplugin.context.ContextType
+import com.eacape.speccodingplugin.engine.CliSlashCommandInfo
 import com.eacape.speccodingplugin.prompt.PromptManager
 import com.eacape.speccodingplugin.prompt.PromptScope
 import com.eacape.speccodingplugin.prompt.PromptTemplate
-import com.eacape.speccodingplugin.skill.Skill
-import com.eacape.speccodingplugin.skill.SkillRegistry
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
@@ -19,33 +18,34 @@ import org.junit.jupiter.api.Test
 class CompletionProviderTest {
 
     private lateinit var project: Project
-    private lateinit var skillRegistry: SkillRegistry
     private lateinit var promptManager: PromptManager
 
     @BeforeEach
     fun setUp() {
         project = mockk(relaxed = true)
-        skillRegistry = mockk()
         promptManager = mockk()
     }
 
     @Test
-    fun `slash completion should return skills from registry`() {
-        every { skillRegistry.searchSkills("rev") } returns listOf(
-            Skill(
-                id = "review",
-                name = "Code Review",
-                description = "Analyze code quality",
-                slashCommand = "review",
-                promptTemplate = "review {{selected_code}}",
-            )
-        )
+    fun `slash completion should return codex commands when codex provider selected`() {
         every { promptManager.listPromptTemplates() } returns emptyList()
 
         val provider = createProvider(
             fileCompletions = emptyList(),
             isDumbMode = false,
             classNames = emptyArray(),
+            cliSlashCommands = listOf(
+                CliSlashCommandInfo(
+                    providerId = "codex-cli",
+                    command = "review",
+                    description = "Run a code review non-interactively",
+                ),
+                CliSlashCommandInfo(
+                    providerId = "claude-cli",
+                    command = "add-dir",
+                    description = "Additional directories to allow tool access to",
+                ),
+            ),
         )
 
         val completions = provider.getCompletions(
@@ -53,18 +53,54 @@ class CompletionProviderTest {
                 triggerType = TriggerType.SLASH,
                 triggerOffset = 0,
                 query = "rev",
-            )
+            ),
+            selectedProviderId = "codex-cli",
         )
 
         assertEquals(1, completions.size)
         assertEquals("/review", completions[0].displayText)
         assertEquals("/review", completions[0].insertText)
-        assertEquals("Analyze code quality", completions[0].description)
+        assertTrue(completions[0].description.contains("Codex CLI"))
+    }
+
+    @Test
+    fun `slash completion should return claude commands when claude provider selected`() {
+        every { promptManager.listPromptTemplates() } returns emptyList()
+
+        val provider = createProvider(
+            fileCompletions = emptyList(),
+            isDumbMode = false,
+            classNames = emptyArray(),
+            cliSlashCommands = listOf(
+                CliSlashCommandInfo(
+                    providerId = "codex-cli",
+                    command = "review",
+                    description = "Run a code review non-interactively",
+                ),
+                CliSlashCommandInfo(
+                    providerId = "claude-cli",
+                    command = "add-dir",
+                    description = "Additional directories to allow tool access to",
+                ),
+            ),
+        )
+
+        val completions = provider.getCompletions(
+            TriggerParseResult(
+                triggerType = TriggerType.SLASH,
+                triggerOffset = 0,
+                query = "add",
+            ),
+            selectedProviderId = "claude-cli",
+        )
+
+        assertEquals(1, completions.size)
+        assertEquals("/add-dir", completions.first().insertText)
+        assertTrue(completions.first().description.contains("Claude CLI"))
     }
 
     @Test
     fun `template completion should filter templates by query`() {
-        every { skillRegistry.searchSkills(any()) } returns emptyList()
         every { promptManager.listPromptTemplates() } returns listOf(
             PromptTemplate(
                 id = "design",
@@ -102,7 +138,6 @@ class CompletionProviderTest {
 
     @Test
     fun `file completion should return injected file candidates with context`() {
-        every { skillRegistry.searchSkills(any()) } returns emptyList()
         every { promptManager.listPromptTemplates() } returns emptyList()
 
         val fileCompletion = CompletionItem(
@@ -143,7 +178,6 @@ class CompletionProviderTest {
 
     @Test
     fun `file completion should return empty when provider yields none`() {
-        every { skillRegistry.searchSkills(any()) } returns emptyList()
         every { promptManager.listPromptTemplates() } returns emptyList()
 
         val provider = createProvider(
@@ -165,7 +199,6 @@ class CompletionProviderTest {
 
     @Test
     fun `symbol completion should return class matches when indexing is ready`() {
-        every { skillRegistry.searchSkills(any()) } returns emptyList()
         every { promptManager.listPromptTemplates() } returns emptyList()
 
         val provider = createProvider(
@@ -189,7 +222,6 @@ class CompletionProviderTest {
 
     @Test
     fun `symbol completion should return empty when project is in dumb mode`() {
-        every { skillRegistry.searchSkills(any()) } returns emptyList()
         every { promptManager.listPromptTemplates() } returns emptyList()
 
         val provider = createProvider(
@@ -211,7 +243,6 @@ class CompletionProviderTest {
 
     @Test
     fun `symbol completion should return empty when query is too short`() {
-        every { skillRegistry.searchSkills(any()) } returns emptyList()
         every { promptManager.listPromptTemplates() } returns emptyList()
 
         val provider = createProvider(
@@ -235,14 +266,15 @@ class CompletionProviderTest {
         fileCompletions: List<CompletionItem>,
         isDumbMode: Boolean,
         classNames: Array<String>,
+        cliSlashCommands: List<CliSlashCommandInfo> = emptyList(),
     ): CompletionProvider {
         return CompletionProvider(
             project = project,
-            skillRegistryProvider = { skillRegistry },
             promptManagerProvider = { promptManager },
             fileCompletionsProvider = { fileCompletions },
             isDumbModeProvider = { isDumbMode },
             classNamesProvider = { classNames },
+            cliSlashCommandsProvider = { cliSlashCommands },
         )
     }
 }

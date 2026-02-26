@@ -45,6 +45,11 @@ import java.awt.Color
 import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.Insets
+import java.awt.RenderingHints
+import java.awt.geom.RoundRectangle2D
 import java.util.Locale
 import javax.swing.Box
 import javax.swing.BoxLayout
@@ -59,6 +64,7 @@ import javax.swing.JPanel
 import javax.swing.ListSelectionModel
 import javax.swing.SwingUtilities
 import javax.swing.Timer
+import javax.swing.border.AbstractBorder
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
@@ -805,15 +811,8 @@ class SettingsPanel(
             label.border = BorderFactory.createCompoundBorder(
                 JBUI.Borders.empty(2, 4, 2, 4),
                 BorderFactory.createCompoundBorder(
-                    if (isSelected) BorderFactory.createMatteBorder(0, JBUI.scale(2), 0, 0, SIDEBAR_ITEM_ACCENT)
-                    else JBUI.Borders.emptyLeft(JBUI.scale(3)),
-                    BorderFactory.createCompoundBorder(
-                        SpecUiStyle.roundedLineBorder(
-                            if (isSelected) SIDEBAR_ITEM_SELECTED_BORDER else SIDEBAR_ITEM_BORDER,
-                            JBUI.scale(12),
-                        ),
-                        JBUI.Borders.empty(7, 10, 7, 10),
-                    ),
+                    SidebarItemBorder(isSelected),
+                    JBUI.Borders.empty(7, 8, 7, 10),
                 ),
             )
             label.background = if (isSelected) SIDEBAR_ITEM_SELECTED_BG else SIDEBAR_ITEM_BG
@@ -821,6 +820,77 @@ class SettingsPanel(
             label.font = label.font.deriveFont(if (isSelected) Font.BOLD else Font.PLAIN, 12f)
             label.isOpaque = true
             return label
+        }
+    }
+
+    private class SidebarItemBorder(
+        private val selected: Boolean,
+    ) : AbstractBorder() {
+        override fun paintBorder(
+            c: Component?,
+            g: Graphics?,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+        ) {
+            val baseGraphics = g as? Graphics2D ?: return
+            val g2 = baseGraphics.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+
+                val leftInset = JBUI.scale(8).toFloat()
+                val arc = JBUI.scale(12).toFloat()
+                val outline = RoundRectangle2D.Float(
+                    x + leftInset,
+                    y + 0.5f,
+                    width - leftInset - 1f,
+                    height - 1f,
+                    arc,
+                    arc,
+                )
+                g2.color = if (selected) SIDEBAR_ITEM_SELECTED_BORDER else SIDEBAR_ITEM_BORDER
+                g2.draw(outline)
+
+                if (selected) {
+                    val barWidth = JBUI.scale(3).toFloat()
+                    val barHeight = (height - JBUI.scale(16)).coerceAtLeast(JBUI.scale(14)).toFloat()
+                    val barArc = JBUI.scale(4).toFloat()
+                    val barX = x + JBUI.scale(2).toFloat()
+                    val barY = y + (height - barHeight) / 2f
+                    g2.color = SIDEBAR_ITEM_ACCENT
+                    g2.fill(
+                        RoundRectangle2D.Float(
+                            barX,
+                            barY,
+                            barWidth,
+                            barHeight,
+                            barArc,
+                            barArc,
+                        ),
+                    )
+                }
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        override fun getBorderInsets(c: Component?): Insets = Insets(
+            JBUI.scale(2),
+            JBUI.scale(8),
+            JBUI.scale(2),
+            JBUI.scale(2),
+        )
+
+        override fun getBorderInsets(c: Component?, insets: Insets): Insets {
+            insets.set(
+                JBUI.scale(2),
+                JBUI.scale(8),
+                JBUI.scale(2),
+                JBUI.scale(2),
+            )
+            return insets
         }
     }
 

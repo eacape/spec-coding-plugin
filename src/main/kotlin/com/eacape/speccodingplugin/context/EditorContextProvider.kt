@@ -19,49 +19,41 @@ object EditorContextProvider {
      * 获取当前编辑器文件的上下文
      */
     fun getCurrentFileContext(project: Project): ContextItem? {
-        val editor = getActiveEditor(project) ?: return null
-        val virtualFile = editor.virtualFile ?: return null
+        return ReadAction.compute<ContextItem?, Throwable> {
+            val editor = getActiveEditor(project) ?: return@compute null
+            val virtualFile = editor.virtualFile ?: return@compute null
+            val content = editor.document.text
+            if (content.isBlank()) return@compute null
 
-        val content = ReadAction.compute<String, Throwable> {
-            editor.document.text
+            ContextItem(
+                type = ContextType.CURRENT_FILE,
+                label = virtualFile.name,
+                content = content,
+                filePath = virtualFile.path,
+                priority = 70,
+            )
         }
-
-        if (content.isBlank()) return null
-
-        return ContextItem(
-            type = ContextType.CURRENT_FILE,
-            label = virtualFile.name,
-            content = content,
-            filePath = virtualFile.path,
-            priority = 70,
-        )
     }
 
     /**
      * 获取选中代码的上下文
      */
     fun getSelectedCodeContext(project: Project): ContextItem? {
-        val editor = getActiveEditor(project) ?: return null
-        val virtualFile = editor.virtualFile
-
-        val selectedText = ReadAction.compute<String?, Throwable> {
+        return ReadAction.compute<ContextItem?, Throwable> {
+            val editor = getActiveEditor(project) ?: return@compute null
+            val virtualFile = editor.virtualFile
             val selectionModel = editor.selectionModel
-            if (selectionModel.hasSelection()) {
-                selectionModel.selectedText
-            } else {
-                null
-            }
+            val selectedText = if (selectionModel.hasSelection()) selectionModel.selectedText else null
+            if (selectedText.isNullOrBlank()) return@compute null
+
+            ContextItem(
+                type = ContextType.SELECTED_CODE,
+                label = "Selection in ${virtualFile?.name ?: "editor"}",
+                content = selectedText,
+                filePath = virtualFile?.path,
+                priority = 90,
+            )
         }
-
-        if (selectedText.isNullOrBlank()) return null
-
-        return ContextItem(
-            type = ContextType.SELECTED_CODE,
-            label = "Selection in ${virtualFile?.name ?: "editor"}",
-            content = selectedText,
-            filePath = virtualFile?.path,
-            priority = 90,
-        )
     }
 
     /**
@@ -69,11 +61,10 @@ object EditorContextProvider {
      * 使用通用 PsiNamedElement，不依赖语言特定 API
      */
     fun getContainingScopeContext(project: Project): ContextItem? {
-        val editor = getActiveEditor(project) ?: return null
-        val virtualFile = editor.virtualFile ?: return null
-        val offset = editor.caretModel.offset
-
         return ReadAction.compute<ContextItem?, Throwable> {
+            val editor = getActiveEditor(project) ?: return@compute null
+            val virtualFile = editor.virtualFile ?: return@compute null
+            val offset = editor.caretModel.offset
             val psiFile = PsiManager.getInstance(project).findFile(virtualFile)
                 ?: return@compute null
             val elementAtCaret = psiFile.findElementAt(offset)

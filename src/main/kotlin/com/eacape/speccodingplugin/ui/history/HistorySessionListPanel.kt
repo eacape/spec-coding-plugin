@@ -11,14 +11,17 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
 import java.awt.Cursor
+import java.awt.Dimension
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Point
 import java.awt.RenderingHints
+import java.awt.BasicStroke
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
+import java.awt.font.TextAttribute
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -34,6 +37,7 @@ import javax.swing.ListSelectionModel
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
+import kotlin.math.roundToInt
 
 class HistorySessionListPanel(
     private val onSessionSelected: (String) -> Unit,
@@ -76,11 +80,15 @@ class HistorySessionListPanel(
             border = JBUI.Borders.empty()
             horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
             verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+            viewport.isOpaque = false
+            isOpaque = false
         }
         add(
-            JPanel(BorderLayout()).apply {
+            RoundedCardPanel(JBUI.scale(12)).apply {
+                layout = BorderLayout()
                 isOpaque = false
-                border = JBUI.Borders.empty()
+                border = JBUI.Borders.empty(8, 8, 8, 8)
+                updateColors(LIST_SURFACE_BG, LIST_SURFACE_BORDER)
                 add(listScrollPane, BorderLayout.CENTER)
             },
             BorderLayout.CENTER,
@@ -271,7 +279,7 @@ class HistorySessionListPanel(
         if (!cellBounds.contains(point)) return null
 
         val zoneTop = cellBounds.y + ACTION_ZONE_TOP
-        val zoneBottom = zoneTop + ACTION_ICON_SIZE
+        val zoneBottom = zoneTop + ACTION_HIT_SIZE
         if (point.y < zoneTop || point.y > zoneBottom) return null
 
         val startX = cellBounds.x + cellBounds.width - ACTION_STRIP_WIDTH
@@ -280,11 +288,11 @@ class HistorySessionListPanel(
 
         var iconLeft = startX + ACTION_STRIP_LEFT_PADDING
         RowAction.entries.forEach { action ->
-            val iconRight = iconLeft + ACTION_ICON_SIZE
+            val iconRight = iconLeft + ACTION_HIT_SIZE
             if (point.x in iconLeft..iconRight) {
                 return ActionHit(index = index, action = action)
             }
-            iconLeft += ACTION_ICON_SIZE + ACTION_ICON_GAP
+            iconLeft += ACTION_HIT_SIZE + ACTION_ICON_GAP
         }
         return null
     }
@@ -323,29 +331,34 @@ class HistorySessionListPanel(
 
             topRow.isOpaque = false
 
-            modeLabel.font = modeLabel.font.deriveFont(Font.BOLD, 11f)
+            modeLabel.font = deriveSemiboldFont(modeLabel.font, 10.5f)
             modeLabel.horizontalAlignment = SwingConstants.LEFT
             modeLabel.border = JBUI.Borders.empty()
+            modeLabel.alignmentX = Component.LEFT_ALIGNMENT
 
-            titleLabel.font = titleLabel.font.deriveFont(Font.BOLD, 12.5f)
+            titleLabel.font = deriveTitleFont(titleLabel.font, 12.8f)
             titleLabel.horizontalAlignment = SwingConstants.LEFT
+            titleLabel.alignmentX = Component.LEFT_ALIGNMENT
             detailLabel.font = detailLabel.font.deriveFont(Font.PLAIN, 11f)
             detailLabel.horizontalAlignment = SwingConstants.LEFT
+            detailLabel.alignmentX = Component.LEFT_ALIGNMENT
             providerLabel.font = providerLabel.font.deriveFont(Font.PLAIN, 10.5f)
             providerLabel.horizontalAlignment = SwingConstants.LEFT
+            providerLabel.alignmentX = Component.LEFT_ALIGNMENT
             updatedLabel.font = updatedLabel.font.deriveFont(Font.PLAIN, 10.5f)
             updatedLabel.horizontalAlignment = SwingConstants.LEFT
+            updatedLabel.alignmentX = Component.LEFT_ALIGNMENT
 
             RowAction.entries.forEachIndexed { idx, action ->
-                val iconLabel = JLabel(action.icon).apply {
+                val iconLabel = JLabel(ScaledIcon(action.icon, ACTION_ICON_SCALE)).apply {
                     horizontalAlignment = SwingConstants.CENTER
                     verticalAlignment = SwingConstants.CENTER
-                    preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
+                    preferredSize = JBUI.size(ACTION_HIT_SIZE, ACTION_HIT_SIZE)
                 }
                 val host = JPanel(BorderLayout()).apply {
                     isOpaque = false
                     border = JBUI.Borders.empty(1)
-                    preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
+                    preferredSize = JBUI.size(ACTION_HIT_SIZE, ACTION_HIT_SIZE)
                     minimumSize = preferredSize
                     maximumSize = preferredSize
                     add(iconLabel, BorderLayout.CENTER)
@@ -360,6 +373,8 @@ class HistorySessionListPanel(
             topRow.add(modeLabel, BorderLayout.WEST)
             topRow.add(titleLabel, BorderLayout.CENTER)
             topRow.add(actionPanel, BorderLayout.EAST)
+            topRow.alignmentX = Component.LEFT_ALIGNMENT
+            topRow.maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(24))
 
             accentStripe.isOpaque = true
             accentStripe.preferredSize = JBUI.size(4, 0)
@@ -500,13 +515,99 @@ class HistorySessionListPanel(
     )
 
     private enum class RowAction(val icon: Icon, val tooltipKey: String) {
-        OPEN(AllIcons.Actions.MenuOpen, "history.action.open"),
-        CONTINUE(AllIcons.Actions.Execute, "history.action.continue"),
+        OPEN(OpenSessionIcon(), "history.action.open"),
+        CONTINUE(ContinueSessionIcon(), "history.action.continue"),
         BRANCH(AllIcons.Vcs.Branch, "history.action.branch"),
         DELETE(AllIcons.Actions.GC, "history.action.delete"),
     }
 
+    private class OpenSessionIcon : Icon {
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+                g2.color = OPEN_ICON_COLOR
+                g2.stroke = BasicStroke(1.15f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+                g2.translate(x.toDouble(), y.toDouble())
+                g2.drawRoundRect(1, 2, 7, 10, 2, 2)
+                g2.drawLine(8, 8, 14, 8)
+                g2.drawLine(11, 5, 14, 8)
+                g2.drawLine(11, 11, 14, 8)
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        override fun getIconWidth(): Int = 16
+
+        override fun getIconHeight(): Int = 16
+    }
+
+    private class ContinueSessionIcon : Icon {
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+                g2.color = CONTINUE_ICON_COLOR
+                g2.stroke = BasicStroke(1.15f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+                g2.translate(x.toDouble(), y.toDouble())
+                g2.drawLine(3, 4, 8, 8)
+                g2.drawLine(8, 8, 3, 12)
+                g2.drawLine(8, 4, 13, 8)
+                g2.drawLine(13, 8, 8, 12)
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        override fun getIconWidth(): Int = 16
+
+        override fun getIconHeight(): Int = 16
+    }
+
+    private class ScaledIcon(
+        private val delegate: Icon,
+        private val scale: Float,
+    ) : Icon {
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+                g2.translate(x.toDouble(), y.toDouble())
+                g2.scale(scale.toDouble(), scale.toDouble())
+                delegate.paintIcon(c, g2, 0, 0)
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        override fun getIconWidth(): Int = (delegate.iconWidth * scale).roundToInt()
+
+        override fun getIconHeight(): Int = (delegate.iconHeight * scale).roundToInt()
+    }
+
     companion object {
+        private fun deriveSemiboldFont(base: Font, size: Float): Font {
+            return base.deriveFont(
+                mapOf(
+                    TextAttribute.SIZE to size,
+                    TextAttribute.WEIGHT to TextAttribute.WEIGHT_SEMIBOLD,
+                ),
+            )
+        }
+
+        private fun deriveTitleFont(base: Font, size: Float): Font {
+            return base.deriveFont(
+                mapOf(
+                    TextAttribute.SIZE to size,
+                    TextAttribute.WEIGHT to TextAttribute.WEIGHT_SEMIBOLD,
+                    TextAttribute.TRACKING to 0.012f,
+                ),
+            )
+        }
+
         private val timestampFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
             .withZone(ZoneId.systemDefault())
 
@@ -514,6 +615,8 @@ class HistorySessionListPanel(
         private val CARD_BORDER_DEFAULT = JBColor(Color(219, 226, 238), Color(74, 80, 90))
         private val CARD_BG_SELECTED = JBColor(Color(221, 235, 254), Color(66, 84, 108))
         private val CARD_BORDER_SELECTED = JBColor(Color(123, 162, 224), Color(96, 127, 166))
+        private val LIST_SURFACE_BG = JBColor(Color(244, 247, 253), Color(52, 57, 65))
+        private val LIST_SURFACE_BORDER = JBColor(Color(210, 220, 236), Color(81, 91, 105))
         private val CARD_ACCENT_SPEC = JBColor(Color(89, 132, 208), Color(117, 145, 192))
         private val CARD_ACCENT_SPEC_SELECTED = JBColor(Color(63, 110, 196), Color(143, 173, 220))
         private val CARD_ACCENT_VIBE = JBColor(Color(106, 154, 115), Color(117, 153, 124))
@@ -525,15 +628,18 @@ class HistorySessionListPanel(
         private val ACTION_ICON_HOVER_BORDER = JBColor(Color(158, 184, 226), Color(122, 145, 175))
         private val ACTION_ICON_HOVER_BG_SELECTED = JBColor(Color(206, 224, 251), Color(92, 112, 139))
         private val ACTION_ICON_HOVER_BORDER_SELECTED = JBColor(Color(120, 156, 219), Color(139, 167, 201))
+        private val OPEN_ICON_COLOR = JBColor(Color(93, 110, 134), Color(176, 188, 205))
+        private val CONTINUE_ICON_COLOR = JBColor(Color(69, 160, 96), Color(146, 224, 165))
 
-        private val ACTION_ICON_SIZE = JBUI.scale(16)
-        private val ACTION_ICON_GAP = JBUI.scale(6)
+        private const val ACTION_ICON_SCALE = 1.26f
+        private val ACTION_HIT_SIZE = JBUI.scale(24)
+        private val ACTION_ICON_GAP = JBUI.scale(7)
         private val ACTION_STRIP_LEFT_PADDING = JBUI.scale(6)
-        private val ACTION_STRIP_RIGHT_PADDING = JBUI.scale(10)
+        private val ACTION_STRIP_RIGHT_PADDING = JBUI.scale(11)
         private val ACTION_ZONE_TOP = JBUI.scale(7)
         private val ACTION_STRIP_WIDTH = ACTION_STRIP_LEFT_PADDING +
             ACTION_STRIP_RIGHT_PADDING +
-            RowAction.entries.size * ACTION_ICON_SIZE +
+            RowAction.entries.size * ACTION_HIT_SIZE +
             (RowAction.entries.size - 1) * ACTION_ICON_GAP
     }
 }

@@ -27,6 +27,21 @@ data class CliToolInfo(
 )
 
 /**
+ * CLI 斜杠命令信息
+ */
+data class CliSlashCommandInfo(
+    val providerId: String,
+    val command: String,
+    val description: String = "",
+    val invocationKind: CliSlashInvocationKind = CliSlashInvocationKind.COMMAND,
+)
+
+enum class CliSlashInvocationKind {
+    COMMAND,
+    OPTION,
+}
+
+/**
  * CLI 自动探测服务
  * 在后台线程探测本地已安装的 claude / codex CLI 工具
  */
@@ -42,6 +57,14 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
 
     @Volatile
     var codexInfo: CliToolInfo = CliToolInfo(available = false, path = "codex")
+        private set
+
+    @Volatile
+    var claudeSlashCommands: List<CliSlashCommandInfo> = emptyList()
+        private set
+
+    @Volatile
+    var codexSlashCommands: List<CliSlashCommandInfo> = emptyList()
         private set
 
     @Volatile
@@ -69,6 +92,24 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
         snapshot.forEach { it() }
     }
 
+    fun listSlashCommands(): List<CliSlashCommandInfo> {
+        val merged = linkedMapOf<String, CliSlashCommandInfo>()
+        (claudeSlashCommands + codexSlashCommands).forEach { item ->
+            val normalized = item.command.trim().lowercase(Locale.ROOT)
+            val provider = item.providerId.trim().lowercase(Locale.ROOT)
+            if (normalized.isBlank()) return@forEach
+            if (provider.isBlank()) return@forEach
+            val key = "$provider::$normalized"
+            if (!merged.containsKey(key)) {
+                merged[key] = item.copy(
+                    providerId = provider,
+                    command = normalized,
+                )
+            }
+        }
+        return merged.values.toList()
+    }
+
     /**
      * 异步探测所有 CLI 工具
      */
@@ -87,16 +128,32 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
 
             val claudePath = resolveCliPath(settings.claudeCodeCliPath, "claude")
             claudeInfo = discoverClaude(claudePath)
+            claudeSlashCommands = if (claudeInfo.available) {
+                parseClaudeSlashCommands(claudeInfo.path)
+            } else {
+                emptyList()
+            }
 
             val codexPath = resolveCliPath(settings.codexCliPath, "codex")
             codexInfo = discoverCodex(codexPath)
+            codexSlashCommands = if (codexInfo.available) {
+                parseCodexSlashCommands(codexInfo.path)
+            } else {
+                emptyList()
+            }
             persistDiscoverySnapshot(settings, claudeInfo, codexInfo)
 
             discoveryCompleted = true
-            logger.info("CLI discovery completed: claude=${claudeInfo.available}(${claudeInfo.path}), codex=${codexInfo.available}(${codexInfo.path})")
+            logger.info(
+                "CLI discovery completed: claude=${claudeInfo.available}(${claudeInfo.path}), " +
+                    "codex=${codexInfo.available}(${codexInfo.path}), " +
+                    "slashCommands=${claudeSlashCommands.size + codexSlashCommands.size}"
+            )
             notifyListeners()
         } catch (e: Exception) {
             logger.warn("CLI discovery failed", e)
+            claudeSlashCommands = emptyList()
+            codexSlashCommands = emptyList()
             discoveryCompleted = true
             notifyListeners()
         }
@@ -402,6 +459,18 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
             logger.info("Failed to parse codex models: ${e.message}")
             emptyList()
         }
+    }
+
+    private fun parseClaudeSlashCommands(cliPath: String): List<CliSlashCommandInfo> {
+        val helpOutput = runCommand(cliPath, listOf("--help"), acceptNonZeroExit = true)
+            ?: return emptyList()
+        return parseClaudeSlashCommandsFromHelp(helpOutput)
+    }
+
+    private fun parseCodexSlashCommands(cliPath: String): List<CliSlashCommandInfo> {
+        val helpOutput = runCommand(cliPath, listOf("--help"), acceptNonZeroExit = true)
+            ?: return emptyList()
+        return parseCodexSlashCommandsFromHelp(helpOutput)
     }
 
     private fun extractCodexModels(rawText: String): List<String> {
@@ -832,6 +901,98 @@ class CliDiscoveryService : com.intellij.openapi.Disposable {
         private const val CODEX_SESSION_FILES_TO_SCAN = 12
         private const val CODEX_SESSION_LINES_PER_FILE = 2000
         private const val CODEX_SESSION_MAX_DEPTH = 8
+        private const val CLAUDE_PROVIDER_ID = "claude-cli"
+        private const val CODEX_PROVIDER_ID = "codex-cli"
+        private const val MAX_SLASH_DESCRIPTION_LENGTH = 120
+        private val HELP_COMMAND_LINE_REGEX = Regex("""^\s{2}([A-Za-z][A-Za-z0-9|_-]*)\s{2,}(.+)$""")
+        private val SLASH_COMMAND_NAME_REGEX = Regex("""^[a-z0-9][a-z0-9-]*$""")
+        private val CAMEL_CASE_BOUNDARY_REGEX = Regex("""([a-z0-9])([A-Z])""")
+        private val MULTI_WHITESPACE_REGEX = Regex("""\s+""")
+
+        internal fun parseClaudeSlashCommandsFromHelp(helpOutput: String): List<CliSlashCommandInfo> {
+            if (helpOutput.isBlank()) return emptyList()
+
+            val extracted = linkedMapOf<String, CliSlashCommandInfo>()
+            var inCommandsSection = false
+            helpOutput.lineSequence().forEach { rawLine ->
+                val line = rawLine.trimEnd()
+                val trimmed = line.trim()
+                if (trimmed.equals("Commands:", ignoreCase = true)) {
+                    inCommandsSection = true
+                    return@forEach
+                }
+                if (!inCommandsSection) return@forEach
+                if (trimmed.isBlank()) return@forEach
+                if (trimmed.endsWith(":") && !trimmed.equals("Commands:", ignoreCase = true)) {
+                    inCommandsSection = false
+                    return@forEach
+                }
+
+                val commandMatch = HELP_COMMAND_LINE_REGEX.find(line) ?: return@forEach
+                val command = normalizeSlashCommandToken(commandMatch.groupValues[1]) ?: return@forEach
+                if (extracted.containsKey(command)) return@forEach
+                extracted[command] = CliSlashCommandInfo(
+                    providerId = CLAUDE_PROVIDER_ID,
+                    command = command,
+                    description = normalizeDescription(commandMatch.groupValues[2]),
+                    invocationKind = CliSlashInvocationKind.COMMAND,
+                )
+            }
+            return extracted.values.toList()
+        }
+
+        internal fun parseCodexSlashCommandsFromHelp(helpOutput: String): List<CliSlashCommandInfo> {
+            if (helpOutput.isBlank()) return emptyList()
+
+            val extracted = linkedMapOf<String, CliSlashCommandInfo>()
+            var inCommandsSection = false
+            helpOutput.lineSequence().forEach { rawLine ->
+                val line = rawLine.trimEnd()
+                val trimmed = line.trim()
+                if (trimmed.equals("Commands:", ignoreCase = true)) {
+                    inCommandsSection = true
+                    return@forEach
+                }
+                if (!inCommandsSection) return@forEach
+                if (trimmed.isBlank()) return@forEach
+                if (trimmed.endsWith(":") && !trimmed.equals("Commands:", ignoreCase = true)) {
+                    inCommandsSection = false
+                    return@forEach
+                }
+
+                val commandMatch = HELP_COMMAND_LINE_REGEX.find(line) ?: return@forEach
+                val command = normalizeSlashCommandToken(commandMatch.groupValues[1]) ?: return@forEach
+                if (extracted.containsKey(command)) return@forEach
+                extracted[command] = CliSlashCommandInfo(
+                    providerId = CODEX_PROVIDER_ID,
+                    command = command,
+                    description = normalizeDescription(commandMatch.groupValues[2]),
+                    invocationKind = CliSlashInvocationKind.COMMAND,
+                )
+            }
+            return extracted.values.toList()
+        }
+
+        private fun normalizeSlashCommandToken(raw: String): String? {
+            val candidate = raw
+                .trim()
+                .removePrefix("/")
+                .substringBefore("|")
+                .substringBefore(",")
+                .trim()
+            if (candidate.isBlank()) return null
+            val kebab = CAMEL_CASE_BOUNDARY_REGEX
+                .replace(candidate, "$1-$2")
+                .lowercase(Locale.ROOT)
+            return kebab.takeIf { SLASH_COMMAND_NAME_REGEX.matches(it) }
+        }
+
+        private fun normalizeDescription(raw: String): String {
+            if (raw.isBlank()) return ""
+            return MULTI_WHITESPACE_REGEX
+                .replace(raw.trim(), " ")
+                .take(MAX_SLASH_DESCRIPTION_LENGTH)
+        }
 
         internal fun buildCommonLocationCandidates(
             toolName: String,

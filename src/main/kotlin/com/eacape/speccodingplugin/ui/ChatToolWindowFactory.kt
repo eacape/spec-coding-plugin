@@ -12,9 +12,11 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.util.Key
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.openapi.util.Disposer
@@ -23,10 +25,11 @@ import com.intellij.ui.content.ContentManagerEvent
 import com.intellij.ui.content.ContentManagerListener
 import javax.swing.SwingUtilities
 
-class ChatToolWindowFactory : ToolWindowFactory {
+class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
     companion object {
         private val CHANGES_CONTENT_KEY = Key.create<Boolean>("SpecCoding.ChangesContent")
         private val WORKTREE_CONTENT_KEY = Key.create<Boolean>("SpecCoding.WorktreeContent")
+        private val CHANGES_TITLE_ICON = IconLoader.getIcon("/icons/toolwindow-changes.svg", ChatToolWindowFactory::class.java)
     }
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -82,7 +85,7 @@ class ChatToolWindowFactory : ToolWindowFactory {
 
             override fun update(e: AnActionEvent) {
                 val text = SpecCodingBundle.message("toolwindow.changes.open.tooltip")
-                e.presentation.icon = AllIcons.Actions.Undo
+                e.presentation.icon = CHANGES_TITLE_ICON
                 e.presentation.text = text
                 e.presentation.description = text
                 e.presentation.isEnabledAndVisible = !project.isDisposed
