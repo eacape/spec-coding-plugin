@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecDocument
+import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.ValidationResult
@@ -316,7 +317,8 @@ class SpecDetailPanel(
         confirmGenerateButton.addActionListener {
             val state = clarificationState ?: return@addActionListener
             val confirmed = normalizeContent(inputArea.text)
-            if (confirmed.isBlank()) {
+            val allowBlank = state.phase == SpecPhase.DESIGN || state.phase == SpecPhase.IMPLEMENT
+            if (confirmed.isBlank() && !allowBlank) {
                 validationLabel.text = SpecCodingBundle.message("spec.detail.clarify.detailsRequired")
                 validationLabel.foreground = JBColor(Color(213, 52, 52), Color(255, 140, 140))
                 return@addActionListener
@@ -803,7 +805,7 @@ class SpecDetailPanel(
     }
 
     private fun renderClarificationQuestions(markdown: String) {
-        val content = markdown.ifBlank {
+        val content = SpecMarkdownSanitizer.sanitize(markdown).ifBlank {
             SpecCodingBundle.message("spec.workflow.clarify.noQuestions")
         }
         runCatching {
@@ -889,7 +891,7 @@ class SpecDetailPanel(
         isGeneratingActive = false
         isClarificationGenerating = false
         stopGeneratingAnimation()
-        renderPreviewMarkdown(buildValidationIssuesMarkdown(phase, validation))
+        renderPreviewMarkdown(buildValidationPreviewMarkdown(phase, validation))
         switchPreviewCard(CARD_PREVIEW)
         validationLabel.text = buildValidationFailureLabel(validation)
         validationLabel.foreground = JBColor(java.awt.Color(244, 67, 54), java.awt.Color(239, 83, 80))
@@ -949,12 +951,13 @@ class SpecDetailPanel(
     }
 
     private fun renderPreviewMarkdown(content: String) {
-        previewSourceText = content
+        val displayContent = SpecMarkdownSanitizer.sanitize(content)
+        previewSourceText = displayContent
         runCatching {
-            MarkdownRenderer.render(previewPane, content)
+            MarkdownRenderer.render(previewPane, displayContent)
             previewPane.caretPosition = 0
         }.onFailure {
-            previewPane.text = content
+            previewPane.text = displayContent
             previewPane.caretPosition = 0
         }
     }
@@ -983,6 +986,31 @@ class SpecDetailPanel(
             }
             appendLine(SpecCodingBundle.message("spec.detail.validation.issues.next"))
         }.trimEnd()
+    }
+
+    private fun buildValidationPreviewMarkdown(
+        phase: SpecPhase,
+        validation: ValidationResult,
+    ): String {
+        val documentContent = currentWorkflow
+            ?.documents
+            ?.get(phase)
+            ?.content
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            .orEmpty()
+        val issuesMarkdown = buildValidationIssuesMarkdown(phase, validation)
+        if (documentContent.isBlank()) {
+            return issuesMarkdown
+        }
+        return buildString {
+            appendLine(documentContent)
+            appendLine()
+            appendLine("---")
+            appendLine()
+            append(issuesMarkdown)
+        }.trim()
     }
 
     private fun buildValidationFailureLabel(validation: ValidationResult): String {
@@ -1126,6 +1154,10 @@ class SpecDetailPanel(
 
     internal fun clickGenerateForTest() {
         generateButton.doClick()
+    }
+
+    internal fun clickConfirmGenerateForTest() {
+        confirmGenerateButton.doClick()
     }
 
     internal fun isClarificationPreviewVisibleForTest(): Boolean {

@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.WorkflowStatus
@@ -263,11 +264,12 @@ internal class ChatSpecSidebarPanel(
         val phase = selectedPhase
         val document = workflow.getDocument(phase)
         val phaseValidation = document?.validationResult
-        val content = document?.content
+        val rawContent = document?.content
             ?.replace("\r\n", "\n")
             ?.replace('\r', '\n')
             ?.trim()
             .orEmpty()
+        val content = SpecMarkdownSanitizer.sanitize(rawContent)
 
         titleLabel.text = workflow.title.ifBlank { workflow.id }
         workflowLabel.text = SpecCodingBundle.message("toolwindow.spec.sidebar.workflow", workflow.id)

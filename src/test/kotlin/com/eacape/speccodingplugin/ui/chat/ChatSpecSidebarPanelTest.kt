@@ -7,6 +7,7 @@ import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import javax.swing.SwingUtilities
@@ -179,6 +180,73 @@ class ChatSpecSidebarPanelTest {
         assertEquals(workflowB.id, openedWorkflowId)
         assertEquals(SpecPhase.IMPLEMENT, openedPhase)
         assertEquals(workflowB.id, panel.currentFocusedWorkflowId())
+    }
+
+    @Test
+    fun `sidebar should sanitize noisy markdown for specify design and implement`() {
+        val workflow = workflowWithDocs(
+            id = "spec-sanitize-all",
+            currentPhase = SpecPhase.IMPLEMENT,
+            docs = mapOf(
+                SpecPhase.SPECIFY to specDocument(
+                    phase = SpecPhase.SPECIFY,
+                    content = """
+                        先把计划写好：
+                        <tool_call>
+                        <tool_name>Write</tool_name>
+                        <tool_input>{"file_path":"requirements.md"}</tool_input>
+                        </tool_call>
+                        
+                        ## 需求文档
+                        ### 功能需求
+                        - 节点名称悬浮显示
+                    """.trimIndent(),
+                    valid = true,
+                ),
+                SpecPhase.DESIGN to specDocument(
+                    phase = SpecPhase.DESIGN,
+                    content = """{"content":"## 架构设计\n\n- 前端: React\n\n## 技术选型\n\n- Kotlin"}""",
+                    valid = true,
+                ),
+                SpecPhase.IMPLEMENT to specDocument(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = """
+                        ```markdown
+                        ## 任务列表
+                        - [ ] Task 1: 实现 hover 展示
+                        
+                        ## 实现步骤
+                        1. 更新节点渲染组件
+                        ```
+                    """.trimIndent(),
+                    valid = false,
+                ),
+            ),
+        )
+        val panel = runOnEdtResult {
+            ChatSpecSidebarPanel(
+                loadWorkflow = { workflowId ->
+                    if (workflowId == workflow.id) Result.success(workflow) else Result.failure(IllegalStateException("missing"))
+                },
+                listWorkflows = { listOf(workflow.id) },
+            )
+        }
+
+        runOnEdt { panel.focusWorkflow(workflow.id, preferredPhase = SpecPhase.SPECIFY) }
+        val specifyRendered = runOnEdtResult { panel.currentContentForTest() }
+        assertTrue(specifyRendered.contains("需求文档"))
+        assertFalse(specifyRendered.contains("<tool_call>", ignoreCase = true))
+
+        runOnEdt { panel.focusWorkflow(workflow.id, preferredPhase = SpecPhase.DESIGN) }
+        val designRendered = runOnEdtResult { panel.currentContentForTest() }
+        assertTrue(designRendered.contains("架构设计"))
+        assertFalse(designRendered.contains("\\n"))
+
+        runOnEdt { panel.focusWorkflow(workflow.id, preferredPhase = SpecPhase.IMPLEMENT) }
+        val implementRendered = runOnEdtResult { panel.currentContentForTest() }
+        assertTrue(implementRendered.contains("任务列表"))
+        assertTrue(implementRendered.contains("实现步骤"))
+        assertFalse(implementRendered.contains("```"))
     }
 
     private fun specDocument(

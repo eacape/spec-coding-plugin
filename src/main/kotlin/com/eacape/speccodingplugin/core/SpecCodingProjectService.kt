@@ -37,6 +37,7 @@ class SpecCodingProjectService(private val project: Project) {
         contextSnapshot: ContextSnapshot? = null,
         conversationHistory: List<LlmMessage> = emptyList(),
         operationMode: OperationMode? = null,
+        planExecuteVerifySections: Boolean = true,
         imagePaths: List<String> = emptyList(),
         requestId: String? = null,
         onChunk: suspend (LlmChunk) -> Unit,
@@ -59,7 +60,7 @@ class SpecCodingProjectService(private val project: Project) {
         messages.add(
             LlmMessage(
                 role = LlmRole.SYSTEM,
-                content = DEV_WORKFLOW_SYSTEM_INSTRUCTION,
+                content = buildDevWorkflowSystemInstruction(planExecuteVerifySections),
             ),
         )
         messages.add(
@@ -116,7 +117,10 @@ class SpecCodingProjectService(private val project: Project) {
 
     companion object {
         private const val MAX_CHAT_HISTORY_MESSAGES = 24
-        private const val DEV_WORKFLOW_SYSTEM_INSTRUCTION = """
+    }
+
+    private fun buildDevWorkflowSystemInstruction(planExecuteVerifySections: Boolean): String {
+        val baseInstruction = """
             You are the in-IDE project development copilot.
             Prefer workflow-oriented responses for implementation tasks:
             1) clarify objective and constraints briefly,
@@ -127,15 +131,31 @@ class SpecCodingProjectService(private val project: Project) {
             [Thinking], [Read], [Edit], [Task], [Verify].
             Never claim files were created/modified/deleted unless tools actually executed those edits.
             If no file edit was performed, describe it as a proposal rather than completed work.
-            For non-trivial development requests, use this markdown structure:
-            ## Plan
-            - concise, actionable steps
-            ## Execute
-            - key code changes, files, and commands
-            ## Verify
-            - checks/tests and expected result
             Keep responses practical, specific to this repository, and avoid generic filler.
-        """
+        """.trimIndent()
+
+        val formatInstruction = if (planExecuteVerifySections) {
+            """
+                For non-trivial development requests, use this markdown structure:
+                ## Plan
+                - concise, actionable steps
+                ## Execute
+                - key code changes, files, and commands
+                ## Verify
+                - checks/tests and expected result
+                When including code, always use fenced code blocks with an explicit language tag.
+                Keep each code block focused and directly runnable where possible.
+            """.trimIndent()
+        } else {
+            """
+                Do not force Plan/Execute/Verify headings.
+                In vibe-style replies, use natural concise sections only when they improve readability.
+                When including code, always use fenced code blocks with an explicit language tag.
+                Keep narrative outside code fences; keep code examples minimal and executable.
+            """.trimIndent()
+        }
+
+        return "$baseInstruction\n$formatInstruction"
     }
 
     private fun buildOperationModeInstruction(operationMode: OperationMode?): String {

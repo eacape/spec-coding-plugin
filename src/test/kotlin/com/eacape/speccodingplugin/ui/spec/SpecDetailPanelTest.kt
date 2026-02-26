@@ -313,6 +313,7 @@ class SpecDetailPanelTest {
 
         assertTrue(panel.currentValidationTextForTest().contains("Validation: FAILED"))
         val preview = panel.currentPreviewTextForTest()
+        assertTrue(preview.contains("tasks content"), preview)
         assertTrue(preview.contains("Validation Issues"))
         assertTrue(preview.contains("Implementation Steps"))
         assertTrue(preview.contains("Task count is low"))
@@ -321,12 +322,63 @@ class SpecDetailPanelTest {
         assertTrue(states["generateEnabled"] as Boolean)
     }
 
+    @Test
+    fun `clarification confirm should allow empty details in implement phase`() {
+        var confirmedInput: String? = null
+        var confirmedContext: String? = null
+        val panel = createPanel(
+            onClarificationConfirm = { input, context ->
+                confirmedInput = input
+                confirmedContext = context
+            },
+        )
+        val workflow = SpecWorkflow(
+            id = "wf-implement-clarify",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.DESIGN to document(
+                    phase = SpecPhase.DESIGN,
+                    content = """
+                        ## 架构设计
+                        - layered
+                        
+                        ## 技术选型
+                        - Kotlin
+                        
+                        ## 数据模型
+                        - Task
+                    """.trimIndent(),
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Implement Clarify",
+            description = "implement clarification",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.showClarificationDraft(
+            phase = SpecPhase.IMPLEMENT,
+            input = "",
+            questionsMarkdown = "1. 任务优先级如何拆分？",
+            suggestedDetails = "",
+        )
+        panel.setInputTextForTest("")
+
+        panel.clickConfirmGenerateForTest()
+
+        assertEquals("", confirmedInput)
+        assertEquals("", confirmedContext)
+    }
+
     private fun createPanel(
         onGenerate: (String) -> Unit = {},
+        onClarificationConfirm: (String, String) -> Unit = { _, _ -> },
     ): SpecDetailPanel {
         return SpecDetailPanel(
             onGenerate = onGenerate,
-            onClarificationConfirm = { _, _ -> },
+            onClarificationConfirm = onClarificationConfirm,
             onClarificationRegenerate = { _, _ -> },
             onClarificationSkip = {},
             onClarificationCancel = {},

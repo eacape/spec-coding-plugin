@@ -88,6 +88,35 @@ class SpecCardMessagePanelTest {
     }
 
     @Test
+    fun `spec card should sanitize noisy content before render`() {
+        val metadata = SpecCardMetadata(
+            workflowId = "spec-1001c",
+            phase = SpecPhase.IMPLEMENT,
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Sanitized Preview",
+            revision = 1011L,
+            sourceCommand = "/spec generate sanitize",
+        )
+        val noisyDocument = """{"content":"## 任务列表\n\n- [ ] Task 1: 清洗规格展示\n\n## 实现步骤\n\n1. 渲染前净化内容"}"""
+
+        val panel = runOnEdtResult {
+            SpecCardMessagePanel(
+                metadata = metadata,
+                cardMarkdown = "## Spec Card",
+                initialDocumentContent = noisyDocument,
+            )
+        }
+
+        val rendered = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertTrue(rendered.contains("任务列表"))
+        assertTrue(rendered.contains("实现步骤"))
+        assertFalse(rendered.contains("\\n"))
+    }
+
+    @Test
     fun `spec card actions should trigger callbacks`() {
         val metadata = SpecCardMetadata(
             workflowId = "spec-1002",

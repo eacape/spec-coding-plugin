@@ -6,7 +6,6 @@ import com.eacape.speccodingplugin.llm.LlmResponse
 import io.mockk.mockk
 import io.mockk.coEvery
 import io.mockk.coVerify
-import io.mockk.thirdArg
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import kotlinx.coroutines.runBlocking
@@ -148,7 +147,8 @@ class SpecGeneratorClarificationTest {
         coEvery {
             llmRouter.stream(providerId = any(), request = any(), onChunk = any())
         } coAnswers {
-            val onChunk = thirdArg<suspend (LlmChunk) -> Unit>()
+            @Suppress("UNCHECKED_CAST")
+            val onChunk = invocation.args[2] as suspend (LlmChunk) -> Unit
             onChunk(LlmChunk(delta = raw))
             LlmResponse(content = "", model = "claude-haiku-4-5")
         }
@@ -183,7 +183,8 @@ class SpecGeneratorClarificationTest {
         coEvery {
             llmRouter.stream(providerId = any(), request = any(), onChunk = any())
         } coAnswers {
-            val onChunk = thirdArg<suspend (LlmChunk) -> Unit>()
+            @Suppress("UNCHECKED_CAST")
+            val onChunk = invocation.args[2] as suspend (LlmChunk) -> Unit
             onChunk(LlmChunk(delta = raw))
             LlmResponse(content = "", model = "claude-haiku-4-5")
         }

@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecDocument
+import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.ui.chat.MarkdownRenderer
 import com.intellij.openapi.application.ApplicationManager
@@ -477,12 +478,13 @@ class SpecHistoryDiffDialog(
     }
 
     private fun buildDisplayContent(content: String): String {
+        val sanitizedContent = SpecMarkdownSanitizer.sanitize(content)
         if (!summaryOnlyCheckBox.isSelected) {
-            return content
+            return sanitizedContent
         }
 
         val maxLines = (summaryLinesSpinner.value as? Int) ?: DEFAULT_SUMMARY_LINES
-        val summary = summarizeTopLines(content, maxLines)
+        val summary = summarizeTopLines(sanitizedContent, maxLines)
         if (summary.omittedLines <= 0) {
             return summary.text
         }

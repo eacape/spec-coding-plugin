@@ -4,6 +4,10 @@ import com.eacape.speccodingplugin.llm.*
 import com.intellij.openapi.diagnostic.thisLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Spec 文档生成器
@@ -53,7 +57,10 @@ class SpecGenerator(
             }
 
             val llmResponse = response.getOrThrow()
-            val content = llmResponse.content
+            val content = normalizeGeneratedDocument(
+                phase = request.phase,
+                rawContent = llmResponse.content,
+            )
 
             // 创建文档
             val document = SpecDocument(
@@ -120,7 +127,7 @@ class SpecGenerator(
             )
             parseClarificationDraft(
                 phase = request.phase,
-                rawContent = response.content,
+                rawContent = SpecMarkdownSanitizer.sanitize(response.content),
                 maxQuestions = budget,
             )
         }.onFailure { error ->
@@ -256,6 +263,7 @@ class SpecGenerator(
             appendConfirmedContext(request.options.confirmedContext)
             appendLine()
             appendLine("要求：")
+            appendLine("0. 只输出最终 tasks.md 正文，不要输出思考过程、工具日志、文件路径、JSON 字符串或转义字符。")
             appendLine("1. 将设计拆解为具体的开发任务")
             appendLine("2. 每个任务应该是可独立完成的")
             appendLine("3. 标记任务优先级（P0/P1/P2）")
@@ -263,6 +271,7 @@ class SpecGenerator(
             appendLine("5. 定义任务依赖关系")
             appendLine("6. 包含测试计划")
             appendLine("7. 使用 Markdown Checkbox 格式")
+            appendLine("8. 必须包含二级标题：## 任务列表 与 ## 实现步骤")
 
             if (request.options.includeExamples) {
                 appendLine()
@@ -270,6 +279,152 @@ class SpecGenerator(
                 appendLine(getImplementTemplate())
             }
         }
+    }
+
+    private fun normalizeGeneratedDocument(
+        phase: SpecPhase,
+        rawContent: String,
+    ): String {
+        if (rawContent.isBlank()) return ""
+
+        var normalized = rawContent
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        normalized = extractLikelyPayloadFromCodeFence(normalized, phase)
+        normalized = extractJsonContentFieldIfPresent(normalized)
+        normalized = decodeEscapedTextIfNeeded(normalized)
+        normalized = SpecMarkdownSanitizer.sanitize(normalized).ifBlank { normalized.trim() }
+        normalized = trimToLikelyDocumentStart(phase, normalized)
+        if (phase == SpecPhase.IMPLEMENT) {
+            normalized = ensureImplementStructure(normalized)
+        }
+        return normalized.trim()
+    }
+
+    private fun extractLikelyPayloadFromCodeFence(
+        content: String,
+        phase: SpecPhase,
+    ): String {
+        val blocks = CODE_FENCE_REGEX.findAll(content)
+            .map { it.groupValues[1].trim() }
+            .filter { it.isNotBlank() }
+            .toList()
+        if (blocks.isEmpty()) return content
+
+        val preferred = blocks.firstOrNull { block ->
+            val decoded = decodeEscapedTextIfNeeded(block)
+            decoded.lineSequence().any { line -> isLikelyPhaseDocumentLine(phase, line) }
+        }
+        return preferred ?: blocks.maxByOrNull { it.length } ?: content
+    }
+
+    private fun extractJsonContentFieldIfPresent(content: String): String {
+        val trimmed = content.trim()
+        if (!trimmed.startsWith("{") || !trimmed.contains("\"content\"")) {
+            return content
+        }
+        return runCatching {
+            val root = jsonParser.parseToJsonElement(trimmed) as? JsonObject ?: return@runCatching content
+            val value = (root["content"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            if (value.isBlank()) content else value
+        }.getOrElse { content }
+    }
+
+    private fun decodeEscapedTextIfNeeded(content: String): String {
+        val trimmed = content.trim()
+        val unwrapped = if (
+            trimmed.length >= 2 &&
+            trimmed.startsWith("\"") &&
+            trimmed.endsWith("\"")
+        ) {
+            trimmed.substring(1, trimmed.length - 1)
+        } else {
+            trimmed
+        }
+
+        val escapedNewlineCount = ESCAPED_NEWLINE_REGEX.findAll(unwrapped).count()
+        val realNewlineCount = unwrapped.count { it == '\n' }
+        if (escapedNewlineCount < 2 || escapedNewlineCount <= realNewlineCount) {
+            return content
+        }
+
+        return unwrapped
+            .replace("\\r\\n", "\n")
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
+    }
+
+    private fun trimToLikelyDocumentStart(phase: SpecPhase, content: String): String {
+        val lines = content.lines()
+        val startIndex = lines.indexOfFirst { line -> isLikelyPhaseDocumentLine(phase, line) }
+        if (startIndex <= 0 || startIndex > MAX_LEADING_NOISE_LINES) {
+            return content
+        }
+        return lines.drop(startIndex).joinToString("\n")
+    }
+
+    private fun isLikelyPhaseDocumentLine(phase: SpecPhase, line: String): Boolean {
+        val trimmed = line.trim()
+        if (trimmed.isBlank()) return false
+        if (MARKDOWN_HEADING_REGEX.matches(trimmed)) return true
+        if (CHECKBOX_ITEM_REGEX.matches(trimmed)) return true
+        if (ORDERED_ITEM_REGEX.matches(trimmed)) return true
+
+        val normalized = trimmed.lowercase()
+        return when (phase) {
+            SpecPhase.SPECIFY -> normalized.contains("功能需求") ||
+                normalized.contains("非功能需求") ||
+                normalized.contains("用户故事") ||
+                normalized.contains("requirements")
+            SpecPhase.DESIGN -> normalized.contains("架构设计") ||
+                normalized.contains("技术选型") ||
+                normalized.contains("数据模型") ||
+                normalized.contains("design")
+            SpecPhase.IMPLEMENT -> normalized.contains("任务列表") ||
+                normalized.contains("实现步骤") ||
+                normalized.contains("task list") ||
+                normalized.contains("implementation steps") ||
+                normalized.startsWith("task ")
+        }
+    }
+
+    private fun ensureImplementStructure(content: String): String {
+        var normalized = content.trim()
+        if (normalized.isBlank()) {
+            return IMPLEMENT_SKELETON
+        }
+
+        val hasTaskList = containsAnyMarker(normalized, IMPLEMENT_TASK_LIST_MARKERS)
+        val hasImplementationSteps = containsAnyMarker(normalized, IMPLEMENT_STEPS_MARKERS)
+
+        if (!hasTaskList) {
+            normalized = buildString {
+                appendLine("## 任务列表")
+                appendLine()
+                appendLine(normalized)
+            }.trim()
+        }
+
+        if (!hasImplementationSteps) {
+            normalized = buildString {
+                appendLine(normalized)
+                appendLine()
+                appendLine("## 实现步骤")
+                appendLine()
+                appendLine("1. 按任务列表优先级执行并在完成后勾选。")
+                appendLine("2. 每完成一项后运行对应测试并记录结果。")
+                appendLine("3. 回归验证后更新文档并同步状态。")
+            }.trim()
+        }
+
+        return normalized
+    }
+
+    private fun containsAnyMarker(content: String, markers: List<String>): Boolean {
+        return markers.any { marker -> content.contains(marker, ignoreCase = true) }
     }
 
     private fun StringBuilder.appendConfirmedContext(confirmedContext: String?) {
@@ -694,6 +849,31 @@ class SpecGenerator(
     }
 
     companion object {
+        private val jsonParser = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+        }
+        private val CODE_FENCE_REGEX = Regex("```(?:[a-zA-Z0-9_-]+)?\\n([\\s\\S]*?)```")
+        private val ESCAPED_NEWLINE_REGEX = Regex("""\\n|\\r\\n""")
+        private val MARKDOWN_HEADING_REGEX = Regex("""^\s{0,3}#{1,6}\s+\S+""")
+        private val CHECKBOX_ITEM_REGEX = Regex("""^\s*-\s*\[[ xX]\]\s+\S+""")
+        private val ORDERED_ITEM_REGEX = Regex("""^\s*\d+\.\s+\S+""")
+        private const val MAX_LEADING_NOISE_LINES = 24
+        private val IMPLEMENT_TASK_LIST_MARKERS = listOf("## 任务列表", "任务列表", "Task List")
+        private val IMPLEMENT_STEPS_MARKERS = listOf("## 实现步骤", "实现步骤", "Implementation Steps")
+        private val IMPLEMENT_SKELETON = """
+            ## 任务列表
+            
+            - [ ] Task 1: 明确本阶段交付范围与接口边界
+            - [ ] Task 2: 完成核心功能实现并补充对应测试
+            - [ ] Task 3: 执行回归验证并更新文档
+            
+            ## 实现步骤
+            
+            1. 按任务列表优先级执行并在完成后勾选。
+            2. 每完成一项后运行对应测试并记录结果。
+            3. 回归验证后更新文档并同步状态。
+        """.trimIndent()
         private const val DEFAULT_CLARIFICATION_QUESTION_BUDGET = 5
         private const val MAX_CLARIFICATION_QUESTION_BUDGET = 8
         private const val MAX_SECTION_HEADER_LENGTH = 80
@@ -702,7 +882,6 @@ class SpecGenerator(
         private val BULLET_QUESTION_REGEX = Regex("""^(?:[-*+]|[•·●▪◦])\s+(?:\[[ xX]\]\s*)?(.+)$""")
         private val QUESTION_LABEL_REGEX =
             Regex("""^(?:(?:q|question)\s*[0-9０-９]*[.:：-]|问题\s*[0-9０-９]*[.:：-])\s*(.+)$""", RegexOption.IGNORE_CASE)
-        private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s*.+$""")
         private val MARKDOWN_HEADING_PREFIX_REGEX = Regex("""^#{1,6}\s*""")
         private val QUESTION_LIKE_LINE_REGEX = Regex(
             """^(?:是否|需不需要|需否|能否|可否|要不要|有没有|哪些|哪种|哪类|何时|何种|如何|why\b|what\b|which\b|who\b|when\b|where\b|how\b|is\b|are\b|can\b|could\b|would\b|should\b|do\b|does\b|did\b|will\b)""",

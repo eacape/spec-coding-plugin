@@ -25,12 +25,17 @@ import javax.swing.text.StyledDocument
  */
 object MarkdownRenderer {
 
-    private val CODE_BG_LIGHT = Color(245, 245, 245)
-    private val CODE_BG_DARK = Color(30, 30, 30)
-    private val CODE_FG_LIGHT = Color(200, 50, 50)
-    private val CODE_FG_DARK = Color(206, 145, 120)
-    private val BLOCK_CODE_BG_LIGHT = Color(240, 240, 240)
-    private val BLOCK_CODE_BG_DARK = Color(28, 28, 28)
+    private const val CODE_FONT_FAMILY = "JetBrains Mono"
+    private val CODE_BG_LIGHT = Color(238, 242, 248)
+    private val CODE_BG_DARK = Color(52, 57, 66)
+    private val CODE_FG_LIGHT = Color(86, 97, 118)
+    private val CODE_FG_DARK = Color(197, 207, 224)
+    private val BLOCK_CODE_BG_LIGHT = Color(241, 245, 251)
+    private val BLOCK_CODE_BG_DARK = Color(38, 44, 52)
+    private val BLOCK_CODE_FG_LIGHT = Color(44, 52, 63)
+    private val BLOCK_CODE_FG_DARK = Color(216, 223, 234)
+    private val CODE_LANG_FG_LIGHT = Color(104, 120, 142)
+    private val CODE_LANG_FG_DARK = Color(148, 164, 187)
 
     fun render(textPane: JTextPane, markdown: String) {
         val doc = textPane.styledDocument
@@ -95,13 +100,14 @@ object MarkdownRenderer {
             i++
         }
 
-        val code = codeLines.joinToString("\n")
+        val code = normalizeCodeBlockContent(codeLines.joinToString("\n"))
 
         // 语言标签
         if (language.isNotEmpty()) {
             val langAttrs = SimpleAttributeSet()
             StyleConstants.setFontSize(langAttrs, 11)
-            StyleConstants.setForeground(langAttrs, JBColor.GRAY)
+            StyleConstants.setForeground(langAttrs, JBColor(CODE_LANG_FG_LIGHT, CODE_LANG_FG_DARK))
+            StyleConstants.setSpaceAbove(langAttrs, 2f)
             doc.insertString(
                 doc.length,
                 SpecCodingBundle.message("chat.markdown.code.languageTag", language) + "\n",
@@ -111,13 +117,25 @@ object MarkdownRenderer {
 
         // 代码内容
         val codeAttrs = SimpleAttributeSet()
-        StyleConstants.setFontFamily(codeAttrs, Font.MONOSPACED)
-        StyleConstants.setFontSize(codeAttrs, 11)
+        StyleConstants.setFontFamily(codeAttrs, CODE_FONT_FAMILY)
+        StyleConstants.setFontSize(codeAttrs, 12)
         StyleConstants.setBackground(codeAttrs, JBColor(BLOCK_CODE_BG_LIGHT, BLOCK_CODE_BG_DARK))
-        StyleConstants.setForeground(codeAttrs, JBColor(Color(50, 50, 50), Color(212, 212, 212)))
-        doc.insertString(doc.length, code, codeAttrs)
+        StyleConstants.setForeground(codeAttrs, JBColor(BLOCK_CODE_FG_LIGHT, BLOCK_CODE_FG_DARK))
+        StyleConstants.setLeftIndent(codeAttrs, 10f)
+        StyleConstants.setRightIndent(codeAttrs, 10f)
+        StyleConstants.setLineSpacing(codeAttrs, 0.08f)
+        StyleConstants.setSpaceAbove(codeAttrs, if (language.isEmpty()) 2f else 1f)
+        StyleConstants.setSpaceBelow(codeAttrs, 4f)
+        val codeText = if (code.isEmpty()) "\n" else "$code\n"
+        doc.insertString(doc.length, codeText, codeAttrs)
 
         return i
+    }
+
+    private fun normalizeCodeBlockContent(raw: String): String {
+        return raw
+            .replace("\t", "    ")
+            .trimEnd('\n', '\r')
     }
 
     /**
@@ -201,7 +219,7 @@ object MarkdownRenderer {
                 }
                 is InlineToken.InlineCode -> {
                     val attrs = SimpleAttributeSet()
-                    StyleConstants.setFontFamily(attrs, Font.MONOSPACED)
+                    StyleConstants.setFontFamily(attrs, CODE_FONT_FAMILY)
                     StyleConstants.setFontSize(attrs, 11)
                     StyleConstants.setBackground(attrs, JBColor(CODE_BG_LIGHT, CODE_BG_DARK))
                     StyleConstants.setForeground(attrs, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))

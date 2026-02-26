@@ -55,7 +55,7 @@ class OpenSpecCodingSettingsAction : AnAction() {
             // 用户切换到其他 Tab 时自动移除 Settings content
             contentManager.addContentManagerListener(object : ContentManagerListener {
                 override fun selectionChanged(event: ContentManagerEvent) {
-                    if (event.content != settingsContent && contentManager.contents.contains(settingsContent)) {
+                    if (contentManager.selectedContent != settingsContent && contentManager.contents.contains(settingsContent)) {
                         contentManager.removeContentManagerListener(this)
                         contentManager.removeContent(settingsContent, true)
                     }

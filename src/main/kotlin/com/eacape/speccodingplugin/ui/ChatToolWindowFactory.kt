@@ -35,13 +35,14 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         toolWindow.title = SpecCodingBundle.message("toolwindow.title")
         val windowStateStore = WindowStateStore.getInstance(project)
+        lateinit var chatPanel: ImprovedChatPanel
 
         // Tool Window 标题栏图标（从左到右：新建会话、历史会话、变更、worktree、设置）
         val newSessionTitleAction = object : DumbAwareAction() {
             override fun actionPerformed(e: AnActionEvent) {
                 if (project.isDisposed) return
                 focusChatTab(toolWindow)
-                project.messageBus.syncPublisher(ChatToolWindowControlListener.TOPIC).onNewSessionRequested()
+                chatPanel.requestNewSessionFromTitleAction()
             }
 
             override fun update(e: AnActionEvent) {
@@ -58,7 +59,7 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
         val openHistoryTitleAction = object : DumbAwareAction() {
             override fun actionPerformed(e: AnActionEvent) {
                 if (project.isDisposed) return
-                project.messageBus.syncPublisher(ChatToolWindowControlListener.TOPIC).onOpenHistoryRequested()
+                chatPanel.requestOpenHistoryFromTitleAction()
             }
 
             override fun update(e: AnActionEvent) {
@@ -131,7 +132,7 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
         val contentFactory = ContentFactory.getInstance()
 
         // Chat 标签页
-        val chatPanel = ImprovedChatPanel(project)
+        chatPanel = ImprovedChatPanel(project)
         val chatContent = contentFactory.createContent(chatPanel, SpecCodingBundle.message("toolwindow.tab.chat"), false)
         Disposer.register(chatContent, chatPanel)
         toolWindow.contentManager.addContent(chatContent)
@@ -220,7 +221,7 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
 
         contentManager.addContentManagerListener(object : ContentManagerListener {
             override fun selectionChanged(event: ContentManagerEvent) {
-                if (event.content != content && contentManager.contents.contains(content)) {
+                if (contentManager.selectedContent != content && contentManager.contents.contains(content)) {
                     contentManager.removeContentManagerListener(this)
                     contentManager.removeContent(content, true)
                 }

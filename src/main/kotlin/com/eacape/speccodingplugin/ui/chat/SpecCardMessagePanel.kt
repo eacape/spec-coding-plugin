@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.DocumentRevisionConflictException
+import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.intellij.icons.AllIcons
@@ -646,8 +647,12 @@ internal class SpecCardMessagePanel(
     }
 
     private fun resolveDisplayContent(): String {
-        if (documentContent.isNotBlank()) return documentContent
-        return extractPreviewFromCardMarkdown(cardMarkdown)
+        val raw = if (documentContent.isNotBlank()) {
+            documentContent
+        } else {
+            extractPreviewFromCardMarkdown(cardMarkdown)
+        }
+        return SpecMarkdownSanitizer.sanitize(raw)
     }
 
     private fun toCollapsedPreview(content: String): String {

@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.context.CodeGraphRenderer
 import com.eacape.speccodingplugin.context.CodeGraphService
+import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
@@ -60,6 +61,13 @@ class SpecWorkflowPanel(
     private val llmRouter = LlmRouter.getInstance()
     private val modelRegistry = ModelRegistry.getInstance()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val discoveryListener: () -> Unit = {
+        llmRouter.refreshProviders()
+        modelRegistry.refreshFromDiscovery()
+        invokeLaterSafe {
+            refreshProviderCombo(preserveSelection = true)
+        }
+    }
 
     @Volatile
     private var _isDisposed = false
@@ -108,6 +116,7 @@ class SpecWorkflowPanel(
         )
 
         setupUI()
+        CliDiscoveryService.getInstance().addDiscoveryListener(discoveryListener)
         subscribeToLocaleEvents()
         subscribeToWorkflowEvents()
         refreshWorkflows()
@@ -1379,6 +1388,7 @@ class SpecWorkflowPanel(
 
     override fun dispose() {
         _isDisposed = true
+        CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
         scope.cancel()
     }
 

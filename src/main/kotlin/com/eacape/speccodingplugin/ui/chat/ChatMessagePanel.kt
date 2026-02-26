@@ -20,11 +20,14 @@ import java.awt.RenderingHints
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.awt.geom.RoundRectangle2D
+import java.util.Locale
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.Icon
 import javax.swing.JPanel
+import javax.swing.JScrollPane
+import javax.swing.JTextArea
 import javax.swing.JTextPane
 import javax.swing.Timer
 import javax.swing.border.AbstractBorder
@@ -44,6 +47,7 @@ open class ChatMessagePanel(
     private var onContinue: ((ChatMessagePanel) -> Unit)? = null,
     private val onWorkflowFileOpen: ((WorkflowQuickActionParser.FileAction) -> Unit)? = null,
     private val onWorkflowCommandExecute: ((String) -> Unit)? = null,
+    private var workflowSectionsEnabled: Boolean = true,
 ) : JPanel(BorderLayout()) {
 
     private val contentPane = JTextPane()
@@ -137,6 +141,12 @@ open class ChatMessagePanel(
         }
     }
 
+    fun setWorkflowSectionsEnabled(enabled: Boolean) {
+        if (workflowSectionsEnabled == enabled) return
+        workflowSectionsEnabled = enabled
+        renderContent(structured = messageFinished)
+    }
+
     /**
      * 完成消息（流式结束后调用）
      */
@@ -149,7 +159,7 @@ open class ChatMessagePanel(
     }
 
     private fun renderContent(structured: Boolean = false) {
-        val useStructured = structured || messageFinished
+        val useStructured = (structured || messageFinished) && workflowSectionsEnabled
         val content = contentBuilder.toString()
         if (role == MessageRole.ASSISTANT) {
             val traceSnapshot = traceAssembler.snapshot(content)
@@ -207,6 +217,9 @@ open class ChatMessagePanel(
     }
 
     private fun createAssistantAnswerComponent(content: String, structured: Boolean): JPanel {
+        if (!workflowSectionsEnabled) {
+            return createMarkdownContainer(stripWorkflowSectionHeadings(content))
+        }
         if (!structured) {
             return createMarkdownContainer(content)
         }
@@ -260,6 +273,66 @@ open class ChatMessagePanel(
             }
         }
         return container
+    }
+
+    private fun stripWorkflowSectionHeadings(content: String): String {
+        val parseResult = WorkflowSectionParser.parse(content)
+        val normalized = if (parseResult.sections.isEmpty()) {
+            content
+        } else {
+            buildString {
+                if (parseResult.remainingText.isNotBlank()) {
+                    append(parseResult.remainingText.trim())
+                }
+                parseResult.sections.forEach { section ->
+                    val sectionContent = section.content.trim()
+                    if (sectionContent.isBlank()) return@forEach
+                    if (isNotEmpty()) appendLine().appendLine()
+                    append(sectionContent)
+                }
+            }
+        }
+        return stripLooseWorkflowHeadingLines(normalized)
+    }
+
+    private fun stripLooseWorkflowHeadingLines(content: String): String {
+        if (content.isBlank()) return content
+        var inCodeFence = false
+        val kept = mutableListOf<String>()
+        content.lines().forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                kept += line
+                return@forEach
+            }
+            if (!inCodeFence && isWorkflowHeadingLine(trimmed)) {
+                return@forEach
+            }
+            kept += line
+        }
+        return kept.joinToString("\n").trimEnd()
+    }
+
+    private fun isWorkflowHeadingLine(trimmedLine: String): Boolean {
+        if (trimmedLine.isBlank()) return false
+        var normalized = trimmedLine
+            .replace(Regex("^#+\\s*"), "")
+            .replace(Regex("^[-*+]\\s+"), "")
+            .replace(Regex("^\\d+[.)]\\s+"), "")
+            .trim()
+            .removePrefix("**")
+            .removeSuffix("**")
+            .removePrefix("__")
+            .removeSuffix("__")
+            .removePrefix("`")
+            .removeSuffix("`")
+            .trim()
+            .trimEnd(':', '：')
+            .trim()
+        if (normalized.isBlank()) return false
+        normalized = normalized.lowercase(Locale.ROOT)
+        return normalized in WORKFLOW_HEADING_TITLES
     }
 
     private fun createTracePanel(items: List<StreamingTraceAssembler.TraceItem>): JPanel {
@@ -634,7 +707,25 @@ open class ChatMessagePanel(
         val panel = JPanel()
         panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
         panel.isOpaque = false
-        panel.add(createMarkdownPane(content))
+        val segments = splitMarkdownSegments(content)
+        if (segments.isEmpty()) {
+            panel.add(createMarkdownPane(content))
+        } else {
+            segments.forEachIndexed { index, segment ->
+                if (index > 0) {
+                    panel.add(JPanel().apply {
+                        isOpaque = false
+                        preferredSize = Dimension(0, JBUI.scale(MARKDOWN_SEGMENT_GAP))
+                        minimumSize = preferredSize
+                        maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+                    })
+                }
+                when (segment) {
+                    is MarkdownSegment.Markdown -> panel.add(createMarkdownPane(segment.text))
+                    is MarkdownSegment.Code -> panel.add(createCodeBlockCard(segment.language, segment.code))
+                }
+            }
+        }
 
         val commands = WorkflowQuickActionParser.parse(content)
             .commands
@@ -644,6 +735,190 @@ open class ChatMessagePanel(
         }
 
         return panel
+    }
+
+    private fun createCodeBlockCard(language: String, code: String): JPanel {
+        val normalizedLanguage = language.substringBefore(' ').trim().ifBlank { "text" }
+        val normalizedCode = code.replace("\r\n", "\n").replace('\r', '\n').trimEnd('\n')
+        val displayCode = if (normalizedCode.isBlank()) " " else normalizedCode
+
+        val card = JPanel(BorderLayout())
+        card.isOpaque = true
+        card.background = CODE_CARD_BG
+        card.border = buildRoundedContainerBorder(
+            lineColor = CODE_CARD_BORDER,
+            arc = 10,
+            padding = JBUI.insets(6, 8, 6, 8),
+        )
+
+        val codeArea = JTextArea(displayCode).apply {
+            isEditable = false
+            isFocusable = true
+            lineWrap = false
+            wrapStyleWord = false
+            tabSize = 4
+            border = JBUI.Borders.empty(4, 2, 4, 2)
+            font = java.awt.Font("JetBrains Mono", java.awt.Font.PLAIN, JBUI.scale(12))
+            background = CODE_CARD_CODE_BG
+            foreground = CODE_CARD_CODE_FG
+            caretColor = foreground
+        }
+
+        val scrollPane = JScrollPane(codeArea).apply {
+            border = JBUI.Borders.empty()
+            viewportBorder = JBUI.Borders.empty()
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            viewport.background = CODE_CARD_CODE_BG
+            isOpaque = false
+        }
+
+        val lineCount = normalizedCode.lineSequence().count().coerceAtLeast(1)
+        val lineHeight = codeArea.getFontMetrics(codeArea.font).height
+        val hasCollapseToggle = lineCount > CODE_CARD_COLLAPSE_THRESHOLD_LINES
+        var expanded = !hasCollapseToggle
+
+        val header = JPanel(BorderLayout(JBUI.scale(6), 0))
+        header.isOpaque = false
+        header.border = JBUI.Borders.emptyBottom(4)
+
+        val languageLabel = JBLabel(SpecCodingBundle.message("chat.markdown.code.languageTag", normalizedLanguage))
+        languageLabel.font = JBUI.Fonts.smallFont()
+        languageLabel.foreground = CODE_CARD_META_FG
+        header.add(languageLabel, BorderLayout.WEST)
+
+        val actionsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply {
+            isOpaque = false
+        }
+
+        val copyButton = JButton()
+        styleIconActionButton(
+            button = copyButton,
+            icon = AllIcons.Actions.Copy,
+            tooltip = SpecCodingBundle.message("chat.message.copy.code"),
+        )
+        copyButton.addActionListener {
+            val copied = copyToClipboard(normalizedCode)
+            showCopyFeedback(copyButton, copied = copied, iconOnly = true)
+        }
+
+        val toggleButton = if (hasCollapseToggle) {
+            JButton().apply {
+                styleInlineActionButton(this)
+                foreground = CODE_CARD_META_FG
+            }
+        } else {
+            null
+        }
+
+        fun applyExpandState() {
+            val visibleLines = when {
+                !hasCollapseToggle -> lineCount.coerceIn(1, CODE_CARD_MAX_VISIBLE_LINES)
+                expanded -> lineCount.coerceIn(CODE_CARD_MIN_VISIBLE_LINES, CODE_CARD_MAX_VISIBLE_LINES)
+                else -> lineCount.coerceIn(1, CODE_CARD_COLLAPSED_VISIBLE_LINES)
+            }
+            val preferredHeight = lineHeight * visibleLines + JBUI.scale(12)
+            scrollPane.preferredSize = Dimension(0, preferredHeight)
+            toggleButton?.let { btn ->
+                val textKey = if (expanded) {
+                    "chat.message.code.collapse"
+                } else {
+                    "chat.message.code.expand"
+                }
+                val text = SpecCodingBundle.message(textKey)
+                btn.text = text
+                btn.toolTipText = text
+                btn.accessibleContext.accessibleName = text
+            }
+            card.revalidate()
+            card.repaint()
+        }
+
+        toggleButton?.let { btn ->
+            btn.addActionListener {
+                expanded = !expanded
+                applyExpandState()
+            }
+            actionsPanel.add(btn)
+        }
+        actionsPanel.add(copyButton)
+        header.add(actionsPanel, BorderLayout.EAST)
+        applyExpandState()
+
+        card.add(header, BorderLayout.NORTH)
+        card.add(scrollPane, BorderLayout.CENTER)
+        return card
+    }
+
+    private fun splitMarkdownSegments(content: String): List<MarkdownSegment> {
+        val normalized = content.replace("\r\n", "\n").replace('\r', '\n')
+        if (normalized.isBlank()) return emptyList()
+
+        val segments = mutableListOf<MarkdownSegment>()
+        val textBuffer = StringBuilder()
+        val lines = normalized.split('\n')
+        var index = 0
+
+        fun appendTextLine(line: String) {
+            if (textBuffer.isNotEmpty()) textBuffer.append('\n')
+            textBuffer.append(line)
+        }
+
+        fun flushText() {
+            val text = textBuffer.toString()
+            if (text.isNotBlank()) {
+                segments += MarkdownSegment.Markdown(text)
+            }
+            textBuffer.setLength(0)
+        }
+
+        while (index < lines.size) {
+            val line = lines[index]
+            val language = parseFenceLanguage(line)
+            if (language == null) {
+                appendTextLine(line)
+                index += 1
+                continue
+            }
+
+            val codeLines = mutableListOf<String>()
+            var cursor = index + 1
+            var closed = false
+            while (cursor < lines.size) {
+                val candidate = lines[cursor]
+                if (isFenceEndLine(candidate)) {
+                    closed = true
+                    break
+                }
+                codeLines += candidate
+                cursor += 1
+            }
+
+            if (!closed) {
+                appendTextLine(line)
+                codeLines.forEach(::appendTextLine)
+                break
+            }
+
+            flushText()
+            segments += MarkdownSegment.Code(language = language, code = codeLines.joinToString("\n"))
+            index = cursor + 1
+        }
+
+        flushText()
+        return if (segments.any { it is MarkdownSegment.Code }) segments else emptyList()
+    }
+
+    private fun parseFenceLanguage(line: String): String? {
+        if (!line.startsWith("```")) return null
+        if (line.length > 3 && line[3] == '`') return null
+        val suffix = line.substring(3)
+        if (suffix.contains('`')) return null
+        return suffix.trim()
+    }
+
+    private fun isFenceEndLine(line: String): Boolean {
+        return line.trimEnd() == "```"
     }
 
     private fun createInlineCommandActions(commands: List<String>): JPanel {
@@ -1454,6 +1729,11 @@ open class ChatMessagePanel(
         private const val MAX_COMMAND_ACTIONS = 4
         private const val MAX_COMMAND_DISPLAY_LENGTH = 26
         private const val MAX_ACTION_FILE_DISPLAY_LENGTH = 30
+        private const val MARKDOWN_SEGMENT_GAP = 6
+        private const val CODE_CARD_MIN_VISIBLE_LINES = 3
+        private const val CODE_CARD_MAX_VISIBLE_LINES = 14
+        private const val CODE_CARD_COLLAPSE_THRESHOLD_LINES = 8
+        private const val CODE_CARD_COLLAPSED_VISIBLE_LINES = 4
         private const val TRACE_DETAIL_PREVIEW_LENGTH = 220
         private const val TRACE_OUTPUT_PREVIEW_LENGTH = 140
         private const val TRACE_GROUP_DETAIL_PREVIEW_LENGTH = 96
@@ -1469,6 +1749,11 @@ open class ChatMessagePanel(
         private const val COPY_FEEDBACK_ICON_FAILURE = "!"
         private const val SPINNER_TICK_MS = 70
         private const val SPINNER_STEP_DEGREES = 20
+        private val CODE_CARD_BG = JBColor(java.awt.Color(245, 248, 253), java.awt.Color(47, 53, 63))
+        private val CODE_CARD_BORDER = JBColor(java.awt.Color(214, 224, 241), java.awt.Color(78, 88, 104))
+        private val CODE_CARD_META_FG = JBColor(java.awt.Color(101, 118, 146), java.awt.Color(156, 178, 210))
+        private val CODE_CARD_CODE_BG = JBColor(java.awt.Color(239, 244, 250), java.awt.Color(39, 45, 53))
+        private val CODE_CARD_CODE_FG = JBColor(java.awt.Color(49, 59, 72), java.awt.Color(214, 223, 236))
         private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s+.*$""")
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+\.\s+.*""")
         private val WORKFLOW_HEADING_TITLES = setOf(
@@ -1502,6 +1787,15 @@ open class ChatMessagePanel(
         val status: ExecutionTimelineParser.Status,
         val detail: String,
     )
+
+    private sealed class MarkdownSegment {
+        data class Markdown(val text: String) : MarkdownSegment()
+
+        data class Code(
+            val language: String,
+            val code: String,
+        ) : MarkdownSegment()
+    }
 
     private enum class OutputFilterLevel {
         KEY,

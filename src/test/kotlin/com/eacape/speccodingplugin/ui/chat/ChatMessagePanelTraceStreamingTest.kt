@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test
 import java.awt.Component
 import java.awt.Container
 import javax.swing.JButton
+import javax.swing.JTextArea
 import javax.swing.JTextPane
 import javax.swing.SwingUtilities
 
@@ -483,6 +484,68 @@ class ChatMessagePanelTraceStreamingTest {
         val failed = SpecCodingBundle.message("chat.message.copy.failed")
         assertTrue(button.toolTipText == copied || button.toolTipText == failed)
         assertTrue(button.text == "OK" || button.text == "!")
+    }
+
+    @Test
+    fun `top-level fenced code block should render as code card`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val content = """
+            before
+            ```kotlin
+            println("hello")
+            ```
+            after
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(content)
+            panel.finishMessage()
+        }
+
+        val copyCodeTooltip = SpecCodingBundle.message("chat.message.copy.code")
+        val copyCodeButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.toolTipText == copyCodeTooltip }
+        assertNotNull(copyCodeButton, "Expected copy-code action for top-level fenced block")
+
+        val markdownText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+        assertTrue(markdownText.contains("before"))
+        assertTrue(markdownText.contains("after"))
+
+        val codeText = collectDescendants(panel)
+            .filterIsInstance<JTextArea>()
+            .joinToString("\n") { it.text.orEmpty() }
+        assertTrue(codeText.contains("println(\"hello\")"))
+    }
+
+    @Test
+    fun `indented fenced code block should not render as code card`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val content = """
+            1. step one
+               ```kotlin
+               val nested = true
+               ```
+            2. step two
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(content)
+            panel.finishMessage()
+        }
+
+        val copyCodeTooltip = SpecCodingBundle.message("chat.message.copy.code")
+        val copyCodeButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.toolTipText == copyCodeTooltip }
+        assertTrue(copyCodeButton == null, "Indented fenced block should stay in markdown renderer")
+
+        val markdownText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+        assertTrue(markdownText.contains("val nested = true"))
     }
 
     private fun collectDescendants(component: Component): Sequence<Component> = sequence {

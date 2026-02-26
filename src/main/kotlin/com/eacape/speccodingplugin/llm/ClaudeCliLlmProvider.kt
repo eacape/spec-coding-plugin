@@ -106,6 +106,8 @@ class ClaudeCliLlmProvider(
         }
         request.maxTokens?.let { options["max_tokens"] = it.toString() }
         request.metadata["requestId"]?.let { options["requestId"] = it }
+        // Always pass prompt through stdin to avoid Windows cmd length limits.
+        options["prompt_via_stdin"] = "true"
         val workingDirectory = LlmRequestContext.extractWorkingDirectory(request)
         val normalizedImagePaths = normalizeImagePaths(request.imagePaths)
         val supportsImageFlag = normalizedImagePaths.isEmpty() || engine.supportsImageFlag()
@@ -129,7 +131,6 @@ class ClaudeCliLlmProvider(
             // Spec workflow only needs pure text generation; disable tools to avoid unnecessary CLI tool execution paths.
             options.putIfAbsent("permission_mode", "plan")
             options["tools"] = ""
-            options["prompt_via_stdin"] = "true"
         }
 
         return EngineRequest(
