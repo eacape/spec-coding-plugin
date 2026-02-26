@@ -86,6 +86,7 @@ class SpecWorkflowPanel(
     private val codeGraphButton = JButton(SpecCodingBundle.message("spec.workflow.codeGraph.short"))
     private val archiveButton = JButton(SpecCodingBundle.message("spec.workflow.archive.short"))
     private val refreshButton = JButton(SpecCodingBundle.message("spec.workflow.refresh.short"))
+    private val pendingClarificationRetryByWorkflowId = mutableMapOf<String, ClarificationRetryPayload>()
 
     private var selectedWorkflowId: String? = null
     private var currentWorkflow: SpecWorkflow? = null
@@ -738,6 +739,15 @@ class SpecWorkflowPanel(
 
     private fun onGenerate(input: String) {
         val context = resolveGenerationContext() ?: return
+        val pendingRetry = pendingClarificationRetryByWorkflowId[context.workflowId]
+        if (pendingRetry != null && input.isBlank()) {
+            runGeneration(
+                workflowId = context.workflowId,
+                input = pendingRetry.input,
+                options = context.options.copy(confirmedContext = pendingRetry.confirmedContext),
+            )
+            return
+        }
         requestClarificationDraft(
             context = context,
             input = input,
@@ -750,6 +760,11 @@ class SpecWorkflowPanel(
         confirmedContext: String,
     ) {
         val context = resolveGenerationContext() ?: return
+        rememberClarificationRetry(
+            workflowId = context.workflowId,
+            input = input,
+            confirmedContext = confirmedContext,
+        )
         runGeneration(
             workflowId = context.workflowId,
             input = input,
@@ -772,6 +787,7 @@ class SpecWorkflowPanel(
 
     private fun onClarificationSkip(input: String) {
         val context = resolveGenerationContext() ?: return
+        pendingClarificationRetryByWorkflowId.remove(context.workflowId)
         setStatusText(SpecCodingBundle.message("spec.workflow.clarify.skippedProceed"))
         runGeneration(
             workflowId = context.workflowId,
@@ -781,6 +797,9 @@ class SpecWorkflowPanel(
     }
 
     private fun onClarificationCancel() {
+        selectedWorkflowId?.let { workflowId ->
+            pendingClarificationRetryByWorkflowId.remove(workflowId)
+        }
         setStatusText(SpecCodingBundle.message("spec.workflow.clarify.cancelled"))
     }
 
@@ -852,10 +871,16 @@ class SpecWorkflowPanel(
                         is SpecGenerationProgress.Generating ->
                             detailPanel.showGenerating(progress.progress)
                         is SpecGenerationProgress.Completed -> {
+                            pendingClarificationRetryByWorkflowId.remove(workflowId)
                             detailPanel.exitClarificationMode(clearInput = true)
                             reloadCurrentWorkflow()
                         }
                         is SpecGenerationProgress.ValidationFailed -> {
+                            rememberClarificationRetry(
+                                workflowId = workflowId,
+                                input = input,
+                                confirmedContext = options.confirmedContext,
+                            )
                             detailPanel.exitClarificationMode(clearInput = true)
                             setStatusText(buildValidationFailureStatus(progress.validation))
                             reloadCurrentWorkflow { updated ->
@@ -866,6 +891,11 @@ class SpecWorkflowPanel(
                             }
                         }
                         is SpecGenerationProgress.Failed -> {
+                            rememberClarificationRetry(
+                                workflowId = workflowId,
+                                input = input,
+                                confirmedContext = options.confirmedContext,
+                            )
                             detailPanel.showGenerationFailed()
                             setStatusText(SpecCodingBundle.message("spec.workflow.error", progress.error))
                         }
@@ -936,6 +966,32 @@ class SpecWorkflowPanel(
         val phase: SpecPhase,
         val options: GenerationOptions,
     )
+
+    private data class ClarificationRetryPayload(
+        val input: String,
+        val confirmedContext: String,
+    )
+
+    private fun rememberClarificationRetry(
+        workflowId: String,
+        input: String,
+        confirmedContext: String?,
+    ) {
+        val normalizedInput = input.trim()
+        val normalizedContext = confirmedContext
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            .orEmpty()
+        if (normalizedInput.isBlank() || normalizedContext.isBlank()) {
+            pendingClarificationRetryByWorkflowId.remove(workflowId)
+            return
+        }
+        pendingClarificationRetryByWorkflowId[workflowId] = ClarificationRetryPayload(
+            input = normalizedInput,
+            confirmedContext = normalizedContext,
+        )
+    }
 
     private fun onShowDelta() {
         val targetWorkflow = currentWorkflow

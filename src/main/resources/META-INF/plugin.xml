@@ -2,7 +2,7 @@
     <id>com.eacape.speccodingplugin</id>
     <name>Spec Code</name>
     <category>Code tools</category>
-    <vendor email="team@eacape.com" url="https://eacape.com">Eacape</vendor>
+    <vendor email="team@eacape.com" url="https://eacape.com">苑勇</vendor>
 
     <description><![CDATA[
         Spec-driven AI coding workflow for JetBrains IDEs.
@@ -136,4 +136,3 @@
         </action>
     </actions>
 </idea-plugin>
-

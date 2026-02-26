@@ -328,6 +328,9 @@ class ImprovedChatPanel(
                 )
                 return@invokeLater
             }
+            if (currentInteractionMode() != ChatInteractionMode.VIBE) {
+                interactionModeComboBox.selectedItem = ChatInteractionMode.VIBE
+            }
             startNewSession()
             showStatus(
                 text = SpecCodingBundle.message("toolwindow.session.new"),
@@ -577,6 +580,7 @@ class ImprovedChatPanel(
 
         chatSplitPane.leftComponent = conversationScrollPane
         chatSplitPane.rightComponent = specSidebarPanel
+        specSidebarPanel.minimumSize = Dimension(JBUI.scale(SPEC_SIDEBAR_MIN_WIDTH), 0)
         configureSplitPaneDivider()
         chatSplitPane.resizeWeight = 0.74
         chatSplitPane.isContinuousLayout = true
@@ -5294,6 +5298,7 @@ class ImprovedChatPanel(
         private const val SPEC_CARD_PREVIEW_MAX_LINES = 18
         private const val SPEC_CARD_PREVIEW_MAX_CHARS = 1800
         private const val SPEC_SIDEBAR_DEFAULT_DIVIDER = 760
+        private const val SPEC_SIDEBAR_MIN_WIDTH = 220
         private const val SPEC_SIDEBAR_MIN_DIVIDER = 320
         private const val SPEC_SIDEBAR_DIVIDER_SIZE = 8
         private const val SPEC_SIDEBAR_DIVIDER_PERSIST_DEBOUNCE_MILLIS = 140

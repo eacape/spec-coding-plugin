@@ -313,7 +313,7 @@ class SpecDetailPanelTest {
 
         assertTrue(panel.currentValidationTextForTest().contains("Validation: FAILED"))
         val preview = panel.currentPreviewTextForTest()
-        assertTrue(preview.contains("tasks content"), preview)
+        assertTrue(preview.contains("draft tasks"))
         assertTrue(preview.contains("Validation Issues"))
         assertTrue(preview.contains("Implementation Steps"))
         assertTrue(preview.contains("Task count is low"))

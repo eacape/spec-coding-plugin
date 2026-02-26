@@ -17,9 +17,12 @@ object SpecMarkdownSanitizer {
         val source = rawContent
             .replace("\r\n", "\n")
             .replace('\r', '\n')
-        var normalized = extractLikelyPayloadFromCodeFence(source)
-        normalized = extractJsonContentFieldIfPresent(normalized)
-        val decoded = decodeEscapedTextIfNeeded(normalized)
+        val shouldExtractPayload = shouldExtractPayload(source)
+        var normalized = if (shouldExtractPayload) extractLikelyPayloadFromCodeFence(source) else source
+        if (shouldExtractPayload) {
+            normalized = extractJsonContentFieldIfPresent(normalized)
+        }
+        val decoded = if (shouldExtractPayload) decodeEscapedTextIfNeeded(normalized) else normalized
         val escapedDecoded = decoded != normalized
         normalized = decoded
         val containsToolMarkers = TOOL_MARKER_REGEX.containsMatchIn(normalized) ||
@@ -38,6 +41,24 @@ object SpecMarkdownSanitizer {
             normalized = trimLeadingAgentPrelude(normalized)
         }
         return normalized.trim()
+    }
+
+    private fun shouldExtractPayload(source: String): Boolean {
+        val trimmed = source.trimStart()
+        if (trimmed.startsWith("{") && trimmed.contains("\"content\"")) {
+            return true
+        }
+        if (TOOL_MARKER_REGEX.containsMatchIn(source) || TOOL_METADATA_JSON_LINE_REGEX.containsMatchIn(source)) {
+            return true
+        }
+        val escapedNewlineCount = ESCAPED_NEWLINE_REGEX.findAll(source).count()
+        if (escapedNewlineCount >= 2 && escapedNewlineCount > source.count { it == '\n' }) {
+            return true
+        }
+        val looksLikeDocument = source.lineSequence()
+            .take(MAX_INITIAL_DOC_SCAN_LINES)
+            .any(::isLikelyDocumentStartLine)
+        return !looksLikeDocument && CODE_FENCE_REGEX.containsMatchIn(source)
     }
 
     private fun extractLikelyPayloadFromCodeFence(content: String): String {
@@ -203,6 +224,7 @@ object SpecMarkdownSanitizer {
         options = setOf(RegexOption.IGNORE_CASE),
     )
     private const val MAX_LEADING_NOISE_LINES = 24
+    private const val MAX_INITIAL_DOC_SCAN_LINES = 40
     private val MARKDOWN_HEADING_REGEX = Regex("""^\s{0,3}#{1,6}\s+\S+""")
     private val CHECKBOX_ITEM_REGEX = Regex("""^\s*-\s*\[[ xX]\]\s+\S+""")
     private val RAW_CHECKBOX_ITEM_REGEX = Regex("""^\s*\[[ xX]\]\s+\S+""")

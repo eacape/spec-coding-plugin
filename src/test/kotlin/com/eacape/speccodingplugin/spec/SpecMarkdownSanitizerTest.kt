@@ -64,4 +64,28 @@ class SpecMarkdownSanitizerTest {
         assertFalse(sanitized.contains("random log output"))
         assertFalse(sanitized.contains("以下是执行结果"))
     }
+
+    @Test
+    fun `sanitize should keep full markdown document when code fence is part of document`() {
+        val raw = """
+            ## 架构设计
+            - 使用三层结构
+            
+            ```mermaid
+            graph TD
+              A[UI] --> B[Service]
+            ```
+            
+            ## 技术选型
+            - Kotlin
+            - IntelliJ Platform
+        """.trimIndent()
+
+        val sanitized = SpecMarkdownSanitizer.sanitize(raw)
+
+        assertTrue(sanitized.contains("## 架构设计"))
+        assertTrue(sanitized.contains("## 技术选型"))
+        assertTrue(sanitized.contains("```mermaid"))
+        assertTrue(sanitized.contains("graph TD"))
+    }
 }
