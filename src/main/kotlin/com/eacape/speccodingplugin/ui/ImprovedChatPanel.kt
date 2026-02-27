@@ -4081,7 +4081,6 @@ class ImprovedChatPanel(
         chatSplitPane.ui = SidebarGripSplitPaneUI()
         chatSplitPane.dividerSize = JBUI.scale(SPEC_SIDEBAR_DIVIDER_SIZE)
         chatSplitPane.isOneTouchExpandable = false
-        chatSplitPane.cursor = Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)
         (chatSplitPane.ui as? BasicSplitPaneUI)?.divider?.let { divider ->
             divider.cursor = Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)
             divider.background = JBColor(

@@ -57,6 +57,18 @@ class OpenAiCodexEngine(
             args.add(it)
         }
 
+        request.options
+            .asSequence()
+            .filter { (key, _) -> key.startsWith(CODEX_CONFIG_OPTION_PREFIX) }
+            .sortedBy { (key, _) -> key }
+            .forEach { (_, value) ->
+                val trimmed = value.trim()
+                if (trimmed.isNotEmpty()) {
+                    args.add("-c")
+                    args.add(trimmed)
+                }
+            }
+
         request.imagePaths.forEach { imagePath ->
             args.add("--image")
             args.add(imagePath)
@@ -96,5 +108,9 @@ class OpenAiCodexEngine(
         } catch (e: Exception) {
             null
         }
+    }
+
+    companion object {
+        const val CODEX_CONFIG_OPTION_PREFIX: String = "codex_config_"
     }
 }

@@ -1,204 +1,551 @@
-package com.eacape.speccodingplugin.ui.prompt
+﻿package com.eacape.speccodingplugin.ui.prompt
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.prompt.PromptScope
 import com.eacape.speccodingplugin.prompt.PromptTemplate
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Dimension
 import java.awt.Font
+import javax.swing.Box
 import javax.swing.BoxLayout
+import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JProgressBar
 import javax.swing.JTextPane
+import javax.swing.SwingUtilities
+import javax.swing.Timer
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
 /**
  * Prompt 编辑器对话框
- * 支持创建和编辑 Prompt 模板，带变量语法高亮
+ * 新建场景内置 AI 生成草稿能力。
  */
 class PromptEditorDialog(
+    private val project: Project,
     private val existing: PromptTemplate? = null,
     private val existingPromptIds: Set<String> = emptySet(),
-    private val initialName: String = "",
-    private val initialContent: String = "",
-) : DialogWrapper(true) {
+) : DialogWrapper(project, true) {
+
+    private val projectService: SpecCodingProjectService = project.getService(SpecCodingProjectService::class.java)
+    private val promptJson = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
 
     private val nameField = JBTextField()
     private val contentPane = JTextPane()
     private val variablesLabel = JBLabel("")
     private val previewLabel = JBLabel("")
 
+    private val aiRequirementArea = JBTextArea()
+    private val aiGenerateButton = JButton()
+    private val aiStatusLabel = JBLabel("")
+    private val aiProgressBar = JProgressBar()
+    private val aiStepLabels = listOf(JBLabel(), JBLabel(), JBLabel(), JBLabel())
+    private val aiAnimationTimer = Timer(AI_ANIMATION_INTERVAL_MILLIS) {
+        updateAiAnimationFrame()
+    }
+
+    private var aiAnimationTick = 0
+    private var aiGenerating = false
+
     var result: PromptTemplate? = null
         private set
 
+    private val isCreateMode = existing == null
+
     init {
-        title = if (existing != null) {
-            SpecCodingBundle.message("prompt.editor.title.edit")
-        } else {
+        title = if (isCreateMode) {
             SpecCodingBundle.message("prompt.editor.title.new")
+        } else {
+            SpecCodingBundle.message("prompt.editor.title.edit")
         }
         init()
         loadExisting()
+        refreshLocalizedTexts()
     }
 
     private fun loadExisting() {
         if (existing != null) {
             nameField.text = existing.name
             contentPane.text = existing.content
-        } else {
-            nameField.text = initialName
-            contentPane.text = initialContent
         }
         updateHighlightAndPreview()
     }
 
     override fun createCenterPanel(): JComponent {
-        val panel = JPanel(BorderLayout())
-        panel.preferredSize = Dimension(600, 500)
-        panel.border = JBUI.Borders.empty(8)
+        val root = JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(10)
+            preferredSize = if (isCreateMode) {
+                JBUI.size(760, 620)
+            } else {
+                JBUI.size(720, 520)
+            }
+        }
 
-        // 顶部表单
-        val formPanel = createFormPanel()
+        val stack = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+        }
 
-        // 内容编辑区
-        val editorPanel = createEditorPanel()
+        if (isCreateMode) {
+            stack.add(createAiDraftCard())
+            stack.add(Box.createVerticalStrut(JBUI.scale(10)))
+        }
+        stack.add(createEditorCard())
 
-        // 底部信息
-        val infoPanel = createInfoPanel()
-
-        panel.add(formPanel, BorderLayout.NORTH)
-        panel.add(editorPanel, BorderLayout.CENTER)
-        panel.add(infoPanel, BorderLayout.SOUTH)
-
-        return panel
+        root.add(stack, BorderLayout.CENTER)
+        root.add(createInfoPanel(), BorderLayout.SOUTH)
+        return root
     }
 
-    private fun createFormPanel(): JPanel {
-        val panel = JPanel()
-        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
-        panel.isOpaque = false
-        panel.border = JBUI.Borders.emptyBottom(8)
+    private fun createAiDraftCard(): JPanel {
+        aiRequirementArea.lineWrap = true
+        aiRequirementArea.wrapStyleWord = true
+        aiRequirementArea.rows = 4
+        aiRequirementArea.font = JBUI.Fonts.label().deriveFont(12f)
+        aiRequirementArea.margin = JBUI.insets(6)
 
-        // Name 行
-        val nameRow = createLabeledRow(SpecCodingBundle.message("prompt.editor.field.name"), nameField)
+        aiGenerateButton.isFocusable = false
+        aiGenerateButton.addActionListener { requestAiDraft() }
+        stylePrimaryButton(aiGenerateButton)
+
+        aiProgressBar.isIndeterminate = true
+        aiProgressBar.isVisible = false
+        aiProgressBar.preferredSize = JBUI.size(110, 6)
+
+        aiStatusLabel.font = JBUI.Fonts.smallFont()
+        aiStatusLabel.foreground = STATUS_NORMAL_FG
+
+        val requirementScroll = JBScrollPane(aiRequirementArea).apply {
+            preferredSize = JBUI.size(0, JBUI.scale(92))
+            border = JBUI.Borders.customLine(BORDER_COLOR, 1)
+        }
+
+        val header = JBLabel(SpecCodingBundle.message("prompt.editor.ai.section")).apply {
+            font = font.deriveFont(Font.BOLD, 13f)
+            foreground = TITLE_FG
+        }
+        val subtitle = JBLabel(SpecCodingBundle.message("prompt.editor.ai.subtitle")).apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = SUBTITLE_FG
+            border = JBUI.Borders.emptyTop(2)
+        }
+
+        val titleColumn = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(header)
+            add(subtitle)
+        }
+
+        val actionRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(titleColumn, BorderLayout.WEST)
+            add(aiGenerateButton, BorderLayout.EAST)
+        }
+
+        val stepsRow = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(6)
+            aiStepLabels.forEachIndexed { index, label ->
+                label.font = JBUI.Fonts.smallFont()
+                label.border = JBUI.Borders.empty(2, 6)
+                add(label)
+                if (index < aiStepLabels.lastIndex) {
+                    add(Box.createHorizontalStrut(JBUI.scale(6)))
+                }
+            }
+        }
+
+        val statusRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(6)
+            add(aiProgressBar, BorderLayout.WEST)
+            add(aiStatusLabel, BorderLayout.CENTER)
+        }
+
+        val content = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(actionRow)
+            add(Box.createVerticalStrut(JBUI.scale(6)))
+            add(requirementScroll)
+            add(stepsRow)
+            add(statusRow)
+        }
+
+        return createCard(content)
+    }
+
+    private fun createEditorCard(): JPanel {
+        val nameLabel = JBLabel(SpecCodingBundle.message("prompt.editor.field.name")).apply {
+            preferredSize = JBUI.size(40, 24)
+        }
         nameField.emptyText.text = SpecCodingBundle.message("prompt.editor.placeholder.name")
 
-        panel.add(nameRow)
+        val nameRow = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            add(nameLabel, BorderLayout.WEST)
+            add(nameField, BorderLayout.CENTER)
+        }
 
-        return panel
-    }
-
-    private fun createLabeledRow(
-        label: String, field: JBTextField
-    ): JPanel {
-        val row = JPanel(BorderLayout(8, 0))
-        row.isOpaque = false
-        row.border = JBUI.Borders.emptyBottom(4)
-
-        val lbl = JBLabel(label)
-        lbl.preferredSize = Dimension(50, 24)
-        row.add(lbl, BorderLayout.WEST)
-        row.add(field, BorderLayout.CENTER)
-
-        return row
-    }
-
-    private fun createEditorPanel(): JPanel {
-        val panel = JPanel(BorderLayout())
-        panel.isOpaque = false
-
-        val editorLabel = JBLabel(SpecCodingBundle.message("prompt.editor.field.content"))
-        editorLabel.border = JBUI.Borders.emptyBottom(4)
-
-        // 配置编辑器
-        contentPane.font = Font("JetBrains Mono", Font.PLAIN, 13)
+        contentPane.font = JBUI.Fonts.label().deriveFont(13f)
         contentPane.border = JBUI.Borders.empty(8)
-
-        // 监听内容变化，实时高亮
         contentPane.document.addDocumentListener(
             object : DocumentListener {
-                override fun insertUpdate(e: DocumentEvent) {
-                    updateHighlightAndPreview()
-                }
-                override fun removeUpdate(e: DocumentEvent) {
-                    updateHighlightAndPreview()
-                }
-                override fun changedUpdate(e: DocumentEvent) {}
-            }
+                override fun insertUpdate(e: DocumentEvent) = updateHighlightAndPreview()
+                override fun removeUpdate(e: DocumentEvent) = updateHighlightAndPreview()
+                override fun changedUpdate(e: DocumentEvent) = Unit
+            },
         )
 
-        val scrollPane = JBScrollPane(contentPane)
-        scrollPane.preferredSize = Dimension(580, 280)
+        val editorScrollPane = JBScrollPane(contentPane).apply {
+            preferredSize = JBUI.size(0, JBUI.scale(290))
+            border = JBUI.Borders.customLine(BORDER_COLOR, 1)
+        }
 
-        // 提示文字
-        val hintLabel = JBLabel(
-            SpecCodingBundle.message("prompt.editor.hint")
-        )
-        hintLabel.foreground = JBColor.GRAY
-        hintLabel.font = hintLabel.font.deriveFont(11f)
-        hintLabel.border = JBUI.Borders.emptyTop(4)
+        val hintLabel = JBLabel(SpecCodingBundle.message("prompt.editor.hint")).apply {
+            foreground = SUBTITLE_FG
+            font = JBUI.Fonts.smallFont()
+            border = JBUI.Borders.emptyTop(6)
+        }
 
-        panel.add(editorLabel, BorderLayout.NORTH)
-        panel.add(scrollPane, BorderLayout.CENTER)
-        panel.add(hintLabel, BorderLayout.SOUTH)
+        val content = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(nameRow)
+            add(Box.createVerticalStrut(JBUI.scale(8)))
+            add(editorScrollPane)
+            add(hintLabel)
+        }
 
-        return panel
+        return createCard(content)
     }
 
     private fun createInfoPanel(): JPanel {
-        val panel = JPanel()
-        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
-        panel.isOpaque = false
-        panel.border = JBUI.Borders.emptyTop(8)
+        variablesLabel.font = JBUI.Fonts.smallFont()
+        variablesLabel.foreground = VARIABLES_FG
 
-        variablesLabel.foreground = JBColor(
-            java.awt.Color(156, 39, 176),
-            java.awt.Color(206, 147, 216)
+        previewLabel.font = JBUI.Fonts.smallFont()
+        previewLabel.foreground = SUBTITLE_FG
+
+        return JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(8)
+            add(variablesLabel)
+            add(previewLabel)
+        }
+    }
+
+    private fun createCard(content: JComponent): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = CARD_BG
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(CARD_BORDER, 1),
+                JBUI.Borders.empty(10),
+            )
+            add(content, BorderLayout.CENTER)
+        }
+    }
+
+    private fun refreshLocalizedTexts() {
+        if (!isCreateMode) {
+            return
+        }
+        aiGenerateButton.text = SpecCodingBundle.message("prompt.editor.ai.generate")
+        updatePrimaryButtonSize(aiGenerateButton)
+
+        aiStepLabels[0].text = SpecCodingBundle.message("prompt.editor.ai.step.analyze")
+        aiStepLabels[1].text = SpecCodingBundle.message("prompt.editor.ai.step.structure")
+        aiStepLabels[2].text = SpecCodingBundle.message("prompt.editor.ai.step.content")
+        aiStepLabels[3].text = SpecCodingBundle.message("prompt.editor.ai.step.polish")
+
+        if (!aiGenerating) {
+            setAiStatus(
+                SpecCodingBundle.message("prompt.editor.ai.status.idle"),
+                STATUS_NORMAL_FG,
+            )
+            applyAiStepStyle(activeIndex = -1)
+        }
+    }
+
+    private fun stylePrimaryButton(button: JButton) {
+        button.font = button.font.deriveFont(Font.BOLD, 11f)
+        button.background = ACTION_BG
+        button.foreground = ACTION_FG
+        button.isOpaque = true
+        button.isContentAreaFilled = true
+        button.isFocusPainted = false
+        button.border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(ACTION_BORDER, 1),
+            JBUI.Borders.empty(5, 12),
         )
-        variablesLabel.font = variablesLabel.font.deriveFont(11f)
+        button.putClientProperty("JButton.buttonType", "roundRect")
+        button.putClientProperty("JComponent.roundRectArc", JBUI.scale(16))
+        updatePrimaryButtonSize(button)
+    }
 
-        previewLabel.foreground = JBColor.GRAY
-        previewLabel.font = previewLabel.font.deriveFont(11f)
+    private fun updatePrimaryButtonSize(button: JButton) {
+        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
+        val insets = button.insets
+        val width = maxOf(textWidth + insets.left + insets.right + JBUI.scale(12), JBUI.scale(72))
+        button.preferredSize = JBUI.size(width, JBUI.scale(28))
+        button.minimumSize = button.preferredSize
+    }
 
-        panel.add(variablesLabel)
-        panel.add(previewLabel)
+    private fun requestAiDraft() {
+        if (!isCreateMode || aiGenerating) {
+            return
+        }
+        val requirement = aiRequirementArea.text.trim()
+        if (requirement.isBlank()) {
+            setAiStatus(SpecCodingBundle.message("prompt.editor.ai.requirementRequired"), STATUS_ERROR_FG)
+            return
+        }
 
-        return panel
+        startAiAnimation()
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val draftResult = runBlocking { generatePromptDraftWithAi(requirement) }
+            SwingUtilities.invokeLater {
+                stopAiAnimation()
+                nameField.text = draftResult.draft.name
+                contentPane.text = draftResult.draft.content
+                updateHighlightAndPreview()
+
+                if (draftResult.usedFallback) {
+                    setAiStatus(
+                        SpecCodingBundle.message("prompt.editor.ai.status.fallback", draftResult.reason.orEmpty()),
+                        STATUS_WARN_FG,
+                    )
+                } else {
+                    setAiStatus(SpecCodingBundle.message("prompt.editor.ai.status.success"), STATUS_SUCCESS_FG)
+                }
+            }
+        }
+    }
+
+    private fun startAiAnimation() {
+        aiGenerating = true
+        aiGenerateButton.isEnabled = false
+        aiProgressBar.isVisible = true
+        aiAnimationTick = 0
+        setAiStatus(SpecCodingBundle.message("prompt.editor.ai.status.running", aiStepLabels.first().text, "."), STATUS_NORMAL_FG)
+        applyAiStepStyle(activeIndex = 0)
+        aiAnimationTimer.start()
+    }
+
+    private fun stopAiAnimation() {
+        aiAnimationTimer.stop()
+        aiGenerating = false
+        aiGenerateButton.isEnabled = true
+        aiProgressBar.isVisible = false
+        applyAiStepStyle(activeIndex = -1)
+    }
+
+    private fun updateAiAnimationFrame() {
+        if (!aiGenerating) {
+            return
+        }
+        val stepIndex = (aiAnimationTick / AI_STEP_FRAME_COUNT) % aiStepLabels.size
+        val dots = ".".repeat((aiAnimationTick % 3) + 1)
+        val stepName = aiStepLabels[stepIndex].text
+        setAiStatus(
+            SpecCodingBundle.message("prompt.editor.ai.status.running", stepName, dots),
+            STATUS_NORMAL_FG,
+        )
+        applyAiStepStyle(activeIndex = stepIndex)
+        aiAnimationTick += 1
+    }
+
+    private fun applyAiStepStyle(activeIndex: Int) {
+        aiStepLabels.forEachIndexed { index, label ->
+            if (index == activeIndex) {
+                label.foreground = STEP_ACTIVE_FG
+                label.background = STEP_ACTIVE_BG
+                label.isOpaque = true
+            } else {
+                label.foreground = STEP_IDLE_FG
+                label.background = STEP_IDLE_BG
+                label.isOpaque = true
+            }
+        }
+    }
+
+    private fun setAiStatus(text: String, color: Color) {
+        aiStatusLabel.text = text
+        aiStatusLabel.foreground = color
+    }
+
+    private suspend fun generatePromptDraftWithAi(requirement: String): PromptDraftResult {
+        val fallback = buildFallbackPromptDraft(requirement)
+        val providers = projectService.availableProviders()
+        val providerId = providers.firstOrNull()
+            ?: return PromptDraftResult(
+                draft = fallback,
+                usedFallback = true,
+                reason = SpecCodingBundle.message("prompt.manager.ai.reason.providerUnavailable"),
+            )
+
+        val prompt = buildString {
+            appendLine("You are generating a reusable prompt template for an IDE coding assistant.")
+            appendLine("Return ONLY strict JSON, no markdown fences, no explanation.")
+            appendLine("Required JSON keys: name, content.")
+            appendLine("Rules:")
+            appendLine("1) name: concise and human-readable.")
+            appendLine("2) content: a direct instruction template for the assistant.")
+            appendLine("3) Keep content practical and implementation-oriented.")
+            appendLine()
+            appendLine("User requirement:")
+            appendLine(requirement)
+        }
+
+        val responseText = StringBuilder()
+        val chatResult = runCatching {
+            projectService.chat(
+                providerId = providerId,
+                userInput = prompt,
+                planExecuteVerifySections = false,
+            ) { chunk ->
+                if (chunk.delta.isNotBlank()) {
+                    responseText.append(chunk.delta)
+                }
+            }
+        }
+
+        if (chatResult.isFailure) {
+            return PromptDraftResult(
+                draft = fallback,
+                usedFallback = true,
+                reason = chatResult.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown"),
+            )
+        }
+
+        val rawResponse = responseText.toString().trim()
+        if (rawResponse.isBlank()) {
+            return PromptDraftResult(
+                draft = fallback,
+                usedFallback = true,
+                reason = SpecCodingBundle.message("prompt.manager.ai.reason.emptyResponse"),
+            )
+        }
+
+        val draft = runCatching { parsePromptDraft(rawResponse, requirement) }.getOrNull()
+            ?: return PromptDraftResult(
+                draft = fallback,
+                usedFallback = true,
+                reason = SpecCodingBundle.message("prompt.manager.ai.reason.invalidJson"),
+            )
+
+        return PromptDraftResult(
+            draft = draft,
+            usedFallback = false,
+            reason = null,
+        )
+    }
+
+    private fun parsePromptDraft(raw: String, requirement: String): GeneratedPromptDraft {
+        val root = parsePromptJson(raw)
+        val name = root["name"]?.jsonPrimitive?.contentOrNull?.trim()
+            ?.ifBlank { null }
+            ?: requirement
+                .replace("\\s+".toRegex(), " ")
+                .trim()
+                .take(40)
+                .ifBlank { SpecCodingBundle.message("prompt.manager.ai.defaultName") }
+
+        val content = root["content"]?.jsonPrimitive?.contentOrNull
+            ?.trim()
+            ?.ifBlank { null }
+            ?: throw IllegalArgumentException(SpecCodingBundle.message("prompt.manager.ai.reason.invalidJson"))
+
+        return GeneratedPromptDraft(name = name, content = content)
+    }
+
+    private fun parsePromptJson(raw: String): JsonObject {
+        val trimmed = raw.trim()
+        val direct = runCatching { promptJson.parseToJsonElement(trimmed) as? JsonObject }.getOrNull()
+        if (direct != null) {
+            return direct
+        }
+
+        val firstBrace = trimmed.indexOf('{')
+        val lastBrace = trimmed.lastIndexOf('}')
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+            val candidate = trimmed.substring(firstBrace, lastBrace + 1)
+            val extracted = runCatching { promptJson.parseToJsonElement(candidate) as? JsonObject }.getOrNull()
+            if (extracted != null) {
+                return extracted
+            }
+        }
+
+        throw IllegalArgumentException(SpecCodingBundle.message("prompt.manager.ai.reason.invalidJson"))
+    }
+
+    private fun buildFallbackPromptDraft(requirement: String): GeneratedPromptDraft {
+        val normalizedRequirement = requirement
+            .replace("\\s+".toRegex(), " ")
+            .trim()
+            .ifBlank { SpecCodingBundle.message("prompt.manager.ai.defaultName") }
+
+        val fallbackName = normalizedRequirement.take(40)
+        val fallbackContent = buildString {
+            appendLine("你是项目开发助手。")
+            appendLine("围绕以下目标执行：")
+            appendLine(normalizedRequirement)
+            appendLine()
+            appendLine("输出要求：")
+            appendLine("1. 先澄清边界与约束。")
+            appendLine("2. 再给出可执行步骤。")
+            appendLine("3. 涉及代码时给出关键改动点。")
+            appendLine("4. 最后附上验证建议。")
+        }.trim()
+
+        return GeneratedPromptDraft(name = fallbackName, content = fallbackContent)
     }
 
     private fun updateHighlightAndPreview() {
-        // 延迟执行以避免在文档修改期间操作
-        javax.swing.SwingUtilities.invokeLater {
-            // 语法高亮
+        SwingUtilities.invokeLater {
             val caretPos = contentPane.caretPosition
             PromptSyntaxHighlighter.highlight(contentPane)
             try {
-                contentPane.caretPosition = caretPos.coerceAtMost(
-                    contentPane.document.length
-                )
-            } catch (_: Exception) { }
+                contentPane.caretPosition = caretPos.coerceAtMost(contentPane.document.length)
+            } catch (_: Exception) {
+                // ignore
+            }
 
-            // 更新变量列表
             val text = contentPane.text
             val vars = PromptSyntaxHighlighter.extractVariables(text)
             variablesLabel.text = if (vars.isNotEmpty()) {
                 SpecCodingBundle.message(
                     "prompt.editor.variables.detected",
-                    vars.joinToString(", ") { "{{$it}}" }
+                    vars.joinToString(", ") { "{{$it}}" },
                 )
             } else {
                 SpecCodingBundle.message("prompt.editor.variables.none")
             }
-
-            // 更新字符计数
             previewLabel.text = SpecCodingBundle.message("prompt.editor.characters", text.length)
         }
     }
@@ -215,12 +562,10 @@ class PromptEditorDialog(
 
     override fun doOKAction() {
         val templateId = resolveTemplateId()
-
         val variables = PromptSyntaxHighlighter
             .extractVariables(contentPane.text)
             .associateWith { "" }
 
-        // 保留已有变量的值
         val mergedVars = if (existing != null) {
             val merged = existing.variables.toMutableMap()
             variables.keys.forEach { key ->
@@ -252,6 +597,7 @@ class PromptEditorDialog(
             .replace(Regex("[^a-z0-9]+"), "-")
             .trim('-')
             .ifBlank { "prompt" }
+
         if (baseId !in existingPromptIds) {
             return baseId
         }
@@ -259,9 +605,52 @@ class PromptEditorDialog(
         var index = 2
         var candidate = "$baseId-$index"
         while (candidate in existingPromptIds) {
-            index++
+            index += 1
             candidate = "$baseId-$index"
         }
         return candidate
+    }
+
+    override fun dispose() {
+        aiAnimationTimer.stop()
+        super.dispose()
+    }
+
+    private data class GeneratedPromptDraft(
+        val name: String,
+        val content: String,
+    )
+
+    private data class PromptDraftResult(
+        val draft: GeneratedPromptDraft,
+        val usedFallback: Boolean,
+        val reason: String?,
+    )
+
+    companion object {
+        private const val AI_ANIMATION_INTERVAL_MILLIS = 450
+        private const val AI_STEP_FRAME_COUNT = 4
+
+        private val CARD_BG = JBColor(Color(248, 251, 255), Color(58, 64, 74))
+        private val CARD_BORDER = JBColor(Color(205, 218, 238), Color(92, 104, 121))
+        private val BORDER_COLOR = JBColor(Color(189, 205, 230), Color(100, 112, 129))
+
+        private val TITLE_FG = JBColor(Color(43, 64, 96), Color(214, 225, 241))
+        private val SUBTITLE_FG = JBColor(Color(101, 116, 137), Color(176, 190, 210))
+        private val VARIABLES_FG = JBColor(Color(82, 95, 165), Color(177, 189, 236))
+
+        private val ACTION_BG = JBColor(Color(218, 232, 252), Color(79, 99, 130))
+        private val ACTION_BORDER = JBColor(Color(161, 186, 223), Color(113, 132, 162))
+        private val ACTION_FG = JBColor(Color(38, 57, 88), Color(222, 232, 246))
+
+        private val STATUS_NORMAL_FG = JBColor(Color(79, 95, 120), Color(184, 196, 214))
+        private val STATUS_SUCCESS_FG = JBColor(Color(38, 124, 70), Color(137, 212, 162))
+        private val STATUS_WARN_FG = JBColor(Color(146, 94, 31), Color(224, 190, 134))
+        private val STATUS_ERROR_FG = JBColor(Color(167, 53, 67), Color(228, 147, 157))
+
+        private val STEP_IDLE_BG = JBColor(Color(236, 243, 252), Color(71, 79, 92))
+        private val STEP_IDLE_FG = JBColor(Color(96, 112, 139), Color(173, 185, 204))
+        private val STEP_ACTIVE_BG = JBColor(Color(209, 226, 250), Color(86, 108, 140))
+        private val STEP_ACTIVE_FG = JBColor(Color(43, 66, 103), Color(226, 235, 247))
     }
 }

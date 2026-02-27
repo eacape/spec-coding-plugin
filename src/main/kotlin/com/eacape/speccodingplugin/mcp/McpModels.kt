@@ -202,8 +202,8 @@ data class InitializeParams(
  */
 @Serializable
 data class ClientCapabilities(
-    val experimental: Map<String, JsonElement>? = null,
-    val sampling: Map<String, JsonElement>? = null
+    val experimental: Map<String, JsonElement> = emptyMap(),
+    val sampling: Map<String, JsonElement> = emptyMap()
 )
 
 /**
@@ -274,7 +274,7 @@ object McpProtocol {
  */
 object McpMethods {
     const val INITIALIZE = "initialize"
-    const val INITIALIZED = "initialized"
+    const val INITIALIZED = "notifications/initialized"
     const val TOOLS_LIST = "tools/list"
     const val TOOLS_CALL = "tools/call"
     const val RESOURCES_LIST = "resources/list"

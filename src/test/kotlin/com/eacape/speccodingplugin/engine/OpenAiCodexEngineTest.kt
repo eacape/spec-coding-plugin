@@ -25,6 +25,36 @@ class OpenAiCodexEngineTest {
         assertEquals(listOf("--image", "C:/tmp/a.png", "--image", "D:/tmp/b.jpg"), args.subList(firstImageFlagIndex, stdinMarkerIndex))
     }
 
+    @Test
+    fun `buildCommandArgs should include codex config overrides as repeated c flags`() {
+        val engine = OpenAiCodexEngine("codex")
+        val request = EngineRequest(
+            prompt = "hello",
+            options = mapOf(
+                "${OpenAiCodexEngine.CODEX_CONFIG_OPTION_PREFIX}00_00" to "mcp_servers.demo.command=\"npx\"",
+                "${OpenAiCodexEngine.CODEX_CONFIG_OPTION_PREFIX}00_01" to "mcp_servers.demo.args=['-y','chrome-devtools-mcp@latest']",
+            ),
+        )
+
+        val args = invokeBuildCommandArgs(engine, request)
+        val stdinMarkerIndex = args.indexOf("--")
+        val configSection = args.subList(0, stdinMarkerIndex)
+
+        assertTrue(configSection.contains("-c"), "Expected at least one -c option in args: $args")
+        assertTrue(
+            configSection.windowed(2).any { pair ->
+                pair.first() == "-c" && pair.last() == "mcp_servers.demo.command=\"npx\""
+            },
+            "Expected mcp command override in args: $args",
+        )
+        assertTrue(
+            configSection.windowed(2).any { pair ->
+                pair.first() == "-c" && pair.last() == "mcp_servers.demo.args=['-y','chrome-devtools-mcp@latest']"
+            },
+            "Expected mcp args override in args: $args",
+        )
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun invokeBuildCommandArgs(engine: OpenAiCodexEngine, request: EngineRequest): List<String> {
         val method = engine::class.java.getDeclaredMethod("buildCommandArgs", EngineRequest::class.java)

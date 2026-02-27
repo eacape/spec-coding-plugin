@@ -411,6 +411,120 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `process timeline should support collapse toggle`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-process-collapse",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Process Collapse",
+            description = "timeline collapse",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.appendProcessTimelineEntry(
+            text = "Prepare clarification context",
+            state = SpecDetailPanel.ProcessTimelineState.DONE,
+        )
+
+        assertTrue(panel.isProcessTimelineExpandedForTest())
+        panel.toggleProcessTimelineExpandedForTest()
+        assertFalse(panel.isProcessTimelineExpandedForTest())
+        panel.toggleProcessTimelineExpandedForTest()
+        assertTrue(panel.isProcessTimelineExpandedForTest())
+    }
+
+    @Test
+    fun `clarification sections should support collapse toggles`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-clarify-collapse",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Clarify Collapse",
+            description = "clarify collapse",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.showClarificationDraft(
+            phase = SpecPhase.SPECIFY,
+            input = "build scheduler",
+            questionsMarkdown = "1. Should support offline?",
+            suggestedDetails = "",
+        )
+
+        assertTrue(panel.isClarificationQuestionsExpandedForTest())
+        assertTrue(panel.isClarificationPreviewExpandedForTest())
+        panel.toggleClarificationQuestionsExpandedForTest()
+        panel.toggleClarificationPreviewExpandedForTest()
+        assertFalse(panel.isClarificationQuestionsExpandedForTest())
+        assertFalse(panel.isClarificationPreviewExpandedForTest())
+    }
+
+    @Test
+    fun `clarification reply input should autosave on text changes`() {
+        var autosaveCalls = 0
+        var autosavedContext = ""
+        var autosavedQuestions = emptyList<String>()
+        val panel = createPanel(
+            onClarificationDraftAutosave = { _, context, _, questions ->
+                autosaveCalls += 1
+                autosavedContext = context
+                autosavedQuestions = questions
+            },
+        )
+        val workflow = SpecWorkflow(
+            id = "wf-clarify-autosave",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Clarify Autosave",
+            description = "clarify autosave",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.showClarificationDraft(
+            phase = SpecPhase.SPECIFY,
+            input = "build storage service",
+            questionsMarkdown = "1. ???",
+            suggestedDetails = "",
+            structuredQuestions = listOf(
+                "是否需要多租户隔离？",
+                "是否需要跨区域容灾？",
+            ),
+        )
+        panel.toggleClarificationQuestionForTest(0)
+        panel.setClarificationQuestionDetailForTest(0, "需要，按租户维度做资源与权限隔离")
+
+        assertTrue(autosaveCalls > 0)
+        assertTrue(autosavedContext.contains("Detail: 需要，按租户维度做资源与权限隔离"))
+        assertEquals(2, autosavedQuestions.size)
+    }
+
+    @Test
     fun `clicking generate should clear input area`() {
         var generatedInput: String? = null
         val panel = createPanel(
@@ -612,6 +726,7 @@ class SpecDetailPanelTest {
         onGenerate: (String) -> Unit = {},
         onClarificationConfirm: (String, String) -> Unit = { _, _ -> },
         onClarificationRegenerate: (String, String) -> Unit = { _, _ -> },
+        onClarificationDraftAutosave: (String, String, String, List<String>) -> Unit = { _, _, _, _ -> },
     ): SpecDetailPanel {
         return SpecDetailPanel(
             onGenerate = onGenerate,
@@ -626,6 +741,7 @@ class SpecDetailPanelTest {
             onOpenInEditor = {},
             onShowHistoryDiff = {},
             onSaveDocument = { _, _, onDone -> onDone(Result.failure(IllegalStateException("not implemented"))) },
+            onClarificationDraftAutosave = onClarificationDraftAutosave,
         )
     }
 

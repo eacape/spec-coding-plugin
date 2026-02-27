@@ -53,6 +53,7 @@ class SpecDetailPanel(
     private val onOpenInEditor: (SpecPhase) -> Unit,
     private val onShowHistoryDiff: (SpecPhase) -> Unit,
     private val onSaveDocument: (SpecPhase, String, (Result<SpecWorkflow>) -> Unit) -> Unit,
+    private val onClarificationDraftAutosave: (String, String, String, List<String>) -> Unit,
 ) : JPanel(BorderLayout()) {
 
     private val treeRoot = DefaultMutableTreeNode(SpecCodingBundle.message("spec.detail.documents"))
@@ -80,7 +81,13 @@ class SpecDetailPanel(
     private val inputArea = JBTextArea(3, 40)
     private lateinit var clarificationSplitPane: JSplitPane
     private lateinit var clarificationPreviewSection: JPanel
+    private lateinit var clarificationQuestionsBodyContainer: JPanel
+    private lateinit var clarificationPreviewBodyContainer: JPanel
+    private lateinit var clarificationQuestionsToggleButton: JButton
+    private lateinit var clarificationPreviewToggleButton: JButton
     private lateinit var processTimelineSection: JPanel
+    private lateinit var processTimelineBodyContainer: JPanel
+    private lateinit var processTimelineToggleButton: JButton
     private lateinit var inputSectionContainer: JPanel
     private lateinit var bottomPanelContainer: JPanel
     private lateinit var mainSplitPane: JSplitPane
@@ -114,6 +121,10 @@ class SpecDetailPanel(
     private var activePreviewCard: String = CARD_PREVIEW
     private var clarificationState: ClarificationState? = null
     private var isBottomCollapsedForChecklist: Boolean = false
+    private var isProcessTimelineExpanded: Boolean = true
+    private var isClarificationQuestionsExpanded: Boolean = true
+    private var isClarificationPreviewExpanded: Boolean = true
+    private var isClarificationPreviewContentVisible: Boolean = true
     private val processTimelineEntries = mutableListOf<ProcessTimelineEntry>()
 
     init {
@@ -256,9 +267,9 @@ class SpecDetailPanel(
         inputArea.wrapStyleWord = true
         inputArea.document.addDocumentListener(
             object : DocumentListener {
-                override fun insertUpdate(e: DocumentEvent?) = updateClarificationPreview()
-                override fun removeUpdate(e: DocumentEvent?) = updateClarificationPreview()
-                override fun changedUpdate(e: DocumentEvent?) = updateClarificationPreview()
+                override fun insertUpdate(e: DocumentEvent?) = onClarificationInputEdited()
+                override fun removeUpdate(e: DocumentEvent?) = onClarificationInputEdited()
+                override fun changedUpdate(e: DocumentEvent?) = onClarificationInputEdited()
             },
         )
         updateInputPlaceholder(null)
@@ -489,33 +500,39 @@ class SpecDetailPanel(
         clarificationPreviewPane.border = JBUI.Borders.empty(2, 2)
         styleClarificationSectionLabel(clarificationPreviewLabel)
 
-        val questionsSection = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
-            isOpaque = false
-            add(clarificationQuestionsLabel, BorderLayout.NORTH)
-            add(
-                createSectionContainer(
-                    clarificationQuestionsCardPanel,
-                    backgroundColor = CLARIFICATION_QUESTIONS_BG,
-                    borderColor = CLARIFICATION_QUESTIONS_BORDER,
-                ),
-                BorderLayout.CENTER,
-            )
+        val questionsCollapsible = createCollapsibleSection(
+            titleLabel = clarificationQuestionsLabel,
+            content = createSectionContainer(
+                clarificationQuestionsCardPanel,
+                backgroundColor = CLARIFICATION_QUESTIONS_BG,
+                borderColor = CLARIFICATION_QUESTIONS_BORDER,
+            ),
+            expanded = isClarificationQuestionsExpanded,
+        ) { expanded ->
+            isClarificationQuestionsExpanded = expanded
+            refreshClarificationSectionsLayout()
         }
+        clarificationQuestionsBodyContainer = questionsCollapsible.bodyContainer
+        clarificationQuestionsToggleButton = questionsCollapsible.toggleButton
+        val questionsSection = questionsCollapsible.root
 
-        clarificationPreviewSection = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
-            isOpaque = false
-            add(clarificationPreviewLabel, BorderLayout.NORTH)
-            add(
-                createSectionContainer(
-                    JBScrollPane(clarificationPreviewPane).apply {
-                        border = JBUI.Borders.empty()
-                    },
-                    backgroundColor = CLARIFICATION_PREVIEW_BG,
-                    borderColor = CLARIFICATION_PREVIEW_BORDER,
-                ),
-                BorderLayout.CENTER,
-            )
+        val previewCollapsible = createCollapsibleSection(
+            titleLabel = clarificationPreviewLabel,
+            content = createSectionContainer(
+                JBScrollPane(clarificationPreviewPane).apply {
+                    border = JBUI.Borders.empty()
+                },
+                backgroundColor = CLARIFICATION_PREVIEW_BG,
+                borderColor = CLARIFICATION_PREVIEW_BORDER,
+            ),
+            expanded = isClarificationPreviewExpanded,
+        ) { expanded ->
+            isClarificationPreviewExpanded = expanded
+            refreshClarificationSectionsLayout()
         }
+        clarificationPreviewSection = previewCollapsible.root
+        clarificationPreviewBodyContainer = previewCollapsible.bodyContainer
+        clarificationPreviewToggleButton = previewCollapsible.toggleButton
 
         return JPanel(BorderLayout(0, JBUI.scale(8))).apply {
             isOpaque = true
@@ -529,6 +546,7 @@ class SpecDetailPanel(
                 SpecUiStyle.applySplitPaneDivider(this, dividerSize = JBUI.scale(8))
             }
             add(clarificationSplitPane, BorderLayout.CENTER)
+            refreshClarificationSectionsLayout()
         }
     }
 
@@ -538,22 +556,117 @@ class SpecDetailPanel(
         processTimelinePane.border = JBUI.Borders.empty(2, 2)
         styleClarificationSectionLabel(processTimelineLabel)
 
-        return JPanel(BorderLayout(0, JBUI.scale(4))).apply {
-            isOpaque = false
+        val timelineCollapsible = createCollapsibleSection(
+            titleLabel = processTimelineLabel,
+            content = createSectionContainer(
+                JBScrollPane(processTimelinePane).apply {
+                    border = JBUI.Borders.empty()
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                    verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+                    preferredSize = JBUI.size(0, JBUI.scale(96))
+                },
+                backgroundColor = PROCESS_SECTION_BG,
+                borderColor = PROCESS_SECTION_BORDER,
+            ),
+            expanded = isProcessTimelineExpanded,
+        ) { expanded ->
+            isProcessTimelineExpanded = expanded
+            applyProcessTimelineCollapseState()
+        }
+        processTimelineBodyContainer = timelineCollapsible.bodyContainer
+        processTimelineToggleButton = timelineCollapsible.toggleButton
+        return timelineCollapsible.root.apply {
             border = JBUI.Borders.emptyBottom(JBUI.scale(2))
-            add(processTimelineLabel, BorderLayout.NORTH)
-            add(
-                createSectionContainer(
-                    JBScrollPane(processTimelinePane).apply {
-                        border = JBUI.Borders.empty()
-                        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-                        verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                        preferredSize = JBUI.size(0, JBUI.scale(96))
-                    },
-                    backgroundColor = PROCESS_SECTION_BG,
-                    borderColor = PROCESS_SECTION_BORDER,
-                ),
-                BorderLayout.CENTER,
+            applyProcessTimelineCollapseState()
+        }
+    }
+
+    private data class CollapsibleSectionWidgets(
+        val root: JPanel,
+        val bodyContainer: JPanel,
+        val toggleButton: JButton,
+    )
+
+    private fun createCollapsibleSection(
+        titleLabel: JBLabel,
+        content: Component,
+        expanded: Boolean,
+        onToggle: (Boolean) -> Unit,
+    ): CollapsibleSectionWidgets {
+        val body = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            isVisible = expanded
+            add(content, BorderLayout.CENTER)
+        }
+        val toggleButton = JButton().apply {
+            styleCollapsibleToggleButton(this)
+            addActionListener {
+                val nextExpanded = !body.isVisible
+                body.isVisible = nextExpanded
+                onToggle(nextExpanded)
+            }
+        }
+        val header = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+            isOpaque = false
+            add(titleLabel, BorderLayout.WEST)
+            add(toggleButton, BorderLayout.EAST)
+        }
+        val root = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+            isOpaque = false
+            add(header, BorderLayout.NORTH)
+            add(body, BorderLayout.CENTER)
+        }
+        updateCollapseToggleButton(toggleButton, expanded = expanded, enabled = true)
+        return CollapsibleSectionWidgets(root = root, bodyContainer = body, toggleButton = toggleButton)
+    }
+
+    private fun styleCollapsibleToggleButton(button: JButton) {
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.isContentAreaFilled = false
+        button.isBorderPainted = false
+        button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        button.foreground = TREE_FILE_TEXT
+        button.margin = JBUI.insets(0)
+        button.preferredSize = JBUI.size(22, 22)
+        button.minimumSize = button.preferredSize
+        button.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+    }
+
+    private fun updateCollapseToggleButton(button: JButton, expanded: Boolean, enabled: Boolean) {
+        button.text = if (expanded && enabled) COLLAPSE_ICON_EXPANDED else COLLAPSE_ICON_COLLAPSED
+        button.toolTipText = SpecCodingBundle.message(
+            if (expanded && enabled) "chat.workflow.toggle.collapse" else "chat.workflow.toggle.expand",
+        )
+        button.isEnabled = enabled
+        button.foreground = if (enabled) TREE_FILE_TEXT else TREE_STATUS_PENDING_TEXT
+        button.cursor = if (enabled) {
+            Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        } else {
+            Cursor.getDefaultCursor()
+        }
+    }
+
+    private fun refreshCollapsibleToggleTexts() {
+        if (::processTimelineToggleButton.isInitialized) {
+            updateCollapseToggleButton(
+                processTimelineToggleButton,
+                expanded = isProcessTimelineExpanded,
+                enabled = true,
+            )
+        }
+        if (::clarificationQuestionsToggleButton.isInitialized) {
+            updateCollapseToggleButton(
+                clarificationQuestionsToggleButton,
+                expanded = isClarificationQuestionsExpanded,
+                enabled = true,
+            )
+        }
+        if (::clarificationPreviewToggleButton.isInitialized) {
+            updateCollapseToggleButton(
+                clarificationPreviewToggleButton,
+                expanded = isClarificationPreviewExpanded,
+                enabled = isClarificationPreviewContentVisible,
             )
         }
     }
@@ -718,6 +831,7 @@ class SpecDetailPanel(
         styleActionButton(skipClarificationButton)
         styleActionButton(cancelClarificationButton)
         updatePreviewModeButtons()
+        refreshCollapsibleToggleTexts()
         renderProcessTimeline()
         if (isClarificationGenerating) {
             renderClarificationQuestions(
@@ -736,6 +850,7 @@ class SpecDetailPanel(
                 )
             }
         }
+        refreshClarificationSectionsLayout()
         setClarificationPreviewVisible(!isClarificationGenerating)
         updateClarificationPreview()
         refreshInputAreaMode()
@@ -937,6 +1052,7 @@ class SpecDetailPanel(
         setClarificationPreviewVisible(false)
         switchPreviewCard(CARD_CLARIFY)
         updateClarificationPreview()
+        persistClarificationDraftSnapshot()
 
         generatingPercent = 0
         isClarificationGenerating = true
@@ -994,6 +1110,7 @@ class SpecDetailPanel(
         setClarificationPreviewVisible(true)
         switchPreviewCard(CARD_CLARIFY)
         updateClarificationPreview()
+        persistClarificationDraftSnapshot()
         validationLabel.text = SpecCodingBundle.message("spec.workflow.clarify.hint")
         validationLabel.foreground = TREE_TEXT
         currentWorkflow?.let { updateButtonStates(it) } ?: disableAllButtons()
@@ -1358,6 +1475,7 @@ class SpecDetailPanel(
         )
         syncClarificationInputFromSelection(nextState)
         updateClarificationPreview()
+        persistClarificationDraftSnapshot(nextState)
         validationLabel.text = SpecCodingBundle.message("spec.workflow.clarify.hint")
         validationLabel.foreground = TREE_TEXT
         currentWorkflow?.let { updateButtonStates(it) }
@@ -1385,6 +1503,7 @@ class SpecDetailPanel(
         clarificationState = nextState
         syncClarificationInputFromSelection(nextState)
         updateClarificationPreview()
+        persistClarificationDraftSnapshot(nextState)
         validationLabel.text = SpecCodingBundle.message("spec.workflow.clarify.hint")
         validationLabel.foreground = TREE_TEXT
         currentWorkflow?.let { updateButtonStates(it) }
@@ -1673,6 +1792,11 @@ class SpecDetailPanel(
         val border: Color,
     )
 
+    private fun onClarificationInputEdited() {
+        updateClarificationPreview()
+        persistClarificationDraftSnapshot()
+    }
+
     private fun updateClarificationPreview() {
         if (clarificationState == null) {
             return
@@ -1689,17 +1813,70 @@ class SpecDetailPanel(
         }
     }
 
-    private fun setClarificationPreviewVisible(visible: Boolean) {
+    private fun persistClarificationDraftSnapshot(state: ClarificationState? = clarificationState) {
+        val snapshot = state ?: return
+        onClarificationDraftAutosave(
+            snapshot.input,
+            resolveClarificationConfirmedContext(snapshot),
+            snapshot.questionsMarkdown,
+            snapshot.structuredQuestions,
+        )
+    }
+
+    private fun refreshClarificationSectionsLayout() {
         if (!::clarificationSplitPane.isInitialized) {
             return
         }
-        if (visible) {
+        if (::clarificationQuestionsBodyContainer.isInitialized) {
+            clarificationQuestionsBodyContainer.isVisible = isClarificationQuestionsExpanded
+        }
+        val previewBodyVisible = isClarificationPreviewContentVisible && isClarificationPreviewExpanded
+        if (::clarificationPreviewBodyContainer.isInitialized) {
+            clarificationPreviewBodyContainer.isVisible = previewBodyVisible
+        }
+        if (::clarificationQuestionsToggleButton.isInitialized) {
+            updateCollapseToggleButton(
+                clarificationQuestionsToggleButton,
+                expanded = isClarificationQuestionsExpanded,
+                enabled = true,
+            )
+        }
+        if (::clarificationPreviewToggleButton.isInitialized) {
+            updateCollapseToggleButton(
+                clarificationPreviewToggleButton,
+                expanded = isClarificationPreviewExpanded,
+                enabled = isClarificationPreviewContentVisible,
+            )
+        }
+        if (isClarificationPreviewContentVisible) {
+            clarificationPreviewSection.isVisible = true
             if (clarificationSplitPane.bottomComponent == null) {
                 clarificationSplitPane.bottomComponent = clarificationPreviewSection
             }
-            clarificationPreviewSection.isVisible = true
             clarificationSplitPane.resizeWeight = 0.58
             clarificationSplitPane.dividerSize = JBUI.scale(8)
+            SwingUtilities.invokeLater {
+                if (!::clarificationSplitPane.isInitialized) {
+                    return@invokeLater
+                }
+                val total = clarificationSplitPane.height - clarificationSplitPane.dividerSize
+                if (total <= 0) {
+                    return@invokeLater
+                }
+                val collapsedSectionHeight = JBUI.scale(36)
+                val minTop = collapsedSectionHeight
+                val minBottom = collapsedSectionHeight
+                val maxTop = (total - minBottom).coerceAtLeast(minTop)
+                val target = when {
+                    !isClarificationQuestionsExpanded && isClarificationPreviewExpanded -> minTop
+                    isClarificationQuestionsExpanded && !isClarificationPreviewExpanded -> maxTop
+                    !isClarificationQuestionsExpanded && !isClarificationPreviewExpanded -> minTop
+                    else -> (total * 0.58).toInt()
+                }.coerceIn(minTop, maxTop)
+                clarificationSplitPane.dividerLocation = target
+                clarificationSplitPane.revalidate()
+                clarificationSplitPane.repaint()
+            }
         } else {
             clarificationPreviewSection.isVisible = false
             clarificationSplitPane.bottomComponent = null
@@ -1710,11 +1887,37 @@ class SpecDetailPanel(
         clarificationSplitPane.repaint()
     }
 
+    private fun setClarificationPreviewVisible(visible: Boolean) {
+        isClarificationPreviewContentVisible = visible
+        refreshClarificationSectionsLayout()
+    }
+
+    private fun applyProcessTimelineCollapseState() {
+        if (!::processTimelineBodyContainer.isInitialized) {
+            return
+        }
+        processTimelineBodyContainer.isVisible = isProcessTimelineExpanded
+        if (::processTimelineToggleButton.isInitialized) {
+            updateCollapseToggleButton(
+                processTimelineToggleButton,
+                expanded = isProcessTimelineExpanded,
+                enabled = true,
+            )
+        }
+        if (::processTimelineSection.isInitialized) {
+            processTimelineSection.revalidate()
+            processTimelineSection.repaint()
+        }
+    }
+
     private fun setProcessTimelineVisible(visible: Boolean) {
         if (!::processTimelineSection.isInitialized) {
             return
         }
         processTimelineSection.isVisible = visible
+        if (visible) {
+            applyProcessTimelineCollapseState()
+        }
         processTimelineSection.revalidate()
         processTimelineSection.repaint()
     }
@@ -2103,6 +2306,36 @@ class SpecDetailPanel(
         return isBottomCollapsedForChecklist
     }
 
+    internal fun toggleProcessTimelineExpandedForTest() {
+        if (::processTimelineToggleButton.isInitialized) {
+            processTimelineToggleButton.doClick()
+        }
+    }
+
+    internal fun toggleClarificationQuestionsExpandedForTest() {
+        if (::clarificationQuestionsToggleButton.isInitialized) {
+            clarificationQuestionsToggleButton.doClick()
+        }
+    }
+
+    internal fun toggleClarificationPreviewExpandedForTest() {
+        if (::clarificationPreviewToggleButton.isInitialized) {
+            clarificationPreviewToggleButton.doClick()
+        }
+    }
+
+    internal fun isProcessTimelineExpandedForTest(): Boolean {
+        return isProcessTimelineExpanded
+    }
+
+    internal fun isClarificationQuestionsExpandedForTest(): Boolean {
+        return isClarificationQuestionsExpanded
+    }
+
+    internal fun isClarificationPreviewExpandedForTest(): Boolean {
+        return isClarificationPreviewExpanded
+    }
+
     internal fun clickGenerateForTest() {
         generateButton.doClick()
     }
@@ -2112,9 +2345,7 @@ class SpecDetailPanel(
     }
 
     internal fun isClarificationPreviewVisibleForTest(): Boolean {
-        return ::clarificationSplitPane.isInitialized &&
-            clarificationSplitPane.bottomComponent != null &&
-            clarificationPreviewSection.isVisible
+        return isClarificationPreviewContentVisible
     }
 
     internal fun currentProcessTimelineTextForTest(): String {
@@ -2368,6 +2599,8 @@ class SpecDetailPanel(
         private const val CARD_CLARIFY = "clarify"
         private const val CLARIFY_QUESTIONS_CARD_MARKDOWN = "clarify.questions.markdown"
         private const val CLARIFY_QUESTIONS_CARD_CHECKLIST = "clarify.questions.checklist"
+        private const val COLLAPSE_ICON_EXPANDED = "▾"
+        private const val COLLAPSE_ICON_COLLAPSED = "▸"
         private val DETAIL_LINE_REGEX = Regex("^-\\s*(detail|details|补充|说明)\\s*[:：]\\s*(.+)$", RegexOption.IGNORE_CASE)
     }
 }

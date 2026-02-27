@@ -89,6 +89,7 @@ class McpPanel(
         onEditServer = ::onEditServer,
         onRefreshLogs = ::onRefreshServerLogs,
         onClearLogs = ::onClearServerLogs,
+        onCopyLogs = ::onCopyServerLogs,
     )
 
     init {
@@ -305,14 +306,29 @@ class McpPanel(
     }
 
     private fun onDeleteServer(serverId: String) {
-        if (selectedServerId == serverId) {
+        val clearDetail = selectedServerId == serverId
+        if (clearDetail) {
             selectedServerId = null
+            serverDetailPanel.showEmpty()
         }
-        mcpHub.stopServer(serverId)
-        mcpHub.unregisterServer(serverId)
-        mcpConfigStore.delete(serverId)
-        serverDetailPanel.showEmpty()
-        refreshServers()
+        scope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                mcpHub.unregisterServer(serverId).getOrThrow()
+                mcpConfigStore.delete(serverId)
+            }
+            invokeLaterSafe {
+                if (result.isFailure) {
+                    statusLabel.text = result.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown")
+                    if (clearDetail) {
+                        selectedServerId = serverId
+                        onServerSelected(serverId)
+                    }
+                } else if (clearDetail) {
+                    serverDetailPanel.showEmpty()
+                }
+                refreshServers()
+            }
+        }
     }
 
     private fun onAiQuickSetup() {
@@ -700,9 +716,16 @@ class McpPanel(
     }
 
     private fun onStopServer(serverId: String) {
-        mcpHub.stopServer(serverId)
-        refreshServers()
-        onServerSelected(serverId)
+        scope.launch(Dispatchers.IO) {
+            val result = mcpHub.stopServer(serverId)
+            invokeLaterSafe {
+                if (result.isFailure) {
+                    statusLabel.text = result.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown")
+                }
+                refreshServers()
+                onServerSelected(serverId)
+            }
+        }
     }
 
     private fun onRestartServer(serverId: String) {
@@ -719,12 +742,20 @@ class McpPanel(
         if (selectedServerId == serverId) {
             refreshServerDetail(serverId)
         }
+        statusLabel.text = SpecCodingBundle.message("mcp.server.logs.refreshed")
     }
 
     private fun onClearServerLogs(serverId: String) {
         mcpHub.clearServerRuntimeLogs(serverId)
         if (selectedServerId == serverId) {
             refreshServerDetail(serverId)
+        }
+        statusLabel.text = SpecCodingBundle.message("mcp.server.logs.cleared")
+    }
+
+    private fun onCopyServerLogs(serverId: String) {
+        if (selectedServerId == serverId) {
+            statusLabel.text = SpecCodingBundle.message("mcp.server.logs.copied")
         }
     }
 

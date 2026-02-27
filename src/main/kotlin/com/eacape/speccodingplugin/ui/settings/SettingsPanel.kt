@@ -1879,6 +1879,10 @@ class SettingsPanel(
         init {
             layout = BorderLayout(JBUI.scale(8), 0)
             isOpaque = true
+            iconLabel.preferredSize = JBUI.size(16, 16)
+            iconLabel.minimumSize = iconLabel.preferredSize
+            iconLabel.maximumSize = iconLabel.preferredSize
+            iconLabel.horizontalAlignment = SwingConstants.CENTER
             iconLabel.verticalAlignment = SwingConstants.TOP
             iconLabel.border = JBUI.Borders.emptyTop(1)
             commandLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
@@ -2220,10 +2224,10 @@ class SettingsPanel(
         private val SKILL_ITEM_SELECTED_BORDER = JBColor(Color(158, 186, 223), Color(119, 139, 170))
         private val SKILL_ITEM_SELECTED_TITLE_FG = JBColor(Color(24, 44, 78), Color(235, 241, 250))
         private val SKILL_ITEM_SELECTED_META_FG = JBColor(Color(63, 85, 116), Color(198, 212, 232))
-        private val SKILL_CODEX_ICON = IconLoader.getIcon("/icons/provider-codex.svg", SettingsPanel::class.java)
+        private val SKILL_CODEX_ICON = IconLoader.getIcon("/icons/skill-codex.svg", SettingsPanel::class.java)
         private val SKILL_CLAUDE_ICON = AllIcons.Vcs.History
         private val SKILL_PROJECT_ICON = AllIcons.Vcs.Branch
-        private val SKILL_GLOBAL_ICON = AllIcons.General.GearPlain
+        private val SKILL_GLOBAL_ICON = IconLoader.getIcon("/icons/skill-global.svg", SettingsPanel::class.java)
         private val STATUS_NORMAL_FG = JBColor(Color(92, 106, 127), Color(177, 188, 204))
         private val STATUS_SUCCESS_FG = JBColor(Color(42, 128, 74), Color(131, 208, 157))
         private val STATUS_ERROR_FG = JBColor(Color(171, 55, 69), Color(226, 144, 154))

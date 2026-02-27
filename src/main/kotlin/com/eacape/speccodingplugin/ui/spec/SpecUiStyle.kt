@@ -82,7 +82,6 @@ internal object SpecUiStyle {
         val cursor = Cursor.getPredefinedCursor(cursorType)
         splitPane.dividerSize = dividerSize
         splitPane.isOneTouchExpandable = false
-        splitPane.cursor = cursor
         (splitPane.ui as? BasicSplitPaneUI)?.divider?.let { divider ->
             divider.cursor = cursor
             divider.background = dividerBackground

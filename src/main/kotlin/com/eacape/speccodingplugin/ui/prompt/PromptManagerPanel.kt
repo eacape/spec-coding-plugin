@@ -1,7 +1,6 @@
-package com.eacape.speccodingplugin.ui.prompt
+﻿package com.eacape.speccodingplugin.ui.prompt
 
 import com.eacape.speccodingplugin.SpecCodingBundle
-import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.prompt.PromptManager
@@ -9,16 +8,10 @@ import com.eacape.speccodingplugin.prompt.PromptTemplate
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
-import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Cursor
@@ -28,9 +21,9 @@ import java.awt.Graphics2D
 import java.awt.Insets
 import java.awt.Point
 import java.awt.RenderingHints
-import java.awt.geom.RoundRectangle2D
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.geom.RoundRectangle2D
 import javax.swing.BorderFactory
 import javax.swing.DefaultListModel
 import javax.swing.JButton
@@ -41,23 +34,15 @@ import javax.swing.border.CompoundBorder
 
 /**
  * Prompt 管理面板
- * 展示 Prompt 列表，支持新建、编辑、删除操作
  */
 class PromptManagerPanel(
     private val project: Project,
 ) : JPanel(BorderLayout()), Disposable {
 
     private val promptManager = PromptManager.getInstance(project)
-    private val projectService: SpecCodingProjectService = project.getService(SpecCodingProjectService::class.java)
     private val listModel = DefaultListModel<PromptTemplate>()
     private val promptList = JBList(listModel)
-    private val promptJson = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-    }
-
     private val newBtn = JButton()
-    private val aiDraftBtn = JButton()
 
     @Volatile
     private var isDisposed = false
@@ -71,13 +56,9 @@ class PromptManagerPanel(
     }
 
     private fun setupUI() {
-        // 顶部标题条移除，仅保留操作按钮
         styleActionButton(newBtn)
-        styleActionButton(aiDraftBtn)
 
-        // 列表
-        promptList.selectionMode =
-            ListSelectionModel.SINGLE_SELECTION
+        promptList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         promptList.cellRenderer = PromptListCellRenderer()
         promptList.isOpaque = false
         promptList.fixedCellHeight = -1
@@ -105,6 +86,7 @@ class PromptManagerPanel(
             viewport.isOpaque = false
             isOpaque = false
         }
+
         val listCard = JPanel(BorderLayout()).apply {
             isOpaque = true
             background = LIST_SECTION_BG
@@ -115,19 +97,16 @@ class PromptManagerPanel(
             add(scrollPane, BorderLayout.CENTER)
         }
 
-        // 按钮事件
         newBtn.addActionListener { onNew() }
-        aiDraftBtn.addActionListener { onAiDraft() }
 
-        val footerActions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
+        val topActions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyTop(6)
-            add(aiDraftBtn)
+            border = JBUI.Borders.emptyBottom(6)
             add(newBtn)
         }
 
+        add(topActions, BorderLayout.NORTH)
         add(listCard, BorderLayout.CENTER)
-        add(footerActions, BorderLayout.SOUTH)
     }
 
     fun refresh() {
@@ -136,8 +115,9 @@ class PromptManagerPanel(
     }
 
     private fun refreshLocalizedTexts() {
-        aiDraftBtn.text = SpecCodingBundle.message("prompt.manager.ai")
         newBtn.text = SpecCodingBundle.message("prompt.manager.new")
+        updateActionButtonSize(newBtn)
+        revalidate()
         promptList.repaint()
     }
 
@@ -207,15 +187,28 @@ class PromptManagerPanel(
             ),
             JBUI.Borders.empty(3, 10, 3, 10),
         )
-        button.preferredSize = JBUI.size(0, 30)
-        button.minimumSize = JBUI.size(0, 30)
         button.putClientProperty("JButton.buttonType", "roundRect")
         button.putClientProperty("JComponent.roundRectArc", JBUI.scale(12))
+        updateActionButtonSize(button)
+    }
+
+    private fun updateActionButtonSize(button: JButton) {
+        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
+        val insets = button.insets
+        val width = maxOf(
+            textWidth + insets.left + insets.right + JBUI.scale(14),
+            JBUI.scale(64),
+        )
+        button.preferredSize = JBUI.size(width, JBUI.scale(28))
+        button.minimumSize = button.preferredSize
     }
 
     private fun onNew() {
         val existingIds = promptManager.listPromptTemplates().map { it.id }.toSet()
-        val dialog = PromptEditorDialog(existingPromptIds = existingIds)
+        val dialog = PromptEditorDialog(
+            project = project,
+            existingPromptIds = existingIds,
+        )
         if (dialog.showAndGet()) {
             val template = dialog.result ?: return
             promptManager.upsertTemplate(template)
@@ -226,10 +219,14 @@ class PromptManagerPanel(
     private fun onEdit(template: PromptTemplate? = promptList.selectedValue) {
         val selected = template ?: return
         val existingIds = promptManager.listPromptTemplates().map { it.id }.toSet()
-        val dialog = PromptEditorDialog(existing = selected, existingPromptIds = existingIds)
+        val dialog = PromptEditorDialog(
+            project = project,
+            existing = selected,
+            existingPromptIds = existingIds,
+        )
         if (dialog.showAndGet()) {
-            val template = dialog.result ?: return
-            promptManager.upsertTemplate(template)
+            val updated = dialog.result ?: return
+            promptManager.upsertTemplate(updated)
             refresh()
         }
     }
@@ -238,167 +235,6 @@ class PromptManagerPanel(
         val selected = template ?: return
         promptManager.deleteTemplate(selected.id)
         refresh()
-    }
-
-    private fun onAiDraft() {
-        val requirement = Messages.showMultilineInputDialog(
-            project,
-            SpecCodingBundle.message("prompt.manager.ai.requirement.message"),
-            SpecCodingBundle.message("prompt.manager.ai.requirement.title"),
-            "",
-            null,
-            null,
-        )?.trim().orEmpty()
-        if (requirement.isBlank()) {
-            return
-        }
-        setToolbarBusy(true)
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val result = runBlocking { generatePromptDraftWithAi(requirement) }
-            invokeLaterSafe {
-                setToolbarBusy(false)
-                if (result.usedFallback && !result.reason.isNullOrBlank()) {
-                    Messages.showWarningDialog(
-                        project,
-                        SpecCodingBundle.message("prompt.manager.ai.fallback", result.reason),
-                        SpecCodingBundle.message("prompt.manager.ai"),
-                    )
-                }
-                val existingIds = promptManager.listPromptTemplates().map { it.id }.toSet()
-                val dialog = PromptEditorDialog(
-                    existingPromptIds = existingIds,
-                    initialName = result.draft.name,
-                    initialContent = result.draft.content,
-                )
-                if (dialog.showAndGet()) {
-                    val template = dialog.result ?: return@invokeLaterSafe
-                    promptManager.upsertTemplate(template)
-                    refresh()
-                }
-            }
-        }
-    }
-
-    private fun setToolbarBusy(busy: Boolean) {
-        newBtn.isEnabled = !busy
-        aiDraftBtn.isEnabled = !busy
-    }
-
-    private suspend fun generatePromptDraftWithAi(requirement: String): PromptDraftResult {
-        val fallback = buildFallbackPromptDraft(requirement)
-        val providers = projectService.availableProviders()
-        val providerId = providers.firstOrNull()
-            ?: return PromptDraftResult(
-                draft = fallback,
-                usedFallback = true,
-                reason = SpecCodingBundle.message("prompt.manager.ai.reason.providerUnavailable"),
-            )
-        val prompt = buildString {
-            appendLine("You are generating a reusable prompt template for an IDE coding assistant.")
-            appendLine("Return ONLY strict JSON, no markdown fences, no explanation.")
-            appendLine("Required JSON keys: name, content.")
-            appendLine("Rules:")
-            appendLine("1) name: concise and human-readable.")
-            appendLine("2) content: a direct instruction template for the assistant.")
-            appendLine("3) Keep content practical and implementation-oriented.")
-            appendLine()
-            appendLine("User requirement:")
-            appendLine(requirement)
-        }
-        val responseText = StringBuilder()
-        val callResult = runCatching {
-            projectService.chat(
-                providerId = providerId,
-                userInput = prompt,
-                planExecuteVerifySections = false,
-            ) { chunk ->
-                if (chunk.delta.isNotBlank()) {
-                    responseText.append(chunk.delta)
-                }
-            }
-        }
-        if (callResult.isFailure) {
-            return PromptDraftResult(
-                draft = fallback,
-                usedFallback = true,
-                reason = callResult.exceptionOrNull()?.message
-                    ?: SpecCodingBundle.message("common.unknown"),
-            )
-        }
-        val rawResponse = responseText.toString().trim()
-        if (rawResponse.isBlank()) {
-            return PromptDraftResult(
-                draft = fallback,
-                usedFallback = true,
-                reason = SpecCodingBundle.message("prompt.manager.ai.reason.emptyResponse"),
-            )
-        }
-        val draft = runCatching { parsePromptDraft(rawResponse, requirement) }.getOrNull()
-            ?: return PromptDraftResult(
-                draft = fallback,
-                usedFallback = true,
-                reason = SpecCodingBundle.message("prompt.manager.ai.reason.invalidJson"),
-            )
-        return PromptDraftResult(
-            draft = draft,
-            usedFallback = false,
-            reason = null,
-        )
-    }
-
-    private fun parsePromptDraft(raw: String, requirement: String): GeneratedPromptDraft {
-        val root = parsePromptJson(raw)
-        val name = root["name"]?.jsonPrimitive?.contentOrNull?.trim()
-            ?.ifBlank { null }
-            ?: requirement
-                .replace("\\s+".toRegex(), " ")
-                .trim()
-                .take(40)
-                .ifBlank { SpecCodingBundle.message("prompt.manager.ai.defaultName") }
-        val content = root["content"]?.jsonPrimitive?.contentOrNull
-            ?.trim()
-            ?.ifBlank { null }
-            ?: throw IllegalArgumentException(SpecCodingBundle.message("prompt.manager.ai.reason.invalidJson"))
-        return GeneratedPromptDraft(name = name, content = content)
-    }
-
-    private fun parsePromptJson(raw: String): JsonObject {
-        val trimmed = raw.trim()
-        val direct = runCatching { promptJson.parseToJsonElement(trimmed) as? JsonObject }.getOrNull()
-        if (direct != null) {
-            return direct
-        }
-
-        val firstBrace = trimmed.indexOf('{')
-        val lastBrace = trimmed.lastIndexOf('}')
-        if (firstBrace >= 0 && lastBrace > firstBrace) {
-            val candidate = trimmed.substring(firstBrace, lastBrace + 1)
-            val extracted = runCatching { promptJson.parseToJsonElement(candidate) as? JsonObject }.getOrNull()
-            if (extracted != null) {
-                return extracted
-            }
-        }
-        throw IllegalArgumentException(SpecCodingBundle.message("prompt.manager.ai.reason.invalidJson"))
-    }
-
-    private fun buildFallbackPromptDraft(requirement: String): GeneratedPromptDraft {
-        val normalizedRequirement = requirement
-            .replace("\\s+".toRegex(), " ")
-            .trim()
-            .ifBlank { SpecCodingBundle.message("prompt.manager.ai.defaultName") }
-        val fallbackName = normalizedRequirement.take(40)
-        val fallbackContent = buildString {
-            appendLine("你是项目开发助手。")
-            appendLine("围绕以下目标执行：")
-            appendLine(normalizedRequirement)
-            appendLine()
-            appendLine("输出要求：")
-            appendLine("1. 先澄清边界与约束。")
-            appendLine("2. 再给出可执行步骤。")
-            appendLine("3. 涉及代码时给出关键改动点。")
-            appendLine("4. 最后附上验证建议。")
-        }.trim()
-        return GeneratedPromptDraft(name = fallbackName, content = fallbackContent)
     }
 
     private fun invokeLaterSafe(action: () -> Unit) {
@@ -415,17 +251,6 @@ class PromptManagerPanel(
     override fun dispose() {
         isDisposed = true
     }
-
-    private data class GeneratedPromptDraft(
-        val name: String,
-        val content: String,
-    )
-
-    private data class PromptDraftResult(
-        val draft: GeneratedPromptDraft,
-        val usedFallback: Boolean,
-        val reason: String?,
-    )
 
     private class RoundedLineBorder(
         private val lineColor: Color,

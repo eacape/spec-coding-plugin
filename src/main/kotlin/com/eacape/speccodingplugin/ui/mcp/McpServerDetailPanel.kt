@@ -33,6 +33,7 @@ class McpServerDetailPanel(
     private val onEditServer: (String) -> Unit,
     private val onRefreshLogs: (String) -> Unit,
     private val onClearLogs: (String) -> Unit,
+    private val onCopyLogs: (String) -> Unit,
 ) : JPanel(BorderLayout()) {
 
     private val prettyJson = Json { prettyPrint = true }
@@ -83,6 +84,7 @@ class McpServerDetailPanel(
             val text = runtimeLogArea.text
             if (text.isNotBlank()) {
                 Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+                currentServerId?.let(onCopyLogs)
             }
         }
     }

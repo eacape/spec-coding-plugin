@@ -114,6 +114,7 @@ class SpecWorkflowPanel(
             onOpenInEditor = ::onOpenInEditor,
             onShowHistoryDiff = ::onShowHistoryDiff,
             onSaveDocument = ::onSaveDocument,
+            onClarificationDraftAutosave = ::onClarificationDraftAutosave,
         )
 
         setupUI()
@@ -839,6 +840,27 @@ class SpecWorkflowPanel(
             state = SpecDetailPanel.ProcessTimelineState.INFO,
         )
         setStatusText(SpecCodingBundle.message("spec.workflow.clarify.cancelled"))
+    }
+
+    private fun onClarificationDraftAutosave(
+        input: String,
+        confirmedContext: String,
+        questionsMarkdown: String,
+        structuredQuestions: List<String>,
+    ) {
+        val workflowId = selectedWorkflowId ?: return
+        val activeWorkflowId = currentWorkflow?.id
+        if (activeWorkflowId != null && activeWorkflowId != workflowId) {
+            return
+        }
+        rememberClarificationRetry(
+            workflowId = workflowId,
+            input = input,
+            confirmedContext = confirmedContext,
+            questionsMarkdown = questionsMarkdown,
+            structuredQuestions = structuredQuestions,
+            clarificationRound = pendingClarificationRetryByWorkflowId[workflowId]?.clarificationRound,
+        )
     }
 
     private fun requestClarificationDraft(

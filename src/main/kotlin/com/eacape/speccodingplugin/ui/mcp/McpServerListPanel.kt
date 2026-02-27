@@ -94,6 +94,7 @@ class McpServerListPanel(
         val scrollPane = JBScrollPane(serverList).apply {
             border = JBUI.Borders.empty()
             viewport.background = LIST_BG
+            horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
 
         add(toolbarCard, BorderLayout.NORTH)

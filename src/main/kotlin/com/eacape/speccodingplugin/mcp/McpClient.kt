@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.buildJsonObject
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
@@ -17,6 +18,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 /**
  * MCP 客户端
@@ -148,8 +150,19 @@ class McpClient(
             errorReader?.close()
             writer?.close()
             reader?.close()
-            server.process?.destroy()
-            server.process?.waitFor()
+            val process = server.process
+            process?.destroy()
+            if (process != null) {
+                val exited = process.waitFor(STOP_WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                if (!exited) {
+                    emitRuntimeLog(
+                        McpRuntimeLogLevel.WARN,
+                        "Process did not exit in ${STOP_WAIT_TIMEOUT_MS}ms, forcing termination",
+                    )
+                    process.destroyForcibly()
+                    process.waitFor(FORCE_STOP_WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                }
+            }
         } catch (e: Exception) {
             logger.warn("Error stopping MCP server", e)
         }
@@ -209,7 +222,7 @@ class McpClient(
         checkInitialized()
         emitRuntimeLog(McpRuntimeLogLevel.INFO, "Requesting tools/list...")
 
-        val response = sendRequest(McpMethods.TOOLS_LIST, null)
+        val response = sendRequest(McpMethods.TOOLS_LIST, buildJsonObject { })
 
         if (response.error != null) {
             throw Exception("List tools failed: ${response.error.message}")
@@ -570,6 +583,8 @@ class McpClient(
         private const val STDERR_TAIL_MAX_LINES = 8
         private const val STDERR_TAIL_MAX_CHARS = 420
         private const val RUNTIME_LOG_MAX_CHARS = 600
+        private const val STOP_WAIT_TIMEOUT_MS = 1500L
+        private const val FORCE_STOP_WAIT_TIMEOUT_MS = 500L
         private val WINDOWS_EXEC_EXTENSIONS = listOf(".cmd", ".bat", ".exe", ".com")
     }
 }
