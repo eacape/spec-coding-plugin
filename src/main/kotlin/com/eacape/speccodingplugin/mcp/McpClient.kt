@@ -51,6 +51,8 @@ class McpClient(
 
     private val stderrTail = ArrayDeque<String>()
     private val stderrTailLock = Any()
+    @Volatile
+    private var runtimeLogListener: ((McpRuntimeLogEvent) -> Unit)? = null
 
     /**
      * 启动 MCP Server
@@ -62,6 +64,10 @@ class McpClient(
             val launchCommand = resolveLaunchCommand(
                 command = server.config.command,
                 args = server.config.args,
+            )
+            emitRuntimeLog(
+                level = McpRuntimeLogLevel.INFO,
+                message = "Launch command: ${formatCommandForLog(launchCommand)}",
             )
 
             // 构建进程
@@ -79,6 +85,13 @@ class McpClient(
             val process = try {
                 processBuilder.start()
             } catch (error: Exception) {
+                emitRuntimeLog(
+                    level = McpRuntimeLogLevel.ERROR,
+                    message = buildLaunchFailureMessage(
+                        attemptedCommand = launchCommand.firstOrNull().orEmpty(),
+                        error = error,
+                    ),
+                )
                 throw IllegalStateException(
                     buildLaunchFailureMessage(
                         attemptedCommand = launchCommand.firstOrNull().orEmpty(),
@@ -89,6 +102,11 @@ class McpClient(
             }
             server.process = process
             server.status = ServerStatus.STARTING
+            val pidText = runCatching { process.pid().toString() }.getOrNull()
+            emitRuntimeLog(
+                level = McpRuntimeLogLevel.INFO,
+                message = if (pidText != null) "Process started (pid=$pidText)" else "Process started",
+            )
 
             // 设置 IO
             writer = BufferedWriter(OutputStreamWriter(process.outputStream))
@@ -106,12 +124,14 @@ class McpClient(
 
             try {
                 // 初始化握手
+                emitRuntimeLog(McpRuntimeLogLevel.INFO, "Waiting for initialize response...")
                 initialize()
             } catch (error: Exception) {
                 throw enrichStartupError(error, process)
             }
 
             server.status = ServerStatus.RUNNING
+            emitRuntimeLog(McpRuntimeLogLevel.INFO, "Server is running")
             logger.info("MCP server started: ${server.config.name}")
         }
     }
@@ -121,6 +141,7 @@ class McpClient(
      */
     fun stop() {
         logger.info("Stopping MCP server: ${server.config.name}")
+        emitRuntimeLog(McpRuntimeLogLevel.INFO, "Stopping server process")
 
         try {
             stderrJob?.cancel()
@@ -137,6 +158,7 @@ class McpClient(
         server.process = null
         initialized = false
 
+        emitRuntimeLog(McpRuntimeLogLevel.INFO, "Server stopped")
         logger.info("MCP server stopped: ${server.config.name}")
     }
 
@@ -173,6 +195,10 @@ class McpClient(
         // 发送 initialized 通知
         sendNotification(McpMethods.INITIALIZED, null)
 
+        emitRuntimeLog(
+            level = McpRuntimeLogLevel.INFO,
+            message = "Initialize succeeded: ${result.serverInfo.name} ${result.serverInfo.version}",
+        )
         logger.info("MCP server initialized: ${result.serverInfo.name} ${result.serverInfo.version}")
     }
 
@@ -181,6 +207,7 @@ class McpClient(
      */
     suspend fun listTools(): Result<List<McpTool>> = runCatching {
         checkInitialized()
+        emitRuntimeLog(McpRuntimeLogLevel.INFO, "Requesting tools/list...")
 
         val response = sendRequest(McpMethods.TOOLS_LIST, null)
 
@@ -193,6 +220,7 @@ class McpClient(
             response.result!!
         )
 
+        emitRuntimeLog(McpRuntimeLogLevel.INFO, "tools/list returned ${result.tools.size} tool(s)")
         result.tools
     }
 
@@ -300,6 +328,10 @@ class McpClient(
             logger.warn("Read loop error", e)
             server.status = ServerStatus.ERROR
             server.error = e.message
+            emitRuntimeLog(
+                level = McpRuntimeLogLevel.ERROR,
+                message = "Read loop error: ${e.message ?: e::class.java.simpleName}",
+            )
         }
     }
 
@@ -310,6 +342,7 @@ class McpClient(
                 val normalized = line.trim()
                 if (normalized.isNotEmpty()) {
                     appendStderrLine(normalized)
+                    emitRuntimeLog(McpRuntimeLogLevel.STDERR, normalized)
                     logger.debug("MCP stderr [${server.config.id}]: $normalized")
                 }
             }
@@ -428,6 +461,7 @@ class McpClient(
                 append(stderrSummary)
             }
         }
+        emitRuntimeLog(McpRuntimeLogLevel.ERROR, "Startup failed: $message")
         return IllegalStateException(message, error)
     }
 
@@ -508,9 +542,34 @@ class McpClient(
         return server.status == ServerStatus.RUNNING && initialized
     }
 
+    fun setRuntimeLogListener(listener: (McpRuntimeLogEvent) -> Unit) {
+        runtimeLogListener = listener
+    }
+
+    private fun emitRuntimeLog(level: McpRuntimeLogLevel, message: String) {
+        val normalizedMessage = message.trim().replace('\n', ' ')
+        if (normalizedMessage.isEmpty()) return
+        val event = McpRuntimeLogEvent(
+            level = level,
+            message = normalizedMessage.take(RUNTIME_LOG_MAX_CHARS),
+        )
+        runCatching {
+            runtimeLogListener?.invoke(event)
+        }.onFailure { error ->
+            logger.debug("Failed to emit MCP runtime log", error)
+        }
+    }
+
+    private fun formatCommandForLog(command: List<String>): String {
+        return command.joinToString(" ") { token ->
+            if (token.contains(' ')) "\"$token\"" else token
+        }
+    }
+
     companion object {
         private const val STDERR_TAIL_MAX_LINES = 8
         private const val STDERR_TAIL_MAX_CHARS = 420
+        private const val RUNTIME_LOG_MAX_CHARS = 600
         private val WINDOWS_EXEC_EXTENSIONS = listOf(".cmd", ".bat", ".exe", ".com")
     }
 }

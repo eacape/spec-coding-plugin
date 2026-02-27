@@ -46,7 +46,7 @@ class PromptManager(private val project: Project) {
      */
     fun getActivePromptId(): String {
         ensureLoaded()
-        return synchronized(lock) { resolveActivePrompt(catalog).id }
+        return synchronized(lock) { catalog.activePromptId.orEmpty() }
     }
 
     /**
@@ -95,7 +95,11 @@ class PromptManager(private val project: Project) {
         synchronized(lock) {
             val remaining = catalog.templates.filterNot { it.id == normalized.id }
             val updated = (remaining + normalized).sortedBy { it.name.lowercase() }
-            val nextActiveId = catalog.activePromptId ?: normalized.id
+            val nextActiveId = catalog.activePromptId
+                ?.takeIf { activeId ->
+                    updated.any { it.id == activeId } ||
+                    GlobalPromptManager.getInstance().getTemplate(activeId) != null
+                }
             catalog = catalog.copy(templates = updated, activePromptId = nextActiveId)
             saveCatalogSafely(catalog)
         }
@@ -107,7 +111,7 @@ class PromptManager(private val project: Project) {
     fun deleteTemplate(promptId: String): Boolean {
         ensureLoaded()
         val normalizedPromptId = promptId.trim()
-        if (normalizedPromptId.isBlank() || normalizedPromptId == DEFAULT_PROMPT_ID) {
+        if (normalizedPromptId.isBlank()) {
             return false
         }
 
@@ -117,11 +121,14 @@ class PromptManager(private val project: Project) {
             }
 
             val remaining = catalog.templates.filterNot { it.id == normalizedPromptId }
-            val nextActiveId = if (catalog.activePromptId == normalizedPromptId) {
-                remaining.firstOrNull()?.id ?: DEFAULT_PROMPT_ID
-            } else {
-                catalog.activePromptId
-            }
+            val nextActiveId = catalog.activePromptId
+                ?.takeIf { activeId ->
+                    activeId != normalizedPromptId &&
+                    (
+                        remaining.any { it.id == activeId } ||
+                        GlobalPromptManager.getInstance().getTemplate(activeId) != null
+                    )
+                }
             catalog = catalog.copy(templates = remaining, activePromptId = nextActiveId)
             saveCatalogSafely(catalog)
             true
@@ -174,6 +181,9 @@ class PromptManager(private val project: Project) {
         val active = synchronized(lock) {
             sessionOverride ?: resolveActivePrompt(catalog)
         }
+        if (active == null) {
+            return ""
+        }
 
         // 合并变量：全局变量 < 项目变量 < 模板变量 < 运行时变量
         val globalVariables = getGlobalVariables()
@@ -220,41 +230,41 @@ class PromptManager(private val project: Project) {
     }
 
     private fun normalizeCatalog(value: PromptCatalog?): PromptCatalog {
-        if (value == null || value.templates.isEmpty()) {
+        if (value == null) {
             return defaultCatalog()
         }
 
+        val templates = value.templates
+            .filterNot(::isLegacyDefaultTemplate)
+            .sortedBy { it.name.lowercase() }
         val active = value.activePromptId
             ?.takeIf { activeId ->
                 // 检查活跃 ID 是否存在于项目级或全局级
-                value.templates.any { it.id == activeId } ||
+                templates.any { it.id == activeId } ||
                 GlobalPromptManager.getInstance().getTemplate(activeId) != null
             }
-            ?: value.templates.first().id
-        return value.copy(activePromptId = active)
+        return PromptCatalog(templates = templates, activePromptId = active)
     }
 
-    private fun resolveActivePrompt(value: PromptCatalog): PromptTemplate {
+    private fun resolveActivePrompt(value: PromptCatalog): PromptTemplate? {
         val activeId = value.activePromptId
+            ?.trim()
+            ?.ifBlank { null }
+            ?: return null
 
         // 优先从项目级查找
-        val projectTemplate = activeId?.let { id ->
-            value.templates.firstOrNull { it.id == id }
-        }
+        val projectTemplate = value.templates.firstOrNull { it.id == activeId }
         if (projectTemplate != null) {
             return projectTemplate
         }
 
         // 其次从全局级查找
-        val globalTemplate = activeId?.let { id ->
-            GlobalPromptManager.getInstance().getTemplate(id)
-        }
+        val globalTemplate = GlobalPromptManager.getInstance().getTemplate(activeId)
         if (globalTemplate != null) {
             return globalTemplate
         }
 
-        // 最后返回默认模板
-        return value.templates.firstOrNull() ?: DEFAULT_PROMPT_TEMPLATE
+        return null
     }
 
     private fun loadCatalogSafely(): PromptCatalog? {
@@ -295,37 +305,19 @@ class PromptManager(private val project: Project) {
     }
 
     private fun defaultCatalog(): PromptCatalog {
-        return PromptCatalog(
-            templates = listOf(DEFAULT_PROMPT_TEMPLATE),
-            activePromptId = DEFAULT_PROMPT_ID,
-        )
+        return PromptCatalog()
+    }
+
+    private fun isLegacyDefaultTemplate(template: PromptTemplate): Boolean {
+        if (template.id.trim().lowercase() !in LEGACY_DEFAULT_PROMPT_IDS) {
+            return false
+        }
+        val normalizedTags = template.tags.map { it.trim().lowercase() }
+        return normalizedTags.contains("built-in") || template.name.trim().equals("Default Assistant", ignoreCase = true)
     }
 
     companion object {
-        const val DEFAULT_PROMPT_ID = "default"
-
-        private val DEFAULT_PROMPT_TEMPLATE = PromptTemplate(
-            id = DEFAULT_PROMPT_ID,
-            name = "Default Assistant",
-            content = """
-                You are Spec Coding assistant in JetBrains IDE.
-                Current project: {{project_name}} ({{project_path}})
-                Focus on project development through conversation.
-
-                When the user asks to build or change something:
-                1. Clarify the requirement and constraints briefly.
-                2. Propose an implementation plan with concrete steps.
-                3. Provide repository-specific code changes and explain key trade-offs.
-                4. Suggest verification steps (tests, checks, runtime validation).
-
-                Keep answers concise, practical, and safe.
-            """.trimIndent(),
-            variables = mapOf(
-                "language" to "Kotlin",
-            ),
-            scope = PromptScope.PROJECT,
-            tags = listOf("built-in"),
-        )
+        private val LEGACY_DEFAULT_PROMPT_IDS = setOf("default")
 
         fun getInstance(project: Project): PromptManager {
             return project.getService(PromptManager::class.java)

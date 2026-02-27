@@ -86,7 +86,9 @@ class McpPanel(
         onStartServer = ::onStartServer,
         onStopServer = ::onStopServer,
         onRestartServer = ::onRestartServer,
-        onEditServer = ::onEditServer
+        onEditServer = ::onEditServer,
+        onRefreshLogs = ::onRefreshServerLogs,
+        onClearLogs = ::onClearServerLogs,
     )
 
     init {
@@ -201,6 +203,14 @@ class McpPanel(
                 override fun onToolsDiscovered(serverId: String, tools: List<McpTool>) {
                     invokeLaterSafe { refreshServers() }
                 }
+
+                override fun onServerRuntimeLogsChanged(serverId: String) {
+                    invokeLaterSafe {
+                        if (selectedServerId == serverId) {
+                            serverDetailPanel.updateRuntimeLogs(mcpHub.getServerRuntimeLogs(serverId))
+                        }
+                    }
+                }
             }
         )
 
@@ -260,9 +270,14 @@ class McpPanel(
 
     private fun onServerSelected(serverId: String) {
         selectedServerId = serverId
+        refreshServerDetail(serverId)
+    }
+
+    private fun refreshServerDetail(serverId: String) {
         val server = mcpHub.getServer(serverId) ?: return
         val tools = mcpHub.getServerTools(serverId)
-        serverDetailPanel.updateServer(server, tools)
+        val logs = mcpHub.getServerRuntimeLogs(serverId)
+        serverDetailPanel.updateServer(server, tools, logs)
     }
 
     private fun onAddServer() {
@@ -697,6 +712,19 @@ class McpPanel(
                 refreshServers()
                 onServerSelected(serverId)
             }
+        }
+    }
+
+    private fun onRefreshServerLogs(serverId: String) {
+        if (selectedServerId == serverId) {
+            refreshServerDetail(serverId)
+        }
+    }
+
+    private fun onClearServerLogs(serverId: String) {
+        mcpHub.clearServerRuntimeLogs(serverId)
+        if (selectedServerId == serverId) {
+            refreshServerDetail(serverId)
         }
     }
 

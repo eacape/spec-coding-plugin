@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 interface McpHubListener {
     fun onServerStatusChanged(serverId: String, status: ServerStatus) {}
     fun onToolsDiscovered(serverId: String, tools: List<McpTool>) {}
+    fun onServerRuntimeLogsChanged(serverId: String) {}
 
     companion object {
         val TOPIC: Topic<McpHubListener> = Topic.create(
@@ -52,6 +53,10 @@ class McpHub internal constructor(
     // Client 实例映射
     private val clients = ConcurrentHashMap<String, McpClientAdapter>()
 
+    // Server 运行日志（环形缓冲）
+    private val serverRuntimeLogs = ConcurrentHashMap<String, MutableList<McpRuntimeLogEntry>>()
+    private val serverRuntimeLogLocks = ConcurrentHashMap<String, Any>()
+
     /**
      * 注册 Server 配置
      */
@@ -85,6 +90,8 @@ class McpHub internal constructor(
 
             // 移除注册
             servers.remove(serverId)
+            serverRuntimeLogs.remove(serverId)
+            serverRuntimeLogLocks.remove(serverId)
             logger.info("Unregistered MCP server: $serverId")
         }
     }
@@ -99,11 +106,15 @@ class McpHub internal constructor(
 
             if (server.status == ServerStatus.RUNNING) {
                 logger.warn("Server already running: $serverId")
+                appendRuntimeLog(serverId, McpRuntimeLogLevel.WARN, "Server already running")
                 return@runCatching
             }
 
+            appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Start requested")
+
             // 安全校验
             McpSecurityValidator.validateBeforeStart(server.config).getOrThrow()
+            appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Security validation passed")
 
             // 启动中状态
             server.status = ServerStatus.STARTING
@@ -113,13 +124,17 @@ class McpHub internal constructor(
             try {
                 // 创建客户端
                 val client = clientFactory(server, scope)
+                client.setRuntimeLogListener { event ->
+                    appendRuntimeLog(serverId, event.level, event.message)
+                }
                 clients[serverId] = client
 
                 // 启动 Server
                 client.start().getOrThrow()
 
                 // 发现工具
-                discoverTools(serverId)
+                val toolCount = discoverTools(serverId)
+                appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Startup completed, discovered $toolCount tool(s)")
 
                 // 成功状态
                 server.status = ServerStatus.RUNNING
@@ -132,6 +147,11 @@ class McpHub internal constructor(
 
                 server.status = ServerStatus.ERROR
                 server.error = e.message
+                appendRuntimeLog(
+                    serverId,
+                    McpRuntimeLogLevel.ERROR,
+                    "Startup failed: ${e.message ?: e::class.java.simpleName}",
+                )
                 notifyStatusChanged(serverId, ServerStatus.ERROR)
 
                 throw e
@@ -144,6 +164,7 @@ class McpHub internal constructor(
      */
     fun stopServer(serverId: String): Result<Unit> {
         return runCatching {
+            appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Stop requested")
             val client = clients.remove(serverId)
             if (client != null) {
                 client.stop()
@@ -158,6 +179,7 @@ class McpHub internal constructor(
 
             // 清除工具注册
             toolRegistry.clearServerTools(serverId)
+            appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Server stopped")
 
             // 通知状态变更
             notifyStatusChanged(serverId, ServerStatus.STOPPED)
@@ -178,20 +200,27 @@ class McpHub internal constructor(
     /**
      * 发现工具
      */
-    private suspend fun discoverTools(serverId: String) {
-        val client = clients[serverId] ?: return
-        val server = servers[serverId] ?: return
+    private suspend fun discoverTools(serverId: String): Int {
+        val client = clients[serverId] ?: return 0
+        val server = servers[serverId] ?: return 0
 
         try {
             val tools = client.listTools().getOrThrow()
             toolRegistry.registerTools(serverId, tools)
             logger.info("Discovered ${tools.size} tools from server: $serverId")
+            appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Discovered ${tools.size} tool(s)")
 
             // 通知工具发现
             notifyToolsDiscovered(serverId, tools)
+            return tools.size
         } catch (e: Exception) {
             server.status = ServerStatus.ERROR
             server.error = e.message
+            appendRuntimeLog(
+                serverId,
+                McpRuntimeLogLevel.ERROR,
+                "Tool discovery failed: ${e.message ?: e::class.java.simpleName}",
+            )
             notifyStatusChanged(serverId, ServerStatus.ERROR)
             logger.warn("Failed to discover tools from server: $serverId", e)
             throw e
@@ -229,6 +258,31 @@ class McpHub internal constructor(
      */
     fun getServer(serverId: String): McpServer? {
         return servers[serverId]
+    }
+
+    /**
+     * 获取 Server 运行日志（默认最近 200 条）
+     */
+    fun getServerRuntimeLogs(serverId: String, limit: Int = RUNTIME_LOG_MAX_LINES): List<McpRuntimeLogEntry> {
+        val lock = serverRuntimeLogLocks.computeIfAbsent(serverId) { Any() }
+        synchronized(lock) {
+            val logs = serverRuntimeLogs[serverId] ?: return emptyList()
+            if (logs.isEmpty()) return emptyList()
+            val normalizedLimit = if (limit <= 0) RUNTIME_LOG_MAX_LINES else limit
+            val fromIndex = (logs.size - normalizedLimit).coerceAtLeast(0)
+            return logs.subList(fromIndex, logs.size).toList()
+        }
+    }
+
+    /**
+     * 清空指定 Server 运行日志
+     */
+    fun clearServerRuntimeLogs(serverId: String) {
+        val lock = serverRuntimeLogLocks.computeIfAbsent(serverId) { Any() }
+        synchronized(lock) {
+            serverRuntimeLogs[serverId]?.clear()
+        }
+        notifyRuntimeLogsChanged(serverId)
     }
 
     /**
@@ -313,6 +367,24 @@ class McpHub internal constructor(
         }
     }
 
+    private fun appendRuntimeLog(serverId: String, level: McpRuntimeLogLevel, message: String) {
+        val normalized = message.trim().replace('\n', ' ')
+        if (normalized.isEmpty()) return
+        val lock = serverRuntimeLogLocks.computeIfAbsent(serverId) { Any() }
+        synchronized(lock) {
+            val logs = serverRuntimeLogs.computeIfAbsent(serverId) { mutableListOf() }
+            logs += McpRuntimeLogEntry(
+                timestampMillis = System.currentTimeMillis(),
+                level = level,
+                message = normalized.take(RUNTIME_LOG_MAX_CHARS),
+            )
+            if (logs.size > RUNTIME_LOG_MAX_LINES) {
+                logs.removeFirst()
+            }
+        }
+        notifyRuntimeLogsChanged(serverId)
+    }
+
     /**
      * 通知状态变更
      */
@@ -337,6 +409,15 @@ class McpHub internal constructor(
         }
     }
 
+    private fun notifyRuntimeLogsChanged(serverId: String) {
+        try {
+            project.messageBus.syncPublisher(McpHubListener.TOPIC)
+                .onServerRuntimeLogsChanged(serverId)
+        } catch (e: Exception) {
+            logger.debug("Failed to notify runtime logs changed", e)
+        }
+    }
+
     /**
      * 清理资源
      */
@@ -353,6 +434,9 @@ class McpHub internal constructor(
     }
 
     companion object {
+        private const val RUNTIME_LOG_MAX_LINES = 200
+        private const val RUNTIME_LOG_MAX_CHARS = 700
+
         fun getInstance(project: Project): McpHub = project.service()
     }
 }
@@ -363,6 +447,7 @@ internal interface McpClientAdapter {
     suspend fun callTool(toolName: String, arguments: Map<String, Any>): Result<ToolCallResult>
     fun stop()
     fun isRunning(): Boolean
+    fun setRuntimeLogListener(listener: (McpRuntimeLogEvent) -> Unit) {}
 }
 
 private class RealMcpClientAdapter(
@@ -381,6 +466,10 @@ private class RealMcpClientAdapter(
     }
 
     override fun isRunning(): Boolean = delegate.isRunning()
+
+    override fun setRuntimeLogListener(listener: (McpRuntimeLogEvent) -> Unit) {
+        delegate.setRuntimeLogListener(listener)
+    }
 }
 
 /**

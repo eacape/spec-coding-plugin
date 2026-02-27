@@ -89,7 +89,7 @@ class GlobalPromptManager {
             }
 
             val fromDisk = loadCatalogSafely()
-            catalog = fromDisk ?: createDefaultCatalog()
+            catalog = normalizeCatalog(fromDisk)
             loaded = true
         }
     }
@@ -131,26 +131,31 @@ class GlobalPromptManager {
             .resolve("global-catalog.yaml")
     }
 
+    private fun normalizeCatalog(value: PromptCatalog?): PromptCatalog {
+        if (value == null) {
+            return createDefaultCatalog()
+        }
+        val templates = value.templates
+            .filterNot(::isLegacyDefaultTemplate)
+            .sortedBy { it.name.lowercase() }
+        return PromptCatalog(templates = templates, activePromptId = null)
+    }
+
     private fun createDefaultCatalog(): PromptCatalog {
-        return PromptCatalog(
-            templates = listOf(
-                PromptTemplate(
-                    id = "global-default",
-                    name = "Global Default Assistant",
-                    content = """
-                        You are a helpful AI coding assistant.
-                        Provide clear, concise, and accurate responses.
-                        Follow best practices and coding standards.
-                    """.trimIndent(),
-                    scope = PromptScope.GLOBAL,
-                    tags = listOf("built-in", "default"),
-                )
-            ),
-            activePromptId = null, // 全局级不设置活跃提示词
-        )
+        return PromptCatalog()
+    }
+
+    private fun isLegacyDefaultTemplate(template: PromptTemplate): Boolean {
+        if (template.id.trim().lowercase() !in LEGACY_GLOBAL_DEFAULT_IDS) {
+            return false
+        }
+        val normalizedTags = template.tags.map { it.trim().lowercase() }
+        return normalizedTags.contains("built-in") || template.name.trim().equals("Global Default Assistant", ignoreCase = true)
     }
 
     companion object {
+        private val LEGACY_GLOBAL_DEFAULT_IDS = setOf("global-default")
+
         fun getInstance(): GlobalPromptManager {
             return com.intellij.openapi.components.service()
         }

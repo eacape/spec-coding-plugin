@@ -27,6 +27,8 @@ import javax.swing.event.DocumentListener
 class PromptEditorDialog(
     private val existing: PromptTemplate? = null,
     private val existingPromptIds: Set<String> = emptySet(),
+    private val initialName: String = "",
+    private val initialContent: String = "",
 ) : DialogWrapper(true) {
 
     private val nameField = JBTextField()
@@ -48,9 +50,13 @@ class PromptEditorDialog(
     }
 
     private fun loadExisting() {
-        if (existing == null) return
-        nameField.text = existing.name
-        contentPane.text = existing.content
+        if (existing != null) {
+            nameField.text = existing.name
+            contentPane.text = existing.content
+        } else {
+            nameField.text = initialName
+            contentPane.text = initialContent
+        }
         updateHighlightAndPreview()
     }
 

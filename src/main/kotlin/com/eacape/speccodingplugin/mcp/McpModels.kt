@@ -36,6 +36,33 @@ enum class ServerStatus {
 }
 
 /**
+ * MCP 运行日志级别
+ */
+enum class McpRuntimeLogLevel {
+    INFO,
+    WARN,
+    ERROR,
+    STDERR,
+}
+
+/**
+ * MCP 运行日志事件（由 Client 发出）
+ */
+data class McpRuntimeLogEvent(
+    val level: McpRuntimeLogLevel,
+    val message: String,
+)
+
+/**
+ * MCP 运行日志条目（由 Hub 持久化到内存）
+ */
+data class McpRuntimeLogEntry(
+    val timestampMillis: Long,
+    val level: McpRuntimeLogLevel,
+    val message: String,
+)
+
+/**
  * MCP Server 实例
  */
 data class McpServer(

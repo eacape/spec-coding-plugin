@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.ui.mcp
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.mcp.McpRuntimeLogEntry
+import com.eacape.speccodingplugin.mcp.McpRuntimeLogLevel
 import com.eacape.speccodingplugin.mcp.McpServer
 import com.eacape.speccodingplugin.mcp.McpTool
 import com.eacape.speccodingplugin.mcp.ServerStatus
@@ -14,6 +16,10 @@ import com.intellij.util.ui.JBUI
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import java.awt.*
+import java.awt.datatransfer.StringSelection
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import javax.swing.*
 
 /**
@@ -24,7 +30,9 @@ class McpServerDetailPanel(
     private val onStartServer: (String) -> Unit,
     private val onStopServer: (String) -> Unit,
     private val onRestartServer: (String) -> Unit,
-    private val onEditServer: (String) -> Unit
+    private val onEditServer: (String) -> Unit,
+    private val onRefreshLogs: (String) -> Unit,
+    private val onClearLogs: (String) -> Unit,
 ) : JPanel(BorderLayout()) {
 
     private val prettyJson = Json { prettyPrint = true }
@@ -42,19 +50,25 @@ class McpServerDetailPanel(
     private val toolListModel = DefaultListModel<McpTool>()
     private val toolList = JBList(toolListModel)
     private val toolDetailArea = JBTextArea()
+    private val runtimeLogsLabel = JBLabel(SpecCodingBundle.message("mcp.server.logs"))
+    private val runtimeLogArea = JBTextArea()
+    private val refreshLogsBtn = JButton(SpecCodingBundle.message("mcp.server.logs.refresh"))
+    private val clearLogsBtn = JButton(SpecCodingBundle.message("mcp.server.logs.clear"))
+    private val copyLogsBtn = JButton(SpecCodingBundle.message("mcp.server.logs.copy"))
 
     private val emptyLabel = JBLabel(SpecCodingBundle.message("mcp.server.select"))
 
     private var currentServerId: String? = null
     private var currentServerStatus: ServerStatus = ServerStatus.STOPPED
     private var currentErrorText: String? = null
+    private var currentRuntimeLogs: List<McpRuntimeLogEntry> = emptyList()
 
     init {
         border = JBUI.Borders.empty()
         isOpaque = true
         background = DETAIL_SECTION_BG
         bindActions()
-        listOf(startBtn, stopBtn, restartBtn, editBtn).forEach(::styleActionButton)
+        listOf(startBtn, stopBtn, restartBtn, editBtn, refreshLogsBtn, clearLogsBtn, copyLogsBtn).forEach(::styleActionButton)
         showEmpty()
     }
 
@@ -63,6 +77,14 @@ class McpServerDetailPanel(
         stopBtn.addActionListener { currentServerId?.let(onStopServer) }
         restartBtn.addActionListener { currentServerId?.let(onRestartServer) }
         editBtn.addActionListener { currentServerId?.let(onEditServer) }
+        refreshLogsBtn.addActionListener { currentServerId?.let(onRefreshLogs) }
+        clearLogsBtn.addActionListener { currentServerId?.let(onClearLogs) }
+        copyLogsBtn.addActionListener {
+            val text = runtimeLogArea.text
+            if (text.isNotBlank()) {
+                Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
+            }
+        }
     }
 
     private fun buildContentUI() {
@@ -189,13 +211,62 @@ class McpServerDetailPanel(
 
         panel.add(toolsLabel, BorderLayout.NORTH)
         panel.add(splitPane, BorderLayout.CENTER)
+        panel.add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyTop(6)
+                add(createLogsPanel(), BorderLayout.CENTER)
+            },
+            BorderLayout.SOUTH,
+        )
         return panel
     }
 
-    fun updateServer(server: McpServer, tools: List<McpTool>) {
+    private fun createLogsPanel(): JPanel {
+        runtimeLogsLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        runtimeLogsLabel.foreground = TITLE_FG
+        runtimeLogsLabel.border = JBUI.Borders.empty(0, 0, 4, 0)
+
+        runtimeLogArea.isEditable = false
+        runtimeLogArea.font = JBUI.Fonts.smallFont()
+        runtimeLogArea.border = JBUI.Borders.empty(6)
+        runtimeLogArea.background = LOG_BG
+        runtimeLogArea.foreground = TOOL_DETAIL_FG
+        runtimeLogArea.lineWrap = true
+        runtimeLogArea.wrapStyleWord = true
+        runtimeLogArea.rows = 7
+
+        val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply {
+            isOpaque = false
+            add(refreshLogsBtn)
+            add(clearLogsBtn)
+            add(copyLogsBtn)
+        }
+
+        val header = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(runtimeLogsLabel, BorderLayout.WEST)
+            add(actionRow, BorderLayout.EAST)
+        }
+
+        val scroll = JBScrollPane(runtimeLogArea).apply {
+            border = JBUI.Borders.empty()
+            viewport.background = LOG_BG
+            preferredSize = Dimension(0, 170)
+        }
+
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(header, BorderLayout.NORTH)
+            add(createSectionContainer(scroll), BorderLayout.CENTER)
+        }
+    }
+
+    fun updateServer(server: McpServer, tools: List<McpTool>, runtimeLogs: List<McpRuntimeLogEntry>) {
         currentServerId = server.config.id
         currentServerStatus = server.status
         currentErrorText = server.error
+        currentRuntimeLogs = runtimeLogs
         serverNameLabel.text = server.config.name
         commandLabel.text = SpecCodingBundle.message(
             "mcp.server.command",
@@ -219,14 +290,21 @@ class McpServerDetailPanel(
         } else {
             toolDetailArea.text = ""
         }
+        updateRuntimeLogArea(runtimeLogs)
 
         buildContentUI()
+    }
+
+    fun updateRuntimeLogs(runtimeLogs: List<McpRuntimeLogEntry>) {
+        currentRuntimeLogs = runtimeLogs
+        updateRuntimeLogArea(runtimeLogs)
     }
 
     fun showEmpty() {
         currentServerId = null
         currentServerStatus = ServerStatus.STOPPED
         currentErrorText = null
+        currentRuntimeLogs = emptyList()
         removeAll()
         layout = BorderLayout()
         emptyLabel.text = SpecCodingBundle.message("mcp.server.select")
@@ -258,11 +336,18 @@ class McpServerDetailPanel(
         stopBtn.text = SpecCodingBundle.message("mcp.server.stop")
         restartBtn.text = SpecCodingBundle.message("mcp.server.restart")
         editBtn.text = SpecCodingBundle.message("mcp.server.edit")
+        refreshLogsBtn.text = SpecCodingBundle.message("mcp.server.logs.refresh")
+        clearLogsBtn.text = SpecCodingBundle.message("mcp.server.logs.clear")
+        copyLogsBtn.text = SpecCodingBundle.message("mcp.server.logs.copy")
         styleActionButton(startBtn)
         styleActionButton(stopBtn)
         styleActionButton(restartBtn)
         styleActionButton(editBtn)
+        styleActionButton(refreshLogsBtn)
+        styleActionButton(clearLogsBtn)
+        styleActionButton(copyLogsBtn)
         toolList.emptyText.text = SpecCodingBundle.message("mcp.server.noTools")
+        runtimeLogsLabel.text = SpecCodingBundle.message("mcp.server.logs")
         toolsLabel.text = SpecCodingBundle.message("mcp.server.tools", toolListModel.size())
         if (toolListModel.isEmpty) {
             toolDetailArea.text = if (currentServerStatus == ServerStatus.ERROR) {
@@ -272,6 +357,7 @@ class McpServerDetailPanel(
                 SpecCodingBundle.message("mcp.server.noTools")
             }
         }
+        updateRuntimeLogArea(currentRuntimeLogs)
         updateErrorLabel(currentServerStatus, currentErrorText)
         if (currentServerId == null) {
             emptyLabel.text = SpecCodingBundle.message("mcp.server.select")
@@ -340,6 +426,26 @@ class McpServerDetailPanel(
         }
         toolDetailArea.text = sb.toString()
         toolDetailArea.caretPosition = 0
+    }
+
+    private fun updateRuntimeLogArea(logs: List<McpRuntimeLogEntry>) {
+        runtimeLogArea.text = if (logs.isEmpty()) {
+            SpecCodingBundle.message("mcp.server.logs.empty")
+        } else {
+            logs.joinToString("\n") { entry ->
+                val timestamp = LOG_TIME_FORMATTER.format(
+                    Instant.ofEpochMilli(entry.timestampMillis).atZone(ZoneId.systemDefault())
+                )
+                val level = when (entry.level) {
+                    McpRuntimeLogLevel.INFO -> "INFO"
+                    McpRuntimeLogLevel.WARN -> "WARN"
+                    McpRuntimeLogLevel.ERROR -> "ERROR"
+                    McpRuntimeLogLevel.STDERR -> "STDERR"
+                }
+                "[$timestamp] [$level] ${entry.message}"
+            }
+        }
+        runtimeLogArea.caretPosition = runtimeLogArea.document.length
     }
 
     private class ToolCellRenderer : ListCellRenderer<McpTool> {
@@ -429,6 +535,7 @@ class McpServerDetailPanel(
     }
 
     companion object {
+        private val LOG_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
         private val HEADER_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val HEADER_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
         private val SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
@@ -446,6 +553,7 @@ class McpServerDetailPanel(
         private val TOOL_DESC_FG = JBColor(Color(104, 120, 143), Color(168, 181, 202))
         private val TOOL_DESC_FG_SELECTED = JBColor(Color(86, 104, 129), Color(206, 219, 238))
         private val TOOL_DETAIL_BG = JBColor(Color(246, 249, 255), Color(58, 64, 74))
+        private val LOG_BG = JBColor(Color(244, 248, 255), Color(54, 60, 70))
         private val TOOL_DETAIL_FG = JBColor(Color(68, 84, 109), Color(204, 216, 236))
         private val EMPTY_BG = JBColor(Color(247, 251, 255), Color(56, 62, 72))
         private val EMPTY_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))

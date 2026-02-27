@@ -153,6 +153,7 @@ class SpecWorkflowPanel(
             add(providerComboBox)
             add(modelLabel)
             add(modelComboBox)
+            add(statusChipPanel)
         }
         val modelHost = JPanel(BorderLayout()).apply {
             isOpaque = false
@@ -199,10 +200,10 @@ class SpecWorkflowPanel(
         statusChipPanel.border = SpecUiStyle.roundedCardBorder(
             lineColor = STATUS_CHIP_BORDER,
             arc = JBUI.scale(12),
-            top = 4,
-            left = 10,
-            bottom = 4,
-            right = 10,
+            top = 2,
+            left = 8,
+            bottom = 2,
+            right = 8,
         )
         statusChipPanel.removeAll()
         statusChipPanel.add(statusLabel, BorderLayout.CENTER)
@@ -219,13 +220,6 @@ class SpecWorkflowPanel(
             )
             add(modelHost, BorderLayout.NORTH)
             add(actionsHost, BorderLayout.CENTER)
-            add(
-                JPanel(BorderLayout()).apply {
-                    isOpaque = false
-                    add(statusChipPanel, BorderLayout.WEST)
-                },
-                BorderLayout.SOUTH,
-            )
         }
         add(
             JPanel(BorderLayout()).apply {
@@ -240,12 +234,12 @@ class SpecWorkflowPanel(
             isOpaque = true
             background = DETAIL_COLUMN_BG
             add(
-                createSectionContainer(
-                    phaseIndicator,
-                    padding = 4,
-                    backgroundColor = PHASE_SECTION_BG,
-                    borderColor = PHASE_SECTION_BORDER,
-                ),
+                JPanel(BorderLayout()).apply {
+                    isOpaque = true
+                    background = PHASE_SECTION_BG
+                    border = JBUI.Borders.emptyBottom(JBUI.scale(2))
+                    add(phaseIndicator, BorderLayout.CENTER)
+                },
                 BorderLayout.NORTH,
             )
             add(
@@ -1668,7 +1662,6 @@ class SpecWorkflowPanel(
         private val LIST_SECTION_BG = JBColor(Color(242, 248, 255), Color(59, 66, 77))
         private val LIST_SECTION_BORDER = JBColor(Color(198, 212, 234), Color(89, 100, 117))
         private val PHASE_SECTION_BG = JBColor(Color(240, 246, 255), Color(62, 69, 80))
-        private val PHASE_SECTION_BORDER = JBColor(Color(191, 208, 233), Color(93, 106, 124))
         private val DETAIL_SECTION_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
         private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
         private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")

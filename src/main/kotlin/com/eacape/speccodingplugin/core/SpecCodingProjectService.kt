@@ -48,18 +48,6 @@ class SpecCodingProjectService(private val project: Project) {
         messages.add(
             LlmMessage(
                 role = LlmRole.SYSTEM,
-                content = promptManager.renderActivePrompt(
-                    runtimeVariables = mapOf(
-                        "project_name" to project.name,
-                        "project_path" to project.basePath.orEmpty(),
-                        "provider" to providerId.orEmpty(),
-                    ),
-                ),
-            ),
-        )
-        messages.add(
-            LlmMessage(
-                role = LlmRole.SYSTEM,
                 content = buildDevWorkflowSystemInstruction(planExecuteVerifySections),
             ),
         )

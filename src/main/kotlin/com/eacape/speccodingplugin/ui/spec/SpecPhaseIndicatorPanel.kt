@@ -26,8 +26,8 @@ class SpecPhaseIndicatorPanel : JPanel() {
     private val trackBg = JBColor(Color(208, 216, 228), Color(89, 99, 115))
 
     init {
-        preferredSize = Dimension(0, JBUI.scale(68))
-        minimumSize = Dimension(0, JBUI.scale(68))
+        preferredSize = Dimension(0, JBUI.scale(60))
+        minimumSize = Dimension(0, JBUI.scale(60))
         isOpaque = false
     }
 
@@ -54,7 +54,7 @@ class SpecPhaseIndicatorPanel : JPanel() {
         if (phases.isEmpty()) return
 
         val outerPaddingX = JBUI.scale(12)
-        val outerPaddingY = JBUI.scale(10)
+        val outerPaddingY = JBUI.scale(8)
         val cardWidth = (width - outerPaddingX * 2).coerceAtLeast(JBUI.scale(180))
         val cardHeight = (height - outerPaddingY * 2).coerceAtLeast(JBUI.scale(44))
         val cardX = ((width - cardWidth) / 2).coerceAtLeast(0)

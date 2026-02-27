@@ -1780,7 +1780,6 @@ class ImprovedChatPanel(
             }
         }
         return buildString {
-            appendLine("Referenced prompt templates:")
             appendLine(promptBlocks)
             appendLine()
             append(modeAwareInput)

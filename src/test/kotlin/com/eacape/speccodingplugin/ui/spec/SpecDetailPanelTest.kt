@@ -242,6 +242,8 @@ class SpecDetailPanelTest {
         assertTrue(readyStatus.contains("Review clarification questions"))
         assertFalse(readyStatus.contains("◐"))
         assertTrue(panel.isClarificationPreviewVisibleForTest())
+        assertTrue(panel.isInputSectionVisibleForTest())
+        assertFalse(panel.isBottomCollapsedForChecklistForTest())
         val readyStates = panel.buttonStatesForTest()
         assertTrue(readyStates["confirmGenerateEnabled"] as Boolean)
         assertTrue(readyStates["regenerateClarificationEnabled"] as Boolean)
@@ -289,20 +291,29 @@ class SpecDetailPanelTest {
         )
 
         assertFalse(panel.isInputEditableForTest())
+        assertFalse(panel.isInputSectionVisibleForTest())
+        assertTrue(panel.isBottomCollapsedForChecklistForTest())
         panel.clickConfirmGenerateForTest()
         assertEquals(null, confirmedContext)
         assertTrue(panel.currentValidationTextForTest().contains("Please add confirmed details"))
 
         panel.toggleClarificationQuestionForTest(0)
         panel.clickConfirmGenerateForTest()
+        assertEquals(null, confirmedContext)
+        assertTrue(panel.currentValidationTextForTest().contains("Please add details for confirmed item"))
+
+        panel.setClarificationQuestionDetailForTest(0, "至少两地三中心，RPO<5s，RTO<30s")
+        panel.clickConfirmGenerateForTest()
 
         assertEquals("RunnerGo needs redis nodes support", confirmedInput)
-        assertTrue((confirmedContext ?: "").contains("Confirmed Clarification Points"))
+        assertTrue((confirmedContext ?: "").contains("**Confirmed Clarification Points**"))
         assertTrue((confirmedContext ?: "").contains("是否需要多机房容灾？"))
+        assertTrue((confirmedContext ?: "").contains("Detail: 至少两地三中心，RPO<5s，RTO<30s"))
+        assertFalse((confirmedContext ?: "").contains("## "))
     }
 
     @Test
-    fun `clarification checklist should support single mode and not applicable`() {
+    fun `clarification checklist should support not applicable and detail serialization without checkbox markers`() {
         var confirmedContext: String? = null
         val panel = createPanel(
             onClarificationConfirm = { _, context ->
@@ -338,25 +349,24 @@ class SpecDetailPanelTest {
             ),
         )
 
-        panel.setClarificationSelectionModeForTest(single = true)
-        assertEquals("SINGLE", panel.currentChecklistModeForTest())
-
         panel.toggleClarificationQuestionForTest(0)
         assertEquals("CONFIRMED", panel.currentChecklistDecisionForTest(0))
-        panel.toggleClarificationQuestionForTest(1)
-        assertEquals("UNDECIDED", panel.currentChecklistDecisionForTest(0))
-        assertEquals("CONFIRMED", panel.currentChecklistDecisionForTest(1))
+        panel.setClarificationQuestionDetailForTest(0, "容灾等级按 P0 执行")
 
-        panel.markClarificationQuestionNotApplicableForTest(0)
-        assertEquals("NOT_APPLICABLE", panel.currentChecklistDecisionForTest(0))
+        panel.markClarificationQuestionNotApplicableForTest(1)
+        assertEquals("NOT_APPLICABLE", panel.currentChecklistDecisionForTest(1))
 
         panel.clickConfirmGenerateForTest()
 
         val context = confirmedContext ?: ""
-        assertTrue(context.contains("Confirmed Clarification Points"))
-        assertTrue(context.contains("- [x] 目标吞吐量是多少？"))
-        assertTrue(context.contains("Not Applicable Clarification Points"))
-        assertTrue(context.contains("- [ ] 是否要求跨区域容灾？"))
+        assertTrue(context.contains("**Confirmed Clarification Points**"))
+        assertTrue(context.contains("是否要求跨区域容灾？"))
+        assertTrue(context.contains("Detail: 容灾等级按 P0 执行"))
+        assertTrue(context.contains("**Not Applicable Clarification Points**"))
+        assertTrue(context.contains("目标吞吐量是多少？"))
+        assertFalse(context.contains("[x]"))
+        assertFalse(context.contains("[ ]"))
+        assertFalse(context.contains("## "))
     }
 
     @Test

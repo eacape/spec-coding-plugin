@@ -1,7 +1,6 @@
 package com.eacape.speccodingplugin.ui.prompt
 
 import com.eacape.speccodingplugin.SpecCodingBundle
-import com.eacape.speccodingplugin.prompt.PromptManager
 import com.eacape.speccodingplugin.prompt.PromptTemplate
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
@@ -109,7 +108,7 @@ class PromptListCellRenderer : ListCellRenderer<PromptTemplate> {
             tagLabel.foreground = TAG_TEXT_FG
             tagsPanel.add(tagLabel)
         }
-        deleteActionLabel.isEnabled = value.id != PromptManager.DEFAULT_PROMPT_ID
+        deleteActionLabel.isEnabled = true
 
         val cardBackground = if (isSelected) CARD_BG_SELECTED else CARD_BG_DEFAULT
         val cardBorder = if (isSelected) CARD_BORDER_SELECTED else CARD_BORDER_DEFAULT

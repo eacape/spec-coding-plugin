@@ -55,9 +55,15 @@ import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Insets
+import java.awt.Point
 import java.awt.RenderingHints
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseMotionAdapter
 import java.awt.geom.RoundRectangle2D
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -75,6 +81,7 @@ import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.ListSelectionModel
 import javax.swing.SwingUtilities
+import javax.swing.SwingConstants
 import javax.swing.Timer
 import javax.swing.border.AbstractBorder
 import javax.swing.event.DocumentEvent
@@ -132,6 +139,7 @@ class SettingsPanel(
     private val skillEditorStatusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
     private val skillsListModel = DefaultListModel<Skill>()
     private val skillsList = JBList(skillsListModel)
+    private var hoveredSkillIndex = -1
     private var activeSkillSourcePath: String? = null
     private val skillJson = Json {
         ignoreUnknownKeys = true
@@ -258,9 +266,9 @@ class SettingsPanel(
 
         sectionList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         sectionList.visibleRowCount = SidebarSection.entries.size
-        sectionList.fixedCellHeight = JBUI.scale(44)
+        sectionList.fixedCellHeight = JBUI.scale(SIDEBAR_ITEM_HEIGHT)
         sectionList.cellRenderer = SidebarSectionRenderer()
-        sectionList.border = JBUI.Borders.empty(8, 8, 8, 8)
+        sectionList.border = JBUI.Borders.empty(6, 6, 6, 6)
         sectionList.background = SIDEBAR_SURFACE_BG
         sectionList.foreground = SIDEBAR_ITEM_FG
         sectionList.selectionBackground = SIDEBAR_SELECTION_BG
@@ -294,11 +302,11 @@ class SettingsPanel(
             background = SIDEBAR_SURFACE_BG
             border = SpecUiStyle.roundedCardBorder(
                 lineColor = SIDEBAR_SURFACE_BORDER,
-                arc = JBUI.scale(12),
-                top = 2,
-                left = 2,
-                bottom = 2,
-                right = 2,
+                arc = JBUI.scale(10),
+                top = 1,
+                left = 1,
+                bottom = 1,
+                right = 1,
             )
             add(scrollPane, BorderLayout.CENTER)
         }
@@ -308,13 +316,14 @@ class SettingsPanel(
             background = SIDEBAR_BG
             border = SpecUiStyle.roundedCardBorder(
                 lineColor = SIDEBAR_BORDER,
-                arc = JBUI.scale(14),
-                top = 6,
-                left = 6,
-                bottom = 6,
-                right = 6,
+                arc = JBUI.scale(16),
+                top = 5,
+                left = 5,
+                bottom = 5,
+                right = 5,
             )
-            preferredSize = JBUI.size(148, 0)
+            preferredSize = JBUI.size(SIDEBAR_WIDTH, 0)
+            minimumSize = JBUI.size(SIDEBAR_WIDTH, 0)
             add(navSurface, BorderLayout.CENTER)
         }
     }
@@ -425,41 +434,46 @@ class SettingsPanel(
     private fun createSkillsSection(): JPanel {
         skillDiscoveryStatusLabel.font = JBUI.Fonts.smallFont()
         skillEditorStatusLabel.font = JBUI.Fonts.smallFont()
+        skillDiscoveryStatusLabel.border = JBUI.Borders.emptyLeft(2)
+        skillEditorStatusLabel.border = JBUI.Borders.emptyLeft(2)
         setSkillDiscoveryStatus(SpecCodingBundle.message("settings.skills.discovery.empty"), SkillStatusTone.NORMAL)
         setSkillEditorStatus(SpecCodingBundle.message("toolwindow.status.ready"), SkillStatusTone.NORMAL)
 
         skillsList.isFocusable = true
         skillsList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         skillsList.visibleRowCount = 12
-        skillsList.fixedCellHeight = JBUI.scale(54)
+        skillsList.fixedCellHeight = -1
         skillsList.background = CONTENT_BG
         skillsList.selectionBackground = JBColor(Color(216, 231, 252), Color(79, 96, 121))
         skillsList.selectionForeground = SIDEBAR_ITEM_SELECTED_FG
-        skillsList.cellRenderer = SimpleListCellRenderer.create<Skill> { label, value, _ ->
-            label.text = value?.let(::formatSkillListEntry).orEmpty()
-            label.toolTipText = value?.let(::formatSkillTooltip).orEmpty()
-            label.border = JBUI.Borders.empty(4, 8, 4, 8)
-        }
+        skillsList.cellRenderer = SkillItemRenderer()
         skillsList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
                 loadSelectedSkillForEditing(skillsList.selectedValue)
             }
         }
+        skillsList.addMouseMotionListener(object : MouseMotionAdapter() {
+            override fun mouseMoved(event: java.awt.event.MouseEvent) {
+                updateHoveredSkillIndex(event.point)
+            }
+        })
+        skillsList.addMouseListener(object : MouseAdapter() {
+            override fun mouseExited(event: java.awt.event.MouseEvent) {
+                updateHoveredSkillIndex(null)
+            }
+        })
 
         skillMarkdownArea.lineWrap = false
         skillMarkdownArea.wrapStyleWord = false
         skillMarkdownArea.rows = 14
+        skillMarkdownArea.font = Font("JetBrains Mono", Font.PLAIN, 13)
+        skillMarkdownArea.margin = JBUI.insets(6)
+        skillMarkdownArea.tabSize = 2
 
         val skillsScrollPane = JBScrollPane(skillsList).apply {
-            border = SpecUiStyle.roundedCardBorder(
-                lineColor = SKILL_STATUS_BORDER,
-                arc = JBUI.scale(10),
-                top = 4,
-                left = 6,
-                bottom = 4,
-                right = 6,
-            )
+            border = JBUI.Borders.empty()
             preferredSize = JBUI.size(0, JBUI.scale(260))
+            viewport.background = CONTENT_BG
         }
 
         val discoveryActions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
@@ -467,9 +481,10 @@ class SettingsPanel(
             add(skillNewDraftButton)
             add(skillRefreshButton)
         }
+        val discoveryStatusPanel = createSkillStatusPanel(skillDiscoveryStatusLabel)
         val discoveryHeader = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
-            add(skillDiscoveryStatusLabel, BorderLayout.CENTER)
+            add(discoveryStatusPanel, BorderLayout.CENTER)
             add(discoveryActions, BorderLayout.EAST)
         }
         val discoveryPanel = FormBuilder.createFormBuilder()
@@ -524,6 +539,7 @@ class SettingsPanel(
                 right = 6,
             )
             preferredSize = JBUI.size(0, JBUI.scale(280))
+            viewport.background = CONTENT_BG
         }
 
         val editorSaveActions = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 0)).apply {
@@ -537,6 +553,7 @@ class SettingsPanel(
             add(editorSaveActions, BorderLayout.EAST)
         }
 
+        val editorStatusPanel = createSkillStatusPanel(skillEditorStatusLabel)
         val editorPanel = FormBuilder.createFormBuilder()
             .addComponent(editorMetadataPanel)
             .addVerticalGap(8)
@@ -544,7 +561,7 @@ class SettingsPanel(
             .addVerticalGap(8)
             .addComponent(editorActionRow)
             .addVerticalGap(4)
-            .addComponent(skillEditorStatusLabel)
+            .addComponent(editorStatusPanel)
             .panel.apply {
                 isOpaque = false
                 border = JBUI.Borders.empty()
@@ -562,10 +579,10 @@ class SettingsPanel(
             discoveryCard,
             editorCard,
         ).apply {
-            resizeWeight = 0.30
+            resizeWeight = 0.32
             isContinuousLayout = true
             isOneTouchExpandable = false
-            dividerSize = JBUI.scale(7)
+            dividerSize = JBUI.scale(9)
             border = JBUI.Borders.empty()
         }
 
@@ -599,6 +616,18 @@ class SettingsPanel(
             add(secondLabel)
             add(Box.createHorizontalStrut(JBUI.scale(6)))
             add(secondCombo)
+        }
+    }
+
+    private fun createSkillStatusPanel(label: JBLabel): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = SKILL_STATUS_BG
+            border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(SKILL_STATUS_BORDER, JBUI.scale(8)),
+                JBUI.Borders.empty(4, 8, 4, 8),
+            )
+            add(label, BorderLayout.CENTER)
         }
     }
 
@@ -979,6 +1008,7 @@ class SettingsPanel(
     }
 
     private fun applySkillDiscoverySnapshot(snapshot: SkillDiscoverySnapshot) {
+        hoveredSkillIndex = -1
         skillsListModel.clear()
         var projectCount = 0
         var globalCount = 0
@@ -1001,7 +1031,7 @@ class SettingsPanel(
         )
     }
 
-    private fun formatSkillListEntry(skill: Skill): String {
+    private fun formatSkillMeta(skill: Skill): String {
         val scopeText = when (skill.scope ?: SkillScope.GLOBAL) {
             SkillScope.GLOBAL -> SpecCodingBundle.message("settings.skills.scope.global")
             SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
@@ -1020,22 +1050,43 @@ class SettingsPanel(
                 SpecCodingBundle.message("settings.skills.channel.all")
             else -> channelDisplayText(detectedChannel)
         }
-        return buildString {
-            append("<html><b>/")
-            append(skill.slashCommand)
-            append("</b><br/><span>")
-            append(scopeText)
-            append(" · ")
-            append(channelText)
-            append(" · ")
-            append(sourceText)
-            append("</span></html>")
-        }
+        return "[$scopeText]   [$channelText]   [$sourceText]"
     }
 
     private fun formatSkillTooltip(skill: Skill): String {
         val description = skill.description.trim().ifBlank { "/" + skill.slashCommand }
-        return "<html>$description</html>"
+        return "<html><b>/${skill.slashCommand}</b><br/>$description</html>"
+    }
+
+    private fun updateHoveredSkillIndex(point: Point?) {
+        val nextIndex = if (point == null) {
+            -1
+        } else {
+            val index = skillsList.locationToIndex(point)
+            if (index >= 0 && skillsList.getCellBounds(index, index)?.contains(point) == true) {
+                index
+            } else {
+                -1
+            }
+        }
+        if (hoveredSkillIndex != nextIndex) {
+            hoveredSkillIndex = nextIndex
+            skillsList.repaint()
+        }
+    }
+
+    private fun resolveSkillItemIcon(skill: Skill): Icon {
+        return when (detectStorageChannel(skill.sourcePath, skill.tags.joinToString(" "))) {
+            SkillStorageChannel.CODEX -> SKILL_CODEX_ICON
+            SkillStorageChannel.CLAUDE,
+            SkillStorageChannel.CLUADE -> SKILL_CLAUDE_ICON
+            SkillStorageChannel.UNKNOWN -> {
+                when (skill.scope ?: SkillScope.GLOBAL) {
+                    SkillScope.PROJECT -> SKILL_PROJECT_ICON
+                    SkillScope.GLOBAL -> SKILL_GLOBAL_ICON
+                }
+            }
+        }
     }
 
     private fun detectStorageChannel(vararg text: String?): SkillStorageChannel {
@@ -1108,10 +1159,30 @@ class SettingsPanel(
         if (!Files.isRegularFile(path)) {
             return fallback
         }
+        val content = readSkillFileText(path)
         return parseSkillMarkdownDraft(
-            content = Files.readString(path, StandardCharsets.UTF_8),
+            content = content,
             fallback = fallback,
         )
+    }
+
+    private fun readSkillFileText(path: Path): String {
+        val bytes = Files.readAllBytes(path)
+        decodeBytesStrict(bytes, StandardCharsets.UTF_8)?.let { return it }
+        runCatching { Charset.forName("GB18030") }.getOrNull()
+            ?.let { decodeBytesStrict(bytes, it) }
+            ?.let { return it }
+        decodeBytesStrict(bytes, Charset.defaultCharset())?.let { return it }
+        return String(bytes, StandardCharsets.UTF_8)
+    }
+
+    private fun decodeBytesStrict(bytes: ByteArray, charset: Charset): String? {
+        return runCatching {
+            val decoder = charset.newDecoder()
+            decoder.onMalformedInput(CodingErrorAction.REPORT)
+            decoder.onUnmappableCharacter(CodingErrorAction.REPORT)
+            decoder.decode(ByteBuffer.wrap(bytes)).toString()
+        }.getOrNull()
     }
 
     private fun parseSkillMarkdownDraft(content: String, fallback: GeneratedSkillDraft): GeneratedSkillDraft {
@@ -1364,6 +1435,72 @@ class SettingsPanel(
                         setSkillEditorStatus(
                             SpecCodingBundle.message(
                                 "settings.skills.editor.saveCurrent.failed",
+                                error.message ?: SpecCodingBundle.message("common.unknown"),
+                            ),
+                            SkillStatusTone.ERROR,
+                        )
+                    }
+            }
+        }
+    }
+
+    private fun deleteSkillFromCurrentSource() {
+        val sourcePath = activeSkillSourcePath?.trim().orEmpty()
+        if (sourcePath.isBlank()) {
+            setSkillEditorStatus(
+                SpecCodingBundle.message("settings.skills.editor.delete.unavailable"),
+                SkillStatusTone.ERROR,
+            )
+            return
+        }
+
+        skillDeleteButton.isEnabled = false
+        skillSaveButton.isEnabled = false
+        skillSaveCurrentButton.isEnabled = false
+        setSkillEditorStatus(
+            SpecCodingBundle.message("settings.skills.editor.delete.running"),
+            SkillStatusTone.NORMAL,
+        )
+        scope.launch {
+            val result = runCatching {
+                val path = Paths.get(sourcePath)
+                if (!Files.exists(path)) {
+                    throw IllegalStateException(SpecCodingBundle.message("settings.skills.editor.delete.unavailable"))
+                }
+                Files.delete(path)
+                val parent = path.parent
+                if (parent != null && Files.isDirectory(parent)) {
+                    Files.list(parent).use { stream ->
+                        if (!stream.findAny().isPresent) {
+                            Files.delete(parent)
+                        }
+                    }
+                }
+                path
+            }
+            SwingUtilities.invokeLater {
+                if (isDisposed || project.isDisposed) {
+                    return@invokeLater
+                }
+                result
+                    .onSuccess { deletedPath ->
+                        activeSkillSourcePath = null
+                        skillDeleteButton.isEnabled = false
+                        skillSaveButton.isEnabled = true
+                        skillSaveCurrentButton.isEnabled = false
+                        setSkillEditorStatus(
+                            SpecCodingBundle.message("settings.skills.editor.delete.success", deletedPath.toString()),
+                            SkillStatusTone.SUCCESS,
+                        )
+                        refreshSkillDiscovery(forceReload = true)
+                    }
+                    .onFailure { error ->
+                        skillDeleteButton.isEnabled = !activeSkillSourcePath.isNullOrBlank()
+                        skillSaveButton.isEnabled = true
+                        skillSaveCurrentButton.isEnabled = !activeSkillSourcePath.isNullOrBlank()
+                        setSkillEditorStatus(
+                            SpecCodingBundle.message(
+                                "settings.skills.editor.delete.failed",
                                 error.message ?: SpecCodingBundle.message("common.unknown"),
                             ),
                             SkillStatusTone.ERROR,
@@ -1733,6 +1870,77 @@ class SettingsPanel(
         UNKNOWN,
     }
 
+    private inner class SkillItemRenderer : JPanel(), javax.swing.ListCellRenderer<Skill> {
+        private val iconLabel = JBLabel()
+        private val commandLabel = JBLabel()
+        private val metaLabel = JBLabel()
+        private val textPanel = JPanel()
+
+        init {
+            layout = BorderLayout(JBUI.scale(8), 0)
+            isOpaque = true
+            iconLabel.verticalAlignment = SwingConstants.TOP
+            iconLabel.border = JBUI.Borders.emptyTop(1)
+            commandLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            commandLabel.border = JBUI.Borders.emptyBottom(1)
+            metaLabel.font = JBUI.Fonts.miniFont()
+            textPanel.layout = BoxLayout(textPanel, BoxLayout.Y_AXIS)
+            textPanel.isOpaque = false
+            textPanel.add(commandLabel)
+            textPanel.add(metaLabel)
+            add(iconLabel, BorderLayout.WEST)
+            add(textPanel, BorderLayout.CENTER)
+        }
+
+        override fun getListCellRendererComponent(
+            list: JList<out Skill>?,
+            value: Skill?,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean,
+        ): Component {
+            val skill = value
+            if (skill == null) {
+                iconLabel.icon = null
+                commandLabel.text = ""
+                metaLabel.text = ""
+                return this
+            }
+            iconLabel.icon = resolveSkillItemIcon(skill)
+            commandLabel.text = "/${skill.slashCommand}"
+            metaLabel.text = formatSkillMeta(skill)
+            toolTipText = formatSkillTooltip(skill)
+
+            val selected = isSelected
+            val hovered = !selected && index == hoveredSkillIndex
+            background = when {
+                selected -> SKILL_ITEM_SELECTED_BG
+                hovered -> SKILL_ITEM_HOVER_BG
+                else -> SKILL_ITEM_BG
+            }
+            commandLabel.foreground = when {
+                selected -> SKILL_ITEM_SELECTED_TITLE_FG
+                hovered -> SKILL_ITEM_HOVER_TITLE_FG
+                else -> SKILL_ITEM_TITLE_FG
+            }
+            metaLabel.foreground = when {
+                selected -> SKILL_ITEM_SELECTED_META_FG
+                hovered -> SKILL_ITEM_HOVER_META_FG
+                else -> SKILL_ITEM_META_FG
+            }
+            val dividerColor = when {
+                selected -> SKILL_ITEM_SELECTED_BORDER
+                hovered -> SKILL_ITEM_HOVER_BORDER
+                else -> SKILL_ITEM_BORDER
+            }
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, if (index < skillsListModel.size() - 1) 1 else 0, 0, dividerColor),
+                JBUI.Borders.empty(8, 8, 8, 8),
+            )
+            return this
+        }
+    }
+
     private class SidebarSectionRenderer : DefaultListCellRenderer() {
         override fun getListCellRendererComponent(
             list: JList<*>?,
@@ -1746,17 +1954,17 @@ class SettingsPanel(
             val section = value as? SidebarSection ?: return component
             label.text = SpecCodingBundle.message(section.titleKey)
             label.icon = section.icon
-            label.iconTextGap = JBUI.scale(7)
+            label.iconTextGap = JBUI.scale(6)
             label.border = BorderFactory.createCompoundBorder(
-                JBUI.Borders.empty(2, 4, 2, 4),
+                JBUI.Borders.empty(1, 2, 1, 2),
                 BorderFactory.createCompoundBorder(
                     SidebarItemBorder(isSelected),
-                    JBUI.Borders.empty(7, 8, 7, 10),
+                    JBUI.Borders.empty(6, 7, 6, 8),
                 ),
             )
             label.background = if (isSelected) SIDEBAR_ITEM_SELECTED_BG else SIDEBAR_ITEM_BG
             label.foreground = if (isSelected) SIDEBAR_ITEM_SELECTED_FG else SIDEBAR_ITEM_FG
-            label.font = label.font.deriveFont(if (isSelected) Font.BOLD else Font.PLAIN, 12f)
+            label.font = label.font.deriveFont(if (isSelected) Font.BOLD else Font.PLAIN, 11.5f)
             label.isOpaque = true
             return label
         }
@@ -1779,8 +1987,8 @@ class SettingsPanel(
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
 
-                val leftInset = JBUI.scale(8).toFloat()
-                val arc = JBUI.scale(12).toFloat()
+                val leftInset = JBUI.scale(6).toFloat()
+                val arc = JBUI.scale(10).toFloat()
                 val outline = RoundRectangle2D.Float(
                     x + leftInset,
                     y + 0.5f,
@@ -1793,9 +2001,20 @@ class SettingsPanel(
                 g2.draw(outline)
 
                 if (selected) {
-                    val barWidth = JBUI.scale(3).toFloat()
-                    val barHeight = (height - JBUI.scale(16)).coerceAtLeast(JBUI.scale(14)).toFloat()
-                    val barArc = JBUI.scale(4).toFloat()
+                    val glowOutline = RoundRectangle2D.Float(
+                        x + leftInset + 1f,
+                        y + 1.5f,
+                        width - leftInset - 3f,
+                        height - 3f,
+                        JBUI.scale(8).toFloat(),
+                        JBUI.scale(8).toFloat(),
+                    )
+                    g2.color = SIDEBAR_ITEM_SELECTED_GLOW
+                    g2.draw(glowOutline)
+
+                    val barWidth = JBUI.scale(2).toFloat()
+                    val barHeight = (height - JBUI.scale(14)).coerceAtLeast(JBUI.scale(12)).toFloat()
+                    val barArc = JBUI.scale(3).toFloat()
                     val barX = x + JBUI.scale(2).toFloat()
                     val barY = y + (height - barHeight) / 2f
                     g2.color = SIDEBAR_ITEM_ACCENT
@@ -1816,17 +2035,17 @@ class SettingsPanel(
         }
 
         override fun getBorderInsets(c: Component?): Insets = Insets(
-            JBUI.scale(2),
-            JBUI.scale(8),
-            JBUI.scale(2),
+            JBUI.scale(1),
+            JBUI.scale(6),
+            JBUI.scale(1),
             JBUI.scale(2),
         )
 
         override fun getBorderInsets(c: Component?, insets: Insets): Insets {
             insets.set(
-                JBUI.scale(2),
-                JBUI.scale(8),
-                JBUI.scale(2),
+                JBUI.scale(1),
+                JBUI.scale(6),
+                JBUI.scale(1),
                 JBUI.scale(2),
             )
             return insets
@@ -1877,7 +2096,7 @@ class SettingsPanel(
     }
 
     private fun updateSkillComboPreferredSizes() {
-        fitComboWidth(
+        val scopeWidth = measureComboWidth(
             combo = skillTargetScopeCombo,
             minWidth = JBUI.scale(86),
             maxWidth = JBUI.scale(110),
@@ -1887,10 +2106,19 @@ class SettingsPanel(
                 SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
             }
         }
-        fitComboWidth(
-            combo = skillTargetChannelCombo,
+        val providerWidth = measureComboWidth(
+            combo = skillDraftProviderCombo,
             minWidth = JBUI.scale(86),
-            maxWidth = JBUI.scale(118),
+            maxWidth = JBUI.scale(110),
+        ) { provider -> providerDisplayText(provider) }
+        val primaryWidth = maxOf(scopeWidth, providerWidth)
+        applyComboWidth(skillTargetScopeCombo, primaryWidth)
+        applyComboWidth(skillDraftProviderCombo, primaryWidth)
+
+        val channelWidth = measureComboWidth(
+            combo = skillTargetChannelCombo,
+            minWidth = JBUI.scale(94),
+            maxWidth = JBUI.scale(132),
         ) { channel ->
             when (channel) {
                 SkillSaveChannel.CODEX -> SpecCodingBundle.message("settings.skills.channel.codex")
@@ -1898,24 +2126,22 @@ class SettingsPanel(
                 SkillSaveChannel.ALL -> SpecCodingBundle.message("settings.skills.channel.all")
             }
         }
-        fitComboWidth(
-            combo = skillDraftProviderCombo,
-            minWidth = JBUI.scale(82),
-            maxWidth = JBUI.scale(112),
-        ) { provider -> providerDisplayText(provider) }
-        fitComboWidth(
+        val modelWidth = measureComboWidth(
             combo = skillDraftModelCombo,
             minWidth = JBUI.scale(94),
             maxWidth = JBUI.scale(132),
         ) { model -> lowerUiText(model.name) }
+        val secondaryWidth = maxOf(channelWidth, modelWidth)
+        applyComboWidth(skillTargetChannelCombo, secondaryWidth)
+        applyComboWidth(skillDraftModelCombo, secondaryWidth)
     }
 
-    private fun <T> fitComboWidth(
+    private fun <T> measureComboWidth(
         combo: ComboBox<T>,
         minWidth: Int,
         maxWidth: Int,
         textProvider: (T) -> String,
-    ) {
+    ): Int {
         val fontMetrics = combo.getFontMetrics(combo.font)
         var targetWidth = minWidth
         for (index in 0 until combo.itemCount) {
@@ -1923,8 +2149,11 @@ class SettingsPanel(
             val textWidth = fontMetrics.stringWidth(textProvider(item))
             targetWidth = maxOf(targetWidth, textWidth + JBUI.scale(44))
         }
-        val boundedWidth = targetWidth.coerceIn(minWidth, maxWidth)
-        combo.preferredSize = JBUI.size(boundedWidth, JBUI.scale(28))
+        return targetWidth.coerceIn(minWidth, maxWidth)
+    }
+
+    private fun applyComboWidth(combo: ComboBox<*>, width: Int) {
+        combo.preferredSize = JBUI.size(width, JBUI.scale(28))
         combo.minimumSize = combo.preferredSize
     }
 
@@ -1938,19 +2167,22 @@ class SettingsPanel(
     }
 
     companion object {
-        private val SIDEBAR_BG = JBColor(Color(242, 248, 255), Color(51, 58, 68))
-        private val SIDEBAR_BORDER = JBColor(Color(196, 212, 236), Color(82, 93, 109))
-        private val SIDEBAR_SURFACE_BG = JBColor(Color(248, 251, 255), Color(58, 65, 76))
-        private val SIDEBAR_SURFACE_BORDER = JBColor(Color(208, 221, 241), Color(88, 99, 116))
-        private val SIDEBAR_SELECTION_BG = JBColor(Color(221, 235, 255), Color(76, 92, 117))
-        private val SIDEBAR_SELECTION_FG = JBColor(Color(45, 69, 107), Color(217, 228, 245))
-        private val SIDEBAR_ITEM_BG = JBColor(Color(248, 251, 255), Color(58, 65, 76))
-        private val SIDEBAR_ITEM_BORDER = JBColor(Color(224, 233, 247), Color(92, 103, 121))
-        private val SIDEBAR_ITEM_FG = JBColor(Color(68, 87, 118), Color(194, 206, 224))
-        private val SIDEBAR_ITEM_SELECTED_BG = JBColor(Color(228, 239, 255), Color(79, 95, 119))
-        private val SIDEBAR_ITEM_SELECTED_BORDER = JBColor(Color(177, 198, 230), Color(112, 130, 158))
-        private val SIDEBAR_ITEM_SELECTED_FG = JBColor(Color(37, 60, 99), Color(228, 237, 248))
-        private val SIDEBAR_ITEM_ACCENT = JBColor(Color(97, 134, 197), Color(154, 178, 216))
+        private const val SIDEBAR_WIDTH = 128
+        private const val SIDEBAR_ITEM_HEIGHT = 40
+        private val SIDEBAR_BG = JBColor(Color(237, 245, 255), Color(49, 57, 68))
+        private val SIDEBAR_BORDER = JBColor(Color(182, 204, 233), Color(81, 94, 113))
+        private val SIDEBAR_SURFACE_BG = JBColor(Color(245, 250, 255), Color(56, 65, 77))
+        private val SIDEBAR_SURFACE_BORDER = JBColor(Color(199, 217, 242), Color(90, 104, 125))
+        private val SIDEBAR_SELECTION_BG = JBColor(Color(214, 231, 255), Color(74, 93, 122))
+        private val SIDEBAR_SELECTION_FG = JBColor(Color(39, 64, 106), Color(224, 234, 248))
+        private val SIDEBAR_ITEM_BG = JBColor(Color(245, 250, 255), Color(56, 65, 77))
+        private val SIDEBAR_ITEM_BORDER = JBColor(Color(216, 229, 248), Color(97, 113, 136))
+        private val SIDEBAR_ITEM_FG = JBColor(Color(64, 84, 117), Color(194, 207, 227))
+        private val SIDEBAR_ITEM_SELECTED_BG = JBColor(Color(223, 237, 255), Color(78, 98, 129))
+        private val SIDEBAR_ITEM_SELECTED_BORDER = JBColor(Color(156, 184, 222), Color(114, 136, 169))
+        private val SIDEBAR_ITEM_SELECTED_GLOW = JBColor(Color(235, 244, 255), Color(96, 118, 150))
+        private val SIDEBAR_ITEM_SELECTED_FG = JBColor(Color(31, 55, 92), Color(233, 240, 251))
+        private val SIDEBAR_ITEM_ACCENT = JBColor(Color(73, 118, 191), Color(159, 186, 227))
         private val CONTENT_BG = JBColor(Color(250, 252, 255), Color(50, 56, 64))
         private val CONTENT_BORDER = JBColor(Color(204, 216, 234), Color(83, 91, 103))
         private val MODULE_CARD_BG = JBColor(Color(245, 250, 255), Color(58, 65, 76))
@@ -1976,6 +2208,22 @@ class SettingsPanel(
         private val ACTION_PRIMARY_FG = JBColor(Color(37, 57, 89), Color(223, 232, 246))
         private val SKILL_STATUS_BG = JBColor(Color(238, 245, 255), Color(65, 76, 93))
         private val SKILL_STATUS_BORDER = JBColor(Color(182, 200, 226), Color(101, 118, 142))
+        private val SKILL_ITEM_BG = JBColor(Color(250, 253, 255), Color(58, 66, 77))
+        private val SKILL_ITEM_BORDER = JBColor(Color(216, 228, 245), Color(93, 106, 125))
+        private val SKILL_ITEM_TITLE_FG = JBColor(Color(27, 47, 82), Color(223, 232, 246))
+        private val SKILL_ITEM_META_FG = JBColor(Color(84, 102, 129), Color(180, 194, 214))
+        private val SKILL_ITEM_HOVER_BG = JBColor(Color(239, 247, 255), Color(69, 80, 97))
+        private val SKILL_ITEM_HOVER_BORDER = JBColor(Color(186, 206, 234), Color(112, 130, 158))
+        private val SKILL_ITEM_HOVER_TITLE_FG = JBColor(Color(25, 46, 80), Color(227, 236, 248))
+        private val SKILL_ITEM_HOVER_META_FG = JBColor(Color(75, 96, 125), Color(190, 205, 227))
+        private val SKILL_ITEM_SELECTED_BG = JBColor(Color(225, 238, 255), Color(78, 96, 123))
+        private val SKILL_ITEM_SELECTED_BORDER = JBColor(Color(158, 186, 223), Color(119, 139, 170))
+        private val SKILL_ITEM_SELECTED_TITLE_FG = JBColor(Color(24, 44, 78), Color(235, 241, 250))
+        private val SKILL_ITEM_SELECTED_META_FG = JBColor(Color(63, 85, 116), Color(198, 212, 232))
+        private val SKILL_CODEX_ICON = IconLoader.getIcon("/icons/provider-codex.svg", SettingsPanel::class.java)
+        private val SKILL_CLAUDE_ICON = AllIcons.Vcs.History
+        private val SKILL_PROJECT_ICON = AllIcons.Vcs.Branch
+        private val SKILL_GLOBAL_ICON = AllIcons.General.GearPlain
         private val STATUS_NORMAL_FG = JBColor(Color(92, 106, 127), Color(177, 188, 204))
         private val STATUS_SUCCESS_FG = JBColor(Color(42, 128, 74), Color(131, 208, 157))
         private val STATUS_ERROR_FG = JBColor(Color(171, 55, 69), Color(226, 144, 154))

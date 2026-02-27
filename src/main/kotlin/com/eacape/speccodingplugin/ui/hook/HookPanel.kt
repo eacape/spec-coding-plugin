@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Component
 import java.awt.FlowLayout
 import java.awt.Font
 import java.nio.charset.StandardCharsets
@@ -46,11 +47,11 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import javax.swing.DefaultListCellRenderer
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JList
+import javax.swing.ListCellRenderer
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 
@@ -172,7 +173,7 @@ class HookPanel(
         hooksList.addListSelectionListener { updateButtonState() }
 
         hooksList.background = PANEL_SECTION_BG
-        hooksList.fixedCellHeight = JBUI.scale(24)
+        hooksList.fixedCellHeight = JBUI.scale(34)
 
         logArea.isEditable = false
         logArea.lineWrap = true
@@ -863,25 +864,95 @@ class HookPanel(
         scope.cancel()
     }
 
-    private inner class HookListRenderer : DefaultListCellRenderer() {
+    private inner class HookListRenderer : JPanel(BorderLayout(JBUI.scale(6), 0)), ListCellRenderer<HookDefinition> {
+        private val nameLabel = JBLabel()
+        private val eventChip = JBLabel()
+        private val enabledChip = JBLabel()
+        private val chipPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0))
+
+        init {
+            isOpaque = true
+            border = JBUI.Borders.empty(4, 8)
+            nameLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            chipPanel.isOpaque = false
+            chipPanel.add(eventChip)
+            chipPanel.add(enabledChip)
+            add(nameLabel, BorderLayout.CENTER)
+            add(chipPanel, BorderLayout.EAST)
+        }
+
         override fun getListCellRendererComponent(
-            list: JList<*>?,
-            value: Any?,
+            list: JList<out HookDefinition>?,
+            value: HookDefinition?,
             index: Int,
             isSelected: Boolean,
             cellHasFocus: Boolean,
-        ) = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus).also {
-            val hook = value as? HookDefinition ?: return@also
+        ): Component {
+            val hook = value ?: return this
             val enabledText = if (hook.enabled) {
                 SpecCodingBundle.message("hook.enabled")
             } else {
                 SpecCodingBundle.message("hook.disabled")
             }
-            text = SpecCodingBundle.message(
+            val eventText = eventDisplayName(hook.event)
+            nameLabel.text = hook.name
+            toolTipText = SpecCodingBundle.message(
                 "hook.list.item",
                 hook.name,
-                eventDisplayName(hook.event),
+                eventText,
                 enabledText,
+            )
+            nameLabel.foreground = if (isSelected) ITEM_TEXT_SELECTED_FG else ITEM_TEXT_FG
+            styleChip(
+                label = eventChip,
+                text = eventText,
+                foreground = EVENT_CHIP_FG,
+                background = EVENT_CHIP_BG,
+                borderColor = EVENT_CHIP_BORDER,
+            )
+            if (hook.enabled) {
+                styleChip(
+                    label = enabledChip,
+                    text = enabledText,
+                    foreground = ENABLED_CHIP_FG,
+                    background = ENABLED_CHIP_BG,
+                    borderColor = ENABLED_CHIP_BORDER,
+                )
+            } else {
+                styleChip(
+                    label = enabledChip,
+                    text = enabledText,
+                    foreground = DISABLED_CHIP_FG,
+                    background = DISABLED_CHIP_BG,
+                    borderColor = DISABLED_CHIP_BORDER,
+                )
+            }
+            background = if (isSelected) ITEM_SELECTED_BG else ITEM_BG
+            border = javax.swing.BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(
+                    if (isSelected) ITEM_SELECTED_BORDER else ITEM_BORDER,
+                    JBUI.scale(10),
+                ),
+                JBUI.Borders.empty(4, 8, 4, 8),
+            )
+            return this
+        }
+
+        private fun styleChip(
+            label: JBLabel,
+            text: String,
+            foreground: Color,
+            background: Color,
+            borderColor: Color,
+        ) {
+            label.text = text
+            label.font = JBUI.Fonts.smallFont()
+            label.foreground = foreground
+            label.background = background
+            label.isOpaque = true
+            label.border = javax.swing.BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(8)),
+                JBUI.Borders.empty(1, 6, 1, 6),
             )
         }
     }
@@ -918,6 +989,21 @@ class HookPanel(
     }
 
     companion object {
+        private val ITEM_BG = JBColor(Color(245, 249, 255), Color(58, 64, 74))
+        private val ITEM_BORDER = JBColor(Color(202, 214, 234), Color(91, 101, 117))
+        private val ITEM_SELECTED_BG = JBColor(Color(224, 237, 255), Color(74, 86, 103))
+        private val ITEM_SELECTED_BORDER = JBColor(Color(145, 175, 219), Color(120, 140, 168))
+        private val ITEM_TEXT_FG = JBColor(Color(47, 66, 100), Color(218, 227, 238))
+        private val ITEM_TEXT_SELECTED_FG = JBColor(Color(33, 56, 92), Color(233, 239, 248))
+        private val EVENT_CHIP_BG = JBColor(Color(234, 242, 255), Color(73, 83, 97))
+        private val EVENT_CHIP_BORDER = JBColor(Color(178, 199, 227), Color(110, 124, 145))
+        private val EVENT_CHIP_FG = JBColor(Color(58, 80, 117), Color(207, 218, 233))
+        private val ENABLED_CHIP_BG = JBColor(Color(224, 245, 233), Color(67, 92, 77))
+        private val ENABLED_CHIP_BORDER = JBColor(Color(150, 203, 174), Color(97, 130, 109))
+        private val ENABLED_CHIP_FG = JBColor(Color(36, 107, 67), Color(188, 226, 204))
+        private val DISABLED_CHIP_BG = JBColor(Color(246, 236, 236), Color(95, 78, 78))
+        private val DISABLED_CHIP_BORDER = JBColor(Color(220, 182, 182), Color(130, 106, 106))
+        private val DISABLED_CHIP_FG = JBColor(Color(126, 63, 63), Color(228, 201, 201))
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
