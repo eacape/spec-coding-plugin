@@ -64,6 +64,9 @@ class SpecCodingSettingsState : PersistentStateComponent<SpecCodingSettingsState
     // Skill 生成默认作用域（GLOBAL / PROJECT）
     var skillGenerationScope: String = "PROJECT"
 
+    // Skill 保存目标通道（CODEX / CLUADE / ALL）
+    var skillGenerationChannel: String = "ALL"
+
     override fun getState(): SpecCodingSettingsState = this
 
     override fun loadState(state: SpecCodingSettingsState) {

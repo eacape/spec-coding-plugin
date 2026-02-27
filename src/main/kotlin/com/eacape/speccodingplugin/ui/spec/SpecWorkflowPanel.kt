@@ -535,6 +535,7 @@ class SpecWorkflowPanel(
     }
 
     private fun selectWorkflow(workflowId: String) {
+        val previousSelectedWorkflowId = selectedWorkflowId
         selectedWorkflowId = workflowId
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.loadWorkflow(workflowId).getOrNull()
@@ -543,6 +544,9 @@ class SpecWorkflowPanel(
                 if (wf != null) {
                     phaseIndicator.updatePhase(wf)
                     detailPanel.updateWorkflow(wf)
+                    if (previousSelectedWorkflowId != workflowId) {
+                        restorePendingClarificationState(workflowId)
+                    }
                     createWorktreeButton.isEnabled = true
                     mergeWorktreeButton.isEnabled = true
                     deltaButton.isEnabled = true
@@ -740,18 +744,35 @@ class SpecWorkflowPanel(
     private fun onGenerate(input: String) {
         val context = resolveGenerationContext() ?: return
         val pendingRetry = pendingClarificationRetryByWorkflowId[context.workflowId]
-        if (pendingRetry != null && input.isBlank()) {
-            runGeneration(
-                workflowId = context.workflowId,
-                input = pendingRetry.input,
-                options = context.options.copy(confirmedContext = pendingRetry.confirmedContext),
+        val clarificationRound = (pendingRetry?.clarificationRound ?: 0) + 1
+        val effectiveInput = input.ifBlank { pendingRetry?.input.orEmpty() }
+        val seededContext = when {
+            input.isNotBlank() -> input
+            !pendingRetry?.confirmedContext.isNullOrBlank() -> pendingRetry?.confirmedContext.orEmpty()
+            else -> effectiveInput
+        }
+        if (pendingRetry == null) {
+            detailPanel.clearProcessTimeline()
+        }
+        detailPanel.appendProcessTimelineEntry(
+            text = SpecCodingBundle.message("spec.workflow.process.clarify.round", clarificationRound),
+            state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
+        )
+        if (pendingRetry != null) {
+            detailPanel.appendProcessTimelineEntry(
+                text = SpecCodingBundle.message("spec.workflow.process.retryContextReuse"),
+                state = SpecDetailPanel.ProcessTimelineState.INFO,
             )
-            return
         }
         requestClarificationDraft(
             context = context,
-            input = input,
-            suggestedDetails = "",
+            input = effectiveInput,
+            options = context.options.copy(
+                confirmedContext = pendingRetry?.confirmedContext,
+            ),
+            suggestedDetails = seededContext,
+            seedQuestionsMarkdown = pendingRetry?.questionsMarkdown,
+            clarificationRound = clarificationRound,
         )
     }
 
@@ -760,10 +781,15 @@ class SpecWorkflowPanel(
         confirmedContext: String,
     ) {
         val context = resolveGenerationContext() ?: return
+        detailPanel.appendProcessTimelineEntry(
+            text = SpecCodingBundle.message("spec.workflow.process.clarify.confirmed"),
+            state = SpecDetailPanel.ProcessTimelineState.DONE,
+        )
         rememberClarificationRetry(
             workflowId = context.workflowId,
             input = input,
             confirmedContext = confirmedContext,
+            clarificationRound = pendingClarificationRetryByWorkflowId[context.workflowId]?.clarificationRound,
         )
         runGeneration(
             workflowId = context.workflowId,
@@ -777,17 +803,29 @@ class SpecWorkflowPanel(
         currentDraft: String,
     ) {
         val context = resolveGenerationContext() ?: return
+        val pendingRetry = pendingClarificationRetryByWorkflowId[context.workflowId]
+        val clarificationRound = (pendingRetry?.clarificationRound ?: 0) + 1
+        detailPanel.appendProcessTimelineEntry(
+            text = SpecCodingBundle.message("spec.workflow.process.clarify.regenerate", clarificationRound),
+            state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
+        )
         requestClarificationDraft(
             context = context,
             input = input,
             options = context.options.copy(confirmedContext = currentDraft),
             suggestedDetails = currentDraft,
+            seedQuestionsMarkdown = pendingRetry?.questionsMarkdown,
+            clarificationRound = clarificationRound,
         )
     }
 
     private fun onClarificationSkip(input: String) {
         val context = resolveGenerationContext() ?: return
         pendingClarificationRetryByWorkflowId.remove(context.workflowId)
+        detailPanel.appendProcessTimelineEntry(
+            text = SpecCodingBundle.message("spec.workflow.process.clarify.skipped"),
+            state = SpecDetailPanel.ProcessTimelineState.INFO,
+        )
         setStatusText(SpecCodingBundle.message("spec.workflow.clarify.skippedProceed"))
         runGeneration(
             workflowId = context.workflowId,
@@ -800,6 +838,10 @@ class SpecWorkflowPanel(
         selectedWorkflowId?.let { workflowId ->
             pendingClarificationRetryByWorkflowId.remove(workflowId)
         }
+        detailPanel.appendProcessTimelineEntry(
+            text = SpecCodingBundle.message("spec.workflow.process.clarify.cancelled"),
+            state = SpecDetailPanel.ProcessTimelineState.INFO,
+        )
         setStatusText(SpecCodingBundle.message("spec.workflow.clarify.cancelled"))
     }
 
@@ -808,6 +850,8 @@ class SpecWorkflowPanel(
         input: String,
         options: GenerationOptions = context.options,
         suggestedDetails: String = input,
+        seedQuestionsMarkdown: String? = null,
+        clarificationRound: Int = 1,
     ) {
         scope.launch(Dispatchers.IO) {
             val safeSuggestedDetails = suggestedDetails.ifBlank { input }
@@ -820,6 +864,22 @@ class SpecWorkflowPanel(
                     phase = fallbackPhase,
                     input = input,
                     suggestedDetails = safeSuggestedDetails,
+                )
+                seedQuestionsMarkdown
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let {
+                        detailPanel.appendProcessTimelineEntry(
+                            text = SpecCodingBundle.message("spec.workflow.process.clarify.lastRoundReused"),
+                            state = SpecDetailPanel.ProcessTimelineState.INFO,
+                        )
+                    }
+                detailPanel.appendProcessTimelineEntry(
+                    text = SpecCodingBundle.message("spec.workflow.process.clarify.prepare"),
+                    state = SpecDetailPanel.ProcessTimelineState.DONE,
+                )
+                detailPanel.appendProcessTimelineEntry(
+                    text = SpecCodingBundle.message("spec.workflow.process.clarify.request", clarificationRound),
+                    state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
                 )
                 setStatusText(SpecCodingBundle.message("spec.workflow.clarify.generating"))
             }
@@ -847,10 +907,26 @@ class SpecWorkflowPanel(
                     questionsMarkdown = markdown,
                     suggestedDetails = safeSuggestedDetails,
                 )
+                val errorText = compactErrorMessage(draftError, SpecCodingBundle.message("common.unknown"))
+                rememberClarificationRetry(
+                    workflowId = context.workflowId,
+                    input = input,
+                    confirmedContext = safeSuggestedDetails,
+                    questionsMarkdown = markdown,
+                    clarificationRound = clarificationRound,
+                    lastError = draftError?.let { errorText },
+                )
                 if (draft == null) {
-                    val errorText = compactErrorMessage(draftError, SpecCodingBundle.message("common.unknown"))
+                    detailPanel.appendProcessTimelineEntry(
+                        text = SpecCodingBundle.message("spec.workflow.process.clarify.failed", errorText),
+                        state = SpecDetailPanel.ProcessTimelineState.FAILED,
+                    )
                     setStatusText(SpecCodingBundle.message("spec.workflow.error", errorText))
                 } else {
+                    detailPanel.appendProcessTimelineEntry(
+                        text = SpecCodingBundle.message("spec.workflow.process.clarify.ready"),
+                        state = SpecDetailPanel.ProcessTimelineState.DONE,
+                    )
                     setStatusText(null)
                 }
             }
@@ -863,25 +939,76 @@ class SpecWorkflowPanel(
         options: GenerationOptions,
     ) {
         scope.launch(Dispatchers.IO) {
+            var modelCallRecorded = false
+            var normalizeRecorded = false
             specEngine.generateCurrentPhase(workflowId, input, options).collect { progress ->
                 invokeLaterSafe {
                     when (progress) {
-                        is SpecGenerationProgress.Started ->
+                        is SpecGenerationProgress.Started -> {
+                            detailPanel.appendProcessTimelineEntry(
+                                text = SpecCodingBundle.message("spec.workflow.process.generate.prepare"),
+                                state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
+                            )
                             detailPanel.showGenerating(0.0)
-                        is SpecGenerationProgress.Generating ->
+                        }
+                        is SpecGenerationProgress.Generating -> {
+                            if (!modelCallRecorded) {
+                                detailPanel.appendProcessTimelineEntry(
+                                    text = SpecCodingBundle.message(
+                                        "spec.workflow.process.generate.call",
+                                        (progress.progress * 100).toInt().coerceIn(0, 100),
+                                    ),
+                                    state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
+                                )
+                                modelCallRecorded = true
+                            }
+                            if (progress.progress >= 0.5 && !normalizeRecorded) {
+                                detailPanel.appendProcessTimelineEntry(
+                                    text = SpecCodingBundle.message("spec.workflow.process.generate.normalize"),
+                                    state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
+                                )
+                                normalizeRecorded = true
+                            }
                             detailPanel.showGenerating(progress.progress)
+                        }
                         is SpecGenerationProgress.Completed -> {
+                            detailPanel.appendProcessTimelineEntry(
+                                text = SpecCodingBundle.message("spec.workflow.process.generate.validate"),
+                                state = SpecDetailPanel.ProcessTimelineState.DONE,
+                            )
+                            detailPanel.appendProcessTimelineEntry(
+                                text = SpecCodingBundle.message("spec.workflow.process.generate.save"),
+                                state = SpecDetailPanel.ProcessTimelineState.DONE,
+                            )
+                            detailPanel.appendProcessTimelineEntry(
+                                text = SpecCodingBundle.message("spec.workflow.process.generate.completed"),
+                                state = SpecDetailPanel.ProcessTimelineState.DONE,
+                            )
                             pendingClarificationRetryByWorkflowId.remove(workflowId)
                             detailPanel.exitClarificationMode(clearInput = true)
                             reloadCurrentWorkflow()
                         }
                         is SpecGenerationProgress.ValidationFailed -> {
+                            val firstValidationError = progress.validation.errors.firstOrNull()
+                                ?: SpecCodingBundle.message("common.unknown")
+                            detailPanel.appendProcessTimelineEntry(
+                                text = SpecCodingBundle.message("spec.workflow.process.generate.validate"),
+                                state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
+                            )
+                            detailPanel.appendProcessTimelineEntry(
+                                text = SpecCodingBundle.message(
+                                    "spec.workflow.process.generate.validationFailed",
+                                    firstValidationError,
+                                ),
+                                state = SpecDetailPanel.ProcessTimelineState.FAILED,
+                            )
                             rememberClarificationRetry(
                                 workflowId = workflowId,
                                 input = input,
                                 confirmedContext = options.confirmedContext,
+                                clarificationRound = pendingClarificationRetryByWorkflowId[workflowId]?.clarificationRound,
+                                lastError = firstValidationError,
                             )
-                            detailPanel.exitClarificationMode(clearInput = true)
                             setStatusText(buildValidationFailureStatus(progress.validation))
                             reloadCurrentWorkflow { updated ->
                                 detailPanel.showValidationFailureInteractive(
@@ -891,10 +1018,19 @@ class SpecWorkflowPanel(
                             }
                         }
                         is SpecGenerationProgress.Failed -> {
+                            detailPanel.appendProcessTimelineEntry(
+                                text = SpecCodingBundle.message(
+                                    "spec.workflow.process.generate.failed",
+                                    progress.error,
+                                ),
+                                state = SpecDetailPanel.ProcessTimelineState.FAILED,
+                            )
                             rememberClarificationRetry(
                                 workflowId = workflowId,
                                 input = input,
                                 confirmedContext = options.confirmedContext,
+                                clarificationRound = pendingClarificationRetryByWorkflowId[workflowId]?.clarificationRound,
+                                lastError = progress.error,
                             )
                             detailPanel.showGenerationFailed()
                             setStatusText(SpecCodingBundle.message("spec.workflow.error", progress.error))
@@ -970,27 +1106,77 @@ class SpecWorkflowPanel(
     private data class ClarificationRetryPayload(
         val input: String,
         val confirmedContext: String,
+        val questionsMarkdown: String,
+        val clarificationRound: Int,
+        val lastError: String?,
     )
 
     private fun rememberClarificationRetry(
         workflowId: String,
         input: String,
         confirmedContext: String?,
+        questionsMarkdown: String? = null,
+        clarificationRound: Int? = null,
+        lastError: String? = null,
     ) {
-        val normalizedInput = input.trim()
-        val normalizedContext = confirmedContext
+        val previous = pendingClarificationRetryByWorkflowId[workflowId]
+        val normalizedInput = normalizeRetryText(input)
+        val normalizedContext = confirmedContext?.let { normalizeRetryText(it) }
+        val normalizedQuestions = questionsMarkdown?.let { normalizeRetryText(it) }
+        val normalizedError = lastError
             ?.replace("\r\n", "\n")
             ?.replace('\r', '\n')
             ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val mergedInput = normalizedInput.ifBlank { previous?.input.orEmpty() }
+        val mergedContext = when {
+            normalizedContext != null -> normalizedContext
+            else -> previous?.confirmedContext.orEmpty()
+        }
+        val mergedQuestions = normalizedQuestions
+            ?: previous?.questionsMarkdown
             .orEmpty()
-        if (normalizedInput.isBlank() || normalizedContext.isBlank()) {
+        val mergedRound = clarificationRound
+            ?: previous?.clarificationRound
+            ?: 1
+        val mergedError = normalizedError ?: previous?.lastError
+        if (mergedInput.isBlank() && mergedContext.isBlank() && mergedQuestions.isBlank()) {
             pendingClarificationRetryByWorkflowId.remove(workflowId)
             return
         }
         pendingClarificationRetryByWorkflowId[workflowId] = ClarificationRetryPayload(
-            input = normalizedInput,
-            confirmedContext = normalizedContext,
+            input = mergedInput,
+            confirmedContext = mergedContext,
+            questionsMarkdown = mergedQuestions,
+            clarificationRound = mergedRound,
+            lastError = mergedError,
         )
+    }
+
+    private fun normalizeRetryText(value: String): String {
+        return value
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+    }
+
+    private fun restorePendingClarificationState(workflowId: String) {
+        val payload = pendingClarificationRetryByWorkflowId[workflowId] ?: return
+        detailPanel.appendProcessTimelineEntry(
+            text = SpecCodingBundle.message(
+                "spec.workflow.process.retryRestored",
+                payload.clarificationRound,
+            ),
+            state = SpecDetailPanel.ProcessTimelineState.INFO,
+        )
+        payload.lastError
+            ?.takeIf { it.isNotBlank() }
+            ?.let { error ->
+                detailPanel.appendProcessTimelineEntry(
+                    text = SpecCodingBundle.message("spec.workflow.process.retryLastError", error),
+                    state = SpecDetailPanel.ProcessTimelineState.FAILED,
+                )
+            }
     }
 
     private fun onShowDelta() {

@@ -250,6 +250,47 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `process timeline should show entries and clear properly`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-process",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Process",
+            description = "timeline",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+
+        panel.appendProcessTimelineEntry(
+            text = "Prepare clarification context",
+            state = SpecDetailPanel.ProcessTimelineState.DONE,
+        )
+        panel.appendProcessTimelineEntry(
+            text = "Calling model to generate content (30%)",
+            state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
+        )
+
+        assertTrue(panel.isProcessTimelineVisibleForTest())
+        val timelineText = panel.currentProcessTimelineTextForTest()
+        assertTrue(timelineText.contains("Prepare clarification context"))
+        assertTrue(timelineText.contains("Calling model to generate content"))
+
+        panel.clearProcessTimeline()
+
+        assertFalse(panel.isProcessTimelineVisibleForTest())
+        assertEquals("", panel.currentProcessTimelineTextForTest())
+    }
+
+    @Test
     fun `clicking generate should clear input area`() {
         var generatedInput: String? = null
         val panel = createPanel(
@@ -277,6 +318,38 @@ class SpecDetailPanelTest {
         panel.clickGenerateForTest()
 
         assertEquals("new requirements input", generatedInput)
+        assertEquals("", panel.currentInputTextForTest())
+    }
+
+    @Test
+    fun `clicking generate with empty requirements should prompt input and not trigger generation`() {
+        var generateCallCount = 0
+        val panel = createPanel(
+            onGenerate = { generateCallCount += 1 },
+        )
+        val workflow = SpecWorkflow(
+            id = "wf-generate-empty",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements content",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Generate Empty",
+            description = "Generate empty workflow",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.setInputTextForTest("")
+
+        panel.clickGenerateForTest()
+
+        assertEquals(0, generateCallCount)
+        assertEquals("Please provide requirements before generating.", panel.currentValidationTextForTest())
         assertEquals("", panel.currentInputTextForTest())
     }
 
@@ -320,6 +393,49 @@ class SpecDetailPanelTest {
 
         val states = panel.buttonStatesForTest()
         assertTrue(states["generateEnabled"] as Boolean)
+    }
+
+    @Test
+    fun `validation failure should keep clarification actions when clarification state exists`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-validation-clarify",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = "draft tasks",
+                    valid = false,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Validation Clarify",
+            description = "Validation with clarify state",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.showClarificationDraft(
+            phase = SpecPhase.IMPLEMENT,
+            input = "",
+            questionsMarkdown = "1. Is rollback required?",
+            suggestedDetails = "- keep rollback steps",
+        )
+        panel.setInputTextForTest("- keep rollback steps")
+
+        panel.showValidationFailureInteractive(
+            phase = SpecPhase.IMPLEMENT,
+            validation = ValidationResult(
+                valid = false,
+                errors = listOf("Missing required section: Implementation Steps"),
+            ),
+        )
+
+        val states = panel.buttonStatesForTest()
+        assertTrue(states["confirmGenerateEnabled"] as Boolean)
+        assertTrue(states["regenerateClarificationEnabled"] as Boolean)
+        assertTrue(states["skipClarificationEnabled"] as Boolean)
+        assertEquals("- keep rollback steps", panel.currentInputTextForTest())
     }
 
     @Test

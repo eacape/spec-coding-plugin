@@ -32,6 +32,7 @@ import javax.swing.ListSelectionModel
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
+import javax.swing.SwingUtilities
 
 class SpecWorkflowListPanel(
     private val onWorkflowSelected: (String) -> Unit,
@@ -53,6 +54,7 @@ class SpecWorkflowListPanel(
 
     private val listModel = DefaultListModel<WorkflowListItem>()
     private val workflowList = JBList(listModel)
+    private val workflowCellRenderer = WorkflowCellRenderer()
     private val newButton = JButton()
     private var suppressSelectionEvents = false
 
@@ -71,7 +73,7 @@ class SpecWorkflowListPanel(
 
         newButton.addActionListener { onCreateWorkflow() }
 
-        workflowList.cellRenderer = WorkflowCellRenderer()
+        workflowList.cellRenderer = workflowCellRenderer
         workflowList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         workflowList.fixedCellHeight = -1
         workflowList.visibleRowCount = -1
@@ -200,7 +202,7 @@ class SpecWorkflowListPanel(
             workflowList.cursor = Cursor.getDefaultCursor()
             return
         }
-        workflowList.cursor = if (WorkflowCellRenderer.resolveRowAction(cellBounds, point) != null) {
+        workflowList.cursor = if (workflowCellRenderer.resolveRowAction(workflowList, index, point) != null) {
             Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         } else {
             Cursor.getDefaultCursor()
@@ -214,7 +216,7 @@ class SpecWorkflowListPanel(
         if (!cellBounds.contains(event.point)) return
         val selectedId = listModel.getElementAt(index).workflowId
         workflowList.selectedIndex = index
-        when (WorkflowCellRenderer.resolveRowAction(cellBounds, event.point)) {
+        when (workflowCellRenderer.resolveRowAction(workflowList, index, event.point)) {
             WorkflowCellRenderer.RowAction.DELETE -> onDeleteWorkflow(selectedId)
             WorkflowCellRenderer.RowAction.EDIT -> onEditWorkflow(selectedId)
             null -> {
@@ -468,6 +470,57 @@ class SpecWorkflowListPanel(
             }
         }
 
+        fun resolveRowAction(
+            list: JList<out WorkflowListItem>,
+            index: Int,
+            point: Point,
+        ): RowAction? {
+            val cellBounds = list.getCellBounds(index, index) ?: return null
+            if (!cellBounds.contains(point)) return null
+            val value = list.model.getElementAt(index) ?: return null
+            val selected = list.selectedIndex == index
+            val rendererComponent = getListCellRendererComponent(list, value, index, selected, false)
+            rendererComponent.setBounds(0, 0, cellBounds.width, cellBounds.height)
+            layoutRecursively(rendererComponent)
+
+            val editRect = SwingUtilities.convertRectangle(
+                editActionLabel.parent,
+                editActionLabel.bounds,
+                rendererComponent,
+            )
+            val deleteRect = SwingUtilities.convertRectangle(
+                deleteActionLabel.parent,
+                deleteActionLabel.bounds,
+                rendererComponent,
+            )
+
+            val listEditRect = Rectangle(
+                cellBounds.x + editRect.x - ACTION_HIT_SLOP,
+                cellBounds.y + editRect.y - ACTION_HIT_SLOP,
+                editRect.width + ACTION_HIT_SLOP * 2,
+                editRect.height + ACTION_HIT_SLOP * 2,
+            )
+            val listDeleteRect = Rectangle(
+                cellBounds.x + deleteRect.x - ACTION_HIT_SLOP,
+                cellBounds.y + deleteRect.y - ACTION_HIT_SLOP,
+                deleteRect.width + ACTION_HIT_SLOP * 2,
+                deleteRect.height + ACTION_HIT_SLOP * 2,
+            )
+            return when {
+                listDeleteRect.contains(point) -> RowAction.DELETE
+                listEditRect.contains(point) -> RowAction.EDIT
+                else -> null
+            }
+        }
+
+        private fun layoutRecursively(component: Component) {
+            if (component !is java.awt.Container) return
+            component.doLayout()
+            component.components.forEach { child ->
+                layoutRecursively(child)
+            }
+        }
+
         companion object {
             private val ROW_BOTTOM_GAP = JBUI.scale(8)
             private val CARD_VERTICAL_PAD = JBUI.scale(8)
@@ -478,40 +531,10 @@ class SpecWorkflowListPanel(
             private val ACTION_ICON_SIZE = JBUI.scale(16)
             private val ACTION_ICON_GAP = JBUI.scale(6)
             private val ACTION_SAFE_GAP = JBUI.scale(10)
-            private val ACTION_RIGHT_PAD = CARD_RIGHT_PAD + ACTION_PANEL_RIGHT_PAD
             private val ACTION_HIT_SLOP = JBUI.scale(3)
             private val MIN_TEXT_WIDTH = JBUI.scale(76)
             private val META_STATUS_GAP = JBUI.scale(10)
             private val MIN_PHASE_TEXT_WIDTH = JBUI.scale(36)
-
-            fun resolveRowAction(cellBounds: Rectangle, point: Point): RowAction? {
-                if (!cellBounds.contains(point)) {
-                    return null
-                }
-                val iconZoneHeight = (cellBounds.height - ROW_BOTTOM_GAP - CARD_VERTICAL_PAD * 2)
-                    .coerceAtLeast(ACTION_ICON_SIZE)
-                val centerY = cellBounds.y + CARD_VERTICAL_PAD + iconZoneHeight / 2
-                val topY = centerY - ACTION_ICON_SIZE / 2
-                val deleteX = cellBounds.x + cellBounds.width - ACTION_RIGHT_PAD - ACTION_ICON_SIZE
-                val editX = deleteX - ACTION_ICON_GAP - ACTION_ICON_SIZE
-                val editRect = Rectangle(
-                    editX - ACTION_HIT_SLOP,
-                    topY - ACTION_HIT_SLOP,
-                    ACTION_ICON_SIZE + ACTION_HIT_SLOP * 2,
-                    ACTION_ICON_SIZE + ACTION_HIT_SLOP * 2,
-                )
-                val deleteRect = Rectangle(
-                    deleteX - ACTION_HIT_SLOP,
-                    topY - ACTION_HIT_SLOP,
-                    ACTION_ICON_SIZE + ACTION_HIT_SLOP * 2,
-                    ACTION_ICON_SIZE + ACTION_HIT_SLOP * 2,
-                )
-                return when {
-                    deleteRect.contains(point) -> RowAction.DELETE
-                    editRect.contains(point) -> RowAction.EDIT
-                    else -> null
-                }
-            }
         }
     }
 

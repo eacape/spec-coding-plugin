@@ -56,11 +56,13 @@ class SpecDetailPanel(
     private val previewPane = JTextPane()
     private val clarificationQuestionsPane = JTextPane()
     private val clarificationPreviewPane = JTextPane()
+    private val processTimelinePane = JTextPane()
     private val previewCardLayout = CardLayout()
     private val previewCardPanel = JPanel(previewCardLayout)
     private val previewModePanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
     private val previewModeButton = JButton(SpecCodingBundle.message("spec.detail.view.preview"))
     private val clarificationModeButton = JButton(SpecCodingBundle.message("spec.detail.view.clarify"))
+    private val processTimelineLabel = JBLabel(SpecCodingBundle.message("spec.detail.process.title"))
     private val clarificationQuestionsLabel = JBLabel(SpecCodingBundle.message("spec.detail.clarify.questions.title"))
     private val clarificationPreviewLabel = JBLabel(SpecCodingBundle.message("spec.detail.clarify.preview.title"))
     private val editorArea = JBTextArea(14, 40)
@@ -68,6 +70,7 @@ class SpecDetailPanel(
     private val inputArea = JBTextArea(3, 40)
     private lateinit var clarificationSplitPane: JSplitPane
     private lateinit var clarificationPreviewSection: JPanel
+    private lateinit var processTimelineSection: JPanel
 
     private val generateButton = JButton(SpecCodingBundle.message("spec.detail.generate"))
     private val nextPhaseButton = JButton(SpecCodingBundle.message("spec.detail.nextPhase"))
@@ -97,6 +100,7 @@ class SpecDetailPanel(
     private var editingPhase: SpecPhase? = null
     private var activePreviewCard: String = CARD_PREVIEW
     private var clarificationState: ClarificationState? = null
+    private val processTimelineEntries = mutableListOf<ProcessTimelineEntry>()
 
     init {
         setupUI()
@@ -106,6 +110,18 @@ class SpecDetailPanel(
         val phase: SpecPhase,
         val input: String,
         val questionsMarkdown: String,
+    )
+
+    enum class ProcessTimelineState {
+        INFO,
+        ACTIVE,
+        DONE,
+        FAILED,
+    }
+
+    data class ProcessTimelineEntry(
+        val text: String,
+        val state: ProcessTimelineState = ProcessTimelineState.INFO,
     )
 
     private fun setupUI() {
@@ -180,6 +196,9 @@ class SpecDetailPanel(
         previewCardPanel.add(createClarificationCard(), CARD_CLARIFY)
         switchPreviewCard(CARD_PREVIEW)
         configurePreviewModePanel()
+        processTimelineSection = createProcessTimelineSection()
+        setProcessTimelineVisible(false)
+        previewPanel.add(processTimelineSection, BorderLayout.NORTH)
         previewPanel.add(
             previewCardPanel,
             BorderLayout.CENTER,
@@ -265,6 +284,7 @@ class SpecDetailPanel(
     }
 
     private fun setupButtons(panel: JPanel) {
+        generateButton.icon = null
         styleActionButton(generateButton)
         styleActionButton(nextPhaseButton)
         styleActionButton(goBackButton)
@@ -293,6 +313,8 @@ class SpecDetailPanel(
             if (text.isNotBlank() || allowBlank) {
                 onGenerate(text)
                 clearInput()
+            } else {
+                showInputRequiredHint(phase)
             }
         }
         nextPhaseButton.addActionListener { onNextPhase() }
@@ -437,6 +459,32 @@ class SpecDetailPanel(
         }
     }
 
+    private fun createProcessTimelineSection(): JPanel {
+        processTimelinePane.isEditable = false
+        processTimelinePane.isOpaque = false
+        processTimelinePane.border = JBUI.Borders.empty(2, 2)
+        styleClarificationSectionLabel(processTimelineLabel)
+
+        return JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(JBUI.scale(2))
+            add(processTimelineLabel, BorderLayout.NORTH)
+            add(
+                createSectionContainer(
+                    JBScrollPane(processTimelinePane).apply {
+                        border = JBUI.Borders.empty()
+                        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                        verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+                        preferredSize = JBUI.size(0, JBUI.scale(96))
+                    },
+                    backgroundColor = PROCESS_SECTION_BG,
+                    borderColor = PROCESS_SECTION_BORDER,
+                ),
+                BorderLayout.CENTER,
+            )
+        }
+    }
+
     private fun styleClarificationSectionLabel(label: JBLabel) {
         label.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         label.foreground = SECTION_TITLE_FG
@@ -465,6 +513,12 @@ class SpecDetailPanel(
     private fun showClarificationEntryHint() {
         validationLabel.text = SpecCodingBundle.message("spec.detail.clarify.entry.hint")
         validationLabel.foreground = GENERATING_FG
+    }
+
+    private fun showInputRequiredHint(phase: SpecPhase?) {
+        if (phase != SpecPhase.SPECIFY) return
+        validationLabel.text = SpecCodingBundle.message("spec.detail.input.required")
+        validationLabel.foreground = JBColor(Color(213, 52, 52), Color(255, 140, 140))
     }
 
     private fun createSectionContainer(
@@ -520,6 +574,7 @@ class SpecDetailPanel(
         clarificationModeButton.text = SpecCodingBundle.message("spec.detail.view.clarify")
         previewModeButton.toolTipText = SpecCodingBundle.message("spec.detail.view.preview.tooltip")
         clarificationModeButton.toolTipText = SpecCodingBundle.message("spec.detail.view.clarify.tooltip")
+        processTimelineLabel.text = SpecCodingBundle.message("spec.detail.process.title")
         clarificationQuestionsLabel.text = SpecCodingBundle.message("spec.detail.clarify.questions.title")
         clarificationPreviewLabel.text = SpecCodingBundle.message("spec.detail.clarify.preview.title")
         generateButton.text = SpecCodingBundle.message("spec.detail.generate")
@@ -558,6 +613,7 @@ class SpecDetailPanel(
         styleActionButton(skipClarificationButton)
         styleActionButton(cancelClarificationButton)
         updatePreviewModeButtons()
+        renderProcessTimeline()
         if (isClarificationGenerating) {
             renderClarificationQuestions(SpecCodingBundle.message("spec.workflow.clarify.generating"))
         } else {
@@ -581,6 +637,7 @@ class SpecDetailPanel(
         }
         if (previousWorkflowId != workflow.id) {
             clarificationState = null
+            clearProcessTimeline()
         }
         if (clarificationState?.phase != null && clarificationState?.phase != workflow.currentPhase) {
             clarificationState = null
@@ -616,6 +673,7 @@ class SpecDetailPanel(
         editingPhase = null
         selectedPhase = null
         clarificationState = null
+        clearProcessTimeline()
         treeRoot.removeAllChildren()
         treeModel.reload()
         setClarificationPreviewVisible(true)
@@ -784,6 +842,47 @@ class SpecDetailPanel(
         currentWorkflow?.let { updateButtonStates(it) } ?: disableAllButtons()
     }
 
+    fun showProcessTimeline(entries: List<ProcessTimelineEntry>) {
+        processTimelineEntries.clear()
+        entries.forEach { entry ->
+            val normalized = entry.text.trim()
+            if (normalized.isNotBlank()) {
+                processTimelineEntries += entry.copy(text = normalized)
+            }
+        }
+        while (processTimelineEntries.size > MAX_PROCESS_TIMELINE_ENTRIES) {
+            processTimelineEntries.removeAt(0)
+        }
+        renderProcessTimeline()
+    }
+
+    fun appendProcessTimelineEntry(
+        text: String,
+        state: ProcessTimelineState = ProcessTimelineState.INFO,
+    ) {
+        val normalized = text.trim()
+        if (normalized.isBlank()) {
+            return
+        }
+        val previous = processTimelineEntries.lastOrNull()
+        if (previous != null && previous.text == normalized && previous.state == state) {
+            return
+        }
+        processTimelineEntries += ProcessTimelineEntry(
+            text = normalized,
+            state = state,
+        )
+        while (processTimelineEntries.size > MAX_PROCESS_TIMELINE_ENTRIES) {
+            processTimelineEntries.removeAt(0)
+        }
+        renderProcessTimeline()
+    }
+
+    fun clearProcessTimeline() {
+        processTimelineEntries.clear()
+        renderProcessTimeline()
+    }
+
     fun exitClarificationMode(clearInput: Boolean = false) {
         isGeneratingActive = false
         isClarificationGenerating = false
@@ -852,6 +951,47 @@ class SpecDetailPanel(
         }
         clarificationSplitPane.revalidate()
         clarificationSplitPane.repaint()
+    }
+
+    private fun setProcessTimelineVisible(visible: Boolean) {
+        if (!::processTimelineSection.isInitialized) {
+            return
+        }
+        processTimelineSection.isVisible = visible
+        processTimelineSection.revalidate()
+        processTimelineSection.repaint()
+    }
+
+    private fun renderProcessTimeline() {
+        if (processTimelineEntries.isEmpty()) {
+            processTimelinePane.text = ""
+            setProcessTimelineVisible(false)
+            return
+        }
+        setProcessTimelineVisible(true)
+        val markdown = buildString {
+            processTimelineEntries.forEach { entry ->
+                appendLine("- ${processStatePrefix(entry.state)} ${entry.text}")
+            }
+        }.trimEnd()
+        runCatching {
+            MarkdownRenderer.render(processTimelinePane, markdown)
+            processTimelinePane.caretPosition = 0
+        }.onFailure {
+            processTimelinePane.text = processTimelineEntries.joinToString("\n") { entry ->
+                "${processStatePrefix(entry.state)} ${entry.text}"
+            }
+            processTimelinePane.caretPosition = 0
+        }
+    }
+
+    private fun processStatePrefix(state: ProcessTimelineState): String {
+        return when (state) {
+            ProcessTimelineState.INFO -> "•"
+            ProcessTimelineState.ACTIVE -> "→"
+            ProcessTimelineState.DONE -> "✓"
+            ProcessTimelineState.FAILED -> "✕"
+        }
     }
 
     fun showGenerating(progress: Double) {
@@ -1166,6 +1306,14 @@ class SpecDetailPanel(
             clarificationPreviewSection.isVisible
     }
 
+    internal fun currentProcessTimelineTextForTest(): String {
+        return processTimelinePane.text
+    }
+
+    internal fun isProcessTimelineVisibleForTest(): Boolean {
+        return ::processTimelineSection.isInitialized && processTimelineSection.isVisible
+    }
+
     internal fun buttonStatesForTest(): Map<String, Any> {
         return mapOf(
             "generateEnabled" to generateButton.isEnabled,
@@ -1347,6 +1495,8 @@ class SpecDetailPanel(
         private val INPUT_SECTION_BORDER = JBColor(Color(200, 214, 234), Color(86, 97, 113))
         private val ACTIONS_SECTION_BG = JBColor(Color(236, 244, 255), Color(63, 70, 81))
         private val ACTIONS_SECTION_BORDER = JBColor(Color(190, 208, 234), Color(95, 108, 126))
+        private val PROCESS_SECTION_BG = JBColor(Color(246, 251, 255), Color(55, 62, 73))
+        private val PROCESS_SECTION_BORDER = JBColor(Color(199, 215, 237), Color(90, 101, 118))
         private val CLARIFICATION_CARD_BG = JBColor(Color(244, 249, 255), Color(56, 62, 72))
         private val CLARIFICATION_QUESTIONS_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
         private val CLARIFICATION_QUESTIONS_BORDER = JBColor(Color(203, 216, 235), Color(84, 95, 110))
@@ -1387,6 +1537,7 @@ class SpecDetailPanel(
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
         private val SECTION_TITLE_FG = JBColor(Color(36, 60, 101), Color(212, 223, 241))
+        private const val MAX_PROCESS_TIMELINE_ENTRIES = 18
         private const val CARD_PREVIEW = "preview"
         private const val CARD_EDIT = "edit"
         private const val CARD_CLARIFY = "clarify"

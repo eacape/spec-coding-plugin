@@ -352,6 +352,63 @@ class SpecEngineWorkflowTest {
     }
 
     @Test
+    fun `generateCurrentPhase should inject project context for incremental workflow without baseline`() {
+        var capturedConfirmedContext: String? = null
+        val engine = SpecEngine(project, storage) { request ->
+            capturedConfirmedContext = request.options.confirmedContext
+            val content = """
+                ## 功能需求
+                - 增量需求应结合现有项目
+                
+                ## 非功能需求
+                - 不破坏已有结构
+                
+                ## 用户故事
+                As a maintainer, I want incremental requirements to reuse current code layout.
+                
+                ## 验收标准
+                - [ ] 与现有项目结构对齐
+            """.trimIndent()
+            val candidate = SpecDocument(
+                id = "doc-specify",
+                phase = request.phase,
+                content = content,
+                metadata = SpecMetadata(
+                    title = "${request.phase.displayName} Document",
+                    description = "Generated ${request.phase.displayName} document",
+                ),
+            )
+            SpecGenerationResult.Success(candidate.copy(validationResult = SpecValidator.validate(candidate)))
+        }
+
+        Files.writeString(
+            tempDir.resolve("README.md"),
+            """
+                # Existing Project
+                Incremental requirements should align with this repository.
+            """.trimIndent(),
+        )
+
+        val workflow = engine.createWorkflow(
+            title = "Incremental without baseline",
+            description = "结合当前项目",
+            changeIntent = SpecChangeIntent.INCREMENTAL,
+            baselineWorkflowId = null,
+        ).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(
+                workflowId = workflow.id,
+                input = "extend requirements",
+            ).collect()
+        }
+
+        assertNotNull(capturedConfirmedContext)
+        assertTrue(capturedConfirmedContext!!.contains("现有项目上下文（增量需求生成要求）"))
+        assertTrue(capturedConfirmedContext!!.contains("README.md"))
+    }
+
+    @Test
     fun `generateCurrentPhase should inject baseline context for incremental workflow`() {
         var capturedConfirmedContext: String? = null
         val engine = SpecEngine(project, storage) { request ->
@@ -406,5 +463,78 @@ class SpecEngineWorkflowTest {
         assertTrue(capturedConfirmedContext!!.contains("用户确认：只做后端改造"))
         assertTrue(capturedConfirmedContext!!.contains("增量需求基线上下文"))
         assertTrue(capturedConfirmedContext!!.contains("基线工作流 ID: ${baseline.id}"))
+    }
+
+    @Test
+    fun `generateCurrentPhase should inject project context for incremental specify workflow`() {
+        var capturedConfirmedContext: String? = null
+        val engine = SpecEngine(project, storage) { request ->
+            capturedConfirmedContext = request.options.confirmedContext
+            val content = """
+                ## 功能需求
+                - 在增量需求中复用现有模块
+                
+                ## 非功能需求
+                - 保持与现有项目结构兼容
+                
+                ## 用户故事
+                As a user, I want incremental changes to align with existing codebase.
+                
+                ## 验收标准
+                - [ ] 输出包含与现有项目一致的模块命名
+            """.trimIndent()
+            val candidate = SpecDocument(
+                id = "doc-specify",
+                phase = request.phase,
+                content = content,
+                metadata = SpecMetadata(
+                    title = "${request.phase.displayName} Document",
+                    description = "Generated ${request.phase.displayName} document",
+                ),
+            )
+            SpecGenerationResult.Success(candidate.copy(validationResult = SpecValidator.validate(candidate)))
+        }
+
+        Files.writeString(
+            tempDir.resolve("README.md"),
+            """
+                # Existing Project
+                This project already has workflow, spec, and history modules.
+            """.trimIndent(),
+        )
+        val srcDir = tempDir.resolve("src/main/kotlin/com/example")
+        Files.createDirectories(srcDir)
+        Files.writeString(
+            srcDir.resolve("LegacyService.kt"),
+            """
+                package com.example
+                
+                class LegacyService
+            """.trimIndent(),
+        )
+
+        val baseline = engine.createWorkflow(
+            title = "Baseline",
+            description = "base workflow",
+        ).getOrThrow()
+        val incremental = engine.createWorkflow(
+            title = "Incremental with Project Context",
+            description = "在现有项目上新增需求",
+            changeIntent = SpecChangeIntent.INCREMENTAL,
+            baselineWorkflowId = baseline.id,
+        ).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(
+                workflowId = incremental.id,
+                input = "add incremental requirements",
+            ).collect()
+        }
+
+        assertNotNull(capturedConfirmedContext)
+        assertTrue(capturedConfirmedContext!!.contains("现有项目上下文（增量需求生成要求）"))
+        assertTrue(capturedConfirmedContext!!.contains("README.md"))
+        assertTrue(capturedConfirmedContext!!.contains("LegacyService.kt"))
+        assertTrue(capturedConfirmedContext!!.contains("增量需求基线上下文"))
     }
 }

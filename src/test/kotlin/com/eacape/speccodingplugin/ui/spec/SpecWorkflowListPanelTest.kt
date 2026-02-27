@@ -163,6 +163,76 @@ class SpecWorkflowListPanelTest {
         assertEquals(listOf("wf-edit"), editedIds)
     }
 
+    @Test
+    fun `single click on delete icon in unselected row should trigger delete callback`() {
+        val deletedIds = mutableListOf<String>()
+        val panel = runOnEdtResult {
+            SpecWorkflowListPanel(
+                onWorkflowSelected = {},
+                onCreateWorkflow = {},
+                onEditWorkflow = {},
+                onDeleteWorkflow = { deletedIds += it },
+            )
+        }
+
+        runOnEdt {
+            panel.updateWorkflows(
+                listOf(
+                    SpecWorkflowListPanel.WorkflowListItem(
+                        workflowId = "wf-a",
+                        title = "Workflow A",
+                        description = "",
+                        currentPhase = SpecPhase.SPECIFY,
+                        status = WorkflowStatus.IN_PROGRESS,
+                        updatedAt = 1L,
+                    ),
+                    SpecWorkflowListPanel.WorkflowListItem(
+                        workflowId = "wf-b",
+                        title = "Workflow B",
+                        description = "",
+                        currentPhase = SpecPhase.DESIGN,
+                        status = WorkflowStatus.IN_PROGRESS,
+                        updatedAt = 2L,
+                    ),
+                ),
+            )
+
+            val list = extractWorkflowList(panel)
+            list.setSize(220, 170)
+            list.doLayout()
+            panel.setSelectedWorkflow("wf-a")
+
+            val secondCellBounds = list.getCellBounds(1, 1)
+            assertNotNull(secondCellBounds)
+            val rowComponent = rendererComponentFor(list, panel.itemsForTest()[1], secondCellBounds!!)
+            val deleteLabel = findLabelByTooltip(rowComponent, SpecCodingBundle.message("spec.workflow.delete"))
+            assertNotNull(deleteLabel)
+
+            val deleteRect = SwingUtilities.convertRectangle(
+                deleteLabel!!.parent,
+                deleteLabel.bounds,
+                rowComponent,
+            )
+            val clickX = secondCellBounds.x + deleteRect.x + deleteRect.width / 2
+            val clickY = secondCellBounds.y + deleteRect.y + deleteRect.height / 2
+            list.dispatchEvent(
+                MouseEvent(
+                    list,
+                    MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(),
+                    0,
+                    clickX,
+                    clickY,
+                    1,
+                    false,
+                    MouseEvent.BUTTON1,
+                ),
+            )
+        }
+
+        assertEquals(listOf("wf-b"), deletedIds)
+    }
+
     private fun item(id: String, title: String, phase: SpecPhase): SpecWorkflowListPanel.WorkflowListItem {
         return SpecWorkflowListPanel.WorkflowListItem(
             workflowId = id,

@@ -8,6 +8,9 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import java.nio.charset.Charset
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.UUID
 
 /**
@@ -573,23 +576,22 @@ class SpecEngine(private val project: Project) {
             operationMode = normalizedOperationMode,
         )
 
-        val baselineContext = buildIncrementalBaselineContext(workflow) ?: return enrichedOptions
+        val baselineContext = buildIncrementalBaselineContext(workflow)
+        val projectContext = buildIncrementalProjectContext(workflow)
         val existingContext = enrichedOptions.confirmedContext
             ?.replace("\r\n", "\n")
             ?.replace('\r', '\n')
             ?.trim()
             .orEmpty()
-        val mergedContext = if (existingContext.isBlank()) {
-            baselineContext
-        } else {
-            buildString {
-                appendLine(existingContext)
-                appendLine()
-                appendLine("---")
-                appendLine()
-                appendLine(baselineContext)
-            }.trim()
+        val mergedContextSections = listOfNotNull(
+            existingContext.takeIf { it.isNotBlank() },
+            baselineContext?.takeIf { it.isNotBlank() },
+            projectContext?.takeIf { it.isNotBlank() },
+        )
+        if (mergedContextSections.isEmpty()) {
+            return enrichedOptions
         }
+        val mergedContext = mergedContextSections.joinToString(separator = "\n\n---\n\n")
         return enrichedOptions.copy(confirmedContext = mergedContext)
     }
 
@@ -638,6 +640,160 @@ class SpecEngine(private val project: Project) {
         }
     }
 
+    private fun buildIncrementalProjectContext(workflow: SpecWorkflow): String? {
+        if (!workflow.isIncrementalWorkflow() || workflow.currentPhase != SpecPhase.SPECIFY) {
+            return null
+        }
+        val basePath = project.basePath
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val root = runCatching { Path.of(basePath) }.getOrNull() ?: return null
+        if (!Files.isDirectory(root)) {
+            return null
+        }
+
+        val topLevelDirectories = listTopLevelEntries(root, directoriesOnly = true)
+        val topLevelFiles = listTopLevelEntries(root, directoriesOnly = false)
+        val keyFileSnippets = readKeyProjectFiles(root)
+        val sourceSnapshot = buildSourceSnapshot(root)
+
+        if (topLevelDirectories.isEmpty() && topLevelFiles.isEmpty() && keyFileSnippets.isEmpty() && sourceSnapshot.isBlank()) {
+            return null
+        }
+
+        return buildString {
+            appendLine("## 现有项目上下文（增量需求生成要求）")
+            appendLine("生成 requirements.md 时，请结合当前代码结构和已有配置，优先复用现有模块与命名。")
+            if (topLevelDirectories.isNotEmpty()) {
+                appendLine("顶层目录: ${topLevelDirectories.joinToString(", ")}")
+            }
+            if (topLevelFiles.isNotEmpty()) {
+                appendLine("顶层文件: ${topLevelFiles.joinToString(", ")}")
+            }
+            if (sourceSnapshot.isNotBlank()) {
+                appendLine()
+                appendLine("### 现有源码文件（节选）")
+                appendLine(sourceSnapshot)
+            }
+            if (keyFileSnippets.isNotEmpty()) {
+                appendLine()
+                appendLine("### 关键项目文件（节选）")
+                keyFileSnippets.forEach { snippet ->
+                    appendLine("#### ${snippet.relativePath}")
+                    appendLine("```")
+                    appendLine(snippet.content)
+                    appendLine("```")
+                    appendLine()
+                }
+            }
+        }.trimEnd()
+    }
+
+    private fun listTopLevelEntries(root: Path, directoriesOnly: Boolean): List<String> {
+        return runCatching {
+            Files.list(root).use { stream ->
+                stream
+                    .filter { path ->
+                        val name = path.fileName?.toString().orEmpty()
+                        if (name.isBlank() || shouldIgnoreProjectEntry(name)) {
+                            return@filter false
+                        }
+                        if (directoriesOnly) {
+                            Files.isDirectory(path)
+                        } else {
+                            Files.isRegularFile(path)
+                        }
+                    }
+                    .map { it.fileName.toString() }
+                    .sorted()
+                    .limit(MAX_TOP_LEVEL_ENTRIES.toLong())
+                    .toList()
+            }
+        }.getOrElse { emptyList() }
+    }
+
+    private fun readKeyProjectFiles(root: Path): List<ProjectContextSnippet> {
+        return KEY_PROJECT_CONTEXT_FILES.mapNotNull { relativePath ->
+            val path = root.resolve(relativePath)
+            if (!Files.isRegularFile(path)) {
+                return@mapNotNull null
+            }
+            val raw = runCatching {
+                Files.readString(path, DEFAULT_PROJECT_CONTEXT_CHARSET)
+            }.getOrElse { error ->
+                logger.debug("Skip project context file due to read failure: $relativePath", error)
+                return@mapNotNull null
+            }
+            val normalized = raw
+                .replace("\r\n", "\n")
+                .replace('\r', '\n')
+                .trim()
+            if (normalized.isBlank()) {
+                return@mapNotNull null
+            }
+            ProjectContextSnippet(
+                relativePath = relativePath,
+                content = clipContextText(normalized, MAX_KEY_FILE_SNIPPET_LINES, MAX_KEY_FILE_SNIPPET_CHARS),
+            )
+        }
+    }
+
+    private fun buildSourceSnapshot(root: Path): String {
+        val lines = mutableListOf<String>()
+        for (relativeDir in SOURCE_CONTEXT_DIRS) {
+            val dir = root.resolve(relativeDir)
+            if (!Files.isDirectory(dir)) {
+                continue
+            }
+            val files = runCatching {
+                Files.walk(dir, SOURCE_SNAPSHOT_DEPTH).use { stream ->
+                    stream
+                        .filter { Files.isRegularFile(it) }
+                        .map { root.relativize(it).toString().replace('\\', '/') }
+                        .sorted()
+                        .limit(MAX_SOURCE_FILES_PER_DIR.toLong())
+                        .toList()
+                }
+            }.getOrElse { error ->
+                logger.debug("Skip source snapshot for $relativeDir", error)
+                emptyList()
+            }
+            if (files.isEmpty()) {
+                continue
+            }
+            lines += "- $relativeDir"
+            files.forEach { path -> lines += "  - `$path`" }
+        }
+        return lines.joinToString("\n")
+    }
+
+    private fun clipContextText(content: String, maxLines: Int, maxChars: Int): String {
+        val lines = content.lines()
+        val clippedByLines = lines.size > maxLines
+        val linesWithinBudget = lines.take(maxLines).joinToString("\n")
+        val clippedByChars = linesWithinBudget.length > maxChars
+        val clipped = if (clippedByChars) {
+            linesWithinBudget.take(maxChars).trimEnd()
+        } else {
+            linesWithinBudget
+        }
+        return if (clippedByLines || clippedByChars) {
+            "$clipped\n...(截断)"
+        } else {
+            clipped
+        }
+    }
+
+    private fun shouldIgnoreProjectEntry(name: String): Boolean {
+        return name in PROJECT_CONTEXT_IGNORED_ENTRIES
+    }
+
+    private data class ProjectContextSnippet(
+        val relativePath: String,
+        val content: String,
+    )
+
     /**
      * 生成工作流 ID
      */
@@ -646,6 +802,45 @@ class SpecEngine(private val project: Project) {
     }
 
     companion object {
+        private val PROJECT_CONTEXT_IGNORED_ENTRIES = setOf(
+            ".git",
+            ".idea",
+            ".gradle",
+            ".spec-coding",
+            "build",
+            "out",
+            "node_modules",
+            "__pycache__",
+            ".DS_Store",
+            "Thumbs.db",
+        )
+        private val KEY_PROJECT_CONTEXT_FILES = listOf(
+            "README.md",
+            "README.zh-CN.md",
+            "docs/spec-coding-plugin-plan.md",
+            "docs/dev-checklist.md",
+            "build.gradle.kts",
+            "settings.gradle.kts",
+            "gradle.properties",
+            "src/main/resources/META-INF/plugin.xml",
+            "package.json",
+            "pom.xml",
+            "pyproject.toml",
+        )
+        private val SOURCE_CONTEXT_DIRS = listOf(
+            "src/main/kotlin",
+            "src/main/java",
+            "src/main/resources",
+            "src/test/kotlin",
+            "src/test/java",
+        )
+        private val DEFAULT_PROJECT_CONTEXT_CHARSET: Charset = Charsets.UTF_8
+        private const val MAX_TOP_LEVEL_ENTRIES = 12
+        private const val MAX_KEY_FILE_SNIPPET_LINES = 120
+        private const val MAX_KEY_FILE_SNIPPET_CHARS = 4000
+        private const val SOURCE_SNAPSHOT_DEPTH = 2
+        private const val MAX_SOURCE_FILES_PER_DIR = 18
+
         fun getInstance(project: Project): SpecEngine = project.service()
     }
 }
