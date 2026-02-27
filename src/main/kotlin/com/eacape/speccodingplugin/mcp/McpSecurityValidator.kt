@@ -12,8 +12,10 @@ object McpSecurityValidator {
     private val logger = thisLogger()
 
     private val SAFE_COMMANDS = setOf(
-        "npx", "node", "python", "python3", "uvx", "uv",
-        "docker", "deno", "bun", "cargo"
+        "npx", "npx.cmd", "npm", "npm.cmd",
+        "node", "python", "python3", "uvx", "uv",
+        "docker", "deno", "bun", "cargo",
+        "chrome-devtools-mcp", "chrome-devtools-mcp.cmd"
     )
 
     private val SHELL_METACHARACTERS = Regex("[;&|`\\\$(){}\\[\\]<>!]")

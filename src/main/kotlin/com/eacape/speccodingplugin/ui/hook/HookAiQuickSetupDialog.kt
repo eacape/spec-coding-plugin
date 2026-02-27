@@ -1,4 +1,4 @@
-package com.eacape.speccodingplugin.ui.mcp
+package com.eacape.speccodingplugin.ui.hook
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
@@ -18,17 +18,14 @@ import java.awt.FlowLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
 
-/**
- * MCP AI 快速配置输入对话框。
- */
-class McpAiQuickSetupDialog(
+class HookAiQuickSetupDialog(
     providers: List<String>,
     private val modelsByProvider: Map<String, List<ModelInfo>>,
     preferredProviderId: String?,
     preferredModelId: String?,
 ) : DialogWrapper(true) {
 
-    private val inputArea = JBTextArea(10, 62)
+    private val inputArea = JBTextArea(8, 62)
     private val providerCombo = ComboBox<String>()
     private val modelCombo = ComboBox<ModelChoice>()
 
@@ -42,8 +39,11 @@ class McpAiQuickSetupDialog(
         private set
 
     init {
-        title = SpecCodingBundle.message("mcp.ai.dialog.title")
-        val availableProviders = providers.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+        title = SpecCodingBundle.message("hook.ai.dialog.title")
+        val availableProviders = providers
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
         availableProviders.forEach { providerCombo.addItem(it) }
         providerCombo.renderer = SimpleListCellRenderer.create<String> { label, value, _ ->
             label.text = value?.let(::providerDisplayName).orEmpty()
@@ -63,40 +63,39 @@ class McpAiQuickSetupDialog(
     override fun createCenterPanel(): JComponent {
         val panel = JPanel(BorderLayout(JBUI.scale(0), JBUI.scale(8)))
         panel.border = JBUI.Borders.empty(8)
-        panel.preferredSize = Dimension(JBUI.scale(640), JBUI.scale(300))
+        panel.preferredSize = Dimension(JBUI.scale(640), JBUI.scale(280))
 
         val guidance = JBLabel(
-            "<html>${SpecCodingBundle.message("mcp.ai.dialog.guide")}</html>"
+            "<html>${SpecCodingBundle.message("hook.ai.dialog.message")}</html>"
         )
         guidance.foreground = JBUI.CurrentTheme.ContextHelp.FOREGROUND
         panel.add(guidance, BorderLayout.NORTH)
 
         val controls = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0))
         controls.isOpaque = false
-        controls.add(JBLabel(SpecCodingBundle.message("mcp.ai.dialog.provider")))
-        providerCombo.preferredSize = Dimension(JBUI.scale(140), providerCombo.preferredSize.height)
+        controls.add(JBLabel(SpecCodingBundle.message("hook.ai.dialog.provider")))
+        providerCombo.preferredSize = Dimension(JBUI.scale(150), providerCombo.preferredSize.height)
         controls.add(providerCombo)
-        controls.add(JBLabel(SpecCodingBundle.message("mcp.ai.dialog.model")))
+        controls.add(JBLabel(SpecCodingBundle.message("hook.ai.dialog.model")))
         modelCombo.preferredSize = Dimension(JBUI.scale(220), modelCombo.preferredSize.height)
         controls.add(modelCombo)
 
         inputArea.lineWrap = true
         inputArea.wrapStyleWord = true
-        inputArea.emptyText.text = SpecCodingBundle.message("mcp.ai.dialog.placeholder")
+        inputArea.emptyText.text = SpecCodingBundle.message("hook.ai.dialog.placeholder")
 
         val center = JPanel(BorderLayout(JBUI.scale(0), JBUI.scale(8)))
         center.isOpaque = false
         center.add(controls, BorderLayout.NORTH)
         center.add(JBScrollPane(inputArea), BorderLayout.CENTER)
         panel.add(center, BorderLayout.CENTER)
-
         return panel
     }
 
     override fun doValidate(): ValidationInfo? {
         if (inputArea.text.trim().isEmpty()) {
             return ValidationInfo(
-                SpecCodingBundle.message("mcp.ai.dialog.validation.promptRequired"),
+                SpecCodingBundle.message("hook.ai.dialog.validation.promptRequired"),
                 inputArea,
             )
         }
@@ -120,7 +119,7 @@ class McpAiQuickSetupDialog(
 
         val auto = ModelChoice(
             id = null,
-            label = SpecCodingBundle.message("mcp.ai.dialog.model.auto"),
+            label = SpecCodingBundle.message("hook.ai.dialog.model.auto"),
         )
         modelCombo.addItem(auto)
         models.forEach { model ->

@@ -772,6 +772,7 @@ class SpecWorkflowPanel(
             ),
             suggestedDetails = seededContext,
             seedQuestionsMarkdown = pendingRetry?.questionsMarkdown,
+            seedStructuredQuestions = pendingRetry?.structuredQuestions.orEmpty(),
             clarificationRound = clarificationRound,
         )
     }
@@ -815,6 +816,7 @@ class SpecWorkflowPanel(
             options = context.options.copy(confirmedContext = currentDraft),
             suggestedDetails = currentDraft,
             seedQuestionsMarkdown = pendingRetry?.questionsMarkdown,
+            seedStructuredQuestions = pendingRetry?.structuredQuestions.orEmpty(),
             clarificationRound = clarificationRound,
         )
     }
@@ -851,6 +853,7 @@ class SpecWorkflowPanel(
         options: GenerationOptions = context.options,
         suggestedDetails: String = input,
         seedQuestionsMarkdown: String? = null,
+        seedStructuredQuestions: List<String> = emptyList(),
         clarificationRound: Int = 1,
     ) {
         scope.launch(Dispatchers.IO) {
@@ -901,11 +904,17 @@ class SpecWorkflowPanel(
                     return@invokeLaterSafe
                 }
                 val markdown = buildClarificationMarkdown(draft, draftError)
+                val structuredQuestions = if (draft != null) {
+                    draft.questions
+                } else {
+                    seedStructuredQuestions
+                }
                 detailPanel.showClarificationDraft(
                     phase = draft?.phase ?: fallbackPhase,
                     input = input,
                     questionsMarkdown = markdown,
                     suggestedDetails = safeSuggestedDetails,
+                    structuredQuestions = structuredQuestions,
                 )
                 val errorText = compactErrorMessage(draftError, SpecCodingBundle.message("common.unknown"))
                 rememberClarificationRetry(
@@ -913,6 +922,7 @@ class SpecWorkflowPanel(
                     input = input,
                     confirmedContext = safeSuggestedDetails,
                     questionsMarkdown = markdown,
+                    structuredQuestions = structuredQuestions,
                     clarificationRound = clarificationRound,
                     lastError = draftError?.let { errorText },
                 )
@@ -1107,6 +1117,7 @@ class SpecWorkflowPanel(
         val input: String,
         val confirmedContext: String,
         val questionsMarkdown: String,
+        val structuredQuestions: List<String>,
         val clarificationRound: Int,
         val lastError: String?,
     )
@@ -1116,6 +1127,7 @@ class SpecWorkflowPanel(
         input: String,
         confirmedContext: String?,
         questionsMarkdown: String? = null,
+        structuredQuestions: List<String>? = null,
         clarificationRound: Int? = null,
         lastError: String? = null,
     ) {
@@ -1136,11 +1148,17 @@ class SpecWorkflowPanel(
         val mergedQuestions = normalizedQuestions
             ?: previous?.questionsMarkdown
             .orEmpty()
+        val mergedStructuredQuestions = structuredQuestions
+            ?.map { normalizeRetryText(it) }
+            ?.filter { it.isNotBlank() }
+            ?.distinct()
+            ?: previous?.structuredQuestions
+            .orEmpty()
         val mergedRound = clarificationRound
             ?: previous?.clarificationRound
             ?: 1
         val mergedError = normalizedError ?: previous?.lastError
-        if (mergedInput.isBlank() && mergedContext.isBlank() && mergedQuestions.isBlank()) {
+        if (mergedInput.isBlank() && mergedContext.isBlank() && mergedQuestions.isBlank() && mergedStructuredQuestions.isEmpty()) {
             pendingClarificationRetryByWorkflowId.remove(workflowId)
             return
         }
@@ -1148,6 +1166,7 @@ class SpecWorkflowPanel(
             input = mergedInput,
             confirmedContext = mergedContext,
             questionsMarkdown = mergedQuestions,
+            structuredQuestions = mergedStructuredQuestions,
             clarificationRound = mergedRound,
             lastError = mergedError,
         )

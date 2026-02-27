@@ -67,6 +67,12 @@ class SpecCodingSettingsState : PersistentStateComponent<SpecCodingSettingsState
     // Skill 保存目标通道（CODEX / CLUADE / ALL）
     var skillGenerationChannel: String = "ALL"
 
+    // Skill AI 草稿生成 provider（为空时跟随 defaultProvider）
+    var skillGenerationProvider: String = ""
+
+    // Skill AI 草稿生成 model id（为空时跟随 selectedCliModel）
+    var skillGenerationModel: String = ""
+
     override fun getState(): SpecCodingSettingsState = this
 
     override fun loadState(state: SpecCodingSettingsState) {

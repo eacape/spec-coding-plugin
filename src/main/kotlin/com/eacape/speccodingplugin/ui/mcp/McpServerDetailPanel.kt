@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.mcp.McpServer
 import com.eacape.speccodingplugin.mcp.McpTool
 import com.eacape.speccodingplugin.mcp.ServerStatus
+import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -31,6 +32,7 @@ class McpServerDetailPanel(
     private val serverNameLabel = JBLabel("")
     private val statusLabel = JBLabel("")
     private val commandLabel = JBLabel("")
+    private val errorLabel = JBLabel("")
     private val startBtn = JButton(SpecCodingBundle.message("mcp.server.start"))
     private val stopBtn = JButton(SpecCodingBundle.message("mcp.server.stop"))
     private val restartBtn = JButton(SpecCodingBundle.message("mcp.server.restart"))
@@ -44,47 +46,84 @@ class McpServerDetailPanel(
     private val emptyLabel = JBLabel(SpecCodingBundle.message("mcp.server.select"))
 
     private var currentServerId: String? = null
+    private var currentServerStatus: ServerStatus = ServerStatus.STOPPED
+    private var currentErrorText: String? = null
 
     init {
-        border = JBUI.Borders.empty(8)
+        border = JBUI.Borders.empty()
+        isOpaque = true
+        background = DETAIL_SECTION_BG
+        bindActions()
+        listOf(startBtn, stopBtn, restartBtn, editBtn).forEach(::styleActionButton)
         showEmpty()
+    }
+
+    private fun bindActions() {
+        startBtn.addActionListener { currentServerId?.let(onStartServer) }
+        stopBtn.addActionListener { currentServerId?.let(onStopServer) }
+        restartBtn.addActionListener { currentServerId?.let(onRestartServer) }
+        editBtn.addActionListener { currentServerId?.let(onEditServer) }
     }
 
     private fun buildContentUI() {
         removeAll()
         layout = BorderLayout()
-        add(createHeaderPanel(), BorderLayout.NORTH)
-        add(createToolsPanel(), BorderLayout.CENTER)
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(6, 6, 0, 6)
+                add(createHeaderPanel(), BorderLayout.CENTER)
+            },
+            BorderLayout.NORTH,
+        )
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(6)
+                add(createToolsPanel(), BorderLayout.CENTER)
+            },
+            BorderLayout.CENTER,
+        )
         revalidate()
         repaint()
     }
 
     private fun createHeaderPanel(): JPanel {
-        val panel = JPanel(BorderLayout())
-        panel.isOpaque = false
-        panel.border = JBUI.Borders.emptyBottom(8)
+        val panel = JPanel(BorderLayout(0, JBUI.scale(4)))
+        panel.background = HEADER_BG
+        panel.border = SpecUiStyle.roundedCardBorder(
+            lineColor = HEADER_BORDER,
+            arc = JBUI.scale(12),
+            top = 8,
+            left = 10,
+            bottom = 8,
+            right = 10,
+        )
+        panel.isOpaque = true
 
         val infoPanel = JPanel()
         infoPanel.layout = BoxLayout(infoPanel, BoxLayout.Y_AXIS)
         infoPanel.isOpaque = false
 
-        serverNameLabel.font = serverNameLabel.font.deriveFont(Font.BOLD, 14f)
-        statusLabel.font = statusLabel.font.deriveFont(11f)
-        commandLabel.font = commandLabel.font.deriveFont(11f)
-        commandLabel.foreground = JBColor.GRAY
+        serverNameLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        statusLabel.font = JBUI.Fonts.smallFont()
+        commandLabel.font = JBUI.Fonts.smallFont()
+        errorLabel.font = JBUI.Fonts.smallFont()
+        serverNameLabel.foreground = TITLE_FG
+        commandLabel.foreground = COMMAND_FG
+        errorLabel.foreground = ERROR_FG
+        errorLabel.isVisible = false
 
         infoPanel.add(serverNameLabel)
         infoPanel.add(Box.createVerticalStrut(2))
         infoPanel.add(statusLabel)
         infoPanel.add(Box.createVerticalStrut(2))
         infoPanel.add(commandLabel)
+        infoPanel.add(Box.createVerticalStrut(2))
+        infoPanel.add(errorLabel)
 
         val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0))
         btnPanel.isOpaque = false
-        startBtn.addActionListener { currentServerId?.let(onStartServer) }
-        stopBtn.addActionListener { currentServerId?.let(onStopServer) }
-        restartBtn.addActionListener { currentServerId?.let(onRestartServer) }
-        editBtn.addActionListener { currentServerId?.let(onEditServer) }
         btnPanel.add(startBtn)
         btnPanel.add(stopBtn)
         btnPanel.add(restartBtn)
@@ -100,28 +139,53 @@ class McpServerDetailPanel(
         panel.isOpaque = false
 
         toolsLabel.border = JBUI.Borders.emptyBottom(4)
+        toolsLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        toolsLabel.foreground = TITLE_FG
 
         toolList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         toolList.cellRenderer = ToolCellRenderer()
+        toolList.emptyText.text = SpecCodingBundle.message("mcp.server.noTools")
+        toolList.background = TOOL_LIST_BG
+        toolList.selectionBackground = TOOL_LIST_SELECTED_BG
+        toolList.selectionForeground = TOOL_LIST_SELECTED_FG
         toolList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
                 updateToolDetail(toolList.selectedValue)
             }
         }
 
-        val listScroll = JBScrollPane(toolList)
+        val listScroll = JBScrollPane(toolList).apply {
+            border = JBUI.Borders.empty()
+            viewport.background = TOOL_LIST_BG
+        }
         listScroll.preferredSize = Dimension(0, 200)
 
         toolDetailArea.isEditable = false
-        toolDetailArea.font = Font("JetBrains Mono", Font.PLAIN, 12)
-        toolDetailArea.border = JBUI.Borders.empty(4)
-        val detailScroll = JBScrollPane(toolDetailArea)
+        toolDetailArea.font = JBUI.Fonts.smallFont()
+        toolDetailArea.border = JBUI.Borders.empty(6)
+        toolDetailArea.background = TOOL_DETAIL_BG
+        toolDetailArea.foreground = TOOL_DETAIL_FG
+        val detailScroll = JBScrollPane(toolDetailArea).apply {
+            border = JBUI.Borders.empty()
+            viewport.background = TOOL_DETAIL_BG
+        }
 
         val splitPane = JSplitPane(
-            JSplitPane.VERTICAL_SPLIT, listScroll, detailScroll
+            JSplitPane.VERTICAL_SPLIT,
+            createSectionContainer(listScroll),
+            createSectionContainer(detailScroll),
         )
         splitPane.dividerLocation = 200
-        splitPane.dividerSize = JBUI.scale(4)
+        splitPane.dividerSize = JBUI.scale(6)
+        splitPane.border = JBUI.Borders.empty()
+        splitPane.isContinuousLayout = true
+        splitPane.background = DETAIL_SECTION_BG
+        SpecUiStyle.applySplitPaneDivider(
+            splitPane = splitPane,
+            dividerSize = JBUI.scale(6),
+            dividerBackground = DIVIDER_BG,
+            dividerBorderColor = DIVIDER_BORDER,
+        )
 
         panel.add(toolsLabel, BorderLayout.NORTH)
         panel.add(splitPane, BorderLayout.CENTER)
@@ -130,9 +194,15 @@ class McpServerDetailPanel(
 
     fun updateServer(server: McpServer, tools: List<McpTool>) {
         currentServerId = server.config.id
+        currentServerStatus = server.status
+        currentErrorText = server.error
         serverNameLabel.text = server.config.name
-        commandLabel.text = SpecCodingBundle.message("mcp.server.command", server.config.command)
+        commandLabel.text = SpecCodingBundle.message(
+            "mcp.server.command",
+            buildCommandPreview(server.config.command, server.config.args),
+        )
         updateStatusLabel(server.status)
+        updateErrorLabel(server.status, server.error)
         updateButtonStates(server.status, server.config.trusted)
 
         toolsLabel.text = SpecCodingBundle.message("mcp.server.tools", tools.size)
@@ -140,7 +210,12 @@ class McpServerDetailPanel(
         tools.forEach { toolListModel.addElement(it) }
 
         if (tools.isEmpty()) {
-            toolDetailArea.text = SpecCodingBundle.message("mcp.server.noTools")
+            toolDetailArea.text = if (server.status == ServerStatus.ERROR) {
+                val message = server.error?.trim().orEmpty().ifBlank { SpecCodingBundle.message("common.unknown") }
+                SpecCodingBundle.message("mcp.server.errorDetail", message)
+            } else {
+                SpecCodingBundle.message("mcp.server.noTools")
+            }
         } else {
             toolDetailArea.text = ""
         }
@@ -150,13 +225,57 @@ class McpServerDetailPanel(
 
     fun showEmpty() {
         currentServerId = null
+        currentServerStatus = ServerStatus.STOPPED
+        currentErrorText = null
         removeAll()
         layout = BorderLayout()
         emptyLabel.text = SpecCodingBundle.message("mcp.server.select")
+        emptyLabel.foreground = EMPTY_FG
+        emptyLabel.font = JBUI.Fonts.smallFont()
         emptyLabel.horizontalAlignment = SwingConstants.CENTER
-        add(emptyLabel, BorderLayout.CENTER)
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = true
+                background = EMPTY_BG
+                border = SpecUiStyle.roundedCardBorder(
+                    lineColor = EMPTY_BORDER,
+                    arc = JBUI.scale(12),
+                    top = 6,
+                    left = 6,
+                    bottom = 6,
+                    right = 6,
+                )
+                add(emptyLabel, BorderLayout.CENTER)
+            },
+            BorderLayout.CENTER,
+        )
         revalidate()
         repaint()
+    }
+
+    fun refreshLocalizedTexts() {
+        startBtn.text = SpecCodingBundle.message("mcp.server.start")
+        stopBtn.text = SpecCodingBundle.message("mcp.server.stop")
+        restartBtn.text = SpecCodingBundle.message("mcp.server.restart")
+        editBtn.text = SpecCodingBundle.message("mcp.server.edit")
+        styleActionButton(startBtn)
+        styleActionButton(stopBtn)
+        styleActionButton(restartBtn)
+        styleActionButton(editBtn)
+        toolList.emptyText.text = SpecCodingBundle.message("mcp.server.noTools")
+        toolsLabel.text = SpecCodingBundle.message("mcp.server.tools", toolListModel.size())
+        if (toolListModel.isEmpty) {
+            toolDetailArea.text = if (currentServerStatus == ServerStatus.ERROR) {
+                val message = currentErrorText?.trim().orEmpty().ifBlank { SpecCodingBundle.message("common.unknown") }
+                SpecCodingBundle.message("mcp.server.errorDetail", message)
+            } else {
+                SpecCodingBundle.message("mcp.server.noTools")
+            }
+        }
+        updateErrorLabel(currentServerStatus, currentErrorText)
+        if (currentServerId == null) {
+            emptyLabel.text = SpecCodingBundle.message("mcp.server.select")
+        }
     }
 
     private fun updateStatusLabel(status: ServerStatus) {
@@ -175,16 +294,29 @@ class McpServerDetailPanel(
     }
 
     private fun updateButtonStates(status: ServerStatus, trusted: Boolean) {
-        startBtn.isEnabled = status == ServerStatus.STOPPED && trusted
-        stopBtn.isEnabled = status == ServerStatus.RUNNING
-        restartBtn.isEnabled = status == ServerStatus.RUNNING
+        startBtn.isEnabled = (status == ServerStatus.STOPPED || status == ServerStatus.ERROR) && trusted
+        stopBtn.isEnabled = status == ServerStatus.RUNNING || status == ServerStatus.STARTING
+        restartBtn.isEnabled = status == ServerStatus.RUNNING || status == ServerStatus.ERROR
         editBtn.isEnabled = status != ServerStatus.STARTING
 
-        if (!trusted && status == ServerStatus.STOPPED) {
+        if (!trusted && (status == ServerStatus.STOPPED || status == ServerStatus.ERROR)) {
             startBtn.toolTipText = SpecCodingBundle.message("mcp.server.untrusted")
         } else {
             startBtn.toolTipText = null
         }
+    }
+
+    private fun updateErrorLabel(status: ServerStatus, error: String?) {
+        if (status != ServerStatus.ERROR) {
+            errorLabel.text = ""
+            errorLabel.toolTipText = null
+            errorLabel.isVisible = false
+            return
+        }
+        val message = error?.trim().orEmpty().ifBlank { SpecCodingBundle.message("common.unknown") }
+        errorLabel.text = SpecCodingBundle.message("mcp.server.errorDetail", message)
+        errorLabel.toolTipText = message
+        errorLabel.isVisible = true
     }
 
     private fun updateToolDetail(tool: McpTool?) {
@@ -219,7 +351,7 @@ class McpServerDetailPanel(
             panel.border = JBUI.Borders.empty(4)
             nameLabel.font = nameLabel.font.deriveFont(Font.BOLD, 12f)
             descLabel.font = descLabel.font.deriveFont(Font.PLAIN, 11f)
-            descLabel.foreground = JBColor.GRAY
+            descLabel.foreground = TOOL_DESC_FG
             panel.add(nameLabel, BorderLayout.NORTH)
             panel.add(descLabel, BorderLayout.SOUTH)
         }
@@ -241,16 +373,85 @@ class McpServerDetailPanel(
                 }
             }
             panel.background = if (isSelected) {
-                list.selectionBackground
+                TOOL_LIST_SELECTED_BG
             } else {
-                list.background
+                TOOL_LIST_BG
             }
             nameLabel.foreground = if (isSelected) {
-                list.selectionForeground
+                TOOL_LIST_SELECTED_FG
             } else {
-                list.foreground
+                TOOL_LIST_FG
             }
+            descLabel.foreground = if (isSelected) TOOL_DESC_FG_SELECTED else TOOL_DESC_FG
             return panel
         }
+    }
+
+    private fun styleActionButton(button: JButton) {
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.isContentAreaFilled = true
+        button.isOpaque = true
+        button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.background = BUTTON_BG
+        button.foreground = BUTTON_FG
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+            JBUI.Borders.empty(1, 6, 1, 6),
+        )
+        SpecUiStyle.applyRoundRect(button, arc = 10)
+        button.preferredSize = JBUI.size(
+            maxOf(button.preferredSize.width, JBUI.scale(56)),
+            JBUI.scale(28),
+        )
+    }
+
+    private fun createSectionContainer(content: JComponent): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = SECTION_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = SECTION_BORDER,
+                arc = JBUI.scale(10),
+                top = 4,
+                left = 4,
+                bottom = 4,
+                right = 4,
+            )
+            add(content, BorderLayout.CENTER)
+        }
+    }
+
+    private fun buildCommandPreview(command: String, args: List<String>): String {
+        if (args.isEmpty()) return command
+        return (listOf(command) + args).joinToString(" ")
+    }
+
+    companion object {
+        private val HEADER_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
+        private val HEADER_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
+        private val SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
+        private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val TITLE_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val COMMAND_FG = JBColor(Color(108, 122, 143), Color(162, 176, 197))
+        private val DETAIL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
+        private val TOOL_LIST_BG = JBColor(Color(248, 251, 255), Color(56, 62, 72))
+        private val TOOL_LIST_SELECTED_BG = JBColor(Color(226, 238, 255), Color(75, 91, 114))
+        private val TOOL_LIST_FG = JBColor(Color(45, 62, 88), Color(213, 223, 238))
+        private val TOOL_LIST_SELECTED_FG = JBColor(Color(35, 55, 86), Color(229, 237, 249))
+        private val TOOL_DESC_FG = JBColor(Color(104, 120, 143), Color(168, 181, 202))
+        private val TOOL_DESC_FG_SELECTED = JBColor(Color(86, 104, 129), Color(206, 219, 238))
+        private val TOOL_DETAIL_BG = JBColor(Color(246, 249, 255), Color(58, 64, 74))
+        private val TOOL_DETAIL_FG = JBColor(Color(68, 84, 109), Color(204, 216, 236))
+        private val EMPTY_BG = JBColor(Color(247, 251, 255), Color(56, 62, 72))
+        private val EMPTY_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val EMPTY_FG = JBColor(Color(106, 121, 141), Color(173, 187, 208))
+        private val ERROR_FG = JBColor(Color(176, 60, 73), Color(236, 149, 161))
+        private val DIVIDER_BG = JBColor(Color(236, 240, 246), Color(74, 80, 89))
+        private val DIVIDER_BORDER = JBColor(Color(217, 223, 232), Color(87, 94, 105))
     }
 }

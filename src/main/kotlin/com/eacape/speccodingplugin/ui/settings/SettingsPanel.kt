@@ -41,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -114,10 +115,13 @@ class SettingsPanel(
     private val skillRefreshButton = JButton(SpecCodingBundle.message("settings.skills.discover.refresh"))
     private val skillNewDraftButton = JButton(SpecCodingBundle.message("settings.skills.editor.new"))
     private val skillAiDraftButton = JButton(SpecCodingBundle.message("settings.skills.generate.action"))
+    private val skillDeleteButton = JButton(SpecCodingBundle.message("settings.skills.editor.delete"))
     private val skillSaveButton = JButton(SpecCodingBundle.message("settings.skills.editor.save"))
     private val skillSaveCurrentButton = JButton(SpecCodingBundle.message("settings.skills.editor.saveCurrent"))
     private val skillTargetScopeCombo = ComboBox(SkillScope.entries.toTypedArray())
     private val skillTargetChannelCombo = ComboBox(SkillSaveChannel.entries.toTypedArray())
+    private val skillDraftProviderCombo = ComboBox<String>()
+    private val skillDraftModelCombo = ComboBox<ModelInfo>()
     private val skillRequirementField = JBTextField()
     private val skillIdField = JBTextField()
     private val skillNameField = JBTextField()
@@ -126,8 +130,6 @@ class SettingsPanel(
     private val skillMarkdownArea = JBTextArea()
     private val skillDiscoveryStatusLabel = JBLabel(SpecCodingBundle.message("settings.skills.discovery.empty"))
     private val skillEditorStatusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
-    private val skillRootsListModel = DefaultListModel<String>()
-    private val skillRootsList = JBList(skillRootsListModel)
     private val skillsListModel = DefaultListModel<Skill>()
     private val skillsList = JBList(skillsListModel)
     private var activeSkillSourcePath: String? = null
@@ -167,8 +169,14 @@ class SettingsPanel(
     private fun buildUi() {
         configureComboRenderers()
         refreshProviderComboPreservingSelection(settings.defaultProvider)
+        refreshSkillDraftProviderComboPreservingSelection(resolveSkillDraftPreferredProvider())
+        refreshSkillDraftModelCombo()
         defaultProviderCombo.addActionListener {
             refreshModelCombo()
+            scheduleAutoSave()
+        }
+        skillDraftProviderCombo.addActionListener {
+            refreshSkillDraftModelCombo()
             scheduleAutoSave()
         }
 
@@ -179,6 +187,7 @@ class SettingsPanel(
         skillRefreshButton.addActionListener { refreshSkillDiscovery(forceReload = true) }
         skillNewDraftButton.addActionListener { resetSkillEditorForNewDraft() }
         skillAiDraftButton.addActionListener { generateSkillDraftWithAi() }
+        skillDeleteButton.addActionListener { deleteSkillFromCurrentSource() }
         skillSaveButton.addActionListener { saveSkillToSelectedTargets() }
         skillSaveCurrentButton.addActionListener { saveSkillToCurrentSource() }
         skillTargetScopeCombo.renderer = SimpleListCellRenderer.create<SkillScope> { label, value, _ ->
@@ -194,6 +203,12 @@ class SettingsPanel(
                 SkillSaveChannel.ALL -> SpecCodingBundle.message("settings.skills.channel.all")
             }
         }
+        skillDraftProviderCombo.renderer = SimpleListCellRenderer.create<String> { label, value, _ ->
+            label.text = providerDisplayText(value)
+        }
+        skillDraftModelCombo.renderer = SimpleListCellRenderer.create<ModelInfo> { label, value, _ ->
+            label.text = lowerUiText(value?.name ?: "")
+        }
         skillRequirementField.emptyText.text = SpecCodingBundle.message("settings.skills.generate.placeholder")
         skillMarkdownArea.toolTipText = SpecCodingBundle.message("settings.skills.editor.markdown.placeholder")
 
@@ -201,8 +216,10 @@ class SettingsPanel(
         styleActionButton(skillRefreshButton)
         styleActionButton(skillNewDraftButton)
         styleActionButton(skillAiDraftButton)
+        styleActionButton(skillDeleteButton)
         styleActionButton(skillSaveButton, emphasized = true)
         styleActionButton(skillSaveCurrentButton)
+        updateSkillComboPreferredSizes()
 
         buildSectionCards()
 
@@ -224,11 +241,7 @@ class SettingsPanel(
 
     private fun configureComboRenderers() {
         defaultProviderCombo.renderer = SimpleListCellRenderer.create<String> { label, value, _ ->
-            label.text = when (value) {
-                ClaudeCliLlmProvider.ID -> lowerUiText(SpecCodingBundle.message("statusbar.modelSelector.provider.claudeCli"))
-                CodexCliLlmProvider.ID -> lowerUiText(SpecCodingBundle.message("statusbar.modelSelector.provider.codexCli"))
-                else -> lowerUiText(value ?: "")
-            }
+            label.text = providerDisplayText(value)
         }
 
         defaultModelCombo.renderer = SimpleListCellRenderer.create<ModelInfo> { label, value, _ ->
@@ -415,17 +428,17 @@ class SettingsPanel(
         setSkillDiscoveryStatus(SpecCodingBundle.message("settings.skills.discovery.empty"), SkillStatusTone.NORMAL)
         setSkillEditorStatus(SpecCodingBundle.message("toolwindow.status.ready"), SkillStatusTone.NORMAL)
 
-        skillRootsList.isFocusable = false
-        skillRootsList.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        skillRootsList.visibleRowCount = 4
-        skillRootsList.background = CONTENT_BG
-
         skillsList.isFocusable = true
         skillsList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         skillsList.visibleRowCount = 12
+        skillsList.fixedCellHeight = JBUI.scale(54)
         skillsList.background = CONTENT_BG
+        skillsList.selectionBackground = JBColor(Color(216, 231, 252), Color(79, 96, 121))
+        skillsList.selectionForeground = SIDEBAR_ITEM_SELECTED_FG
         skillsList.cellRenderer = SimpleListCellRenderer.create<Skill> { label, value, _ ->
             label.text = value?.let(::formatSkillListEntry).orEmpty()
+            label.toolTipText = value?.let(::formatSkillTooltip).orEmpty()
+            label.border = JBUI.Borders.empty(4, 8, 4, 8)
         }
         skillsList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
@@ -437,17 +450,6 @@ class SettingsPanel(
         skillMarkdownArea.wrapStyleWord = false
         skillMarkdownArea.rows = 14
 
-        val rootsScrollPane = JBScrollPane(skillRootsList).apply {
-            border = SpecUiStyle.roundedCardBorder(
-                lineColor = SKILL_STATUS_BORDER,
-                arc = JBUI.scale(10),
-                top = 4,
-                left = 6,
-                bottom = 4,
-                right = 6,
-            )
-            preferredSize = JBUI.size(0, JBUI.scale(92))
-        }
         val skillsScrollPane = JBScrollPane(skillsList).apply {
             border = SpecUiStyle.roundedCardBorder(
                 lineColor = SKILL_STATUS_BORDER,
@@ -460,25 +462,49 @@ class SettingsPanel(
             preferredSize = JBUI.size(0, JBUI.scale(260))
         }
 
+        val discoveryActions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            add(skillNewDraftButton)
+            add(skillRefreshButton)
+        }
         val discoveryHeader = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
             add(skillDiscoveryStatusLabel, BorderLayout.CENTER)
-            add(skillRefreshButton, BorderLayout.EAST)
+            add(discoveryActions, BorderLayout.EAST)
         }
         val discoveryPanel = FormBuilder.createFormBuilder()
             .addComponent(discoveryHeader)
             .addVerticalGap(8)
-            .addLabeledComponent(SpecCodingBundle.message("settings.skills.discovery.roots"), rootsScrollPane)
-            .addLabeledComponent(SpecCodingBundle.message("settings.skills.discovery.skills"), skillsScrollPane)
+            .addComponent(skillsScrollPane)
             .panel.apply {
                 isOpaque = false
                 border = JBUI.Borders.empty()
             }
 
+        val targetRow = createSkillComboRow(
+            firstCombo = skillTargetScopeCombo,
+            secondLabelKey = "settings.skills.generate.channel",
+            secondCombo = skillTargetChannelCombo,
+        )
+        val draftModelRow = createSkillComboRow(
+            firstCombo = skillDraftProviderCombo,
+            secondLabelKey = "settings.skills.generate.model",
+            secondCombo = skillDraftModelCombo,
+        )
+
+        val requirementRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            add(skillRequirementField, BorderLayout.CENTER)
+            val actionHost = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+                isOpaque = false
+                add(skillAiDraftButton)
+            }
+            add(actionHost, BorderLayout.EAST)
+        }
         val editorMetadataPanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent(SpecCodingBundle.message("settings.skills.generate.scope"), skillTargetScopeCombo)
-            .addLabeledComponent(SpecCodingBundle.message("settings.skills.generate.channel"), skillTargetChannelCombo)
-            .addLabeledComponent(SpecCodingBundle.message("settings.skills.generate.requirement"), skillRequirementField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.skills.generate.scope"), targetRow)
+            .addLabeledComponent(SpecCodingBundle.message("settings.skills.generate.provider"), draftModelRow)
+            .addLabeledComponent(SpecCodingBundle.message("settings.skills.generate.requirement"), requirementRow)
             .addLabeledComponent(SpecCodingBundle.message("settings.skills.editor.id"), skillIdField)
             .addLabeledComponent(SpecCodingBundle.message("settings.skills.editor.name"), skillNameField)
             .addLabeledComponent(SpecCodingBundle.message("settings.skills.editor.command"), skillCommandField)
@@ -500,12 +526,15 @@ class SettingsPanel(
             preferredSize = JBUI.size(0, JBUI.scale(280))
         }
 
-        val editorActionRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+        val editorSaveActions = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 0)).apply {
             isOpaque = false
-            add(skillNewDraftButton)
-            add(skillAiDraftButton)
+            add(skillDeleteButton)
             add(skillSaveButton)
             add(skillSaveCurrentButton)
+        }
+        val editorActionRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(editorSaveActions, BorderLayout.EAST)
         }
 
         val editorPanel = FormBuilder.createFormBuilder()
@@ -521,13 +550,21 @@ class SettingsPanel(
                 border = JBUI.Borders.empty()
             }
 
+        val discoveryCard = createBasicModuleCard("settings.skills.discovery.title", discoveryPanel).apply {
+            minimumSize = JBUI.size(220, 0)
+        }
+        val editorCard = createBasicModuleCard("settings.skills.editor.title", editorPanel).apply {
+            minimumSize = JBUI.size(420, 0)
+        }
+
         val splitPane = JSplitPane(
             JSplitPane.HORIZONTAL_SPLIT,
-            createBasicModuleCard("settings.skills.discovery.title", discoveryPanel),
-            createBasicModuleCard("settings.skills.editor.title", editorPanel),
+            discoveryCard,
+            editorCard,
         ).apply {
-            resizeWeight = 0.42
+            resizeWeight = 0.30
             isContinuousLayout = true
+            isOneTouchExpandable = false
             dividerSize = JBUI.scale(7)
             border = JBUI.Borders.empty()
         }
@@ -543,6 +580,25 @@ class SettingsPanel(
             isOpaque = false
             border = JBUI.Borders.empty(2)
             add(component, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createSkillComboRow(
+        firstCombo: ComboBox<*>,
+        secondLabelKey: String,
+        secondCombo: ComboBox<*>,
+    ): JPanel {
+        val secondLabel = JBLabel(SpecCodingBundle.message(secondLabelKey)).apply {
+            preferredSize = JBUI.size(JBUI.scale(40), JBUI.scale(28))
+            minimumSize = preferredSize
+        }
+        return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            add(firstCombo)
+            add(Box.createHorizontalStrut(JBUI.scale(10)))
+            add(secondLabel)
+            add(Box.createHorizontalStrut(JBUI.scale(6)))
+            add(secondCombo)
         }
     }
 
@@ -624,6 +680,7 @@ class SettingsPanel(
         interfaceLanguageCombo.addActionListener { scheduleAutoSave() }
         skillTargetScopeCombo.addActionListener { scheduleAutoSave() }
         skillTargetChannelCombo.addActionListener { scheduleAutoSave() }
+        skillDraftModelCombo.addActionListener { scheduleAutoSave() }
         useProxyCheckBox.addActionListener { scheduleAutoSave() }
         autoSaveCheckBox.addActionListener { scheduleAutoSave() }
 
@@ -677,9 +734,31 @@ class SettingsPanel(
         }
     }
 
+    private fun refreshSkillDraftProviderComboPreservingSelection(preferredProvider: String?) {
+        withUiSync {
+            val router = LlmRouter.getInstance()
+            val providers = router.availableUiProviders()
+            skillDraftProviderCombo.removeAllItems()
+            providers.forEach { skillDraftProviderCombo.addItem(it) }
+            val selected = preferredProvider?.takeIf { providers.contains(it) } ?: providers.firstOrNull()
+            if (selected != null) {
+                skillDraftProviderCombo.selectedItem = selected
+            }
+            updateSkillComboPreferredSizes()
+        }
+    }
+
+    private fun resolveSkillDraftPreferredProvider(): String? {
+        return settings.skillGenerationProvider.ifBlank { settings.defaultProvider }.ifBlank { null }
+    }
+
     private fun loadFromSettings() {
         refreshProviderComboPreservingSelection(settings.defaultProvider)
         refreshModelCombo()
+        refreshSkillDraftProviderComboPreservingSelection(resolveSkillDraftPreferredProvider())
+        refreshSkillDraftModelCombo(
+            preferredModelId = settings.skillGenerationModel.ifBlank { settings.selectedCliModel },
+        )
         interfaceLanguageCombo.selectedItem = InterfaceLanguage.fromCode(settings.interfaceLanguage)
         teamPromptRepoUrlField.text = settings.teamPromptRepoUrl
         teamPromptRepoBranchField.text = settings.teamPromptRepoBranch
@@ -708,6 +787,8 @@ class SettingsPanel(
         val nextSkillGenerationScope = (skillTargetScopeCombo.selectedItem as? SkillScope ?: SkillScope.PROJECT).name
         val nextSkillGenerationChannel =
             (skillTargetChannelCombo.selectedItem as? SkillSaveChannel ?: SkillSaveChannel.ALL).name
+        val nextSkillGenerationProvider = (skillDraftProviderCombo.selectedItem as? String).orEmpty()
+        val nextSkillGenerationModel = (skillDraftModelCombo.selectedItem as? ModelInfo)?.id.orEmpty()
         val nextUseProxy = useProxyCheckBox.isSelected
         val nextProxyHost = proxyHostField.text
         val nextProxyPort = proxyPortField.text.toIntOrNull() ?: settings.proxyPort
@@ -725,6 +806,8 @@ class SettingsPanel(
                 nextPromptBranch != settings.teamPromptRepoBranch ||
                 nextSkillGenerationScope != settings.skillGenerationScope ||
                 nextSkillGenerationChannel != settings.skillGenerationChannel ||
+                nextSkillGenerationProvider != settings.skillGenerationProvider ||
+                nextSkillGenerationModel != settings.skillGenerationModel ||
                 nextUseProxy != settings.useProxy ||
                 nextProxyHost != settings.proxyHost ||
                 nextProxyPort != settings.proxyPort ||
@@ -744,6 +827,8 @@ class SettingsPanel(
         settings.teamPromptRepoBranch = nextPromptBranch
         settings.skillGenerationScope = nextSkillGenerationScope
         settings.skillGenerationChannel = nextSkillGenerationChannel
+        settings.skillGenerationProvider = nextSkillGenerationProvider
+        settings.skillGenerationModel = nextSkillGenerationModel
         settings.useProxy = nextUseProxy
         settings.proxyHost = nextProxyHost
         settings.proxyPort = nextProxyPort
@@ -779,9 +864,18 @@ class SettingsPanel(
                 }
                 LlmRouter.getInstance().refreshProviders()
                 val currentProvider = defaultProviderCombo.selectedItem as? String
+                val currentSkillDraftProvider = skillDraftProviderCombo.selectedItem as? String
+                val currentSkillDraftModel = (skillDraftModelCombo.selectedItem as? ModelInfo)?.id
                 refreshProviderComboPreservingSelection(currentProvider ?: settings.defaultProvider)
+                refreshSkillDraftProviderComboPreservingSelection(
+                    currentSkillDraftProvider ?: resolveSkillDraftPreferredProvider(),
+                )
                 ModelRegistry.getInstance().refreshFromDiscovery()
                 refreshModelCombo()
+                refreshSkillDraftModelCombo(
+                    preferredModelId = currentSkillDraftModel
+                        ?: settings.skillGenerationModel.ifBlank { settings.selectedCliModel },
+                )
                 detectCliButton.isEnabled = true
                 detectCliButton.text = SpecCodingBundle.message("settings.cli.detectButton")
             }
@@ -811,16 +905,40 @@ class SettingsPanel(
     }
 
     private fun refreshModelCombo() {
-        val selectedProvider = defaultProviderCombo.selectedItem as? String ?: return
+        refreshModelCombo(
+            providerCombo = defaultProviderCombo,
+            modelCombo = defaultModelCombo,
+            preferredModelId = settings.selectedCliModel,
+        )
+    }
+
+    private fun refreshSkillDraftModelCombo(preferredModelId: String? = null) {
+        refreshModelCombo(
+            providerCombo = skillDraftProviderCombo,
+            modelCombo = skillDraftModelCombo,
+            preferredModelId = preferredModelId ?: settings.skillGenerationModel.ifBlank { settings.selectedCliModel },
+        )
+        updateSkillComboPreferredSizes()
+    }
+
+    private fun refreshModelCombo(
+        providerCombo: ComboBox<String>,
+        modelCombo: ComboBox<ModelInfo>,
+        preferredModelId: String?,
+    ) {
+        val selectedProvider = providerCombo.selectedItem as? String
         withUiSync {
+            modelCombo.removeAllItems()
+            if (selectedProvider.isNullOrBlank()) {
+                return@withUiSync
+            }
             val models = ModelRegistry.getInstance().getModelsForProvider(selectedProvider)
-            defaultModelCombo.removeAllItems()
-            models.forEach { defaultModelCombo.addItem(it) }
-            val match = models.find { it.id == settings.selectedCliModel }
+            models.forEach { modelCombo.addItem(it) }
+            val match = preferredModelId?.let { selectedId -> models.find { it.id == selectedId } }
             if (match != null) {
-                defaultModelCombo.selectedItem = match
-            } else if (defaultModelCombo.itemCount > 0) {
-                defaultModelCombo.selectedIndex = 0
+                modelCombo.selectedItem = match
+            } else if (modelCombo.itemCount > 0) {
+                modelCombo.selectedIndex = 0
             }
         }
     }
@@ -861,77 +979,63 @@ class SettingsPanel(
     }
 
     private fun applySkillDiscoverySnapshot(snapshot: SkillDiscoverySnapshot) {
-        skillRootsListModel.clear()
-        snapshot.roots.forEach { root ->
-            val scopeText = when (root.scope) {
-                SkillScope.GLOBAL -> SpecCodingBundle.message("settings.skills.scope.global")
-                SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
-            }
-            val channelText = channelDisplayText(
-                detectStorageChannel(
-                    root.label,
-                    root.path,
-                ),
-            )
-            val existsText = if (root.exists) {
-                SpecCodingBundle.message("settings.skills.discovery.root.exists")
-            } else {
-                SpecCodingBundle.message("settings.skills.discovery.root.missing")
-            }
-            skillRootsListModel.addElement(
-                SpecCodingBundle.message(
-                    "settings.skills.discovery.root.item",
-                    scopeText,
-                    channelText,
-                    root.label,
-                    existsText,
-                    root.path,
-                ),
-            )
-        }
-
         skillsListModel.clear()
+        var projectCount = 0
+        var globalCount = 0
         snapshot.skills.forEach { skill ->
             skillsListModel.addElement(skill)
+            when (skill.scope ?: SkillScope.GLOBAL) {
+                SkillScope.PROJECT -> projectCount += 1
+                SkillScope.GLOBAL -> globalCount += 1
+            }
         }
 
         setSkillDiscoveryStatus(
             SpecCodingBundle.message(
                 "settings.skills.discovery.summary",
                 snapshot.skills.size,
-                snapshot.roots.count { it.exists },
-                snapshot.roots.size,
+                projectCount,
+                globalCount,
             ),
-            SkillStatusTone.SUCCESS,
+            if (snapshot.skills.isEmpty()) SkillStatusTone.NORMAL else SkillStatusTone.SUCCESS,
         )
     }
 
     private fun formatSkillListEntry(skill: Skill): String {
+        val scopeText = when (skill.scope ?: SkillScope.GLOBAL) {
+            SkillScope.GLOBAL -> SpecCodingBundle.message("settings.skills.scope.global")
+            SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
+        }
         val sourceText = when (skill.sourceType) {
             SkillSourceType.BUILTIN -> SpecCodingBundle.message("settings.skills.source.builtin")
             SkillSourceType.YAML -> SpecCodingBundle.message("settings.skills.source.yaml")
             SkillSourceType.MARKDOWN -> SpecCodingBundle.message("settings.skills.source.markdown")
         }
-        val channelText = channelDisplayText(
-            detectStorageChannel(
-                skill.sourcePath,
-                skill.tags.joinToString(" "),
-            ),
+        val detectedChannel = detectStorageChannel(
+            skill.sourcePath,
+            skill.tags.joinToString(" "),
         )
-        val scopeText = skill.scope?.let {
-            when (it) {
-                SkillScope.GLOBAL -> SpecCodingBundle.message("settings.skills.scope.global")
-                SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
-            }
-        } ?: SpecCodingBundle.message("settings.skills.scope.none")
-        return SpecCodingBundle.message(
-            "settings.skills.discovery.skill.item",
-            skill.slashCommand,
-            sourceText,
-            scopeText,
-            channelText,
-            skill.description,
-        )
+        val channelText = when {
+            skill.sourceType == SkillSourceType.BUILTIN && detectedChannel == SkillStorageChannel.UNKNOWN ->
+                SpecCodingBundle.message("settings.skills.channel.all")
+            else -> channelDisplayText(detectedChannel)
+        }
+        return buildString {
+            append("<html><b>/")
+            append(skill.slashCommand)
+            append("</b><br/><span>")
+            append(scopeText)
+            append(" · ")
+            append(channelText)
+            append(" · ")
+            append(sourceText)
+            append("</span></html>")
+        }
+    }
+
+    private fun formatSkillTooltip(skill: Skill): String {
+        val description = skill.description.trim().ifBlank { "/" + skill.slashCommand }
+        return "<html>$description</html>"
     }
 
     private fun detectStorageChannel(vararg text: String?): SkillStorageChannel {
@@ -1071,6 +1175,8 @@ class SettingsPanel(
             ),
             sourcePath = null,
         )
+        skillAiDraftButton.isEnabled = true
+        skillDeleteButton.isEnabled = false
         setSkillEditorStatus(SpecCodingBundle.message("settings.skills.editor.newReady"), SkillStatusTone.NORMAL)
     }
 
@@ -1082,6 +1188,8 @@ class SettingsPanel(
         skillMarkdownArea.text = draft.body
         activeSkillSourcePath = sourcePath
         skillSaveCurrentButton.isEnabled = !sourcePath.isNullOrBlank()
+        skillDeleteButton.isEnabled = !sourcePath.isNullOrBlank()
+        skillAiDraftButton.isEnabled = true
         val message = if (sourcePath.isNullOrBlank()) {
             SpecCodingBundle.message("settings.skills.editor.ready")
         } else {
@@ -1107,21 +1215,39 @@ class SettingsPanel(
             SpecCodingBundle.message("settings.skills.generate.running"),
             SkillStatusTone.NORMAL,
         )
+        val selectedProvider = (skillDraftProviderCombo.selectedItem as? String)?.trim().orEmpty()
+        val selectedModelId = (skillDraftModelCombo.selectedItem as? ModelInfo)?.id.orEmpty()
 
         scope.launch {
-            val result = runCatching { generateSkillDraft(requirement) }
+            val result = runCatching {
+                generateSkillDraft(
+                    requirement = requirement,
+                    preferredProvider = selectedProvider,
+                    preferredModelId = selectedModelId,
+                )
+            }
             SwingUtilities.invokeLater {
                 if (isDisposed || project.isDisposed) {
                     return@invokeLater
                 }
                 skillAiDraftButton.isEnabled = true
                 result
-                    .onSuccess { draft ->
-                        applyDraftToEditor(draft = draft, sourcePath = null)
-                        setSkillEditorStatus(
-                            SpecCodingBundle.message("settings.skills.generate.draftReady"),
-                            SkillStatusTone.SUCCESS,
-                        )
+                    .onSuccess { generated ->
+                        applyDraftToEditor(draft = generated.draft, sourcePath = null)
+                        if (generated.usedFallback) {
+                            setSkillEditorStatus(
+                                SpecCodingBundle.message(
+                                    "settings.skills.generate.draftReady.fallback",
+                                    generated.reason ?: SpecCodingBundle.message("common.unknown"),
+                                ),
+                                SkillStatusTone.NORMAL,
+                            )
+                        } else {
+                            setSkillEditorStatus(
+                                SpecCodingBundle.message("settings.skills.generate.draftReady"),
+                                SkillStatusTone.SUCCESS,
+                            )
+                        }
                     }
                     .onFailure { error ->
                         setSkillEditorStatus(
@@ -1151,6 +1277,7 @@ class SettingsPanel(
 
         skillSaveButton.isEnabled = false
         skillSaveCurrentButton.isEnabled = false
+        skillDeleteButton.isEnabled = false
         setSkillEditorStatus(SpecCodingBundle.message("settings.skills.editor.saving"), SkillStatusTone.NORMAL)
         scope.launch {
             val result = runCatching { saveDraftToSelectedTargets(draft, targetScope, targetChannel) }
@@ -1160,6 +1287,7 @@ class SettingsPanel(
                 }
                 skillSaveButton.isEnabled = true
                 skillSaveCurrentButton.isEnabled = !activeSkillSourcePath.isNullOrBlank()
+                skillDeleteButton.isEnabled = !activeSkillSourcePath.isNullOrBlank()
                 result
                     .onSuccess { paths ->
                         setSkillEditorStatus(
@@ -1205,6 +1333,7 @@ class SettingsPanel(
 
         skillSaveButton.isEnabled = false
         skillSaveCurrentButton.isEnabled = false
+        skillDeleteButton.isEnabled = false
         setSkillEditorStatus(
             SpecCodingBundle.message("settings.skills.editor.saveCurrent.running"),
             SkillStatusTone.NORMAL,
@@ -1222,6 +1351,7 @@ class SettingsPanel(
                 }
                 skillSaveButton.isEnabled = true
                 skillSaveCurrentButton.isEnabled = true
+                skillDeleteButton.isEnabled = true
                 result
                     .onSuccess { path ->
                         setSkillEditorStatus(
@@ -1333,9 +1463,33 @@ class SettingsPanel(
         }
     }
 
-    private suspend fun generateSkillDraft(requirement: String): GeneratedSkillDraft {
-        val providerId = settings.defaultProvider.ifBlank { null }
-        val modelId = settings.selectedCliModel.ifBlank { null }
+    private suspend fun generateSkillDraft(
+        requirement: String,
+        preferredProvider: String,
+        preferredModelId: String,
+    ): SkillDraftGenerationResult {
+        val fallbackDraft = buildFallbackSkillDraft(requirement)
+        val providers = LlmRouter.getInstance().availableUiProviders()
+        if (providers.isEmpty()) {
+            return SkillDraftGenerationResult(
+                draft = fallbackDraft,
+                usedFallback = true,
+                reason = SpecCodingBundle.message("settings.skills.generate.fallback.reason.providerUnavailable"),
+            )
+        }
+        val selectedDraftProvider = preferredProvider
+            .ifBlank { settings.skillGenerationProvider.ifBlank { settings.defaultProvider } }
+        val providerId = selectedDraftProvider
+            .takeIf { providers.contains(it) }
+            ?: providers.firstOrNull()
+            ?: return SkillDraftGenerationResult(
+                draft = fallbackDraft,
+                usedFallback = true,
+                reason = SpecCodingBundle.message("settings.skills.generate.fallback.reason.providerUnavailable"),
+            )
+        val modelId = preferredModelId
+            .ifBlank { settings.skillGenerationModel.ifBlank { settings.selectedCliModel } }
+            .ifBlank { null }
         val prompt = buildString {
             appendLine("You are generating a local SKILL.md for an IntelliJ plugin user.")
             appendLine("Return ONLY strict JSON, no markdown fences, no explanation.")
@@ -1351,18 +1505,61 @@ class SettingsPanel(
         }
 
         val responseText = StringBuilder()
-        projectService.chat(
-            providerId = providerId,
-            modelId = modelId,
-            userInput = prompt,
-            planExecuteVerifySections = false,
-        ) { chunk ->
-            if (chunk.delta.isNotBlank()) {
-                responseText.append(chunk.delta)
+        val chatResult = withTimeoutOrNull(SKILL_DRAFT_TIMEOUT_MILLIS) {
+            runCatching {
+                projectService.chat(
+                    providerId = providerId,
+                    modelId = modelId,
+                    userInput = prompt,
+                    planExecuteVerifySections = false,
+                ) { chunk ->
+                    if (chunk.delta.isNotBlank()) {
+                        responseText.append(chunk.delta)
+                    }
+                }
             }
+        } ?: run {
+            val timeoutRaw = responseText.toString().trim()
+            if (timeoutRaw.isNotBlank()) {
+                val timeoutRoot = runCatching { parseSkillJson(timeoutRaw) }.getOrNull()
+                if (timeoutRoot != null) {
+                    return buildSkillDraftFromJson(timeoutRoot, requirement)
+                }
+            }
+            return SkillDraftGenerationResult(
+                draft = fallbackDraft,
+                usedFallback = true,
+                reason = SpecCodingBundle.message("settings.skills.generate.fallback.reason.timeout"),
+            )
+        }
+        if (chatResult.isFailure) {
+            return SkillDraftGenerationResult(
+                draft = fallbackDraft,
+                usedFallback = true,
+                reason = chatResult.exceptionOrNull()?.message
+                    ?: SpecCodingBundle.message("common.unknown"),
+            )
         }
 
-        val root = parseSkillJson(responseText.toString())
+        val rawResponse = responseText.toString().trim()
+        if (rawResponse.isBlank()) {
+            return SkillDraftGenerationResult(
+                draft = fallbackDraft,
+                usedFallback = true,
+                reason = SpecCodingBundle.message("settings.skills.generate.fallback.reason.emptyResponse"),
+            )
+        }
+        val root = runCatching { parseSkillJson(rawResponse) }.getOrElse {
+            return SkillDraftGenerationResult(
+                draft = fallbackDraft,
+                usedFallback = true,
+                reason = SpecCodingBundle.message("settings.skills.generate.invalidJson"),
+            )
+        }
+        return buildSkillDraftFromJson(root, requirement)
+    }
+
+    private fun buildSkillDraftFromJson(root: JsonObject, requirement: String): SkillDraftGenerationResult {
         val rawName = root["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         val rawDescription = root["description"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         val rawCommand = root["slash_command"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
@@ -1384,12 +1581,39 @@ class SettingsPanel(
                 appendLine("3. Add or update tests.")
                 appendLine("4. Verify and summarize tradeoffs.")
             }
+        return SkillDraftGenerationResult(
+            draft = GeneratedSkillDraft(
+                id = normalizedId,
+                name = rawName.ifBlank { normalizedId },
+                description = rawDescription.ifBlank { requirement },
+                slashCommand = normalizedCommand,
+                body = body,
+            ),
+            usedFallback = false,
+            reason = null,
+        )
+    }
+
+    private fun buildFallbackSkillDraft(requirement: String): GeneratedSkillDraft {
+        val normalizedId = normalizeSkillToken(
+            value = requirement.replace("\\s+".toRegex(), "-"),
+            fallback = "custom-skill",
+        )
         return GeneratedSkillDraft(
             id = normalizedId,
-            name = rawName.ifBlank { normalizedId },
-            description = rawDescription.ifBlank { requirement },
-            slashCommand = normalizedCommand,
-            body = body,
+            name = requirement.ifBlank { normalizedId }.take(60),
+            description = requirement.ifBlank { SpecCodingBundle.message("settings.skills.generate.placeholder") },
+            slashCommand = normalizedId,
+            body = buildString {
+                appendLine("## Objective")
+                appendLine("- $requirement")
+                appendLine()
+                appendLine("## Workflow")
+                appendLine("1. Clarify context and constraints.")
+                appendLine("2. Implement only the required changes.")
+                appendLine("3. Add/update tests if needed.")
+                appendLine("4. Verify and summarize outcomes.")
+            },
         )
     }
 
@@ -1482,6 +1706,12 @@ class SettingsPanel(
         val description: String,
         val slashCommand: String,
         val body: String,
+    )
+
+    private data class SkillDraftGenerationResult(
+        val draft: GeneratedSkillDraft,
+        val usedFallback: Boolean,
+        val reason: String?,
     )
 
     private enum class SkillStatusTone {
@@ -1637,6 +1867,67 @@ class SettingsPanel(
         }
     }
 
+    private fun providerDisplayText(providerId: String?): String {
+        val raw = when (providerId) {
+            ClaudeCliLlmProvider.ID -> SpecCodingBundle.message("settings.skills.channel.claude")
+            CodexCliLlmProvider.ID -> SpecCodingBundle.message("settings.skills.channel.codex")
+            else -> providerId.orEmpty()
+        }
+        return lowerUiText(raw)
+    }
+
+    private fun updateSkillComboPreferredSizes() {
+        fitComboWidth(
+            combo = skillTargetScopeCombo,
+            minWidth = JBUI.scale(86),
+            maxWidth = JBUI.scale(110),
+        ) { scope ->
+            when (scope) {
+                SkillScope.GLOBAL -> SpecCodingBundle.message("settings.skills.scope.global")
+                SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
+            }
+        }
+        fitComboWidth(
+            combo = skillTargetChannelCombo,
+            minWidth = JBUI.scale(86),
+            maxWidth = JBUI.scale(118),
+        ) { channel ->
+            when (channel) {
+                SkillSaveChannel.CODEX -> SpecCodingBundle.message("settings.skills.channel.codex")
+                SkillSaveChannel.CLUADE -> SpecCodingBundle.message("settings.skills.channel.cluade")
+                SkillSaveChannel.ALL -> SpecCodingBundle.message("settings.skills.channel.all")
+            }
+        }
+        fitComboWidth(
+            combo = skillDraftProviderCombo,
+            minWidth = JBUI.scale(82),
+            maxWidth = JBUI.scale(112),
+        ) { provider -> providerDisplayText(provider) }
+        fitComboWidth(
+            combo = skillDraftModelCombo,
+            minWidth = JBUI.scale(94),
+            maxWidth = JBUI.scale(132),
+        ) { model -> lowerUiText(model.name) }
+    }
+
+    private fun <T> fitComboWidth(
+        combo: ComboBox<T>,
+        minWidth: Int,
+        maxWidth: Int,
+        textProvider: (T) -> String,
+    ) {
+        val fontMetrics = combo.getFontMetrics(combo.font)
+        var targetWidth = minWidth
+        for (index in 0 until combo.itemCount) {
+            val item = combo.getItemAt(index) ?: continue
+            val textWidth = fontMetrics.stringWidth(textProvider(item))
+            targetWidth = maxOf(targetWidth, textWidth + JBUI.scale(44))
+        }
+        val boundedWidth = targetWidth.coerceIn(minWidth, maxWidth)
+        combo.preferredSize = JBUI.size(boundedWidth, JBUI.scale(28))
+        combo.minimumSize = combo.preferredSize
+    }
+
     private fun lowerUiText(text: String): String = text.lowercase(Locale.ROOT)
 
     private fun normalizeOperationMode(input: String): String {
@@ -1693,5 +1984,6 @@ class SettingsPanel(
         private const val SKILL_MARKDOWN_FILE_NAME = "SKILL.md"
         private val SKILL_TOKEN_INVALID_REGEX = Regex("[^a-z0-9_-]+")
         private const val AUTO_SAVE_DEBOUNCE_MILLIS = 650
+        private const val SKILL_DRAFT_TIMEOUT_MILLIS = 120_000L
     }
 }

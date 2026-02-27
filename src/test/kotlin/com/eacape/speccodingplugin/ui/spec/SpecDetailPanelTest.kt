@@ -250,6 +250,116 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `clarification checklist should support click-to-confirm without manual input`() {
+        var confirmedInput: String? = null
+        var confirmedContext: String? = null
+        val panel = createPanel(
+            onClarificationConfirm = { input, context ->
+                confirmedInput = input
+                confirmedContext = context
+            },
+        )
+        val workflow = SpecWorkflow(
+            id = "wf-checklist",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Checklist",
+            description = "Clarification checklist",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+
+        panel.showClarificationDraft(
+            phase = SpecPhase.SPECIFY,
+            input = "RunnerGo needs redis nodes support",
+            questionsMarkdown = "1. ???",
+            suggestedDetails = "",
+            structuredQuestions = listOf(
+                "是否需要多机房容灾？",
+                "性能指标要求是多少？",
+            ),
+        )
+
+        assertFalse(panel.isInputEditableForTest())
+        panel.clickConfirmGenerateForTest()
+        assertEquals(null, confirmedContext)
+        assertTrue(panel.currentValidationTextForTest().contains("Please add confirmed details"))
+
+        panel.toggleClarificationQuestionForTest(0)
+        panel.clickConfirmGenerateForTest()
+
+        assertEquals("RunnerGo needs redis nodes support", confirmedInput)
+        assertTrue((confirmedContext ?: "").contains("Confirmed Clarification Points"))
+        assertTrue((confirmedContext ?: "").contains("是否需要多机房容灾？"))
+    }
+
+    @Test
+    fun `clarification checklist should support single mode and not applicable`() {
+        var confirmedContext: String? = null
+        val panel = createPanel(
+            onClarificationConfirm = { _, context ->
+                confirmedContext = context
+            },
+        )
+        val workflow = SpecWorkflow(
+            id = "wf-checklist-tristate",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Checklist Tri-state",
+            description = "Clarification checklist tri-state",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+
+        panel.showClarificationDraft(
+            phase = SpecPhase.SPECIFY,
+            input = "build a storage scheduler",
+            questionsMarkdown = "1. ???",
+            suggestedDetails = "",
+            structuredQuestions = listOf(
+                "是否要求跨区域容灾？",
+                "目标吞吐量是多少？",
+            ),
+        )
+
+        panel.setClarificationSelectionModeForTest(single = true)
+        assertEquals("SINGLE", panel.currentChecklistModeForTest())
+
+        panel.toggleClarificationQuestionForTest(0)
+        assertEquals("CONFIRMED", panel.currentChecklistDecisionForTest(0))
+        panel.toggleClarificationQuestionForTest(1)
+        assertEquals("UNDECIDED", panel.currentChecklistDecisionForTest(0))
+        assertEquals("CONFIRMED", panel.currentChecklistDecisionForTest(1))
+
+        panel.markClarificationQuestionNotApplicableForTest(0)
+        assertEquals("NOT_APPLICABLE", panel.currentChecklistDecisionForTest(0))
+
+        panel.clickConfirmGenerateForTest()
+
+        val context = confirmedContext ?: ""
+        assertTrue(context.contains("Confirmed Clarification Points"))
+        assertTrue(context.contains("- [x] 目标吞吐量是多少？"))
+        assertTrue(context.contains("Not Applicable Clarification Points"))
+        assertTrue(context.contains("- [ ] 是否要求跨区域容灾？"))
+    }
+
+    @Test
     fun `process timeline should show entries and clear properly`() {
         val panel = createPanel()
         val workflow = SpecWorkflow(
@@ -491,11 +601,12 @@ class SpecDetailPanelTest {
     private fun createPanel(
         onGenerate: (String) -> Unit = {},
         onClarificationConfirm: (String, String) -> Unit = { _, _ -> },
+        onClarificationRegenerate: (String, String) -> Unit = { _, _ -> },
     ): SpecDetailPanel {
         return SpecDetailPanel(
             onGenerate = onGenerate,
             onClarificationConfirm = onClarificationConfirm,
-            onClarificationRegenerate = { _, _ -> },
+            onClarificationRegenerate = onClarificationRegenerate,
             onClarificationSkip = {},
             onClarificationCancel = {},
             onNextPhase = {},

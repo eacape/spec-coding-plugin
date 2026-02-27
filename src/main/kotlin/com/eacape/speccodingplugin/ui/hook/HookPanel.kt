@@ -12,6 +12,7 @@ import com.eacape.speccodingplugin.llm.LlmMessage
 import com.eacape.speccodingplugin.llm.LlmRequest
 import com.eacape.speccodingplugin.llm.LlmRole
 import com.eacape.speccodingplugin.llm.LlmRouter
+import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
@@ -19,7 +20,6 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -64,14 +64,6 @@ class HookPanel(
         HookManager.getInstance(project).getExecutionLogs(limit)
     },
     private val clearLogsAction: () -> Unit = { HookManager.getInstance(project).clearExecutionLogs() },
-    private val requestAiIntentAction: () -> String? = {
-        Messages.showInputDialog(
-            project,
-            SpecCodingBundle.message("hook.ai.dialog.message"),
-            SpecCodingBundle.message("hook.ai.dialog.title"),
-            Messages.getQuestionIcon(),
-        )
-    },
     private val runSynchronously: Boolean = false,
 ) : JPanel(BorderLayout()), Disposable {
 
@@ -87,7 +79,6 @@ class HookPanel(
     private val hooksList = JBList(hooksModel)
     private val logArea = JBTextArea()
 
-    private val titleLabel = JBLabel(SpecCodingBundle.message("hook.panel.title"))
     private val statusLabel = JBLabel("")
     private val guideLabel = JBLabel(SpecCodingBundle.message("hook.guide.quickStart"))
     private val refreshButton = JButton(SpecCodingBundle.message("hook.action.refresh"))
@@ -115,7 +106,6 @@ class HookPanel(
 
         val actionRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
             isOpaque = false
-            add(titleLabel)
             add(refreshButton)
             add(openConfigButton)
             add(aiQuickConfigButton)
@@ -124,9 +114,6 @@ class HookPanel(
             add(refreshLogButton)
             add(clearLogButton)
         }
-        titleLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        titleLabel.foreground = STATUS_TEXT_FG
-
         guideLabel.font = JBUI.Fonts.smallFont()
         guideLabel.foreground = STATUS_TEXT_FG
 
@@ -379,9 +366,8 @@ class HookPanel(
     }
 
     private fun quickSetupWithAi() {
-        val userIntentInput = requestAiIntentAction() ?: return
-        val userIntent = userIntentInput.trim()
-        if (userIntent.isBlank()) {
+        val aiInput = collectAiQuickSetupInput() ?: return
+        if (aiInput.userIntent.isBlank()) {
             statusLabel.text = SpecCodingBundle.message("hook.status.ai.inputRequired")
             return
         }
@@ -390,7 +376,11 @@ class HookPanel(
         val task: suspend () -> Unit = {
             val result = runCatching {
                 val target = ensureHookConfigFile()
-                val draft = buildHookConfigDraft(userIntent)
+                val draft = buildHookConfigDraft(
+                    userIntent = aiInput.userIntent,
+                    preferredProviderId = aiInput.providerId,
+                    preferredModelId = aiInput.modelId,
+                )
                 writeHookConfig(target.path, draft.yaml)
                 HookConfigApplyResult(target = target, draft = draft)
             }
@@ -432,8 +422,40 @@ class HookPanel(
         }
     }
 
-    private suspend fun buildHookConfigDraft(userIntent: String): HookConfigDraft {
-        val aiDraft = generateHookConfigByAi(userIntent)
+    private fun collectAiQuickSetupInput(): HookAiQuickSetupInput? {
+        val providers = availableAiProviders()
+        val preferredProvider = settings.defaultProvider.trim().ifBlank { null } ?: providers.firstOrNull()
+        val preferredModel = settings.selectedCliModel.trim().ifBlank { null }
+        val modelsByProvider = providers.associateWith { providerId ->
+            val providerScopedPreferredModel = if (providerId == preferredProvider) preferredModel else null
+            availableModelsForProvider(providerId, providerScopedPreferredModel)
+        }
+        val dialog = HookAiQuickSetupDialog(
+            providers = providers,
+            modelsByProvider = modelsByProvider,
+            preferredProviderId = preferredProvider,
+            preferredModelId = preferredModel,
+        )
+        if (!dialog.showAndGet()) {
+            return null
+        }
+        return HookAiQuickSetupInput(
+            userIntent = dialog.promptText.trim(),
+            providerId = dialog.selectedProviderId,
+            modelId = dialog.selectedModelId,
+        )
+    }
+
+    private suspend fun buildHookConfigDraft(
+        userIntent: String,
+        preferredProviderId: String?,
+        preferredModelId: String?,
+    ): HookConfigDraft {
+        val aiDraft = generateHookConfigByAi(
+            userIntent = userIntent,
+            preferredProviderId = preferredProviderId,
+            preferredModelId = preferredModelId,
+        )
         if (!aiDraft.isNullOrBlank()) {
             return HookConfigDraft(
                 yaml = aiDraft,
@@ -447,61 +469,115 @@ class HookPanel(
         )
     }
 
-    private suspend fun generateHookConfigByAi(userIntent: String): String? {
+    private suspend fun generateHookConfigByAi(
+        userIntent: String,
+        preferredProviderId: String?,
+        preferredModelId: String?,
+    ): String? {
         llmRouter.refreshProviders()
         modelRegistry.refreshFromDiscovery()
 
-        val providerId = resolveQuickSetupProviderId() ?: return null
-        val modelId = resolveQuickSetupModelId(providerId)
-        val response = runCatching {
-            llmRouter.generate(
-                providerId = providerId,
-                request = LlmRequest(
-                    messages = listOf(
-                        LlmMessage(role = LlmRole.SYSTEM, content = HOOK_AI_SYSTEM_PROMPT),
-                        LlmMessage(role = LlmRole.USER, content = buildHookAiPrompt(userIntent)),
+        val prompt = buildHookAiPrompt(userIntent)
+        val candidates = buildAiRequestCandidates(
+            preferredProviderId = preferredProviderId,
+            preferredModelId = preferredModelId,
+        )
+
+        for (candidate in candidates) {
+            val response = runCatching {
+                llmRouter.generate(
+                    providerId = candidate.providerId,
+                    request = LlmRequest(
+                        messages = listOf(
+                            LlmMessage(role = LlmRole.SYSTEM, content = HOOK_AI_SYSTEM_PROMPT),
+                            LlmMessage(role = LlmRole.USER, content = prompt),
+                        ),
+                        model = candidate.modelId,
+                        temperature = 0.2,
+                        maxTokens = 1_200,
+                        metadata = mapOf("hookQuickSetup" to "true"),
+                        workingDirectory = project.basePath,
                     ),
-                    model = modelId,
-                    temperature = 0.2,
-                    maxTokens = 1_200,
-                    metadata = mapOf("hookQuickSetup" to "true"),
-                    workingDirectory = project.basePath,
-                ),
+                )
+            }.getOrNull() ?: continue
+
+            val normalizedYaml = normalizeHookYaml(response.content)
+            if (normalizedYaml.isBlank()) {
+                continue
+            }
+            val parsedHooks = runCatching { HookYamlCodec.deserialize(normalizedYaml) }
+                .getOrDefault(emptyList())
+            if (parsedHooks.isNotEmpty()) {
+                return normalizedYaml
+            }
+        }
+        return null
+    }
+
+    private fun availableAiProviders(): List<String> {
+        val providers = llmRouter.availableUiProviders()
+            .ifEmpty { llmRouter.availableProviders() }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (providers.isNotEmpty()) {
+            return providers
+        }
+        val configured = settings.defaultProvider.trim().ifBlank { null }
+        if (!configured.isNullOrBlank()) {
+            return listOf(configured)
+        }
+        return listOf(llmRouter.defaultProviderId())
+    }
+
+    private fun availableModelsForProvider(providerId: String, preferredModelId: String?): List<ModelInfo> {
+        val models = modelRegistry.getModelsForProvider(providerId).toMutableList()
+        if (models.isEmpty() && !preferredModelId.isNullOrBlank()) {
+            models += ModelInfo(
+                id = preferredModelId,
+                name = preferredModelId,
+                provider = providerId,
+                contextWindow = 0,
+                capabilities = emptySet(),
             )
-        }.getOrNull() ?: return null
-
-        val normalizedYaml = normalizeHookYaml(response.content)
-        if (normalizedYaml.isBlank()) {
-            return null
         }
-        val parsedHooks = runCatching { HookYamlCodec.deserialize(normalizedYaml) }
-            .getOrDefault(emptyList())
-        if (parsedHooks.isEmpty()) {
-            return null
-        }
-        return normalizedYaml
+        return models
     }
 
-    private fun resolveQuickSetupProviderId(): String? {
-        val availableProviders = llmRouter.availableUiProviders()
-        if (availableProviders.isEmpty()) {
-            return null
+    private fun buildAiRequestCandidates(
+        preferredProviderId: String?,
+        preferredModelId: String?,
+    ): List<AiRequestCandidate> {
+        val configuredProvider = settings.defaultProvider.trim().ifBlank { null }
+        val configuredModel = settings.selectedCliModel.trim().ifBlank { null }
+        val providers = availableAiProviders()
+        val primaryProvider = preferredProviderId?.trim()?.ifBlank { null }
+            ?: configuredProvider
+            ?: providers.firstOrNull()
+
+        val candidates = mutableListOf<AiRequestCandidate>()
+        fun add(providerId: String?, modelId: String?) {
+            val normalizedProvider = providerId?.trim()?.ifBlank { null }
+            val normalizedModel = modelId?.trim()?.ifBlank { null }
+            val candidate = AiRequestCandidate(normalizedProvider, normalizedModel)
+            if (!candidates.contains(candidate)) {
+                candidates += candidate
+            }
         }
 
-        val preferredProvider = settings.defaultProvider.trim()
-        return availableProviders.firstOrNull { it.equals(preferredProvider, ignoreCase = true) }
-            ?: availableProviders.firstOrNull()
-    }
-
-    private fun resolveQuickSetupModelId(providerId: String): String? {
-        val models = modelRegistry.getModelsForProvider(providerId)
-        if (models.isEmpty()) {
-            return null
+        add(primaryProvider, preferredModelId)
+        if (!preferredModelId.isNullOrBlank()) {
+            add(primaryProvider, null)
         }
-
-        val preferredModel = settings.selectedCliModel.trim()
-        return models.firstOrNull { it.id.equals(preferredModel, ignoreCase = true) }?.id
-            ?: models.first().id
+        add(configuredProvider, configuredModel)
+        if (!configuredModel.isNullOrBlank()) {
+            add(configuredProvider, null)
+        }
+        providers.firstOrNull()?.let { provider ->
+            add(provider, null)
+        }
+        add(null, null)
+        return candidates
     }
 
     private fun buildHookAiPrompt(userIntent: String): String {
@@ -681,7 +757,6 @@ class HookPanel(
     }
 
     private fun refreshLocalizedTexts() {
-        titleLabel.text = SpecCodingBundle.message("hook.panel.title")
         guideLabel.text = SpecCodingBundle.message("hook.guide.quickStart")
         refreshButton.text = SpecCodingBundle.message("hook.action.refresh")
         openConfigButton.text = SpecCodingBundle.message("hook.action.openConfig")
@@ -824,6 +899,17 @@ class HookPanel(
     private data class HookConfigDraft(
         val yaml: String,
         val source: HookConfigDraftSource,
+    )
+
+    private data class HookAiQuickSetupInput(
+        val userIntent: String,
+        val providerId: String?,
+        val modelId: String?,
+    )
+
+    private data class AiRequestCandidate(
+        val providerId: String?,
+        val modelId: String?,
     )
 
     private enum class HookConfigDraftSource {

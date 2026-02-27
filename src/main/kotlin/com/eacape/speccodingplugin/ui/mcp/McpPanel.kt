@@ -5,7 +5,11 @@ import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
+import com.eacape.speccodingplugin.llm.LlmRouter
+import com.eacape.speccodingplugin.llm.ModelInfo
+import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.mcp.*
+import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
@@ -22,14 +26,15 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.FlowLayout
+import java.awt.Font
 import java.util.Locale
 import java.util.UUID
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 
@@ -51,20 +56,29 @@ class McpPanel(
     private val mcpConfigStore by lazy { McpConfigStore.getInstance(project) }
     private val projectService: SpecCodingProjectService = project.getService(SpecCodingProjectService::class.java)
     private val settingsState = SpecCodingSettingsState.getInstance()
+    private val llmRouter by lazy { LlmRouter.getInstance() }
+    private val modelRegistry by lazy { ModelRegistry.getInstance() }
     private val aiJson = Json { ignoreUnknownKeys = true }
 
     private val statusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
     private val guideLabel = JBLabel(SpecCodingBundle.message("mcp.panel.guide"))
     private val aiSetupBtn = JButton(SpecCodingBundle.message("mcp.server.aiSetup"))
+    private val cancelAiSetupBtn = JButton(SpecCodingBundle.message("mcp.server.aiSetup.stop"))
+    private val manualAddBtn = JButton(SpecCodingBundle.message("mcp.server.add"))
     private val refreshBtn = JButton(SpecCodingBundle.message("mcp.server.refresh"))
     private val titleLabel = JBLabel(SpecCodingBundle.message("mcp.panel.title"))
+    private val statusChipPanel = JPanel(BorderLayout())
 
     private var selectedServerId: String? = null
     private var aiSetupInProgress: Boolean = false
+    private var aiSetupStopRequested: Boolean = false
+    private var aiSetupJob: Job? = null
+
+    @Volatile
+    private var activeAiRequest: ActiveAiRequest? = null
 
     private val serverListPanel = McpServerListPanel(
         onServerSelected = ::onServerSelected,
-        onAddServer = ::onAddServer,
         onDeleteServer = ::onDeleteServer
     )
 
@@ -83,41 +97,97 @@ class McpPanel(
     }
 
     private fun setupUI() {
-        // 顶部工具栏
-        val toolbar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
-        toolbar.isOpaque = false
-        toolbar.border = JBUI.Borders.emptyBottom(2)
-        titleLabel.font = titleLabel.font.deriveFont(java.awt.Font.BOLD, 13f)
-        toolbar.add(titleLabel)
-        toolbar.add(aiSetupBtn)
-        toolbar.add(refreshBtn)
-        toolbar.add(statusLabel)
-        aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip")
-        guideLabel.foreground = JBColor(
-            java.awt.Color(108, 115, 128),
-            java.awt.Color(150, 158, 170),
-        )
-        guideLabel.border = JBUI.Borders.empty(0, 2, 4, 2)
+        listOf(manualAddBtn, refreshBtn, cancelAiSetupBtn).forEach { styleActionButton(it, primary = false) }
+        styleActionButton(aiSetupBtn, primary = true)
 
-        val north = JPanel(BorderLayout())
-        north.isOpaque = false
-        north.add(toolbar, BorderLayout.NORTH)
-        north.add(guideLabel, BorderLayout.SOUTH)
+        // 顶部工具栏
+        val titleRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            titleLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            titleLabel.foreground = STATUS_TEXT_FG
+            statusLabel.font = JBUI.Fonts.smallFont()
+            statusLabel.foreground = STATUS_TEXT_FG
+            statusChipPanel.isOpaque = true
+            statusChipPanel.background = STATUS_CHIP_BG
+            statusChipPanel.border = SpecUiStyle.roundedCardBorder(
+                lineColor = STATUS_CHIP_BORDER,
+                arc = JBUI.scale(12),
+                top = 3,
+                left = 8,
+                bottom = 3,
+                right = 8,
+            )
+            statusChipPanel.add(statusLabel, BorderLayout.CENTER)
+            add(titleLabel)
+            add(statusChipPanel)
+        }
+
+        val actionsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip")
+            add(aiSetupBtn)
+            add(cancelAiSetupBtn)
+            add(manualAddBtn)
+            add(refreshBtn)
+        }
+
+        guideLabel.foreground = GUIDE_TEXT_FG
+        guideLabel.font = JBUI.Fonts.smallFont()
+        guideLabel.border = JBUI.Borders.empty(0, 1, 0, 1)
+
+        val footerPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(guideLabel, BorderLayout.NORTH)
+        }
+
+        val toolbar = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+            isOpaque = true
+            background = TOOLBAR_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = TOOLBAR_BORDER,
+                arc = JBUI.scale(14),
+                top = 8,
+                left = 10,
+                bottom = 8,
+                right = 10,
+            )
+            add(titleRow, BorderLayout.NORTH)
+            add(actionsRow, BorderLayout.CENTER)
+            add(footerPanel, BorderLayout.SOUTH)
+        }
+
+        val north = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyBottom(8)
+            add(toolbar, BorderLayout.CENTER)
+        }
         add(north, BorderLayout.NORTH)
 
         // 主体: 左右分割
         val splitPane = JSplitPane(
             JSplitPane.HORIZONTAL_SPLIT,
-            serverListPanel,
-            serverDetailPanel
+            createSectionContainer(serverListPanel),
+            createSectionContainer(serverDetailPanel),
         )
-        splitPane.dividerLocation = 220
-        splitPane.dividerSize = JBUI.scale(4)
+        splitPane.dividerLocation = JBUI.scale(252)
+        splitPane.dividerSize = JBUI.scale(8)
+        splitPane.isContinuousLayout = true
+        splitPane.border = JBUI.Borders.empty()
+        splitPane.background = PANEL_SECTION_BG
+        SpecUiStyle.applySplitPaneDivider(
+            splitPane = splitPane,
+            dividerSize = JBUI.scale(8),
+            dividerBackground = DIVIDER_BG,
+            dividerBorderColor = DIVIDER_BORDER,
+        )
         add(splitPane, BorderLayout.CENTER)
 
         // 刷新按钮
         refreshBtn.addActionListener { refreshServers() }
         aiSetupBtn.addActionListener { onAiQuickSetup() }
+        cancelAiSetupBtn.addActionListener { onCancelAiQuickSetup() }
+        manualAddBtn.addActionListener { onAddServer() }
+        setAiSetupInProgress(false)
     }
 
     private fun subscribeToEvents() {
@@ -171,9 +241,16 @@ class McpPanel(
         titleLabel.text = SpecCodingBundle.message("mcp.panel.title")
         aiSetupBtn.text = SpecCodingBundle.message("mcp.server.aiSetup")
         aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip")
+        cancelAiSetupBtn.text = SpecCodingBundle.message("mcp.server.aiSetup.stop")
+        manualAddBtn.text = SpecCodingBundle.message("mcp.server.add")
         refreshBtn.text = SpecCodingBundle.message("mcp.server.refresh")
+        styleActionButton(aiSetupBtn, primary = true)
+        styleActionButton(cancelAiSetupBtn, primary = false)
+        styleActionButton(manualAddBtn, primary = false)
+        styleActionButton(refreshBtn, primary = false)
         guideLabel.text = SpecCodingBundle.message("mcp.panel.guide")
         serverListPanel.refreshLocalizedTexts()
+        serverDetailPanel.refreshLocalizedTexts()
         val servers = mcpHub.getAllServers()
         statusLabel.text = SpecCodingBundle.message("mcp.server.count", servers.size)
         selectedServerId?.let(::onServerSelected) ?: serverDetailPanel.showEmpty()
@@ -225,7 +302,19 @@ class McpPanel(
 
     private fun onAiQuickSetup() {
         if (_isDisposed || aiSetupInProgress) return
-        val dialog = McpAiQuickSetupDialog()
+        val providers = availableAiProviders()
+        val preferredProvider = settingsState.defaultProvider.trim().ifBlank { null } ?: providers.firstOrNull()
+        val preferredModel = settingsState.selectedCliModel.trim().ifBlank { null }
+        val modelsByProvider = providers.associateWith { providerId ->
+            val providerScopedPreferredModel = if (providerId == preferredProvider) preferredModel else null
+            availableModelsForProvider(providerId, providerScopedPreferredModel)
+        }
+        val dialog = McpAiQuickSetupDialog(
+            providers = providers,
+            modelsByProvider = modelsByProvider,
+            preferredProviderId = preferredProvider,
+            preferredModelId = preferredModel,
+        )
         if (!dialog.showAndGet()) {
             return
         }
@@ -233,16 +322,29 @@ class McpPanel(
         if (prompt.isBlank()) {
             return
         }
+        val selectedProvider = dialog.selectedProviderId
+        val selectedModel = dialog.selectedModelId
 
         setAiSetupInProgress(true)
+        aiSetupStopRequested = false
         statusLabel.text = SpecCodingBundle.message("mcp.server.aiSetup.generating")
 
-        scope.launch(Dispatchers.IO) {
+        aiSetupJob = scope.launch(Dispatchers.IO) {
             val result = runCatching {
-                suggestMcpConfig(prompt)
+                suggestMcpConfig(
+                    userPrompt = prompt,
+                    preferredProviderId = selectedProvider,
+                    preferredModelId = selectedModel,
+                )
             }
             invokeLaterSafe {
                 setAiSetupInProgress(false)
+                aiSetupJob = null
+                val cancelled = aiSetupStopRequested || result.exceptionOrNull() is CancellationException
+                if (cancelled) {
+                    statusLabel.text = SpecCodingBundle.message("mcp.server.aiSetup.cancelled")
+                    return@invokeLaterSafe
+                }
                 result.onSuccess { draft ->
                     val deduplicatedDraft = ensureUniqueId(draft)
                     val editor = McpServerEditorDialog(draft = deduplicatedDraft)
@@ -270,30 +372,82 @@ class McpPanel(
     private fun setAiSetupInProgress(inProgress: Boolean) {
         aiSetupInProgress = inProgress
         aiSetupBtn.isEnabled = !inProgress
-        refreshBtn.isEnabled = !inProgress
+        cancelAiSetupBtn.isEnabled = inProgress
     }
 
-    private suspend fun suggestMcpConfig(userPrompt: String): McpServerConfig {
-        val aiPrompt = buildAiSetupPrompt(userPrompt)
-        val providerId = settingsState.defaultProvider.trim().ifBlank { null }
-        val modelId = settingsState.selectedCliModel.trim().ifBlank { null }
-        val response = StringBuilder()
-        val requestId = UUID.randomUUID().toString()
+    private fun onCancelAiQuickSetup() {
+        if (!aiSetupInProgress) return
+        aiSetupStopRequested = true
+        statusLabel.text = SpecCodingBundle.message("mcp.server.aiSetup.stopping")
+        activeAiRequest?.let { request ->
+            llmRouter.cancel(providerId = request.providerId, requestId = request.requestId)
+        }
+        aiSetupJob?.cancel(CancellationException("MCP AI setup cancelled by user"))
+    }
 
-        projectService.chat(
-            providerId = providerId,
-            userInput = aiPrompt,
-            modelId = modelId,
-            operationMode = OperationMode.PLAN,
-            planExecuteVerifySections = false,
-            requestId = requestId,
-        ) { chunk ->
-            if (chunk.delta.isNotEmpty()) {
-                response.append(chunk.delta)
+    private suspend fun suggestMcpConfig(
+        userPrompt: String,
+        preferredProviderId: String?,
+        preferredModelId: String?,
+    ): McpServerConfig {
+        val aiPrompt = buildAiSetupPrompt(userPrompt)
+        val candidates = buildAiRequestCandidates(preferredProviderId, preferredModelId)
+            .take(AI_MAX_CANDIDATE_ATTEMPTS)
+        var lastError: Throwable? = null
+        candidates.forEach { candidate ->
+            try {
+                val response = requestAiDraft(
+                    prompt = aiPrompt,
+                    providerId = candidate.providerId,
+                    modelId = candidate.modelId,
+                )
+                return parseAiSuggestion(response, userPrompt)
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                lastError = error
             }
         }
+        throw IllegalStateException(
+            SpecCodingBundle.message("mcp.server.aiSetup.failed", lastError?.message ?: SpecCodingBundle.message("common.unknown")),
+            lastError,
+        )
+    }
 
-        return parseAiSuggestion(response.toString(), userPrompt)
+    private suspend fun requestAiDraft(
+        prompt: String,
+        providerId: String?,
+        modelId: String?,
+    ): String {
+        val response = StringBuilder()
+        val requestId = UUID.randomUUID().toString()
+        val normalizedProviderId = providerId?.trim()?.ifBlank { null }
+        activeAiRequest = ActiveAiRequest(providerId = normalizedProviderId, requestId = requestId)
+        return try {
+            withTimeout(AI_REQUEST_TIMEOUT_MS) {
+                projectService.chat(
+                    providerId = normalizedProviderId,
+                    userInput = prompt,
+                    modelId = modelId,
+                    operationMode = OperationMode.PLAN,
+                    planExecuteVerifySections = false,
+                    requestId = requestId,
+                ) { chunk ->
+                    if (chunk.delta.isNotEmpty()) {
+                        response.append(chunk.delta)
+                    }
+                }
+            }
+            response.toString()
+        } catch (error: TimeoutCancellationException) {
+            throw IllegalStateException(
+                SpecCodingBundle.message("mcp.server.aiSetup.timeout", AI_REQUEST_TIMEOUT_SECONDS),
+                error,
+            )
+        } finally {
+            if (activeAiRequest?.requestId == requestId) {
+                activeAiRequest = null
+            }
+        }
     }
 
     private fun buildAiSetupPrompt(userPrompt: String): String {
@@ -400,6 +554,68 @@ class McpPanel(
         }.getOrDefault(TransportType.STDIO)
     }
 
+    private fun availableAiProviders(): List<String> {
+        val providers = llmRouter.availableUiProviders()
+            .ifEmpty { llmRouter.availableProviders() }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (providers.isNotEmpty()) return providers
+        val configured = settingsState.defaultProvider.trim().ifBlank { null }
+        if (!configured.isNullOrBlank()) return listOf(configured)
+        return listOf(llmRouter.defaultProviderId())
+    }
+
+    private fun availableModelsForProvider(providerId: String, preferredModelId: String?): List<ModelInfo> {
+        val models = modelRegistry.getModelsForProvider(providerId).toMutableList()
+        if (models.isEmpty() && !preferredModelId.isNullOrBlank()) {
+            models += ModelInfo(
+                id = preferredModelId,
+                name = preferredModelId,
+                provider = providerId,
+                contextWindow = 0,
+                capabilities = emptySet(),
+            )
+        }
+        return models
+    }
+
+    private fun buildAiRequestCandidates(
+        preferredProviderId: String?,
+        preferredModelId: String?,
+    ): List<AiRequestCandidate> {
+        val configuredProvider = settingsState.defaultProvider.trim().ifBlank { null }
+        val configuredModel = settingsState.selectedCliModel.trim().ifBlank { null }
+        val providers = availableAiProviders()
+        val primaryProvider = preferredProviderId?.trim()?.ifBlank { null }
+            ?: configuredProvider
+            ?: providers.firstOrNull()
+
+        val candidates = mutableListOf<AiRequestCandidate>()
+        fun add(providerId: String?, modelId: String?) {
+            val normalizedProvider = providerId?.trim()?.ifBlank { null }
+            val normalizedModel = modelId?.trim()?.ifBlank { null }
+            val candidate = AiRequestCandidate(normalizedProvider, normalizedModel)
+            if (!candidates.contains(candidate)) {
+                candidates += candidate
+            }
+        }
+
+        add(primaryProvider, preferredModelId)
+        if (!preferredModelId.isNullOrBlank()) {
+            add(primaryProvider, null)
+        }
+        add(configuredProvider, configuredModel)
+        if (!configuredModel.isNullOrBlank()) {
+            add(configuredProvider, null)
+        }
+        providers.firstOrNull()?.let { provider ->
+            add(provider, null)
+        }
+        add(null, null)
+        return candidates
+    }
+
     private fun normalizeServerId(seed: String): String {
         val normalized = seed
             .trim()
@@ -493,12 +709,88 @@ class McpPanel(
 
     override fun dispose() {
         _isDisposed = true
+        aiSetupJob?.cancel()
         scope.cancel()
         logger.info("McpPanel disposed")
+    }
+
+    private fun styleActionButton(button: JButton, primary: Boolean) {
+        val bg = if (primary) BUTTON_PRIMARY_BG else BUTTON_BG
+        val border = if (primary) BUTTON_PRIMARY_BORDER else BUTTON_BORDER
+        val fg = if (primary) BUTTON_PRIMARY_FG else BUTTON_FG
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.isContentAreaFilled = true
+        button.isOpaque = true
+        button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.background = bg
+        button.foreground = fg
+        button.border = javax.swing.BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(border, JBUI.scale(10)),
+            JBUI.Borders.empty(1, 6, 1, 6),
+        )
+        SpecUiStyle.applyRoundRect(button, arc = 10)
+        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
+        val insets = button.insets
+        val lafWidth = button.preferredSize?.width ?: 0
+        val width = maxOf(
+            lafWidth,
+            textWidth + insets.left + insets.right + JBUI.scale(14),
+            JBUI.scale(72),
+        )
+        button.preferredSize = JBUI.size(width, JBUI.scale(28))
+        button.minimumSize = button.preferredSize
+    }
+
+    private fun createSectionContainer(content: JComponent): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = PANEL_SECTION_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = PANEL_SECTION_BORDER,
+                arc = JBUI.scale(12),
+                top = 4,
+                left = 4,
+                bottom = 4,
+                right = 4,
+            )
+            add(content, BorderLayout.CENTER)
+        }
     }
 
     companion object {
         private val JSON_FENCE_REGEX = Regex("```(?:json)?\\s*([\\s\\S]*?)```", RegexOption.IGNORE_CASE)
         private val ID_NORMALIZE_REGEX = Regex("[^a-z0-9_-]+")
+        private const val AI_REQUEST_TIMEOUT_MS = 30_000L
+        private const val AI_REQUEST_TIMEOUT_SECONDS = AI_REQUEST_TIMEOUT_MS / 1_000
+        private const val AI_MAX_CANDIDATE_ATTEMPTS = 3
+
+        private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
+        private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
+        private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val BUTTON_PRIMARY_BG = JBColor(Color(213, 228, 250), Color(77, 98, 128))
+        private val BUTTON_PRIMARY_BORDER = JBColor(Color(154, 180, 219), Color(116, 137, 169))
+        private val BUTTON_PRIMARY_FG = JBColor(Color(37, 57, 89), Color(223, 232, 246))
+        private val STATUS_CHIP_BG = JBColor(Color(236, 244, 255), Color(66, 76, 91))
+        private val STATUS_CHIP_BORDER = JBColor(Color(178, 198, 226), Color(99, 116, 140))
+        private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val GUIDE_TEXT_FG = JBColor(Color(86, 100, 122), Color(173, 186, 206))
+        private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
+        private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val DIVIDER_BG = JBColor(Color(236, 240, 246), Color(74, 80, 89))
+        private val DIVIDER_BORDER = JBColor(Color(217, 223, 232), Color(87, 94, 105))
     }
+
+    private data class AiRequestCandidate(
+        val providerId: String?,
+        val modelId: String?,
+    )
+
+    private data class ActiveAiRequest(
+        val providerId: String?,
+        val requestId: String,
+    )
 }
