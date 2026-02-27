@@ -61,6 +61,9 @@ class SpecCodingSettingsState : PersistentStateComponent<SpecCodingSettingsState
     var teamSkillRepoUrl: String = ""
     var teamSkillRepoBranch: String = "main"
 
+    // Skill 生成默认作用域（GLOBAL / PROJECT）
+    var skillGenerationScope: String = "PROJECT"
+
     override fun getState(): SpecCodingSettingsState = this
 
     override fun loadState(state: SpecCodingSettingsState) {

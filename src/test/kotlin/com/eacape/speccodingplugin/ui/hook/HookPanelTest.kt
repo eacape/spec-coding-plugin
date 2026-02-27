@@ -126,7 +126,8 @@ class HookPanelTest {
         panel.clickClearLogsForTest()
 
         assertEquals(1, cleared)
-        assertTrue(panel.logTextForTest().contains("暂无") || panel.logTextForTest().contains("No execution logs"))
+        val logText = panel.logTextForTest().lowercase()
+        assertTrue(logText.contains("暂无") || logText.contains("no execution logs"))
 
         panel.dispose()
     }

@@ -2711,15 +2711,61 @@ class ImprovedChatPanel(
     }
 
     private fun showAvailableSkills() {
-        val skills = skillExecutor.listAvailableSkills()
+        val snapshot = skillExecutor.discoverAvailableSkills(forceReload = true)
+        val skills = snapshot.skills
         val lines = buildString {
             appendLine(SpecCodingBundle.message("toolwindow.skill.available.header", skills.size))
-            skills.forEach { skill ->
+            appendLine(SpecCodingBundle.message("toolwindow.skill.available.roots"))
+            snapshot.roots.forEach { root ->
+                val scopeLabel = when (root.scope) {
+                    com.eacape.speccodingplugin.skill.SkillScope.GLOBAL ->
+                        SpecCodingBundle.message("toolwindow.skill.available.scope.global")
+
+                    com.eacape.speccodingplugin.skill.SkillScope.PROJECT ->
+                        SpecCodingBundle.message("toolwindow.skill.available.scope.project")
+                }
+                val rootStatus = if (root.exists) {
+                    SpecCodingBundle.message("toolwindow.skill.available.root.exists")
+                } else {
+                    SpecCodingBundle.message("toolwindow.skill.available.root.missing")
+                }
                 appendLine(
                     SpecCodingBundle.message(
-                        "toolwindow.skill.available.item",
+                        "toolwindow.skill.available.root.item",
+                        scopeLabel,
+                        root.label,
+                        root.path,
+                        rootStatus,
+                    ),
+                )
+            }
+            skills.forEach { skill ->
+                val sourceLabel = when (skill.sourceType) {
+                    com.eacape.speccodingplugin.skill.SkillSourceType.BUILTIN ->
+                        SpecCodingBundle.message("toolwindow.skill.available.source.builtin")
+
+                    com.eacape.speccodingplugin.skill.SkillSourceType.YAML ->
+                        SpecCodingBundle.message("toolwindow.skill.available.source.yaml")
+
+                    com.eacape.speccodingplugin.skill.SkillSourceType.MARKDOWN ->
+                        SpecCodingBundle.message("toolwindow.skill.available.source.markdown")
+                }
+                val sourceWithScope = skill.scope?.let { scope ->
+                    val scopeText = when (scope) {
+                        com.eacape.speccodingplugin.skill.SkillScope.GLOBAL ->
+                            SpecCodingBundle.message("toolwindow.skill.available.scope.global")
+
+                        com.eacape.speccodingplugin.skill.SkillScope.PROJECT ->
+                            SpecCodingBundle.message("toolwindow.skill.available.scope.project")
+                    }
+                    "$sourceLabel / $scopeText"
+                } ?: sourceLabel
+                appendLine(
+                    SpecCodingBundle.message(
+                        "toolwindow.skill.available.item.ext",
                         skill.slashCommand,
                         skill.description,
+                        sourceWithScope,
                     )
                 )
             }
@@ -3424,8 +3470,7 @@ class ImprovedChatPanel(
 
     private fun isRegisteredSkillSlashCommand(command: String): Boolean {
         val token = extractSlashCommandToken(command) ?: return false
-        return skillExecutor.listAvailableSkills()
-            .any { it.slashCommand.equals(token, ignoreCase = true) }
+        return skillExecutor.hasSkillSlashCommand(token, forceReload = true)
     }
 
     private fun executeProviderSlashCommand(

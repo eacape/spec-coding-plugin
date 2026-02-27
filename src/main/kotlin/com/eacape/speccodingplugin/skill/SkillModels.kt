@@ -12,6 +12,33 @@ data class Skill(
     val contextRequirements: List<ContextRequirement> = emptyList(),
     val tags: List<String> = emptyList(),
     val enabled: Boolean = true,
+    val scope: SkillScope? = null,
+    val sourceType: SkillSourceType = SkillSourceType.BUILTIN,
+    val sourcePath: String? = null,
+)
+
+enum class SkillScope {
+    GLOBAL,
+    PROJECT,
+}
+
+enum class SkillSourceType {
+    BUILTIN,
+    YAML,
+    MARKDOWN,
+}
+
+data class SkillDiscoveryRoot(
+    val scope: SkillScope,
+    val label: String,
+    val path: String,
+    val exists: Boolean,
+)
+
+data class SkillDiscoverySnapshot(
+    val skills: List<Skill>,
+    val roots: List<SkillDiscoveryRoot>,
+    val scannedAt: Long,
 )
 
 /**

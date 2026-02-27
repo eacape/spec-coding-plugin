@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.Locale
 
 /**
  * 技能注册表（Project-level Service）
@@ -24,6 +25,7 @@ class SkillRegistry(private val project: Project) {
     private var loaded = false
 
     private val skills = mutableMapOf<String, Skill>()
+    private var discoveryRoots = emptyList<SkillDiscoveryRoot>()
 
     /**
      * 列出所有已注册的技能
@@ -117,9 +119,28 @@ class SkillRegistry(private val project: Project) {
         synchronized(lock) {
             skills.clear()
             loaded = false
+            discoveryRoots = emptyList()
             loadBuiltinSkills()
             loadCustomSkills()
             loaded = true
+        }
+    }
+
+    /**
+     * 返回当前技能探测快照。可选强制重扫磁盘。
+     */
+    fun discoverySnapshot(forceReload: Boolean = false): SkillDiscoverySnapshot {
+        if (forceReload) {
+            reloadFromDisk()
+        } else {
+            ensureLoaded()
+        }
+        return synchronized(lock) {
+            SkillDiscoverySnapshot(
+                skills = skills.values.filter { it.enabled }.sortedBy { it.name },
+                roots = discoveryRoots.toList(),
+                scannedAt = System.currentTimeMillis(),
+            )
         }
     }
 
@@ -317,9 +338,17 @@ class SkillRegistry(private val project: Project) {
     }
 
     private fun loadCustomSkills() {
+        loadLegacyYamlSkills()
+        loadMarkdownSkillDirectories()
+    }
+
+    /**
+     * 兼容旧版：继续支持项目内 `.spec-coding/skills` 目录下的 yaml 文件。
+     */
+    private fun loadLegacyYamlSkills() {
         val customSkillsPath = getCustomSkillsPath() ?: return
-        if (!Files.exists(customSkillsPath)) {
-            logger.info("No custom skills directory found at $customSkillsPath")
+        if (!Files.isDirectory(customSkillsPath)) {
+            logger.info("No legacy custom skills directory found at $customSkillsPath")
             return
         }
 
@@ -327,7 +356,7 @@ class SkillRegistry(private val project: Project) {
             Files.list(customSkillsPath).use { stream ->
                 val customSkills = mutableListOf<Skill>()
                 stream.forEach { path ->
-                    if (Files.isRegularFile(path) && path.fileName.toString().endsWith(".yaml")) {
+                    if (Files.isRegularFile(path) && path.fileName.toString().endsWith(".yaml", ignoreCase = true)) {
                         loadSkillFromYaml(path)?.let(customSkills::add)
                     }
                 }
@@ -336,11 +365,209 @@ class SkillRegistry(private val project: Project) {
                     skills[skill.id] = skill
                 }
 
-                logger.info("Loaded ${customSkills.size} custom skills")
+                logger.info("Loaded ${customSkills.size} legacy yaml custom skills")
             }
         } catch (e: Exception) {
-            logger.warn("Failed to load custom skills", e)
+            logger.warn("Failed to load legacy yaml custom skills", e)
         }
+    }
+
+    private fun loadMarkdownSkillDirectories() {
+        val roots = resolveDiscoveryRoots()
+        discoveryRoots = roots.map { root ->
+            SkillDiscoveryRoot(
+                scope = root.scope,
+                label = root.label,
+                path = root.path.toString(),
+                exists = Files.isDirectory(root.path),
+            )
+        }
+
+        var loadedMarkdownSkills = 0
+        roots.forEach { root ->
+            if (!Files.isDirectory(root.path)) return@forEach
+            try {
+                Files.walk(root.path, SKILL_MARKDOWN_MAX_DEPTH).use { stream ->
+                    stream
+                        .filter { path ->
+                            Files.isRegularFile(path) &&
+                                path.fileName.toString().equals(SKILL_MARKDOWN_FILE_NAME, ignoreCase = true)
+                        }
+                        .forEach { path ->
+                            loadSkillFromMarkdown(path, root)?.let { skill ->
+                                skills[skill.id] = skill
+                                loadedMarkdownSkills += 1
+                            }
+                        }
+                }
+            } catch (e: Exception) {
+                logger.warn("Failed to scan markdown skills from ${root.path}", e)
+            }
+        }
+        logger.info("Loaded $loadedMarkdownSkills markdown skills from local directories")
+    }
+
+    private fun resolveDiscoveryRoots(): List<DiscoveryRoot> {
+        val candidates = mutableListOf<DiscoveryRoot>()
+
+        val userHome = System.getProperty("user.home")
+            ?.trim()
+            ?.ifBlank { null }
+            ?.let { value -> Paths.get(value) }
+        if (userHome != null) {
+            addScopeRoots(candidates, userHome, SkillScope.GLOBAL)
+        }
+
+        val projectBase = project.basePath
+            ?.trim()
+            ?.ifBlank { null }
+            ?.let { value -> Paths.get(value) }
+        if (projectBase != null) {
+            addScopeRoots(candidates, projectBase, SkillScope.PROJECT)
+        }
+
+        val deduplicated = linkedMapOf<String, DiscoveryRoot>()
+        candidates.forEach { root ->
+            val key = runCatching { root.path.toAbsolutePath().normalize().toString() }
+                .getOrDefault(root.path.toString())
+            deduplicated[key] = root
+        }
+        return deduplicated.values.toList()
+    }
+
+    private fun addScopeRoots(
+        collector: MutableList<DiscoveryRoot>,
+        basePath: Path,
+        scope: SkillScope,
+    ) {
+        collector += DiscoveryRoot(
+            scope = scope,
+            label = ".codex/skills",
+            path = basePath.resolve(".codex").resolve("skills"),
+        )
+        collector += DiscoveryRoot(
+            scope = scope,
+            label = ".claude/skills",
+            path = basePath.resolve(".claude").resolve("skills"),
+        )
+        collector += DiscoveryRoot(
+            scope = scope,
+            label = ".cluade/skills",
+            path = basePath.resolve(".cluade").resolve("skills"),
+        )
+    }
+
+    private fun loadSkillFromMarkdown(path: Path, root: DiscoveryRoot): Skill? {
+        return try {
+            val rawContent = Files.readString(path, StandardCharsets.UTF_8)
+            val parsed = parseFrontMatter(rawContent)
+            val folderName = path.parent?.fileName?.toString()?.trim().orEmpty()
+            val normalizedCommand = normalizeSlashCommand(
+                parsed.entries["slash_command"]
+                    ?: parsed.entries["command"]
+                    ?: folderName
+                    ?: parsed.entries["name"]
+                    ?: parsed.entries["title"]
+                    ?: "",
+            )
+            if (normalizedCommand.isBlank()) {
+                return null
+            }
+
+            val name = parsed.entries["name"]
+                ?.trim()
+                ?.ifBlank { null }
+                ?: folderName.ifBlank { normalizedCommand }
+            val description = parsed.entries["description"]
+                ?.trim()
+                ?.ifBlank { null }
+                ?: "Local skill from ${root.label}"
+            val promptTemplate = parsed.body
+                .trim()
+                .ifBlank { description }
+            val relativeDir = runCatching { root.path.relativize(path.parent).toString() }
+                .getOrDefault(folderName.ifBlank { normalizedCommand })
+            val skillId = buildMarkdownSkillId(root, normalizedCommand, relativeDir)
+            Skill(
+                id = skillId,
+                name = name,
+                description = description,
+                slashCommand = normalizedCommand,
+                promptTemplate = promptTemplate,
+                tags = listOf(
+                    "custom",
+                    "markdown",
+                    root.scope.name.lowercase(Locale.ROOT),
+                    root.label.replace("/", "-"),
+                ),
+                enabled = true,
+                scope = root.scope,
+                sourceType = SkillSourceType.MARKDOWN,
+                sourcePath = path.toString(),
+            )
+        } catch (e: Exception) {
+            logger.warn("Failed to load markdown skill from $path", e)
+            null
+        }
+    }
+
+    private fun parseFrontMatter(content: String): ParsedMarkdownSkill {
+        val normalized = content.replace("\r\n", "\n").replace('\r', '\n')
+        if (!normalized.startsWith("---\n")) {
+            return ParsedMarkdownSkill(entries = emptyMap(), body = normalized)
+        }
+
+        val lines = normalized.split('\n')
+        var endIndex = -1
+        for (index in 1 until lines.size) {
+            if (lines[index].trim() == "---") {
+                endIndex = index
+                break
+            }
+        }
+        if (endIndex <= 1) {
+            return ParsedMarkdownSkill(entries = emptyMap(), body = normalized)
+        }
+
+        val entries = linkedMapOf<String, String>()
+        for (index in 1 until endIndex) {
+            val line = lines[index].trim()
+            if (line.isBlank() || line.startsWith("#")) continue
+            val separator = line.indexOf(':')
+            if (separator <= 0) continue
+            val key = line.substring(0, separator).trim().lowercase(Locale.ROOT)
+            val value = line.substring(separator + 1).trim().trim('"')
+            if (key.isNotBlank() && value.isNotBlank()) {
+                entries[key] = value
+            }
+        }
+        val body = lines.drop(endIndex + 1).joinToString("\n")
+        return ParsedMarkdownSkill(entries = entries, body = body)
+    }
+
+    private fun normalizeSlashCommand(raw: String): String {
+        return raw
+            .trim()
+            .removePrefix("/")
+            .lowercase(Locale.ROOT)
+            .replace(SKILL_COMMAND_INVALID_REGEX, "-")
+            .trim('-')
+    }
+
+    private fun buildMarkdownSkillId(root: DiscoveryRoot, slashCommand: String, relativeDir: String): String {
+        val normalizedRelative = relativeDir
+            .replace('\\', '-')
+            .replace('/', '-')
+            .replace(SKILL_ID_INVALID_REGEX, "-")
+            .trim('-')
+            .ifBlank { slashCommand }
+        val sourceTag = root.label.replace(SKILL_ID_INVALID_REGEX, "-").trim('-')
+        return listOf(
+            "local",
+            root.scope.name.lowercase(Locale.ROOT),
+            sourceTag.lowercase(Locale.ROOT),
+            normalizedRelative.lowercase(Locale.ROOT),
+        ).joinToString("-")
     }
 
     private fun loadSkillFromYaml(path: Path): Skill? {
@@ -352,7 +579,10 @@ class SkillRegistry(private val project: Project) {
             val id = data["id"]?.toString()?.trim() ?: return null
             val name = data["name"]?.toString()?.trim() ?: return null
             val description = data["description"]?.toString()?.trim() ?: return null
-            val slashCommand = data["slash_command"]?.toString()?.trim() ?: return null
+            val slashCommand = normalizeSlashCommand(data["slash_command"]?.toString()?.trim() ?: return null)
+            if (slashCommand.isBlank()) {
+                return null
+            }
             val promptTemplate = data["prompt_template"]?.toString()?.trim() ?: return null
 
             @Suppress("UNCHECKED_CAST")
@@ -378,8 +608,11 @@ class SkillRegistry(private val project: Project) {
                 slashCommand = slashCommand,
                 promptTemplate = promptTemplate,
                 contextRequirements = contextReqs,
-                tags = tags + "custom",
+                tags = tags + listOf("custom", "legacy-yaml"),
                 enabled = enabled,
+                scope = SkillScope.PROJECT,
+                sourceType = SkillSourceType.YAML,
+                sourcePath = path.toString(),
             )
         } catch (e: Exception) {
             logger.warn("Failed to load skill from $path", e)
@@ -394,7 +627,23 @@ class SkillRegistry(private val project: Project) {
             .resolve("skills")
     }
 
+    private data class DiscoveryRoot(
+        val scope: SkillScope,
+        val label: String,
+        val path: Path,
+    )
+
+    private data class ParsedMarkdownSkill(
+        val entries: Map<String, String>,
+        val body: String,
+    )
+
     companion object {
+        private const val SKILL_MARKDOWN_MAX_DEPTH = 6
+        private const val SKILL_MARKDOWN_FILE_NAME = "SKILL.md"
+        private val SKILL_COMMAND_INVALID_REGEX = Regex("[^a-z0-9_-]+")
+        private val SKILL_ID_INVALID_REGEX = Regex("[^a-z0-9_-]+")
+
         fun getInstance(project: Project): SkillRegistry {
             return project.getService(SkillRegistry::class.java)
         }

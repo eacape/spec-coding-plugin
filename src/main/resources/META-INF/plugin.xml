@@ -114,20 +114,6 @@
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
         <action
-                id="SpecCoding.PullTeamSkills"
-                class="com.eacape.speccodingplugin.ui.actions.PullTeamSkillsAction"
-                text="%action.team.skills.pull.text"
-                description="%action.team.skills.pull.description">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
-        </action>
-        <action
-                id="SpecCoding.PushTeamSkills"
-                class="com.eacape.speccodingplugin.ui.actions.PushTeamSkillsAction"
-                text="%action.team.skills.push.text"
-                description="%action.team.skills.push.description">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
-        </action>
-        <action
                 id="SpecCoding.OpenSettings"
                 class="com.eacape.speccodingplugin.ui.actions.OpenSpecCodingSettingsAction"
                 text="%toolbar.openSettings"

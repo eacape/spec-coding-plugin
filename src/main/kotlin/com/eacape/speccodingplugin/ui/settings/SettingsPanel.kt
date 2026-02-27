@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.settings
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.i18n.InterfaceLanguage
 import com.eacape.speccodingplugin.i18n.LocaleManager
@@ -9,8 +10,11 @@ import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
 import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
-import com.eacape.speccodingplugin.skill.TeamSkillSyncResult
-import com.eacape.speccodingplugin.skill.TeamSkillSyncService
+import com.eacape.speccodingplugin.skill.Skill
+import com.eacape.speccodingplugin.skill.SkillDiscoverySnapshot
+import com.eacape.speccodingplugin.skill.SkillRegistry
+import com.eacape.speccodingplugin.skill.SkillScope
+import com.eacape.speccodingplugin.skill.SkillSourceType
 import com.eacape.speccodingplugin.ui.hook.HookPanel
 import com.eacape.speccodingplugin.ui.mcp.McpPanel
 import com.eacape.speccodingplugin.ui.prompt.PromptManagerPanel
@@ -18,9 +22,6 @@ import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.window.GlobalConfigSyncService
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.progress.ProgressIndicator
-import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.util.IconLoader
@@ -39,6 +40,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
@@ -50,6 +55,10 @@ import java.awt.Graphics2D
 import java.awt.Insets
 import java.awt.RenderingHints
 import java.awt.geom.RoundRectangle2D
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
 import java.util.Locale
 import javax.swing.Box
 import javax.swing.BoxLayout
@@ -76,6 +85,8 @@ class SettingsPanel(
 ) : JPanel(BorderLayout()), Disposable {
 
     private val settings = SpecCodingSettingsState.getInstance()
+    private val projectService: SpecCodingProjectService = project.getService(SpecCodingProjectService::class.java)
+    private val skillRegistry: SkillRegistry = SkillRegistry.getInstance(project)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Volatile
@@ -97,12 +108,21 @@ class SettingsPanel(
     private val interfaceLanguageCombo = ComboBox(InterfaceLanguage.entries.toTypedArray())
     private val teamPromptRepoUrlField = JBTextField()
     private val teamPromptRepoBranchField = JBTextField()
-    private val teamSkillRepoUrlField = JBTextField()
-    private val teamSkillRepoBranchField = JBTextField()
 
-    private val pullTeamSkillsButton = JButton(SpecCodingBundle.message("action.team.skills.pull.text"))
-    private val pushTeamSkillsButton = JButton(SpecCodingBundle.message("action.team.skills.push.text"))
-    private val skillSyncStatusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
+    private val skillRefreshButton = JButton(SpecCodingBundle.message("settings.skills.discover.refresh"))
+    private val skillGenerateButton = JButton(SpecCodingBundle.message("settings.skills.generate.action"))
+    private val skillTargetScopeCombo = ComboBox(SkillScope.entries.toTypedArray())
+    private val skillGenerateRequirementField = JBTextField()
+    private val skillDiscoveryStatusLabel = JBLabel(SpecCodingBundle.message("settings.skills.discovery.empty"))
+    private val skillGenerationStatusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
+    private val skillRootsListModel = DefaultListModel<String>()
+    private val skillRootsList = JBList(skillRootsListModel)
+    private val skillsListModel = DefaultListModel<String>()
+    private val skillsList = JBList(skillsListModel)
+    private val skillJson = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
 
     private val sectionListModel = DefaultListModel<SidebarSection>()
     private val sectionList = JBList(sectionListModel)
@@ -144,12 +164,19 @@ class SettingsPanel(
         codexCliPathField.emptyText.text = SpecCodingBundle.message("settings.cli.codexPath.placeholder")
 
         detectCliButton.addActionListener { detectCliTools() }
-        pullTeamSkillsButton.addActionListener { runTeamSkillSync(push = false) }
-        pushTeamSkillsButton.addActionListener { runTeamSkillSync(push = true) }
+        skillRefreshButton.addActionListener { refreshSkillDiscovery(forceReload = true) }
+        skillGenerateButton.addActionListener { generateSkillWithAi() }
+        skillTargetScopeCombo.renderer = SimpleListCellRenderer.create<SkillScope> { label, value, _ ->
+            label.text = when (value ?: SkillScope.PROJECT) {
+                SkillScope.GLOBAL -> SpecCodingBundle.message("settings.skills.scope.global")
+                SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
+            }
+        }
+        skillGenerateRequirementField.emptyText.text = SpecCodingBundle.message("settings.skills.generate.placeholder")
 
         styleActionButton(detectCliButton)
-        styleActionButton(pullTeamSkillsButton)
-        styleActionButton(pushTeamSkillsButton)
+        styleActionButton(skillRefreshButton)
+        styleActionButton(skillGenerateButton, emphasized = true)
 
         buildSectionCards()
 
@@ -165,6 +192,7 @@ class SettingsPanel(
 
         add(centerPanel, BorderLayout.CENTER)
         updateCliStatusLabels()
+        refreshSkillDiscovery(forceReload = true)
     }
 
     private fun configureComboRenderers() {
@@ -355,49 +383,95 @@ class SettingsPanel(
     }
 
     private fun createSkillsSection(): JPanel {
-        val actionRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
-            isOpaque = false
-            add(pullTeamSkillsButton)
-            add(pushTeamSkillsButton)
-        }
+        skillDiscoveryStatusLabel.font = JBUI.Fonts.smallFont()
+        skillGenerationStatusLabel.font = JBUI.Fonts.smallFont()
+        setSkillDiscoveryStatus(SpecCodingBundle.message("settings.skills.discovery.empty"), SkillStatusTone.NORMAL)
+        setSkillGenerationStatus(SpecCodingBundle.message("toolwindow.status.ready"), SkillStatusTone.NORMAL)
 
-        skillSyncStatusLabel.font = JBUI.Fonts.smallFont()
-        setSkillSyncStatus(
-            text = SpecCodingBundle.message("toolwindow.status.ready"),
-            tone = SkillSyncTone.NORMAL,
-        )
+        skillRootsList.isFocusable = false
+        skillRootsList.selectionMode = ListSelectionModel.SINGLE_SELECTION
+        skillRootsList.visibleRowCount = 4
+        skillRootsList.background = CONTENT_BG
 
-        val statusChip = JPanel(BorderLayout()).apply {
-            isOpaque = true
-            background = SKILL_STATUS_BG
+        skillsList.isFocusable = false
+        skillsList.selectionMode = ListSelectionModel.SINGLE_SELECTION
+        skillsList.visibleRowCount = 8
+        skillsList.background = CONTENT_BG
+
+        val rootsScrollPane = JBScrollPane(skillRootsList).apply {
             border = SpecUiStyle.roundedCardBorder(
                 lineColor = SKILL_STATUS_BORDER,
-                arc = JBUI.scale(12),
+                arc = JBUI.scale(10),
                 top = 4,
-                left = 10,
+                left = 6,
                 bottom = 4,
-                right = 10,
+                right = 6,
             )
-            add(skillSyncStatusLabel, BorderLayout.CENTER)
+            preferredSize = JBUI.size(0, JBUI.scale(92))
+        }
+        val skillsScrollPane = JBScrollPane(skillsList).apply {
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = SKILL_STATUS_BORDER,
+                arc = JBUI.scale(10),
+                top = 4,
+                left = 6,
+                bottom = 4,
+                right = 6,
+            )
+            preferredSize = JBUI.size(0, JBUI.scale(180))
         }
 
-        val formPanel = FormBuilder.createFormBuilder()
-            .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.skills.sync.title")}</b></html>"))
-            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.skillRepoUrl"), teamSkillRepoUrlField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.skillBranch"), teamSkillRepoBranchField)
+        val discoveryHeader = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            add(skillDiscoveryStatusLabel, BorderLayout.CENTER)
+            add(skillRefreshButton, BorderLayout.EAST)
+        }
+        val discoveryPanel = FormBuilder.createFormBuilder()
+            .addComponent(discoveryHeader)
             .addVerticalGap(8)
-            .addComponent(actionRow)
-            .addVerticalGap(8)
-            .addComponent(statusChip)
-            .addComponentFillVertically(JPanel(), 0)
+            .addLabeledComponent(SpecCodingBundle.message("settings.skills.discovery.roots"), rootsScrollPane)
+            .addLabeledComponent(SpecCodingBundle.message("settings.skills.discovery.skills"), skillsScrollPane)
             .panel.apply {
                 isOpaque = false
-                border = JBUI.Borders.empty(10, 8, 10, 8)
+                border = JBUI.Borders.empty()
             }
+
+        val generateActionRow = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            isOpaque = false
+            add(skillGenerateButton)
+        }
+        val generationPanel = FormBuilder.createFormBuilder()
+            .addLabeledComponent(SpecCodingBundle.message("settings.skills.generate.scope"), skillTargetScopeCombo)
+            .addLabeledComponent(
+                SpecCodingBundle.message("settings.skills.generate.requirement"),
+                skillGenerateRequirementField,
+            )
+            .addVerticalGap(8)
+            .addComponent(generateActionRow)
+            .addVerticalGap(4)
+            .addComponent(skillGenerationStatusLabel)
+            .panel.apply {
+                isOpaque = false
+                border = JBUI.Borders.empty()
+            }
+
+        val stackPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(createBasicModuleCard("settings.skills.discovery.title", discoveryPanel))
+            add(Box.createVerticalStrut(JBUI.scale(8)))
+            add(createBasicModuleCard("settings.skills.generate.title", generationPanel))
+            add(Box.createVerticalGlue())
+        }
+        val scrollPane = JBScrollPane(stackPanel).apply {
+            border = JBUI.Borders.empty()
+            viewport.isOpaque = false
+            isOpaque = false
+        }
 
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(formPanel, BorderLayout.NORTH)
+            add(scrollPane, BorderLayout.CENTER)
         }
     }
 
@@ -485,6 +559,7 @@ class SettingsPanel(
     private fun installAutoSaveBindings() {
         defaultModelCombo.addActionListener { scheduleAutoSave() }
         interfaceLanguageCombo.addActionListener { scheduleAutoSave() }
+        skillTargetScopeCombo.addActionListener { scheduleAutoSave() }
         useProxyCheckBox.addActionListener { scheduleAutoSave() }
         autoSaveCheckBox.addActionListener { scheduleAutoSave() }
 
@@ -497,8 +572,6 @@ class SettingsPanel(
             defaultModeField,
             teamPromptRepoUrlField,
             teamPromptRepoBranchField,
-            teamSkillRepoUrlField,
-            teamSkillRepoBranchField,
         ).forEach { field ->
             field.document.addDocumentListener(
                 object : DocumentListener {
@@ -546,8 +619,9 @@ class SettingsPanel(
         interfaceLanguageCombo.selectedItem = InterfaceLanguage.fromCode(settings.interfaceLanguage)
         teamPromptRepoUrlField.text = settings.teamPromptRepoUrl
         teamPromptRepoBranchField.text = settings.teamPromptRepoBranch
-        teamSkillRepoUrlField.text = settings.teamSkillRepoUrl
-        teamSkillRepoBranchField.text = settings.teamSkillRepoBranch
+        skillTargetScopeCombo.selectedItem = runCatching {
+            SkillScope.valueOf(settings.skillGenerationScope.uppercase(Locale.ROOT))
+        }.getOrDefault(SkillScope.PROJECT)
         useProxyCheckBox.isSelected = settings.useProxy
         proxyHostField.text = settings.proxyHost
         proxyPortField.text = settings.proxyPort.toString()
@@ -564,8 +638,7 @@ class SettingsPanel(
         val selectedLanguage = (interfaceLanguageCombo.selectedItem as? InterfaceLanguage) ?: InterfaceLanguage.AUTO
         val nextPromptRepoUrl = teamPromptRepoUrlField.text.trim()
         val nextPromptBranch = teamPromptRepoBranchField.text.trim().ifBlank { "main" }
-        val nextSkillRepoUrl = teamSkillRepoUrlField.text.trim()
-        val nextSkillBranch = teamSkillRepoBranchField.text.trim().ifBlank { "main" }
+        val nextSkillGenerationScope = (skillTargetScopeCombo.selectedItem as? SkillScope ?: SkillScope.PROJECT).name
         val nextUseProxy = useProxyCheckBox.isSelected
         val nextProxyHost = proxyHostField.text
         val nextProxyPort = proxyPortField.text.toIntOrNull() ?: settings.proxyPort
@@ -581,8 +654,7 @@ class SettingsPanel(
                 selectedLanguage.code != settings.interfaceLanguage ||
                 nextPromptRepoUrl != settings.teamPromptRepoUrl ||
                 nextPromptBranch != settings.teamPromptRepoBranch ||
-                nextSkillRepoUrl != settings.teamSkillRepoUrl ||
-                nextSkillBranch != settings.teamSkillRepoBranch ||
+                nextSkillGenerationScope != settings.skillGenerationScope ||
                 nextUseProxy != settings.useProxy ||
                 nextProxyHost != settings.proxyHost ||
                 nextProxyPort != settings.proxyPort ||
@@ -600,8 +672,7 @@ class SettingsPanel(
         settings.selectedCliModel = nextSelectedModel
         settings.teamPromptRepoUrl = nextPromptRepoUrl
         settings.teamPromptRepoBranch = nextPromptBranch
-        settings.teamSkillRepoUrl = nextSkillRepoUrl
-        settings.teamSkillRepoBranch = nextSkillBranch
+        settings.skillGenerationScope = nextSkillGenerationScope
         settings.useProxy = nextUseProxy
         settings.proxyHost = nextProxyHost
         settings.proxyPort = nextProxyPort
@@ -683,87 +754,316 @@ class SettingsPanel(
         }
     }
 
-    private fun runTeamSkillSync(push: Boolean) {
-        persistSettings(reason = "settings-panel-skill-sync")
-
-        val taskTitle = SpecCodingBundle.message(
-            if (push) "team.skillSync.task.push" else "team.skillSync.task.pull",
+    private fun refreshSkillDiscovery(forceReload: Boolean) {
+        skillRefreshButton.isEnabled = false
+        setSkillDiscoveryStatus(
+            SpecCodingBundle.message("settings.skills.discovery.scanning"),
+            SkillStatusTone.NORMAL,
         )
-        pullTeamSkillsButton.isEnabled = false
-        pushTeamSkillsButton.isEnabled = false
-        setSkillSyncStatus(taskTitle, SkillSyncTone.NORMAL)
-
-        val service = TeamSkillSyncService.getInstance(project)
-        ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, taskTitle, false) {
-                override fun run(indicator: ProgressIndicator) {
-                    indicator.isIndeterminate = true
-                    indicator.text = taskTitle
-                    val result = if (push) service.pushToTeamRepo() else service.pullFromTeamRepo()
-                    SwingUtilities.invokeLater {
-                        if (isDisposed || project.isDisposed) {
-                            return@invokeLater
-                        }
-                        applySkillSyncResult(result, push)
-                        pullTeamSkillsButton.isEnabled = true
-                        pushTeamSkillsButton.isEnabled = true
-                    }
+        scope.launch {
+            val result = runCatching {
+                skillRegistry.discoverySnapshot(forceReload = forceReload)
+            }
+            SwingUtilities.invokeLater {
+                if (isDisposed || project.isDisposed) {
+                    return@invokeLater
                 }
-            },
-        )
-    }
-
-    private fun applySkillSyncResult(
-        result: Result<TeamSkillSyncResult>,
-        push: Boolean,
-    ) {
-        result
-            .onSuccess { payload ->
-                if (push) {
-                    if (payload.noChanges) {
-                        setSkillSyncStatus(
-                            SpecCodingBundle.message("team.skillSync.push.noChanges", payload.branch),
-                            SkillSyncTone.NORMAL,
-                        )
-                    } else {
-                        setSkillSyncStatus(
+                skillRefreshButton.isEnabled = true
+                result
+                    .onSuccess(::applySkillDiscoverySnapshot)
+                    .onFailure { error ->
+                        setSkillDiscoveryStatus(
                             SpecCodingBundle.message(
-                                "team.skillSync.push.success",
-                                payload.syncedFiles,
-                                payload.branch,
-                                payload.commitId ?: SpecCodingBundle.message("common.unknown"),
+                                "settings.skills.discovery.failed",
+                                error.message ?: SpecCodingBundle.message("common.unknown"),
                             ),
-                            SkillSyncTone.SUCCESS,
+                            SkillStatusTone.ERROR,
                         )
                     }
-                } else {
-                    setSkillSyncStatus(
-                        SpecCodingBundle.message("team.skillSync.pull.success", payload.syncedFiles, payload.branch),
-                        SkillSyncTone.SUCCESS,
-                    )
-                }
             }
-            .onFailure { error ->
-                val messageKey = if (push) "team.skillSync.push.failed" else "team.skillSync.pull.failed"
-                setSkillSyncStatus(
-                    SpecCodingBundle.message(
-                        messageKey,
-                        error.message ?: SpecCodingBundle.message("team.skillSync.error.generic"),
-                    ),
-                    SkillSyncTone.ERROR,
-                )
-            }
+        }
     }
 
-    private fun setSkillSyncStatus(
-        text: String,
-        tone: SkillSyncTone,
-    ) {
-        skillSyncStatusLabel.text = text
-        skillSyncStatusLabel.foreground = when (tone) {
-            SkillSyncTone.NORMAL -> STATUS_NORMAL_FG
-            SkillSyncTone.SUCCESS -> STATUS_SUCCESS_FG
-            SkillSyncTone.ERROR -> STATUS_ERROR_FG
+    private fun applySkillDiscoverySnapshot(snapshot: SkillDiscoverySnapshot) {
+        skillRootsListModel.clear()
+        snapshot.roots.forEach { root ->
+            val scopeText = when (root.scope) {
+                SkillScope.GLOBAL -> SpecCodingBundle.message("settings.skills.scope.global")
+                SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
+            }
+            val existsText = if (root.exists) {
+                SpecCodingBundle.message("settings.skills.discovery.root.exists")
+            } else {
+                SpecCodingBundle.message("settings.skills.discovery.root.missing")
+            }
+            skillRootsListModel.addElement(
+                SpecCodingBundle.message(
+                    "settings.skills.discovery.root.item",
+                    scopeText,
+                    root.label,
+                    existsText,
+                    root.path,
+                ),
+            )
+        }
+
+        skillsListModel.clear()
+        snapshot.skills.forEach { skill ->
+            skillsListModel.addElement(formatSkillListEntry(skill))
+        }
+
+        setSkillDiscoveryStatus(
+            SpecCodingBundle.message(
+                "settings.skills.discovery.summary",
+                snapshot.skills.size,
+                snapshot.roots.count { it.exists },
+                snapshot.roots.size,
+            ),
+            SkillStatusTone.SUCCESS,
+        )
+    }
+
+    private fun formatSkillListEntry(skill: Skill): String {
+        val sourceText = when (skill.sourceType) {
+            SkillSourceType.BUILTIN -> SpecCodingBundle.message("settings.skills.source.builtin")
+            SkillSourceType.YAML -> SpecCodingBundle.message("settings.skills.source.yaml")
+            SkillSourceType.MARKDOWN -> SpecCodingBundle.message("settings.skills.source.markdown")
+        }
+        val scopeText = skill.scope?.let {
+            when (it) {
+                SkillScope.GLOBAL -> SpecCodingBundle.message("settings.skills.scope.global")
+                SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
+            }
+        } ?: SpecCodingBundle.message("settings.skills.scope.none")
+        return SpecCodingBundle.message(
+            "settings.skills.discovery.skill.item",
+            skill.slashCommand,
+            sourceText,
+            scopeText,
+            skill.description,
+        )
+    }
+
+    private fun generateSkillWithAi() {
+        val requirement = skillGenerateRequirementField.text.trim()
+        if (requirement.isBlank()) {
+            setSkillGenerationStatus(
+                SpecCodingBundle.message("settings.skills.generate.requirement.empty"),
+                SkillStatusTone.ERROR,
+            )
+            return
+        }
+
+        val targetScope = (skillTargetScopeCombo.selectedItem as? SkillScope) ?: SkillScope.PROJECT
+        persistSettings(reason = "settings-panel-skill-generate")
+
+        skillGenerateButton.isEnabled = false
+        setSkillGenerationStatus(
+            SpecCodingBundle.message("settings.skills.generate.running"),
+            SkillStatusTone.NORMAL,
+        )
+
+        scope.launch {
+            val result = runCatching {
+                val draft = generateSkillDraft(requirement)
+                writeGeneratedSkill(targetScope, draft)
+            }
+            SwingUtilities.invokeLater {
+                if (isDisposed || project.isDisposed) {
+                    return@invokeLater
+                }
+                skillGenerateButton.isEnabled = true
+                result
+                    .onSuccess { path ->
+                        setSkillGenerationStatus(
+                            SpecCodingBundle.message(
+                                "settings.skills.generate.success",
+                                path.parent?.fileName?.toString().orEmpty(),
+                                path.toString(),
+                            ),
+                            SkillStatusTone.SUCCESS,
+                        )
+                        skillGenerateRequirementField.text = ""
+                        refreshSkillDiscovery(forceReload = true)
+                    }
+                    .onFailure { error ->
+                        setSkillGenerationStatus(
+                            SpecCodingBundle.message(
+                                "settings.skills.generate.failed",
+                                error.message ?: SpecCodingBundle.message("common.unknown"),
+                            ),
+                            SkillStatusTone.ERROR,
+                        )
+                    }
+            }
+        }
+    }
+
+    private suspend fun generateSkillDraft(requirement: String): GeneratedSkillDraft {
+        val providerId = settings.defaultProvider.ifBlank { null }
+        val modelId = settings.selectedCliModel.ifBlank { null }
+        val prompt = buildString {
+            appendLine("You are generating a local SKILL.md for an IntelliJ plugin user.")
+            appendLine("Return ONLY strict JSON, no markdown fences, no explanation.")
+            appendLine("Required JSON keys: id, name, description, slash_command, body.")
+            appendLine("Rules:")
+            appendLine("1) id: lowercase, letters/numbers/hyphen/underscore only.")
+            appendLine("2) slash_command: lowercase command token without leading slash.")
+            appendLine("3) body: markdown instructions for agent execution.")
+            appendLine("4) Keep body concise but actionable.")
+            appendLine()
+            appendLine("User requirement:")
+            appendLine(requirement)
+        }
+
+        val responseText = StringBuilder()
+        projectService.chat(
+            providerId = providerId,
+            modelId = modelId,
+            userInput = prompt,
+            planExecuteVerifySections = false,
+        ) { chunk ->
+            if (chunk.delta.isNotBlank()) {
+                responseText.append(chunk.delta)
+            }
+        }
+
+        val root = parseSkillJson(responseText.toString())
+        val rawName = root["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        val rawDescription = root["description"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        val rawCommand = root["slash_command"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        val normalizedCommand = normalizeSkillToken(rawCommand.removePrefix("/"), fallback = "custom-skill")
+        val normalizedId = normalizeSkillToken(
+            value = root["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty(),
+            fallback = normalizedCommand,
+        )
+        val body = root["body"]?.jsonPrimitive?.contentOrNull
+            ?.trim()
+            ?.ifBlank { null }
+            ?: buildString {
+                appendLine("## Objective")
+                appendLine("- $requirement")
+                appendLine()
+                appendLine("## Workflow")
+                appendLine("1. Clarify constraints from current context.")
+                appendLine("2. Implement minimal viable change.")
+                appendLine("3. Add or update tests.")
+                appendLine("4. Verify and summarize tradeoffs.")
+            }
+        return GeneratedSkillDraft(
+            id = normalizedId,
+            name = rawName.ifBlank { normalizedId },
+            description = rawDescription.ifBlank { requirement },
+            slashCommand = normalizedCommand,
+            body = body,
+        )
+    }
+
+    private fun parseSkillJson(raw: String): JsonObject {
+        val trimmed = raw.trim()
+        val direct = runCatching { skillJson.parseToJsonElement(trimmed) as? JsonObject }.getOrNull()
+        if (direct != null) {
+            return direct
+        }
+
+        val firstBrace = trimmed.indexOf('{')
+        val lastBrace = trimmed.lastIndexOf('}')
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+            val candidate = trimmed.substring(firstBrace, lastBrace + 1)
+            val extracted = runCatching { skillJson.parseToJsonElement(candidate) as? JsonObject }.getOrNull()
+            if (extracted != null) {
+                return extracted
+            }
+        }
+        throw IllegalArgumentException(SpecCodingBundle.message("settings.skills.generate.invalidJson"))
+    }
+
+    private fun writeGeneratedSkill(scope: SkillScope, draft: GeneratedSkillDraft): Path {
+        val root = resolveSkillRoot(scope)
+        Files.createDirectories(root)
+
+        val skillDir = findAvailableSkillDirectory(root, draft.id)
+        Files.createDirectories(skillDir)
+        val filePath = skillDir.resolve(SKILL_MARKDOWN_FILE_NAME)
+        val content = buildGeneratedSkillMarkdown(draft)
+        Files.writeString(filePath, content, StandardCharsets.UTF_8)
+        return filePath
+    }
+
+    private fun resolveSkillRoot(scope: SkillScope): Path {
+        return when (scope) {
+            SkillScope.GLOBAL -> {
+                val home = System.getProperty("user.home")
+                    ?.trim()
+                    ?.ifBlank { null }
+                    ?: throw IllegalStateException(SpecCodingBundle.message("settings.skills.scope.global.unavailable"))
+                Paths.get(home).resolve(".codex").resolve("skills")
+            }
+
+            SkillScope.PROJECT -> {
+                val basePath = project.basePath
+                    ?.trim()
+                    ?.ifBlank { null }
+                    ?: throw IllegalStateException(SpecCodingBundle.message("settings.skills.scope.project.unavailable"))
+                Paths.get(basePath).resolve(".codex").resolve("skills")
+            }
+        }
+    }
+
+    private fun findAvailableSkillDirectory(root: Path, preferredId: String): Path {
+        var candidate = root.resolve(preferredId)
+        if (!Files.exists(candidate)) {
+            return candidate
+        }
+        var suffix = 2
+        while (true) {
+            candidate = root.resolve("$preferredId-$suffix")
+            if (!Files.exists(candidate)) {
+                return candidate
+            }
+            suffix += 1
+        }
+    }
+
+    private fun buildGeneratedSkillMarkdown(draft: GeneratedSkillDraft): String {
+        val body = draft.body.trim().ifBlank {
+            SpecCodingBundle.message("settings.skills.generate.body.fallback")
+        }
+        return buildString {
+            appendLine("---")
+            appendLine("name: ${draft.name}")
+            appendLine("description: ${draft.description}")
+            appendLine("slash_command: ${draft.slashCommand}")
+            appendLine("---")
+            appendLine()
+            appendLine(body)
+        }
+    }
+
+    private fun normalizeSkillToken(value: String, fallback: String): String {
+        return value
+            .trim()
+            .lowercase(Locale.ROOT)
+            .replace(SKILL_TOKEN_INVALID_REGEX, "-")
+            .trim('-')
+            .ifBlank { fallback }
+    }
+
+    private fun setSkillDiscoveryStatus(text: String, tone: SkillStatusTone) {
+        skillDiscoveryStatusLabel.text = text
+        skillDiscoveryStatusLabel.foreground = when (tone) {
+            SkillStatusTone.NORMAL -> STATUS_NORMAL_FG
+            SkillStatusTone.SUCCESS -> STATUS_SUCCESS_FG
+            SkillStatusTone.ERROR -> STATUS_ERROR_FG
+        }
+    }
+
+    private fun setSkillGenerationStatus(text: String, tone: SkillStatusTone) {
+        skillGenerationStatusLabel.text = text
+        skillGenerationStatusLabel.foreground = when (tone) {
+            SkillStatusTone.NORMAL -> STATUS_NORMAL_FG
+            SkillStatusTone.SUCCESS -> STATUS_SUCCESS_FG
+            SkillStatusTone.ERROR -> STATUS_ERROR_FG
         }
     }
 
@@ -788,7 +1088,15 @@ class SettingsPanel(
         HOOKS("hooks", "settings.sidebar.hooks", SIDEBAR_HOOKS_ICON),
     }
 
-    private enum class SkillSyncTone {
+    private data class GeneratedSkillDraft(
+        val id: String,
+        val name: String,
+        val description: String,
+        val slashCommand: String,
+        val body: String,
+    )
+
+    private enum class SkillStatusTone {
         NORMAL,
         SUCCESS,
         ERROR,
@@ -981,6 +1289,8 @@ class SettingsPanel(
         private val STATUS_ERROR_FG = JBColor(Color(171, 55, 69), Color(226, 144, 154))
         private val SIDEBAR_MCP_ICON = IconLoader.getIcon("/icons/settings-mcp.svg", SettingsPanel::class.java)
         private val SIDEBAR_HOOKS_ICON = IconLoader.getIcon("/icons/settings-hooks.svg", SettingsPanel::class.java)
+        private const val SKILL_MARKDOWN_FILE_NAME = "SKILL.md"
+        private val SKILL_TOKEN_INVALID_REGEX = Regex("[^a-z0-9_-]+")
         private const val AUTO_SAVE_DEBOUNCE_MILLIS = 650
     }
 }

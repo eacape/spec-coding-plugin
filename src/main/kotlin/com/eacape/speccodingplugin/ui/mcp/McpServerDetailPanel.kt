@@ -152,6 +152,7 @@ class McpServerDetailPanel(
         currentServerId = null
         removeAll()
         layout = BorderLayout()
+        emptyLabel.text = SpecCodingBundle.message("mcp.server.select")
         emptyLabel.horizontalAlignment = SwingConstants.CENTER
         add(emptyLabel, BorderLayout.CENTER)
         revalidate()

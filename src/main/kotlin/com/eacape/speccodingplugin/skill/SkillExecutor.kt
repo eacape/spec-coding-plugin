@@ -131,7 +131,22 @@ class SkillExecutor(private val project: Project) {
         )
     }
 
-    fun listAvailableSkills(): List<Skill> = registry.listSkills()
+    fun discoverAvailableSkills(forceReload: Boolean = false): SkillDiscoverySnapshot {
+        return registry.discoverySnapshot(forceReload = forceReload)
+    }
+
+    fun listAvailableSkills(forceReload: Boolean = false): List<Skill> {
+        return discoverAvailableSkills(forceReload = forceReload).skills
+    }
+
+    fun hasSkillSlashCommand(commandToken: String, forceReload: Boolean = false): Boolean {
+        val normalized = commandToken.trim().removePrefix("/").lowercase()
+        if (normalized.isBlank()) {
+            return false
+        }
+        return listAvailableSkills(forceReload = forceReload)
+            .any { it.slashCommand.equals(normalized, ignoreCase = true) }
+    }
 
     /**
      * 解析斜杠命令（格式：/skill-name [args]）

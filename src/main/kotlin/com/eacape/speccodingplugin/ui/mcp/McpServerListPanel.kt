@@ -29,9 +29,6 @@ class McpServerListPanel(
 
     private val listModel = DefaultListModel<ServerListItem>()
     private val serverList = JBList(listModel)
-    private val emptyLabel = JBLabel(
-        SpecCodingBundle.message("mcp.server.empty")
-    )
     private val addBtn = JButton(SpecCodingBundle.message("mcp.server.add"))
     private val deleteBtn = JButton(SpecCodingBundle.message("mcp.server.delete"))
 
@@ -61,6 +58,7 @@ class McpServerListPanel(
         // 列表
         serverList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         serverList.cellRenderer = ServerCellRenderer()
+        serverList.emptyText.text = SpecCodingBundle.message("mcp.server.empty")
         serverList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
                 val selected = serverList.selectedValue
@@ -106,6 +104,7 @@ class McpServerListPanel(
     fun refreshLocalizedTexts() {
         addBtn.text = SpecCodingBundle.message("mcp.server.add")
         deleteBtn.text = SpecCodingBundle.message("mcp.server.delete")
+        serverList.emptyText.text = SpecCodingBundle.message("mcp.server.empty")
         serverList.repaint()
     }
 

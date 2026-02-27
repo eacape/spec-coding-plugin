@@ -72,8 +72,6 @@ class SpecCodingSettingsConfigurable : Configurable {
     // 团队 Prompt 同步
     private val teamPromptRepoUrlField = JBTextField()
     private val teamPromptRepoBranchField = JBTextField()
-    private val teamSkillRepoUrlField = JBTextField()
-    private val teamSkillRepoBranchField = JBTextField()
 
     override fun getDisplayName(): String = SpecCodingBundle.message("settings.displayName")
 
@@ -130,8 +128,6 @@ class SpecCodingSettingsConfigurable : Configurable {
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.teamSync")}</b></html>"))
             .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.promptRepoUrl"), teamPromptRepoUrlField)
             .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.promptBranch"), teamPromptRepoBranchField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.skillRepoUrl"), teamSkillRepoUrlField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.skillBranch"), teamSkillRepoBranchField)
             .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.proxy")}</b></html>"))
             .addComponent(useProxyCheckBox.apply { text = SpecCodingBundle.message("settings.proxy.use") })
@@ -157,8 +153,6 @@ class SpecCodingSettingsConfigurable : Configurable {
         if ((interfaceLanguageCombo.selectedItem as? InterfaceLanguage)?.code != settings.interfaceLanguage) return true
         if (teamPromptRepoUrlField.text != settings.teamPromptRepoUrl) return true
         if (teamPromptRepoBranchField.text != settings.teamPromptRepoBranch) return true
-        if (teamSkillRepoUrlField.text != settings.teamSkillRepoUrl) return true
-        if (teamSkillRepoBranchField.text != settings.teamSkillRepoBranch) return true
         if (useProxyCheckBox.isSelected != settings.useProxy) return true
         if (proxyHostField.text != settings.proxyHost) return true
         if (proxyPortField.text != settings.proxyPort.toString()) return true
@@ -177,8 +171,6 @@ class SpecCodingSettingsConfigurable : Configurable {
         val localeChanged = localeManager.setLanguage(selectedLanguage, reason = "settings-configurable-apply")
         settings.teamPromptRepoUrl = teamPromptRepoUrlField.text.trim()
         settings.teamPromptRepoBranch = teamPromptRepoBranchField.text.trim().ifBlank { "main" }
-        settings.teamSkillRepoUrl = teamSkillRepoUrlField.text.trim()
-        settings.teamSkillRepoBranch = teamSkillRepoBranchField.text.trim().ifBlank { "main" }
 
         settings.useProxy = useProxyCheckBox.isSelected
         settings.proxyHost = proxyHostField.text
@@ -204,8 +196,6 @@ class SpecCodingSettingsConfigurable : Configurable {
         interfaceLanguageCombo.selectedItem = InterfaceLanguage.fromCode(settings.interfaceLanguage)
         teamPromptRepoUrlField.text = settings.teamPromptRepoUrl
         teamPromptRepoBranchField.text = settings.teamPromptRepoBranch
-        teamSkillRepoUrlField.text = settings.teamSkillRepoUrl
-        teamSkillRepoBranchField.text = settings.teamSkillRepoBranch
 
         useProxyCheckBox.isSelected = settings.useProxy
         proxyHostField.text = settings.proxyHost

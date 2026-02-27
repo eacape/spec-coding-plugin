@@ -20,7 +20,8 @@ import javax.swing.*
  * 支持添加和编辑 MCP Server 配置
  */
 class McpServerEditorDialog(
-    private val existing: McpServerConfig? = null
+    private val existing: McpServerConfig? = null,
+    private val draft: McpServerConfig? = null,
 ) : DialogWrapper(true) {
 
     private val idField = JBTextField()
@@ -50,16 +51,16 @@ class McpServerEditorDialog(
     }
 
     private fun loadExisting() {
-        if (existing == null) return
-        idField.text = existing.id
-        idField.isEditable = false
-        nameField.text = existing.name
-        commandField.text = existing.command
-        argsField.text = existing.args.joinToString(", ")
-        envArea.text = existing.env.entries.joinToString("\n") { "${it.key}=${it.value}" }
-        transportCombo.selectedItem = existing.transport
-        autoStartCheckBox.isSelected = existing.autoStart
-        trustedCheckBox.isSelected = existing.trusted
+        val source = existing ?: draft ?: return
+        idField.text = source.id
+        idField.isEditable = existing == null
+        nameField.text = source.name
+        commandField.text = source.command
+        argsField.text = source.args.joinToString(", ")
+        envArea.text = source.env.entries.joinToString("\n") { "${it.key}=${it.value}" }
+        transportCombo.selectedItem = source.transport
+        autoStartCheckBox.isSelected = source.autoStart
+        trustedCheckBox.isSelected = source.trusted
     }
 
     override fun createCenterPanel(): JComponent {
