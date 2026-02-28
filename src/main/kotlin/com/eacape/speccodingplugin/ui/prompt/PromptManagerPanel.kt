@@ -15,7 +15,6 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Cursor
-import java.awt.FlowLayout
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Insets
@@ -99,14 +98,15 @@ class PromptManagerPanel(
 
         newBtn.addActionListener { onNew() }
 
-        val topActions = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
-            isOpaque = false
-            border = JBUI.Borders.emptyBottom(6)
-            add(newBtn)
-        }
-
-        add(topActions, BorderLayout.NORTH)
         add(listCard, BorderLayout.CENTER)
+        add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyTop(8)
+                add(newBtn, BorderLayout.CENTER)
+            },
+            BorderLayout.SOUTH,
+        )
     }
 
     fun refresh() {
@@ -115,7 +115,7 @@ class PromptManagerPanel(
     }
 
     private fun refreshLocalizedTexts() {
-        newBtn.text = SpecCodingBundle.message("prompt.manager.new")
+        newBtn.text = SpecCodingBundle.message("prompt.manager.newPrompt")
         updateActionButtonSize(newBtn)
         revalidate()
         promptList.repaint()

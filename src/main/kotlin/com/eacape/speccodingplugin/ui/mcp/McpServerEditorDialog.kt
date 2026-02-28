@@ -3,16 +3,23 @@ package com.eacape.speccodingplugin.ui.mcp
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.mcp.McpServerConfig
 import com.eacape.speccodingplugin.mcp.TransportType
+import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
+import java.awt.Color
 import java.awt.Dimension
+import java.awt.Font
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
+import java.awt.Insets
 import javax.swing.*
 
 /**
@@ -47,7 +54,9 @@ class McpServerEditorDialog(
             SpecCodingBundle.message("mcp.dialog.addServer.title")
         }
         init()
+        applyVisualStyle()
         loadExisting()
+        styleDialogButtons()
     }
 
     private fun loadExisting() {
@@ -64,80 +73,225 @@ class McpServerEditorDialog(
     }
 
     override fun createCenterPanel(): JComponent {
-        val panel = JPanel(BorderLayout())
-        panel.preferredSize = Dimension(550, 420)
-        panel.border = JBUI.Borders.empty(8)
+        val panel = JPanel(BorderLayout(0, JBUI.scale(10)))
+        panel.preferredSize = Dimension(JBUI.scale(620), JBUI.scale(440))
+        panel.border = JBUI.Borders.empty(8, 8, 6, 8)
+        panel.background = DIALOG_BG
 
-        val formPanel = createFormPanel()
+        val formPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(createSectionCard(createBasicFormPanel()))
+            add(Box.createVerticalStrut(JBUI.scale(8)))
+            add(createSectionCard(createRuntimeFormPanel()))
+        }
         panel.add(formPanel, BorderLayout.CENTER)
-
         return panel
     }
 
-    private fun createFormPanel(): JPanel {
-        val panel = JPanel()
-        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
-        panel.isOpaque = false
+    private fun createBasicFormPanel(): JPanel {
+        val panel = JPanel(GridBagLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 4, 2, 4)
+        }
 
-        // ID
         idField.emptyText.text = SpecCodingBundle.message("mcp.dialog.placeholder.id")
-        panel.add(createRow(SpecCodingBundle.message("mcp.dialog.field.id"), idField))
+        addFormRow(panel, 0, SpecCodingBundle.message("mcp.dialog.field.id"), idField)
 
-        // Name
         nameField.emptyText.text = SpecCodingBundle.message("mcp.dialog.placeholder.name")
-        panel.add(createRow(SpecCodingBundle.message("mcp.dialog.field.name"), nameField))
+        addFormRow(panel, 1, SpecCodingBundle.message("mcp.dialog.field.name"), nameField)
 
-        // Command
         commandField.emptyText.text = SpecCodingBundle.message("mcp.dialog.placeholder.command")
-        panel.add(createRow(SpecCodingBundle.message("mcp.dialog.field.command"), commandField))
+        addFormRow(panel, 2, SpecCodingBundle.message("mcp.dialog.field.command"), commandField)
 
-        // Args
         argsField.emptyText.text = SpecCodingBundle.message("mcp.dialog.placeholder.args")
-        panel.add(createRow(SpecCodingBundle.message("mcp.dialog.field.args"), argsField))
+        addFormRow(panel, 3, SpecCodingBundle.message("mcp.dialog.field.args"), argsField)
 
-        // Transport
-        panel.add(createRow(SpecCodingBundle.message("mcp.dialog.field.transport"), transportCombo))
+        addFormRow(panel, 4, SpecCodingBundle.message("mcp.dialog.field.transport"), transportCombo)
+        return panel
+    }
 
-        // Env
-        panel.add(createEnvRow())
+    private fun createRuntimeFormPanel(): JPanel {
+        val panel = JPanel(GridBagLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 4, 2, 4)
+        }
+        addEnvRow(panel, 0)
 
-        // Checkboxes
-        val checkPanel = JPanel()
-        checkPanel.layout = BoxLayout(checkPanel, BoxLayout.X_AXIS)
-        checkPanel.isOpaque = false
-        checkPanel.border = JBUI.Borders.emptyTop(8)
-        checkPanel.add(autoStartCheckBox)
-        checkPanel.add(Box.createHorizontalStrut(16))
-        checkPanel.add(trustedCheckBox)
-        checkPanel.add(Box.createHorizontalGlue())
-        panel.add(checkPanel)
+        val checkPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(8)
+            add(autoStartCheckBox)
+            add(Box.createHorizontalStrut(18))
+            add(trustedCheckBox)
+            add(Box.createHorizontalGlue())
+        }
+        panel.add(
+            checkPanel,
+            GridBagConstraints().apply {
+                gridx = 0
+                gridy = 1
+                gridwidth = 2
+                weightx = 1.0
+                fill = GridBagConstraints.HORIZONTAL
+                insets = Insets(0, 0, 0, 0)
+            }
+        )
 
         return panel
     }
 
-    private fun createRow(label: String, field: JComponent): JPanel {
-        val row = JPanel(BorderLayout(8, 0))
-        row.isOpaque = false
-        row.border = JBUI.Borders.emptyBottom(4)
-        val lbl = JBLabel(label)
-        lbl.preferredSize = Dimension(120, 24)
-        row.add(lbl, BorderLayout.WEST)
-        row.add(field, BorderLayout.CENTER)
-        return row
+    private fun addFormRow(panel: JPanel, row: Int, label: String, field: JComponent) {
+        panel.add(
+            createRowLabel(label),
+            GridBagConstraints().apply {
+                gridx = 0
+                gridy = row
+                weightx = 0.0
+                anchor = GridBagConstraints.WEST
+                fill = GridBagConstraints.NONE
+                insets = Insets(0, 0, JBUI.scale(8), JBUI.scale(10))
+            }
+        )
+        panel.add(
+            createFieldContainer(field),
+            GridBagConstraints().apply {
+                gridx = 1
+                gridy = row
+                weightx = 1.0
+                fill = GridBagConstraints.HORIZONTAL
+                insets = Insets(0, 0, JBUI.scale(8), 0)
+            }
+        )
     }
 
-    private fun createEnvRow(): JPanel {
-        val row = JPanel(BorderLayout(8, 0))
-        row.isOpaque = false
-        row.border = JBUI.Borders.emptyBottom(4)
-        val lbl = JBLabel(SpecCodingBundle.message("mcp.dialog.field.env"))
-        lbl.preferredSize = Dimension(120, 24)
-        row.add(lbl, BorderLayout.WEST)
+    private fun addEnvRow(panel: JPanel, row: Int) {
+        panel.add(
+            createRowLabel(SpecCodingBundle.message("mcp.dialog.field.env")),
+            GridBagConstraints().apply {
+                gridx = 0
+                gridy = row
+                weightx = 0.0
+                anchor = GridBagConstraints.NORTHWEST
+                fill = GridBagConstraints.NONE
+                insets = Insets(2, 0, 0, JBUI.scale(10))
+            }
+        )
+
         envArea.font = commandField.font
-        val scroll = JBScrollPane(envArea)
-        scroll.preferredSize = Dimension(400, 60)
-        row.add(scroll, BorderLayout.CENTER)
-        return row
+        val scroll = JBScrollPane(envArea).apply {
+            preferredSize = Dimension(0, JBUI.scale(86))
+            minimumSize = Dimension(0, JBUI.scale(86))
+            border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(INPUT_BORDER, JBUI.scale(10)),
+                JBUI.Borders.empty(),
+            )
+            viewport.border = JBUI.Borders.empty()
+            viewport.background = INPUT_BG
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+        }
+        envArea.border = JBUI.Borders.empty(6, 8, 6, 8)
+        envArea.background = INPUT_BG
+        envArea.foreground = INPUT_FG
+        envArea.lineWrap = false
+
+        panel.add(
+            scroll,
+            GridBagConstraints().apply {
+                gridx = 1
+                gridy = row
+                weightx = 1.0
+                fill = GridBagConstraints.HORIZONTAL
+                insets = Insets(0, 0, JBUI.scale(4), 0)
+            }
+        )
+    }
+
+    private fun createSectionCard(content: JComponent): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = CARD_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = CARD_BORDER,
+                arc = JBUI.scale(12),
+                top = 8,
+                left = 10,
+                bottom = 8,
+                right = 10,
+            )
+            add(content, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createRowLabel(label: String): JBLabel {
+        return JBLabel(label).apply {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            foreground = LABEL_FG
+            preferredSize = Dimension(JBUI.scale(LABEL_WIDTH), JBUI.scale(30))
+            minimumSize = preferredSize
+            toolTipText = label
+        }
+    }
+
+    private fun createFieldContainer(field: JComponent): JComponent {
+        return when (field) {
+            is JBTextField -> {
+                field.background = INPUT_BG
+                field.foreground = INPUT_FG
+                field.border = BorderFactory.createCompoundBorder(
+                    SpecUiStyle.roundedLineBorder(INPUT_BORDER, JBUI.scale(10)),
+                    JBUI.Borders.empty(5, 8, 5, 8),
+                )
+                field.preferredSize = Dimension(0, JBUI.scale(32))
+                field.minimumSize = Dimension(0, JBUI.scale(32))
+                field
+            }
+
+            is ComboBox<*> -> {
+                field.background = INPUT_BG
+                field.foreground = INPUT_FG
+                field.border = BorderFactory.createCompoundBorder(
+                    SpecUiStyle.roundedLineBorder(INPUT_BORDER, JBUI.scale(10)),
+                    JBUI.Borders.empty(3, 8, 3, 8),
+                )
+                field.preferredSize = Dimension(0, JBUI.scale(32))
+                field.minimumSize = Dimension(0, JBUI.scale(32))
+                field
+            }
+
+            else -> field
+        }
+    }
+
+    private fun applyVisualStyle() {
+        autoStartCheckBox.isOpaque = false
+        trustedCheckBox.isOpaque = false
+        autoStartCheckBox.foreground = CHECKBOX_FG
+        trustedCheckBox.foreground = CHECKBOX_FG
+    }
+
+    private fun styleDialogButtons() {
+        getButton(okAction)?.let { styleDialogButton(it, primary = true) }
+        getButton(cancelAction)?.let { styleDialogButton(it, primary = false) }
+    }
+
+    private fun styleDialogButton(button: JButton, primary: Boolean) {
+        val bg = if (primary) BUTTON_PRIMARY_BG else BUTTON_BG
+        val border = if (primary) BUTTON_PRIMARY_BORDER else BUTTON_BORDER
+        val fg = if (primary) BUTTON_PRIMARY_FG else BUTTON_FG
+
+        button.isFocusPainted = false
+        button.isFocusable = false
+        button.background = bg
+        button.foreground = fg
+        button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(border, JBUI.scale(10)),
+            JBUI.Borders.empty(4, 14, 4, 14),
+        )
+        SpecUiStyle.applyRoundRect(button, arc = 10)
+        button.preferredSize = Dimension(JBUI.scale(90), JBUI.scale(30))
     }
 
     override fun doValidate(): ValidationInfo? {
@@ -190,5 +344,24 @@ class McpServerEditorDialog(
         )
 
         super.doOKAction()
+    }
+
+    companion object {
+        private const val LABEL_WIDTH = 170
+
+        private val DIALOG_BG = JBColor(Color(247, 250, 255), Color(53, 58, 66))
+        private val CARD_BG = JBColor(Color(250, 252, 255), Color(57, 62, 70))
+        private val CARD_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val LABEL_FG = JBColor(Color(60, 78, 110), Color(203, 214, 232))
+        private val INPUT_BG = JBColor(Color(245, 249, 255), Color(63, 69, 80))
+        private val INPUT_BORDER = JBColor(Color(184, 200, 226), Color(103, 115, 133))
+        private val INPUT_FG = JBColor(Color(44, 67, 101), Color(217, 227, 242))
+        private val CHECKBOX_FG = JBColor(Color(70, 88, 118), Color(191, 204, 224))
+        private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
+        private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val BUTTON_PRIMARY_BG = JBColor(Color(213, 228, 250), Color(77, 98, 128))
+        private val BUTTON_PRIMARY_BORDER = JBColor(Color(154, 180, 219), Color(116, 137, 169))
+        private val BUTTON_PRIMARY_FG = JBColor(Color(37, 57, 89), Color(223, 232, 246))
     }
 }

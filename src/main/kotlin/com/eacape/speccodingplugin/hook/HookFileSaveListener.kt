@@ -57,9 +57,11 @@ class HookFileSaveListener(
 
 class HookProjectManagerListener(
     private val hookManagerProvider: (Project) -> HookManager = { HookManager.getInstance(it) },
+    private val gitCommitWatcherProvider: (Project) -> HookGitCommitWatcher = { HookGitCommitWatcher.getInstance(it) },
 ) : ProjectManagerListener {
     @Suppress("OVERRIDE_DEPRECATION")
     override fun projectOpened(project: Project) {
         hookManagerProvider(project).listHooks()
+        gitCommitWatcherProvider(project).start()
     }
 }

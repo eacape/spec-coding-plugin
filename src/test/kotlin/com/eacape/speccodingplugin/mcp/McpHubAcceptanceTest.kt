@@ -3,10 +3,12 @@ package com.eacape.speccodingplugin.mcp
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.AfterEach
@@ -179,6 +181,41 @@ class McpHubAcceptanceTest {
         assertTrue(fakeClient.stopped)
     }
 
+    @Test
+    fun `stop during startup keeps server stopped`() = runBlocking {
+        val startEntered = CompletableDeferred<Unit>()
+        val allowListTools = CompletableDeferred<Unit>()
+        val fakeClient = FakeMcpClientAdapter(
+            startResult = Result.success(Unit),
+            listToolsResult = Result.success(emptyList()),
+            onStart = { startEntered.complete(Unit) },
+            onListTools = { allowListTools.await() },
+            onStop = { allowListTools.complete(Unit) },
+        )
+        hub = createHubWithFakeClient(mapOf("race" to fakeClient))
+
+        val config = McpServerConfig(
+            id = "race",
+            name = "Race MCP",
+            command = "npx",
+            trusted = true,
+        )
+
+        hub.registerServer(config).getOrThrow()
+        val startJob = launch {
+            hub.startServer(config.id).getOrThrow()
+        }
+        startEntered.await()
+        hub.stopServer(config.id).getOrThrow()
+        allowListTools.complete(Unit)
+        startJob.join()
+
+        assertEquals(ServerStatus.STOPPED, hub.getServer(config.id)?.status)
+        assertEquals(null, hub.getServer(config.id)?.error)
+        assertTrue(hub.getServerTools(config.id).isEmpty())
+        assertTrue(fakeClient.stopped)
+    }
+
     private fun createHubWithFakeClient(fakeClients: Map<String, FakeMcpClientAdapter>): McpHub {
         val fakeClientMap = ConcurrentHashMap(fakeClients)
         return McpHub(
@@ -198,15 +235,24 @@ class McpHubAcceptanceTest {
         private val listToolsResult: Result<List<McpTool>> = Result.success(emptyList()),
         private val callToolResult: Result<ToolCallResult> = Result.success(
             ToolCallResult.Success(emptyList())
-        )
+        ),
+        private val onStart: (suspend () -> Unit)? = null,
+        private val onListTools: (suspend () -> Unit)? = null,
+        private val onStop: (() -> Unit)? = null,
     ) : McpClientAdapter {
 
         var stopped: Boolean = false
             private set
 
-        override suspend fun start(): Result<Unit> = startResult
+        override suspend fun start(): Result<Unit> {
+            onStart?.invoke()
+            return startResult
+        }
 
-        override suspend fun listTools(): Result<List<McpTool>> = listToolsResult
+        override suspend fun listTools(): Result<List<McpTool>> {
+            onListTools?.invoke()
+            return listToolsResult
+        }
 
         override suspend fun callTool(
             toolName: String,
@@ -215,6 +261,7 @@ class McpHubAcceptanceTest {
 
         override fun stop() {
             stopped = true
+            onStop?.invoke()
         }
 
         override fun isRunning(): Boolean = startResult.isSuccess && !stopped

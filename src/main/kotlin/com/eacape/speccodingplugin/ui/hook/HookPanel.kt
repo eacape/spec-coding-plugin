@@ -82,7 +82,6 @@ class HookPanel(
 
     private val statusLabel = JBLabel("")
     private val guideLabel = JBLabel(SpecCodingBundle.message("hook.guide.quickStart"))
-    private val refreshButton = JButton(SpecCodingBundle.message("hook.action.refresh"))
     private val openConfigButton = JButton(SpecCodingBundle.message("hook.action.openConfig"))
     private val aiQuickConfigButton = JButton(SpecCodingBundle.message("hook.action.aiQuickConfig"))
     private val enableButton = JButton(SpecCodingBundle.message("hook.action.enable"))
@@ -102,18 +101,15 @@ class HookPanel(
     }
 
     private fun setupUi() {
-        listOf(refreshButton, openConfigButton, aiQuickConfigButton, enableButton, disableButton, refreshLogButton, clearLogButton)
+        listOf(openConfigButton, aiQuickConfigButton, enableButton, disableButton, refreshLogButton, clearLogButton)
             .forEach(::styleActionButton)
 
-        val actionRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+        val hookActionRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
             isOpaque = false
-            add(refreshButton)
             add(openConfigButton)
             add(aiQuickConfigButton)
             add(enableButton)
             add(disableButton)
-            add(refreshLogButton)
-            add(clearLogButton)
         }
         guideLabel.font = JBUI.Fonts.smallFont()
         guideLabel.foreground = STATUS_TEXT_FG
@@ -156,7 +152,7 @@ class HookPanel(
                 bottom = 8,
                 right = 10,
             )
-            add(actionRow, BorderLayout.CENTER)
+            add(hookActionRow, BorderLayout.CENTER)
             add(footerPanel, BorderLayout.SOUTH)
         }
         add(
@@ -191,7 +187,7 @@ class HookPanel(
         val splitPane = JSplitPane(
             JSplitPane.HORIZONTAL_SPLIT,
             createSectionContainer(hooksScroll),
-            createSectionContainer(logsScroll),
+            createLogsSection(logsScroll),
         ).apply {
             dividerLocation = 320
             dividerSize = JBUI.scale(4)
@@ -201,7 +197,6 @@ class HookPanel(
         }
         add(splitPane, BorderLayout.CENTER)
 
-        refreshButton.addActionListener { refreshData() }
         openConfigButton.addActionListener { openHookConfig() }
         aiQuickConfigButton.addActionListener { quickSetupWithAi() }
         refreshLogButton.addActionListener { refreshLogs() }
@@ -252,6 +247,20 @@ class HookPanel(
             )
             add(content, BorderLayout.CENTER)
         }
+    }
+
+    private fun createLogsSection(logsScroll: JComponent): JPanel {
+        val logsToolbar = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
+            isOpaque = false
+            add(refreshLogButton)
+            add(clearLogButton)
+        }
+        val logsContent = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            isOpaque = false
+            add(logsToolbar, BorderLayout.NORTH)
+            add(logsScroll, BorderLayout.CENTER)
+        }
+        return createSectionContainer(logsContent)
     }
 
     private fun subscribeToEvents() {
@@ -596,7 +605,7 @@ class HookPanel(
             appendLine("1. 只输出 YAML，不要 Markdown 代码块，不要解释。")
             appendLine("2. 必须包含根节点 version: 1 和 hooks。")
             appendLine("3. 每个 hook 必须包含 id/name/event/enabled/actions。")
-            appendLine("4. event 只能是 FILE_SAVED、GIT_COMMIT、SPEC_STAGE_CHANGED。")
+            appendLine("4. event 只能是 FILE_SAVED、GIT_COMMIT、SPEC_STAGE_CHANGED、CHAT_MODE_CHANGED。")
             appendLine("5. action.type 只能是 RUN_COMMAND 或 SHOW_NOTIFICATION。")
             appendLine("6. RUN_COMMAND 必须包含 command；SHOW_NOTIFICATION 必须包含 message。")
             appendLine("7. 可选 conditions.filePattern 或 conditions.specStage。")
@@ -637,16 +646,19 @@ class HookPanel(
             HookEvent.FILE_SAVED -> "file-saved"
             HookEvent.GIT_COMMIT -> "git-commit"
             HookEvent.SPEC_STAGE_CHANGED -> "spec-stage"
+            HookEvent.CHAT_MODE_CHANGED -> "chat-mode"
         }
         val displayName = when (event) {
             HookEvent.FILE_SAVED -> "Quick File Saved Hook"
             HookEvent.GIT_COMMIT -> "Quick Git Commit Hook"
             HookEvent.SPEC_STAGE_CHANGED -> "Quick Spec Stage Hook"
+            HookEvent.CHAT_MODE_CHANGED -> "Quick Chat Mode Hook"
         }
         val baseMessage = when (event) {
             HookEvent.FILE_SAVED -> "Hook triggered on file save"
             HookEvent.GIT_COMMIT -> "Hook triggered on git commit"
             HookEvent.SPEC_STAGE_CHANGED -> "Hook triggered on spec stage change"
+            HookEvent.CHAT_MODE_CHANGED -> "Hook triggered on chat mode change"
         }
         val intentSnippet = userIntent
             .replace("\r\n", " ")
@@ -681,6 +693,8 @@ class HookPanel(
     private fun inferEventFromIntent(userIntent: String): HookEvent {
         val normalized = userIntent.trim().lowercase(Locale.ROOT)
         return when {
+            normalized.contains("vibe") || normalized.contains("模式") || normalized.contains("mode") ->
+                HookEvent.CHAT_MODE_CHANGED
             normalized.contains("commit") || normalized.contains("提交") -> HookEvent.GIT_COMMIT
             normalized.contains("spec") || normalized.contains("规格") || normalized.contains("阶段") || normalized.contains("stage") ->
                 HookEvent.SPEC_STAGE_CHANGED
@@ -729,8 +743,9 @@ class HookPanel(
     }
 
     private fun openHookConfigInEditor(path: Path): Boolean {
+        val normalizedPath = path.toAbsolutePath().normalize()
         val virtualFile = LocalFileSystem.getInstance()
-            .refreshAndFindFileByPath(path.toString().replace('\\', '/'))
+            .refreshAndFindFileByNioFile(normalizedPath)
             ?: return false
         FileEditorManager.getInstance(project).openFile(virtualFile, true)
         return true
@@ -759,14 +774,12 @@ class HookPanel(
 
     private fun refreshLocalizedTexts() {
         guideLabel.text = SpecCodingBundle.message("hook.guide.quickStart")
-        refreshButton.text = SpecCodingBundle.message("hook.action.refresh")
         openConfigButton.text = SpecCodingBundle.message("hook.action.openConfig")
         aiQuickConfigButton.text = SpecCodingBundle.message("hook.action.aiQuickConfig")
         enableButton.text = SpecCodingBundle.message("hook.action.enable")
         disableButton.text = SpecCodingBundle.message("hook.action.disable")
         refreshLogButton.text = SpecCodingBundle.message("hook.log.refresh")
         clearLogButton.text = SpecCodingBundle.message("hook.log.clear")
-        styleActionButton(refreshButton)
         styleActionButton(openConfigButton)
         styleActionButton(aiQuickConfigButton)
         styleActionButton(enableButton)
@@ -796,6 +809,7 @@ class HookPanel(
             HookEvent.FILE_SAVED -> SpecCodingBundle.message("hook.event.fileSaved")
             HookEvent.GIT_COMMIT -> SpecCodingBundle.message("hook.event.gitCommit")
             HookEvent.SPEC_STAGE_CHANGED -> SpecCodingBundle.message("hook.event.specStageChanged")
+            HookEvent.CHAT_MODE_CHANGED -> SpecCodingBundle.message("hook.event.chatModeChanged")
         }
     }
 
@@ -848,7 +862,7 @@ class HookPanel(
     }
 
     internal fun clickRefreshForTest() {
-        refreshButton.doClick()
+        refreshData()
     }
 
     internal fun clickOpenConfigForTest() {

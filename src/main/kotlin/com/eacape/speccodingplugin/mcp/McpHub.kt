@@ -8,6 +8,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.util.messages.Topic
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * MCP Hub 状态变更监听器
@@ -56,6 +57,7 @@ class McpHub internal constructor(
     // Server 运行日志（环形缓冲）
     private val serverRuntimeLogs = ConcurrentHashMap<String, MutableList<McpRuntimeLogEntry>>()
     private val serverRuntimeLogLocks = ConcurrentHashMap<String, Any>()
+    private val serverLifecycleVersions = ConcurrentHashMap<String, AtomicLong>()
 
     /**
      * 注册 Server 配置
@@ -92,6 +94,7 @@ class McpHub internal constructor(
             servers.remove(serverId)
             serverRuntimeLogs.remove(serverId)
             serverRuntimeLogLocks.remove(serverId)
+            serverLifecycleVersions.remove(serverId)
             logger.info("Unregistered MCP server: $serverId")
         }
     }
@@ -109,6 +112,12 @@ class McpHub internal constructor(
                 appendRuntimeLog(serverId, McpRuntimeLogLevel.WARN, "Server already running")
                 return@runCatching
             }
+            if (server.status == ServerStatus.STARTING) {
+                logger.warn("Server already starting: $serverId")
+                appendRuntimeLog(serverId, McpRuntimeLogLevel.WARN, "Server already starting")
+                return@runCatching
+            }
+            val lifecycleVersion = advanceServerLifecycleVersion(serverId)
 
             appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Start requested")
 
@@ -128,13 +137,31 @@ class McpHub internal constructor(
                     appendRuntimeLog(serverId, event.level, event.message)
                 }
                 clients[serverId] = client
+                if (!isLifecycleVersionCurrent(serverId, lifecycleVersion)) {
+                    appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Startup aborted by stop request")
+                    clients.remove(serverId)?.stop()
+                    resetServerToStoppedAfterStaleStartup(serverId)
+                    return@runCatching
+                }
 
                 // 启动 Server
                 client.start().getOrThrow()
+                if (!isLifecycleVersionCurrent(serverId, lifecycleVersion)) {
+                    appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Startup aborted by stop request")
+                    clients.remove(serverId)?.stop()
+                    resetServerToStoppedAfterStaleStartup(serverId)
+                    return@runCatching
+                }
 
                 // 发现工具
                 val toolCount = discoverTools(serverId)
                 appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Startup completed, discovered $toolCount tool(s)")
+                if (!isLifecycleVersionCurrent(serverId, lifecycleVersion)) {
+                    appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Startup aborted by stop request")
+                    clients.remove(serverId)?.stop()
+                    resetServerToStoppedAfterStaleStartup(serverId)
+                    return@runCatching
+                }
 
                 // 成功状态
                 server.status = ServerStatus.RUNNING
@@ -143,6 +170,12 @@ class McpHub internal constructor(
 
                 logger.info("Started MCP server: ${server.config.name}")
             } catch (e: Exception) {
+                if (!isLifecycleVersionCurrent(serverId, lifecycleVersion)) {
+                    logger.info("Ignoring MCP startup failure for outdated lifecycle: $serverId", e)
+                    clients.remove(serverId)?.stop()
+                    resetServerToStoppedAfterStaleStartup(serverId)
+                    return@runCatching
+                }
                 clients.remove(serverId)?.stop()
 
                 server.status = ServerStatus.ERROR
@@ -164,6 +197,7 @@ class McpHub internal constructor(
      */
     fun stopServer(serverId: String): Result<Unit> {
         return runCatching {
+            advanceServerLifecycleVersion(serverId)
             appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Stop requested")
             val client = clients.remove(serverId)
             if (client != null) {
@@ -383,6 +417,25 @@ class McpHub internal constructor(
             }
         }
         notifyRuntimeLogsChanged(serverId)
+    }
+
+    private fun advanceServerLifecycleVersion(serverId: String): Long {
+        return serverLifecycleVersions
+            .computeIfAbsent(serverId) { AtomicLong(0) }
+            .incrementAndGet()
+    }
+
+    private fun isLifecycleVersionCurrent(serverId: String, lifecycleVersion: Long): Boolean {
+        return serverLifecycleVersions[serverId]?.get() == lifecycleVersion
+    }
+
+    private fun resetServerToStoppedAfterStaleStartup(serverId: String) {
+        servers[serverId]?.apply {
+            status = ServerStatus.STOPPED
+            error = null
+        }
+        toolRegistry.clearServerTools(serverId)
+        notifyStatusChanged(serverId, ServerStatus.STOPPED)
     }
 
     /**

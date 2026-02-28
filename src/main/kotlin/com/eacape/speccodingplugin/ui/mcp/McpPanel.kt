@@ -37,6 +37,7 @@ import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JSplitPane
+import javax.swing.SwingConstants
 
 /**
  * MCP 主面板
@@ -63,7 +64,6 @@ class McpPanel(
     private val statusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
     private val guideLabel = JBLabel(SpecCodingBundle.message("mcp.panel.guide"))
     private val aiSetupBtn = JButton(SpecCodingBundle.message("mcp.server.aiSetup"))
-    private val cancelAiSetupBtn = JButton(SpecCodingBundle.message("mcp.server.aiSetup.stop"))
     private val manualAddBtn = JButton(SpecCodingBundle.message("mcp.server.add"))
     private val refreshBtn = JButton(SpecCodingBundle.message("mcp.server.refresh"))
     private val titleLabel = JBLabel(SpecCodingBundle.message("mcp.panel.title"))
@@ -100,7 +100,7 @@ class McpPanel(
     }
 
     private fun setupUI() {
-        listOf(manualAddBtn, refreshBtn, cancelAiSetupBtn).forEach { styleActionButton(it, primary = false) }
+        listOf(manualAddBtn, refreshBtn).forEach { styleActionButton(it, primary = false) }
         styleActionButton(aiSetupBtn, primary = true)
 
         // 顶部工具栏
@@ -110,6 +110,7 @@ class McpPanel(
             titleLabel.foreground = STATUS_TEXT_FG
             statusLabel.font = JBUI.Fonts.smallFont()
             statusLabel.foreground = STATUS_TEXT_FG
+            statusLabel.horizontalAlignment = SwingConstants.LEFT
             statusChipPanel.isOpaque = true
             statusChipPanel.background = STATUS_CHIP_BG
             statusChipPanel.border = SpecUiStyle.roundedCardBorder(
@@ -125,25 +126,31 @@ class McpPanel(
             add(statusChipPanel)
         }
 
-        val actionsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        val actionsRow = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)).apply {
             isOpaque = false
             aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip")
             add(aiSetupBtn)
-            add(cancelAiSetupBtn)
             add(manualAddBtn)
             add(refreshBtn)
         }
 
-        guideLabel.foreground = GUIDE_TEXT_FG
-        guideLabel.font = JBUI.Fonts.smallFont()
-        guideLabel.border = JBUI.Borders.empty(0, 1, 0, 1)
-
-        val footerPanel = JPanel(BorderLayout()).apply {
+        val topRow = JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(guideLabel, BorderLayout.NORTH)
+            add(titleRow, BorderLayout.WEST)
+            add(actionsRow, BorderLayout.EAST)
         }
 
-        val toolbar = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+        guideLabel.foreground = GUIDE_TEXT_FG
+        guideLabel.font = JBUI.Fonts.smallFont()
+        guideLabel.border = JBUI.Borders.empty(0, 2, 0, 2)
+
+        val guideRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(5)
+            add(guideLabel, BorderLayout.WEST)
+        }
+
+        val toolbar = JPanel(BorderLayout()).apply {
             isOpaque = true
             background = TOOLBAR_BG
             border = SpecUiStyle.roundedCardBorder(
@@ -154,9 +161,8 @@ class McpPanel(
                 bottom = 8,
                 right = 10,
             )
-            add(titleRow, BorderLayout.NORTH)
-            add(actionsRow, BorderLayout.CENTER)
-            add(footerPanel, BorderLayout.SOUTH)
+            add(topRow, BorderLayout.NORTH)
+            add(guideRow, BorderLayout.SOUTH)
         }
 
         val north = JPanel(BorderLayout()).apply {
@@ -188,9 +194,9 @@ class McpPanel(
         // 刷新按钮
         refreshBtn.addActionListener { refreshServers() }
         aiSetupBtn.addActionListener { onAiQuickSetup() }
-        cancelAiSetupBtn.addActionListener { onCancelAiQuickSetup() }
         manualAddBtn.addActionListener { onAddServer() }
         setAiSetupInProgress(false)
+        updateServerCountStatus()
     }
 
     private fun subscribeToEvents() {
@@ -245,25 +251,44 @@ class McpPanel(
             )
         }
         serverListPanel.updateServers(items)
-        statusLabel.text = SpecCodingBundle.message("mcp.server.count", servers.size)
+        updateServerCountStatus()
+    }
+
+    private fun updateServerCountStatus() {
+        val countText = SpecCodingBundle.message("mcp.server.count", mcpHub.getAllServers().size)
+        setToolbarStatus(countText, allowEllipsis = false)
+    }
+
+    private fun setToolbarStatus(message: String, allowEllipsis: Boolean = true) {
+        val normalized = message
+            .trim()
+            .replace('\n', ' ')
+            .replace(Regex("\\s{2,}"), " ")
+        if (normalized.isEmpty()) {
+            statusLabel.text = ""
+            statusLabel.toolTipText = null
+            return
+        }
+        if (!allowEllipsis || normalized.length <= STATUS_CHIP_MAX_TEXT_LENGTH) {
+            statusLabel.text = normalized
+            statusLabel.toolTipText = null
+            return
+        }
+        statusLabel.text = normalized.take(STATUS_CHIP_MAX_TEXT_LENGTH - 1) + "..."
+        statusLabel.toolTipText = normalized
     }
 
     private fun refreshLocalizedTexts() {
         titleLabel.text = SpecCodingBundle.message("mcp.panel.title")
-        aiSetupBtn.text = SpecCodingBundle.message("mcp.server.aiSetup")
-        aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip")
-        cancelAiSetupBtn.text = SpecCodingBundle.message("mcp.server.aiSetup.stop")
         manualAddBtn.text = SpecCodingBundle.message("mcp.server.add")
         refreshBtn.text = SpecCodingBundle.message("mcp.server.refresh")
-        styleActionButton(aiSetupBtn, primary = true)
-        styleActionButton(cancelAiSetupBtn, primary = false)
         styleActionButton(manualAddBtn, primary = false)
         styleActionButton(refreshBtn, primary = false)
+        setAiSetupInProgress(aiSetupInProgress)
         guideLabel.text = SpecCodingBundle.message("mcp.panel.guide")
         serverListPanel.refreshLocalizedTexts()
         serverDetailPanel.refreshLocalizedTexts()
-        val servers = mcpHub.getAllServers()
-        statusLabel.text = SpecCodingBundle.message("mcp.server.count", servers.size)
+        updateServerCountStatus()
         selectedServerId?.let(::onServerSelected) ?: serverDetailPanel.showEmpty()
     }
 
@@ -318,7 +343,7 @@ class McpPanel(
             }
             invokeLaterSafe {
                 if (result.isFailure) {
-                    statusLabel.text = result.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown")
+                    setToolbarStatus(result.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown"))
                     if (clearDetail) {
                         selectedServerId = serverId
                         onServerSelected(serverId)
@@ -332,7 +357,11 @@ class McpPanel(
     }
 
     private fun onAiQuickSetup() {
-        if (_isDisposed || aiSetupInProgress) return
+        if (_isDisposed) return
+        if (aiSetupInProgress) {
+            onCancelAiQuickSetup()
+            return
+        }
         val providers = availableAiProviders()
         val preferredProvider = settingsState.defaultProvider.trim().ifBlank { null } ?: providers.firstOrNull()
         val preferredModel = settingsState.selectedCliModel.trim().ifBlank { null }
@@ -358,7 +387,7 @@ class McpPanel(
 
         setAiSetupInProgress(true)
         aiSetupStopRequested = false
-        statusLabel.text = SpecCodingBundle.message("mcp.server.aiSetup.generating")
+        setToolbarStatus(SpecCodingBundle.message("mcp.server.aiSetup.generating"))
 
         aiSetupJob = scope.launch(Dispatchers.IO) {
             val result = runCatching {
@@ -373,14 +402,14 @@ class McpPanel(
                 aiSetupJob = null
                 val cancelled = aiSetupStopRequested || result.exceptionOrNull() is CancellationException
                 if (cancelled) {
-                    statusLabel.text = SpecCodingBundle.message("mcp.server.aiSetup.cancelled")
+                    setToolbarStatus(SpecCodingBundle.message("mcp.server.aiSetup.cancelled"))
                     return@invokeLaterSafe
                 }
                 result.onSuccess { draft ->
                     val deduplicatedDraft = ensureUniqueId(draft)
                     val editor = McpServerEditorDialog(draft = deduplicatedDraft)
                     if (!editor.showAndGet()) {
-                        statusLabel.text = SpecCodingBundle.message("mcp.server.aiSetup.cancelled")
+                        setToolbarStatus(SpecCodingBundle.message("mcp.server.aiSetup.cancelled"))
                         return@onSuccess
                     }
                     val config = editor.result ?: return@onSuccess
@@ -389,12 +418,12 @@ class McpPanel(
                     refreshServers()
                     serverListPanel.setSelectedServer(config.id)
                     onServerSelected(config.id)
-                    statusLabel.text = SpecCodingBundle.message("mcp.server.aiSetup.saved", config.name)
+                    setToolbarStatus(SpecCodingBundle.message("mcp.server.aiSetup.saved", config.name))
                 }.onFailure { error ->
-                    statusLabel.text = SpecCodingBundle.message(
+                    setToolbarStatus(SpecCodingBundle.message(
                         "mcp.server.aiSetup.failed",
                         error.message ?: SpecCodingBundle.message("common.unknown"),
-                    )
+                    ))
                 }
             }
         }
@@ -402,14 +431,20 @@ class McpPanel(
 
     private fun setAiSetupInProgress(inProgress: Boolean) {
         aiSetupInProgress = inProgress
-        aiSetupBtn.isEnabled = !inProgress
-        cancelAiSetupBtn.isEnabled = inProgress
+        aiSetupBtn.isEnabled = true
+        aiSetupBtn.text = SpecCodingBundle.message("mcp.server.aiSetup")
+        if (inProgress) {
+            aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip.running")
+        } else {
+            aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip")
+        }
+        styleActionButton(aiSetupBtn, primary = !inProgress)
     }
 
     private fun onCancelAiQuickSetup() {
         if (!aiSetupInProgress) return
         aiSetupStopRequested = true
-        statusLabel.text = SpecCodingBundle.message("mcp.server.aiSetup.stopping")
+        setToolbarStatus(SpecCodingBundle.message("mcp.server.aiSetup.stopping"))
         activeAiRequest?.let { request ->
             llmRouter.cancel(providerId = request.providerId, requestId = request.requestId)
         }
@@ -706,8 +741,10 @@ class McpPanel(
             val result = mcpHub.startServer(serverId)
             invokeLaterSafe {
                 if (result.isFailure) {
-                    statusLabel.text = result.exceptionOrNull()?.message
-                        ?: SpecCodingBundle.message("mcp.server.startFailed")
+                    setToolbarStatus(
+                        result.exceptionOrNull()?.message
+                            ?: SpecCodingBundle.message("mcp.server.startFailed")
+                    )
                 }
                 refreshServers()
                 onServerSelected(serverId)
@@ -720,7 +757,7 @@ class McpPanel(
             val result = mcpHub.stopServer(serverId)
             invokeLaterSafe {
                 if (result.isFailure) {
-                    statusLabel.text = result.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown")
+                    setToolbarStatus(result.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown"))
                 }
                 refreshServers()
                 onServerSelected(serverId)
@@ -742,7 +779,7 @@ class McpPanel(
         if (selectedServerId == serverId) {
             refreshServerDetail(serverId)
         }
-        statusLabel.text = SpecCodingBundle.message("mcp.server.logs.refreshed")
+        setToolbarStatus(SpecCodingBundle.message("mcp.server.logs.refreshed"))
     }
 
     private fun onClearServerLogs(serverId: String) {
@@ -750,12 +787,12 @@ class McpPanel(
         if (selectedServerId == serverId) {
             refreshServerDetail(serverId)
         }
-        statusLabel.text = SpecCodingBundle.message("mcp.server.logs.cleared")
+        setToolbarStatus(SpecCodingBundle.message("mcp.server.logs.cleared"))
     }
 
     private fun onCopyServerLogs(serverId: String) {
         if (selectedServerId == serverId) {
-            statusLabel.text = SpecCodingBundle.message("mcp.server.logs.copied")
+            setToolbarStatus(SpecCodingBundle.message("mcp.server.logs.copied"))
         }
     }
 
@@ -824,6 +861,7 @@ class McpPanel(
         private const val AI_REQUEST_TIMEOUT_MS = 30_000L
         private const val AI_REQUEST_TIMEOUT_SECONDS = AI_REQUEST_TIMEOUT_MS / 1_000
         private const val AI_MAX_CANDIDATE_ATTEMPTS = 3
+        private const val STATUS_CHIP_MAX_TEXT_LENGTH = 26
 
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))

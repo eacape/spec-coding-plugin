@@ -36,6 +36,9 @@ import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.text.BadLocationException
+import javax.swing.text.SimpleAttributeSet
+import javax.swing.text.StyleConstants
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreeCellRenderer
@@ -120,6 +123,8 @@ class SpecDetailPanel(
     private var editingPhase: SpecPhase? = null
     private var activePreviewCard: String = CARD_PREVIEW
     private var clarificationState: ClarificationState? = null
+    private var activeChecklistDetailIndex: Int? = null
+    private var isClarificationChecklistReadOnly: Boolean = false
     private var isBottomCollapsedForChecklist: Boolean = false
     private var isProcessTimelineExpanded: Boolean = true
     private var isClarificationQuestionsExpanded: Boolean = true
@@ -398,6 +403,7 @@ class SpecDetailPanel(
                 validationLabel.foreground = JBColor(Color(213, 52, 52), Color(255, 140, 140))
                 return@addActionListener
             }
+            setClarificationChecklistReadOnly(true)
             onClarificationConfirm(state.input, confirmed)
         }
         regenerateClarificationButton.addActionListener {
@@ -627,17 +633,18 @@ class SpecDetailPanel(
         button.isBorderPainted = false
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         button.foreground = TREE_FILE_TEXT
-        button.margin = JBUI.insets(0)
-        button.preferredSize = JBUI.size(22, 22)
-        button.minimumSize = button.preferredSize
+        button.margin = JBUI.insets(1, 8, 1, 8)
         button.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
     }
 
     private fun updateCollapseToggleButton(button: JButton, expanded: Boolean, enabled: Boolean) {
-        button.text = if (expanded && enabled) COLLAPSE_ICON_EXPANDED else COLLAPSE_ICON_COLLAPSED
-        button.toolTipText = SpecCodingBundle.message(
-            if (expanded && enabled) "chat.workflow.toggle.collapse" else "chat.workflow.toggle.expand",
-        )
+        val key = if (expanded && enabled) {
+            "spec.detail.toggle.collapse"
+        } else {
+            "spec.detail.toggle.expand"
+        }
+        button.text = SpecCodingBundle.message(key)
+        button.toolTipText = button.text
         button.isEnabled = enabled
         button.foreground = if (enabled) TREE_FILE_TEXT else TREE_STATUS_PENDING_TEXT
         button.cursor = if (enabled) {
@@ -870,10 +877,14 @@ class SpecDetailPanel(
         }
         if (previousWorkflowId != workflow.id) {
             clarificationState = null
+            activeChecklistDetailIndex = null
+            isClarificationChecklistReadOnly = false
             clearProcessTimeline()
         }
         if (clarificationState?.phase != null && clarificationState?.phase != workflow.currentPhase) {
             clarificationState = null
+            activeChecklistDetailIndex = null
+            isClarificationChecklistReadOnly = false
         }
         isGeneratingActive = false
         isClarificationGenerating = false
@@ -907,6 +918,8 @@ class SpecDetailPanel(
         editingPhase = null
         selectedPhase = null
         clarificationState = null
+        activeChecklistDetailIndex = null
+        isClarificationChecklistReadOnly = false
         clearProcessTimeline()
         treeRoot.removeAllChildren()
         treeModel.reload()
@@ -1039,6 +1052,8 @@ class SpecDetailPanel(
             input = input,
             questionsMarkdown = generatingText,
         )
+        activeChecklistDetailIndex = null
+        isClarificationChecklistReadOnly = false
         renderClarificationQuestions(
             markdown = generatingText,
             structuredQuestions = emptyList(),
@@ -1093,6 +1108,14 @@ class SpecDetailPanel(
             questionDecisions = inferredDecisions,
             questionDetails = inferredDetails,
         )
+        activeChecklistDetailIndex = inferredDecisions
+            .entries
+            .asSequence()
+            .filter { it.value == ClarificationQuestionDecision.CONFIRMED }
+            .map { it.key }
+            .sorted()
+            .firstOrNull()
+        isClarificationChecklistReadOnly = false
         renderClarificationQuestions(
             markdown = questionsMarkdown,
             structuredQuestions = normalizedQuestions,
@@ -1157,11 +1180,40 @@ class SpecDetailPanel(
         renderProcessTimeline()
     }
 
+    fun lockClarificationChecklistInteractions() {
+        setClarificationChecklistReadOnly(true)
+    }
+
+    fun unlockClarificationChecklistInteractions() {
+        setClarificationChecklistReadOnly(false)
+    }
+
+    private fun setClarificationChecklistReadOnly(readOnly: Boolean) {
+        if (isClarificationChecklistReadOnly == readOnly) {
+            return
+        }
+        isClarificationChecklistReadOnly = readOnly
+        clarificationState
+            ?.takeIf { it.structuredQuestions.isNotEmpty() }
+            ?.let { state ->
+                renderClarificationQuestions(
+                    markdown = state.questionsMarkdown,
+                    structuredQuestions = state.structuredQuestions,
+                    questionDecisions = state.questionDecisions,
+                    questionDetails = state.questionDetails,
+                )
+            }
+        refreshInputAreaMode()
+        currentWorkflow?.let { updateButtonStates(it) }
+    }
+
     fun exitClarificationMode(clearInput: Boolean = false) {
         isGeneratingActive = false
         isClarificationGenerating = false
         stopGeneratingAnimation()
         clarificationState = null
+        activeChecklistDetailIndex = null
+        isClarificationChecklistReadOnly = false
         clarificationQuestionsPane.text = ""
         clarificationPreviewPane.text = ""
         setClarificationPreviewVisible(true)
@@ -1193,6 +1245,7 @@ class SpecDetailPanel(
             clarificationQuestionsCardLayout.show(clarificationQuestionsCardPanel, CLARIFY_QUESTIONS_CARD_CHECKLIST)
             return
         }
+        activeChecklistDetailIndex = null
         renderMarkdownClarificationQuestions(markdown)
         clarificationQuestionsCardLayout.show(clarificationQuestionsCardPanel, CLARIFY_QUESTIONS_CARD_MARKDOWN)
     }
@@ -1216,6 +1269,15 @@ class SpecDetailPanel(
         questionDetails: Map<Int, String>,
     ) {
         clarificationChecklistPanel.removeAll()
+        val confirmedIndexes = structuredQuestions.indices
+            .filter { index -> questionDecisions[index] == ClarificationQuestionDecision.CONFIRMED }
+        val resolvedActiveIndex = when {
+            confirmedIndexes.isEmpty() -> null
+            activeChecklistDetailIndex?.let { it in confirmedIndexes } == true -> activeChecklistDetailIndex
+            else -> confirmedIndexes.first()
+        }
+        activeChecklistDetailIndex = resolvedActiveIndex
+        val checklistEditable = !isClarificationChecklistReadOnly
         structuredQuestions.forEachIndexed { index, question ->
             val decision = questionDecisions[index] ?: ClarificationQuestionDecision.UNDECIDED
             clarificationChecklistPanel.add(
@@ -1224,6 +1286,8 @@ class SpecDetailPanel(
                     question = question,
                     decision = decision,
                     detail = questionDetails[index].orEmpty(),
+                    detailExpanded = decision == ClarificationQuestionDecision.CONFIRMED && resolvedActiveIndex == index,
+                    editable = checklistEditable,
                 ),
             )
             clarificationChecklistPanel.add(Box.createVerticalStrut(JBUI.scale(6)))
@@ -1247,6 +1311,8 @@ class SpecDetailPanel(
         question: String,
         decision: ClarificationQuestionDecision,
         detail: String,
+        detailExpanded: Boolean,
+        editable: Boolean,
     ): JPanel {
         val indicator = JBLabel(
             when (decision) {
@@ -1262,18 +1328,23 @@ class SpecDetailPanel(
                 ClarificationQuestionDecision.UNDECIDED -> TREE_FILE_TEXT
             }
             border = JBUI.Borders.empty(1, 2, 0, 2)
-            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            cursor = if (editable) {
+                Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            } else {
+                Cursor.getDefaultCursor()
+            }
         }
-        val questionText = JBTextArea(question).apply {
+        val questionText = JTextPane().apply {
             isEditable = false
             isOpaque = false
-            lineWrap = true
-            wrapStyleWord = true
             border = JBUI.Borders.empty(0, 2, 0, 2)
-            font = JBUI.Fonts.smallFont()
-            foreground = TREE_TEXT
-            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            cursor = if (editable) {
+                Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            } else {
+                Cursor.getDefaultCursor()
+            }
         }
+        renderChecklistQuestionText(questionText, question)
         val confirmButton = createChecklistChoiceButton(
             text = SpecCodingBundle.message("spec.detail.clarify.checklist.choice.confirm"),
             selected = decision == ClarificationQuestionDecision.CONFIRMED,
@@ -1281,6 +1352,7 @@ class SpecDetailPanel(
             selectedForeground = CHECKLIST_CONFIRM_TEXT,
             normalBackground = CHECKLIST_CHOICE_BG,
             normalForeground = TREE_FILE_TEXT,
+            enabled = editable,
         ) {
             onChecklistQuestionDecisionChanged(
                 index = index,
@@ -1298,6 +1370,7 @@ class SpecDetailPanel(
             selectedForeground = CHECKLIST_NA_TEXT,
             normalBackground = CHECKLIST_CHOICE_BG,
             normalForeground = TREE_FILE_TEXT,
+            enabled = editable,
         ) {
             onChecklistQuestionDecisionChanged(
                 index = index,
@@ -1314,7 +1387,8 @@ class SpecDetailPanel(
             add(notApplicableButton)
         }
         val detailArea = JBTextArea(detail).apply {
-            isEditable = true
+            isEditable = editable
+            isEnabled = editable
             isOpaque = false
             lineWrap = true
             wrapStyleWord = true
@@ -1334,7 +1408,7 @@ class SpecDetailPanel(
         val detailPanel = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
             isOpaque = false
             border = JBUI.Borders.empty(4, 16, 0, 2)
-            isVisible = decision == ClarificationQuestionDecision.CONFIRMED
+            isVisible = detailExpanded
             add(
                 JBLabel(SpecCodingBundle.message("spec.detail.clarify.checklist.detail.label")).apply {
                     font = JBUI.Fonts.smallFont()
@@ -1381,20 +1455,20 @@ class SpecDetailPanel(
         }
         val toggleListener = object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent?) {
+                if (!editable) {
+                    return
+                }
                 if (e == null || e.button != MouseEvent.BUTTON1) {
                     return
                 }
-                val nextDecision = when (decision) {
-                    ClarificationQuestionDecision.UNDECIDED -> ClarificationQuestionDecision.CONFIRMED
-                    ClarificationQuestionDecision.CONFIRMED -> ClarificationQuestionDecision.UNDECIDED
-                    ClarificationQuestionDecision.NOT_APPLICABLE -> ClarificationQuestionDecision.CONFIRMED
-                }
-                onChecklistQuestionDecisionChanged(index, nextDecision)
+                onChecklistQuestionRowClicked(index, decision)
             }
         }
-        row.addMouseListener(toggleListener)
-        indicator.addMouseListener(toggleListener)
-        questionText.addMouseListener(toggleListener)
+        if (editable) {
+            row.addMouseListener(toggleListener)
+            indicator.addMouseListener(toggleListener)
+            questionText.addMouseListener(toggleListener)
+        }
         return row
     }
 
@@ -1405,6 +1479,7 @@ class SpecDetailPanel(
         selectedForeground: Color,
         normalBackground: Color,
         normalForeground: Color,
+        enabled: Boolean,
         onClick: () -> Unit,
     ): JButton {
         return JButton(text).apply {
@@ -1424,9 +1499,112 @@ class SpecDetailPanel(
                 maxOf(JBUI.scale(48), getFontMetrics(font).stringWidth(text) + JBUI.scale(20)),
                 JBUI.scale(22),
             )
-            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-            addActionListener { onClick() }
+            isEnabled = enabled
+            cursor = if (enabled) {
+                Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            } else {
+                Cursor.getDefaultCursor()
+            }
+            addActionListener {
+                if (isEnabled) {
+                    onClick()
+                }
+            }
         }
+    }
+
+    private fun onChecklistQuestionRowClicked(index: Int, fallbackDecision: ClarificationQuestionDecision) {
+        if (isClarificationChecklistReadOnly) {
+            return
+        }
+        val state = clarificationState ?: return
+        if (state.structuredQuestions.isEmpty() || index !in state.structuredQuestions.indices) {
+            return
+        }
+        val currentDecision = state.questionDecisions[index] ?: fallbackDecision
+        if (currentDecision == ClarificationQuestionDecision.CONFIRMED && activeChecklistDetailIndex != index) {
+            activeChecklistDetailIndex = index
+            renderClarificationQuestions(
+                markdown = state.questionsMarkdown,
+                structuredQuestions = state.structuredQuestions,
+                questionDecisions = state.questionDecisions,
+                questionDetails = state.questionDetails,
+            )
+            return
+        }
+        val nextDecision = when (currentDecision) {
+            ClarificationQuestionDecision.UNDECIDED -> ClarificationQuestionDecision.CONFIRMED
+            ClarificationQuestionDecision.CONFIRMED -> ClarificationQuestionDecision.UNDECIDED
+            ClarificationQuestionDecision.NOT_APPLICABLE -> ClarificationQuestionDecision.CONFIRMED
+        }
+        onChecklistQuestionDecisionChanged(index, nextDecision)
+    }
+
+    private fun renderChecklistQuestionText(target: JTextPane, question: String) {
+        val doc = target.styledDocument
+        try {
+            doc.remove(0, doc.length)
+            val baseFont = JBUI.Fonts.smallFont()
+            val normalAttrs = SimpleAttributeSet().apply {
+                StyleConstants.setBold(this, false)
+                StyleConstants.setFontFamily(this, baseFont.family)
+                StyleConstants.setFontSize(this, baseFont.size)
+                StyleConstants.setForeground(this, TREE_TEXT)
+            }
+            val boldAttrs = SimpleAttributeSet(normalAttrs).apply {
+                StyleConstants.setBold(this, true)
+            }
+            parseChecklistQuestionSegments(question).forEach { segment ->
+                val attrs = if (segment.bold) boldAttrs else normalAttrs
+                doc.insertString(doc.length, segment.text, attrs)
+            }
+            target.caretPosition = 0
+        } catch (_: BadLocationException) {
+            target.text = question
+            target.caretPosition = 0
+        }
+    }
+
+    private fun parseChecklistQuestionSegments(question: String): List<ChecklistQuestionSegment> {
+        val normalized = question
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        if (normalized.isBlank()) {
+            return emptyList()
+        }
+        val segments = mutableListOf<ChecklistQuestionSegment>()
+        var cursor = 0
+        BOLD_MARKDOWN_REGEX.findAll(normalized).forEach { match ->
+            val start = match.range.first
+            val endExclusive = match.range.last + 1
+            if (start > cursor) {
+                segments += ChecklistQuestionSegment(
+                    text = normalized.substring(cursor, start),
+                    bold = false,
+                )
+            }
+            val boldText = match.groupValues.getOrNull(1).orEmpty()
+            if (boldText.isNotBlank()) {
+                segments += ChecklistQuestionSegment(
+                    text = boldText,
+                    bold = true,
+                )
+            } else {
+                segments += ChecklistQuestionSegment(
+                    text = match.value,
+                    bold = false,
+                )
+            }
+            cursor = endExclusive
+        }
+        if (cursor < normalized.length) {
+            segments += ChecklistQuestionSegment(
+                text = normalized.substring(cursor),
+                bold = false,
+            )
+        }
+        return segments.filter { it.text.isNotEmpty() }
     }
 
     private fun checklistRowColors(decision: ClarificationQuestionDecision): ChecklistRowColors {
@@ -1447,6 +1625,9 @@ class SpecDetailPanel(
     }
 
     private fun onChecklistQuestionDecisionChanged(index: Int, decision: ClarificationQuestionDecision) {
+        if (isClarificationChecklistReadOnly) {
+            return
+        }
         val state = clarificationState ?: return
         if (state.structuredQuestions.isEmpty() || index !in state.structuredQuestions.indices) {
             return
@@ -1456,10 +1637,30 @@ class SpecDetailPanel(
         if (decision == ClarificationQuestionDecision.UNDECIDED) {
             nextDecisions.remove(index)
             nextDetails.remove(index)
+            if (activeChecklistDetailIndex == index) {
+                activeChecklistDetailIndex = nextDecisions
+                    .entries
+                    .asSequence()
+                    .filter { it.value == ClarificationQuestionDecision.CONFIRMED }
+                    .map { it.key }
+                    .sorted()
+                    .firstOrNull()
+            }
         } else {
             nextDecisions[index] = decision
             if (decision != ClarificationQuestionDecision.CONFIRMED) {
                 nextDetails.remove(index)
+                if (activeChecklistDetailIndex == index) {
+                    activeChecklistDetailIndex = nextDecisions
+                        .entries
+                        .asSequence()
+                        .filter { it.value == ClarificationQuestionDecision.CONFIRMED }
+                        .map { it.key }
+                        .sorted()
+                        .firstOrNull()
+                }
+            } else {
+                activeChecklistDetailIndex = index
             }
         }
         val nextState = state.copy(
@@ -1482,6 +1683,9 @@ class SpecDetailPanel(
     }
 
     private fun onChecklistQuestionDetailChanged(index: Int, detail: String) {
+        if (isClarificationChecklistReadOnly) {
+            return
+        }
         val state = clarificationState ?: return
         if (state.structuredQuestions.isEmpty() || index !in state.structuredQuestions.indices) {
             return
@@ -1489,6 +1693,7 @@ class SpecDetailPanel(
         if (state.questionDecisions[index] != ClarificationQuestionDecision.CONFIRMED) {
             return
         }
+        activeChecklistDetailIndex = index
         val normalized = detail
             .replace("\r\n", "\n")
             .replace('\r', '\n')
@@ -1792,6 +1997,11 @@ class SpecDetailPanel(
         val border: Color,
     )
 
+    private data class ChecklistQuestionSegment(
+        val text: String,
+        val bold: Boolean,
+    )
+
     private fun onClarificationInputEdited() {
         updateClarificationPreview()
         persistClarificationDraftSnapshot()
@@ -1967,6 +2177,7 @@ class SpecDetailPanel(
         isGeneratingActive = false
         isClarificationGenerating = false
         stopGeneratingAnimation()
+        setClarificationChecklistReadOnly(false)
         val workflow = currentWorkflow
         if (workflow == null) {
             validationLabel.text = SpecCodingBundle.message("spec.detail.validation.none")
@@ -1991,6 +2202,7 @@ class SpecDetailPanel(
         isGeneratingActive = false
         isClarificationGenerating = false
         stopGeneratingAnimation()
+        setClarificationChecklistReadOnly(false)
         renderPreviewMarkdown(buildValidationPreviewMarkdown(phase, validation))
         switchPreviewCard(CARD_PREVIEW)
         validationLabel.text = buildValidationFailureLabel(validation)
@@ -2168,6 +2380,7 @@ class SpecDetailPanel(
         val inProgress = workflow.status == WorkflowStatus.IN_PROGRESS
         val allowEditing = !isGeneratingActive
         val clarifying = clarificationState != null
+        val clarificationLocked = clarifying && isClarificationChecklistReadOnly
         val standardModeEnabled = inProgress && !isEditing && !clarifying
 
         generateButton.isVisible = !clarifying
@@ -2204,10 +2417,10 @@ class SpecDetailPanel(
         editButton.isEnabled = !isEditing && allowEditing && !clarifying
         saveButton.isEnabled = isEditing
         cancelEditButton.isEnabled = isEditing
-        confirmGenerateButton.isEnabled = clarifying && inProgress && !isGeneratingActive
-        regenerateClarificationButton.isEnabled = clarifying && inProgress && !isGeneratingActive
-        skipClarificationButton.isEnabled = clarifying && inProgress && !isGeneratingActive
-        cancelClarificationButton.isEnabled = clarifying && !isGeneratingActive
+        confirmGenerateButton.isEnabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked
+        regenerateClarificationButton.isEnabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked
+        skipClarificationButton.isEnabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked
+        cancelClarificationButton.isEnabled = clarifying && !isGeneratingActive && !clarificationLocked
         refreshActionButtonCursors()
     }
 
@@ -2290,8 +2503,24 @@ class SpecDetailPanel(
         return (state.questionDecisions[index] ?: ClarificationQuestionDecision.UNDECIDED).name
     }
 
+    internal fun currentChecklistDetailForTest(index: Int): String? {
+        return clarificationState?.questionDetails?.get(index)
+    }
+
     internal fun setClarificationQuestionDetailForTest(index: Int, detail: String) {
         onChecklistQuestionDetailChanged(index, detail)
+    }
+
+    internal fun activeChecklistDetailIndexForTest(): Int? {
+        return activeChecklistDetailIndex
+    }
+
+    internal fun isClarificationChecklistReadOnlyForTest(): Boolean {
+        return isClarificationChecklistReadOnly
+    }
+
+    internal fun parseChecklistQuestionSegmentsForTest(question: String): List<Pair<String, Boolean>> {
+        return parseChecklistQuestionSegments(question).map { it.text to it.bold }
     }
 
     internal fun isInputEditableForTest(): Boolean {
@@ -2334,6 +2563,14 @@ class SpecDetailPanel(
 
     internal fun isClarificationPreviewExpandedForTest(): Boolean {
         return isClarificationPreviewExpanded
+    }
+
+    internal fun clarificationQuestionsToggleTextForTest(): String {
+        return if (::clarificationQuestionsToggleButton.isInitialized) {
+            clarificationQuestionsToggleButton.text
+        } else {
+            ""
+        }
     }
 
     internal fun clickGenerateForTest() {
@@ -2599,8 +2836,7 @@ class SpecDetailPanel(
         private const val CARD_CLARIFY = "clarify"
         private const val CLARIFY_QUESTIONS_CARD_MARKDOWN = "clarify.questions.markdown"
         private const val CLARIFY_QUESTIONS_CARD_CHECKLIST = "clarify.questions.checklist"
-        private const val COLLAPSE_ICON_EXPANDED = "▾"
-        private const val COLLAPSE_ICON_COLLAPSED = "▸"
+        private val BOLD_MARKDOWN_REGEX = Regex("\\*\\*(.+?)\\*\\*")
         private val DETAIL_LINE_REGEX = Regex("^-\\s*(detail|details|补充|说明)\\s*[:：]\\s*(.+)$", RegexOption.IGNORE_CASE)
     }
 }

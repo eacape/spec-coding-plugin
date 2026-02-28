@@ -238,7 +238,7 @@ class McpServerDetailPanel(
         runtimeLogArea.wrapStyleWord = true
         runtimeLogArea.rows = 7
 
-        val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply {
+        val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
             isOpaque = false
             add(refreshLogsBtn)
             add(clearLogsBtn)
@@ -247,6 +247,7 @@ class McpServerDetailPanel(
 
         val header = JPanel(BorderLayout()).apply {
             isOpaque = false
+            border = JBUI.Borders.emptyBottom(8)
             add(runtimeLogsLabel, BorderLayout.WEST)
             add(actionRow, BorderLayout.EAST)
         }

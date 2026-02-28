@@ -776,7 +776,12 @@ class SpecWorkflowPanel(
         input: String,
         confirmedContext: String,
     ) {
-        val context = resolveGenerationContext() ?: return
+        val context = resolveGenerationContext()
+        if (context == null) {
+            detailPanel.unlockClarificationChecklistInteractions()
+            return
+        }
+        detailPanel.lockClarificationChecklistInteractions()
         detailPanel.appendProcessTimelineEntry(
             text = SpecCodingBundle.message("spec.workflow.process.clarify.confirmed"),
             state = SpecDetailPanel.ProcessTimelineState.DONE,

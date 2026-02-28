@@ -6,6 +6,9 @@ import com.intellij.openapi.project.Project
 import org.yaml.snakeyaml.LoaderOptions
 import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.constructor.SafeConstructor
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -459,7 +462,7 @@ class SkillRegistry(private val project: Project) {
 
     private fun loadSkillFromMarkdown(path: Path, root: DiscoveryRoot): Skill? {
         return try {
-            val rawContent = Files.readString(path, StandardCharsets.UTF_8)
+            val rawContent = readSkillFileText(path)
             val parsed = parseFrontMatter(rawContent)
             val folderName = path.parent?.fileName?.toString()?.trim().orEmpty()
             val normalizedCommand = normalizeSlashCommand(
@@ -545,6 +548,25 @@ class SkillRegistry(private val project: Project) {
         return ParsedMarkdownSkill(entries = entries, body = body)
     }
 
+    private fun readSkillFileText(path: Path): String {
+        val bytes = Files.readAllBytes(path)
+        decodeBytesStrict(bytes, StandardCharsets.UTF_8)?.let { return it }
+        runCatching { Charset.forName("GB18030") }.getOrNull()
+            ?.let { decodeBytesStrict(bytes, it) }
+            ?.let { return it }
+        decodeBytesStrict(bytes, Charset.defaultCharset())?.let { return it }
+        return String(bytes, StandardCharsets.UTF_8)
+    }
+
+    private fun decodeBytesStrict(bytes: ByteArray, charset: Charset): String? {
+        return runCatching {
+            val decoder = charset.newDecoder()
+            decoder.onMalformedInput(CodingErrorAction.REPORT)
+            decoder.onUnmappableCharacter(CodingErrorAction.REPORT)
+            decoder.decode(ByteBuffer.wrap(bytes)).toString()
+        }.getOrNull()
+    }
+
     private fun normalizeSlashCommand(raw: String): String {
         return raw
             .trim()
@@ -573,7 +595,7 @@ class SkillRegistry(private val project: Project) {
     private fun loadSkillFromYaml(path: Path): Skill? {
         return try {
             val yaml = Yaml(SafeConstructor(LoaderOptions()))
-            val content = Files.readString(path, StandardCharsets.UTF_8)
+            val content = readSkillFileText(path)
             val data = yaml.load<Map<String, Any?>>(content)
 
             val id = data["id"]?.toString()?.trim() ?: return null

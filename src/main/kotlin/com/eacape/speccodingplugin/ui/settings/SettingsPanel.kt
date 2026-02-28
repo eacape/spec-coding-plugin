@@ -83,6 +83,7 @@ import javax.swing.ListSelectionModel
 import javax.swing.SwingUtilities
 import javax.swing.SwingConstants
 import javax.swing.Timer
+import javax.swing.UIManager
 import javax.swing.border.AbstractBorder
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -466,7 +467,8 @@ class SettingsPanel(
         skillMarkdownArea.lineWrap = false
         skillMarkdownArea.wrapStyleWord = false
         skillMarkdownArea.rows = 14
-        skillMarkdownArea.font = Font("JetBrains Mono", Font.PLAIN, 13)
+        // Use IDE default textarea font to avoid CJK glyph fallback issues on some systems.
+        skillMarkdownArea.font = UIManager.getFont("TextArea.font")
         skillMarkdownArea.margin = JBUI.insets(6)
         skillMarkdownArea.tabSize = 2
 

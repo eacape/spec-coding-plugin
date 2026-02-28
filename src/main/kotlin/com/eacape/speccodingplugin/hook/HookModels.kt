@@ -7,6 +7,7 @@ enum class HookEvent {
     FILE_SAVED,
     GIT_COMMIT,
     SPEC_STAGE_CHANGED,
+    CHAT_MODE_CHANGED,
 }
 
 /**
@@ -78,4 +79,3 @@ data class HookExecutionLog(
     val message: String,
     val timestamp: Long,
 )
-

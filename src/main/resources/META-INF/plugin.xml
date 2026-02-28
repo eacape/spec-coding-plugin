@@ -55,6 +55,7 @@
         <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookConfigStore"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookExecutor"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookManager"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookGitCommitWatcher"/>
 
         <!-- Context Engine Services -->
         <projectService serviceImplementation="com.eacape.speccodingplugin.context.ContextCollector"/>

@@ -15,6 +15,9 @@ import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.engine.CliSlashCommandInfo
 import com.eacape.speccodingplugin.engine.CliSlashInvocationKind
+import com.eacape.speccodingplugin.hook.HookEvent
+import com.eacape.speccodingplugin.hook.HookManager
+import com.eacape.speccodingplugin.hook.HookTriggerContext
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
@@ -777,6 +780,55 @@ class ImprovedChatPanel(
         activeOperationJob?.cancel(CancellationException("Stopped by user"))
     }
 
+    private fun requestAutoStopAfterMcpVerification(
+        providerId: String,
+        requestId: String,
+        autoStopIssued: AtomicBoolean,
+    ) {
+        if (project.isDisposed || _isDisposed) {
+            return
+        }
+        if (!autoStopIssued.compareAndSet(false, true)) {
+            return
+        }
+        stopRequested.set(true)
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || _isDisposed) {
+                return@invokeLater
+            }
+            showStatus(SpecCodingBundle.message("toolwindow.status.mcp.verify.autostop"))
+        }
+        llmRouter.cancel(providerId = providerId, requestId = requestId)
+        activeOperationJob?.cancel(CancellationException("Stopped after MCP verification reached terminal status"))
+    }
+
+    private fun looksLikeMcpSignal(event: ChatStreamEvent): Boolean {
+        if (containsMcpKeyword(event.detail)) {
+            return true
+        }
+        if (containsMcpKeyword(event.id)) {
+            return true
+        }
+        return event.metadata.entries.any { (key, value) ->
+            containsMcpKeyword(key) || containsMcpKeyword(value)
+        }
+    }
+
+    private fun isMcpVerificationTerminalEvent(event: ChatStreamEvent): Boolean {
+        if (event.kind != ChatTraceKind.VERIFY) {
+            return false
+        }
+        return event.status == ChatTraceStatus.DONE || event.status == ChatTraceStatus.ERROR
+    }
+
+    private fun containsMcpKeyword(value: String?): Boolean {
+        val normalized = value?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (normalized.isBlank()) {
+            return false
+        }
+        return MCP_EVENT_KEYWORDS.any { keyword -> normalized.contains(keyword) }
+    }
+
     private fun resolveProviderIdForRequest(providerId: String?): String {
         val normalized = providerId?.trim().orEmpty()
         if (normalized.isNotBlank()) {
@@ -889,6 +941,8 @@ class ImprovedChatPanel(
             val assistantContent = StringBuilder()
             val pendingDelta = StringBuilder()
             val pendingEvents = mutableListOf<ChatStreamEvent>()
+            val mcpSignalDetected = AtomicBoolean(false)
+            val autoStopIssued = AtomicBoolean(false)
             var pendingChunks = 0
             var lastFlushAtNanos = System.nanoTime()
 
@@ -940,9 +994,19 @@ class ImprovedChatPanel(
                     }
                     chunk.event
                         ?.let(::sanitizeStreamEvent)
-                        ?.let {
-                            pendingEvents += it
-                            streamedTraceEvents += it
+                        ?.let { event ->
+                            pendingEvents += event
+                            streamedTraceEvents += event
+                            if (looksLikeMcpSignal(event)) {
+                                mcpSignalDetected.set(true)
+                            }
+                            if (mcpSignalDetected.get() && isMcpVerificationTerminalEvent(event)) {
+                                requestAutoStopAfterMcpVerification(
+                                    providerId = resolvedProviderId,
+                                    requestId = requestId,
+                                    autoStopIssued = autoStopIssued,
+                                )
+                            }
                         }
                     pendingChunks += 1
 
@@ -4053,7 +4117,8 @@ class ImprovedChatPanel(
 
     private fun onInteractionModeChanged() {
         val mode = currentInteractionMode()
-        if (mode == lastInteractionMode) {
+        val previousMode = lastInteractionMode
+        if (mode == previousMode) {
             return
         }
         lastInteractionMode = mode
@@ -4064,6 +4129,24 @@ class ImprovedChatPanel(
             refreshSpecWorkflowComboBox(selectWorkflowId = workflowId)
         }
         applyInteractionModeUi(mode)
+        emitChatModeChangedHook(previousMode = previousMode, currentMode = mode)
+    }
+
+    private fun emitChatModeChangedHook(
+        previousMode: ChatInteractionMode,
+        currentMode: ChatInteractionMode,
+    ) {
+        HookManager.getInstance(project).trigger(
+            event = HookEvent.CHAT_MODE_CHANGED,
+            triggerContext = HookTriggerContext(
+                specStage = currentMode.name,
+                metadata = mapOf(
+                    "projectName" to project.name,
+                    "previousMode" to previousMode.name,
+                    "currentMode" to currentMode.name,
+                ),
+            ),
+        )
     }
 
     private fun applyInteractionModeUi(mode: ChatInteractionMode) {
@@ -4997,6 +5080,8 @@ class ImprovedChatPanel(
             val assistantContent = StringBuilder()
             val pendingDelta = StringBuilder()
             val pendingEvents = mutableListOf<ChatStreamEvent>()
+            val mcpSignalDetected = AtomicBoolean(false)
+            val autoStopIssued = AtomicBoolean(false)
             var pendingChunks = 0
             var lastFlushAtNanos = System.nanoTime()
 
@@ -5046,9 +5131,19 @@ class ImprovedChatPanel(
                     }
                     chunk.event
                         ?.let(::sanitizeStreamEvent)
-                        ?.let {
-                            pendingEvents += it
-                            streamedTraceEvents += it
+                        ?.let { event ->
+                            pendingEvents += event
+                            streamedTraceEvents += event
+                            if (looksLikeMcpSignal(event)) {
+                                mcpSignalDetected.set(true)
+                            }
+                            if (mcpSignalDetected.get() && isMcpVerificationTerminalEvent(event)) {
+                                requestAutoStopAfterMcpVerification(
+                                    providerId = resolvedProviderId,
+                                    requestId = requestId,
+                                    autoStopIssued = autoStopIssued,
+                                )
+                            }
                         }
                     pendingChunks += 1
 
@@ -5310,6 +5405,13 @@ class ImprovedChatPanel(
         )
         private val CODEX_SESSION_ONLY_SLASH_COMMANDS = setOf(
             "compact",
+        )
+        private val MCP_EVENT_KEYWORDS = listOf(
+            "mcp",
+            "mcp__",
+            "mcp-",
+            "model context protocol",
+            "modelcontextprotocol",
         )
 
         private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"

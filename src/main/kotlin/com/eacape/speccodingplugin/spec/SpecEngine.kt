@@ -1,6 +1,9 @@
 package com.eacape.speccodingplugin.spec
 
 import com.eacape.speccodingplugin.core.OperationMode
+import com.eacape.speccodingplugin.hook.HookEvent
+import com.eacape.speccodingplugin.hook.HookManager
+import com.eacape.speccodingplugin.hook.HookTriggerContext
 import com.eacape.speccodingplugin.llm.LlmRouter
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -419,6 +422,11 @@ class SpecEngine(private val project: Project) {
             activeWorkflows[workflowId] = updatedWorkflow
             storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
+            emitSpecStageChangedHook(
+                workflowId = workflowId,
+                previousPhase = workflow.currentPhase,
+                currentPhase = nextPhase,
+            )
             logger.info("Workflow $workflowId proceeded to ${nextPhase.displayName}")
             updatedWorkflow
         }
@@ -447,6 +455,11 @@ class SpecEngine(private val project: Project) {
             activeWorkflows[workflowId] = updatedWorkflow
             storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
+            emitSpecStageChangedHook(
+                workflowId = workflowId,
+                previousPhase = workflow.currentPhase,
+                currentPhase = previousPhase,
+            )
             logger.info("Workflow $workflowId went back to ${previousPhase.displayName}")
             updatedWorkflow
         }
@@ -554,6 +567,32 @@ class SpecEngine(private val project: Project) {
             activeWorkflows.remove(workflowId)
             logger.info("Workflow $workflowId archived to ${result.archivePath}")
             result
+        }
+    }
+
+    private fun emitSpecStageChangedHook(
+        workflowId: String,
+        previousPhase: SpecPhase,
+        currentPhase: SpecPhase,
+    ) {
+        runCatching {
+            HookManager.getInstance(project).trigger(
+                event = HookEvent.SPEC_STAGE_CHANGED,
+                triggerContext = HookTriggerContext(
+                    specStage = currentPhase.name,
+                    metadata = mapOf(
+                        "workflowId" to workflowId,
+                        "previousStage" to previousPhase.name,
+                        "currentStage" to currentPhase.name,
+                    ),
+                ),
+            )
+        }.onFailure { error ->
+            logger.warn(
+                "Failed to emit SPEC_STAGE_CHANGED hook for workflow=$workflowId " +
+                    "(${previousPhase.name} -> ${currentPhase.name})",
+                error,
+            )
         }
     }
 

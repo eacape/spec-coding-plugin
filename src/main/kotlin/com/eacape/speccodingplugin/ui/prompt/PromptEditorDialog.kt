@@ -21,8 +21,12 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
 import java.awt.Color
-import java.awt.Dimension
 import java.awt.Font
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.Insets
+import java.awt.RenderingHints
+import java.awt.geom.RoundRectangle2D
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
@@ -30,10 +34,12 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JProgressBar
 import javax.swing.JTextPane
+import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.border.AbstractBorder
 
 /**
  * Prompt 编辑器对话框
@@ -93,13 +99,14 @@ class PromptEditorDialog(
     }
 
     override fun createCenterPanel(): JComponent {
-        val root = JPanel(BorderLayout()).apply {
+        val root = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
             border = JBUI.Borders.empty(10)
             preferredSize = if (isCreateMode) {
                 JBUI.size(760, 620)
             } else {
-                JBUI.size(720, 520)
+                JBUI.size(720, 540)
             }
+            isOpaque = false
         }
 
         val stack = JPanel().apply {
@@ -107,6 +114,10 @@ class PromptEditorDialog(
             isOpaque = false
         }
 
+        if (!isCreateMode) {
+            stack.add(createEditHeaderCard())
+            stack.add(Box.createVerticalStrut(JBUI.scale(8)))
+        }
         if (isCreateMode) {
             stack.add(createAiDraftCard())
             stack.add(Box.createVerticalStrut(JBUI.scale(10)))
@@ -116,6 +127,35 @@ class PromptEditorDialog(
         root.add(stack, BorderLayout.CENTER)
         root.add(createInfoPanel(), BorderLayout.SOUTH)
         return root
+    }
+
+    private fun createEditHeaderCard(): JPanel {
+        val title = JBLabel(SpecCodingBundle.message("prompt.editor.title.edit")).apply {
+            font = font.deriveFont(Font.BOLD, 14f)
+            foreground = TITLE_FG
+        }
+        val subtitle = JBLabel(SpecCodingBundle.message("prompt.editor.edit.subtitle")).apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = SUBTITLE_FG
+            border = JBUI.Borders.emptyTop(2)
+        }
+
+        val content = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(title)
+            add(subtitle)
+        }
+
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = HEADER_BG
+            border = JBUI.Borders.compound(
+                RoundedLineBorder(HEADER_BORDER, JBUI.scale(12)),
+                JBUI.Borders.empty(8, 10),
+            )
+            add(content, BorderLayout.CENTER)
+        }
     }
 
     private fun createAiDraftCard(): JPanel {
@@ -200,17 +240,26 @@ class PromptEditorDialog(
 
     private fun createEditorCard(): JPanel {
         val nameLabel = JBLabel(SpecCodingBundle.message("prompt.editor.field.name")).apply {
-            preferredSize = JBUI.size(40, 24)
+            preferredSize = JBUI.size(36, 24)
+            foreground = TITLE_FG
         }
         nameField.emptyText.text = SpecCodingBundle.message("prompt.editor.placeholder.name")
+        nameField.font = JBUI.Fonts.label().deriveFont(13f)
+        nameField.background = INPUT_BG
+        nameField.border = JBUI.Borders.compound(
+            RoundedLineBorder(BORDER_COLOR, JBUI.scale(10)),
+            JBUI.Borders.empty(4, 8),
+        )
+        nameField.putClientProperty("JComponent.roundRectArc", JBUI.scale(10))
 
-        val nameRow = JPanel(BorderLayout(JBUI.scale(4), 0)).apply {
+        val nameRow = JPanel(BorderLayout(JBUI.scale(2), 0)).apply {
             isOpaque = false
             add(nameLabel, BorderLayout.WEST)
             add(nameField, BorderLayout.CENTER)
         }
 
         contentPane.font = JBUI.Fonts.label().deriveFont(13f)
+        contentPane.background = INPUT_BG
         contentPane.border = JBUI.Borders.empty(8)
         contentPane.document.addDocumentListener(
             object : DocumentListener {
@@ -222,22 +271,28 @@ class PromptEditorDialog(
 
         val editorScrollPane = JBScrollPane(contentPane).apply {
             preferredSize = JBUI.size(0, JBUI.scale(290))
-            border = JBUI.Borders.customLine(BORDER_COLOR, 1)
+            viewport.background = INPUT_BG
+            border = JBUI.Borders.compound(
+                RoundedLineBorder(BORDER_COLOR, JBUI.scale(12)),
+                JBUI.Borders.empty(1),
+            )
         }
 
         val hintLabel = JBLabel(SpecCodingBundle.message("prompt.editor.hint")).apply {
             foreground = SUBTITLE_FG
             font = JBUI.Fonts.smallFont()
-            border = JBUI.Borders.emptyTop(6)
+            border = JBUI.Borders.emptyTop(5)
         }
 
         val content = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             add(nameRow)
-            add(Box.createVerticalStrut(JBUI.scale(8)))
+            add(Box.createVerticalStrut(JBUI.scale(6)))
             add(editorScrollPane)
-            add(hintLabel)
+            if (isCreateMode) {
+                add(hintLabel)
+            }
         }
 
         return createCard(content)
@@ -249,13 +304,22 @@ class PromptEditorDialog(
 
         previewLabel.font = JBUI.Fonts.smallFont()
         previewLabel.foreground = SUBTITLE_FG
+        previewLabel.horizontalAlignment = SwingConstants.RIGHT
 
-        return JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        val row = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyTop(8)
-            add(variablesLabel)
-            add(previewLabel)
+            add(variablesLabel, BorderLayout.CENTER)
+            add(previewLabel, BorderLayout.EAST)
+        }
+
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = FOOTER_BG
+            border = JBUI.Borders.compound(
+                RoundedLineBorder(FOOTER_BORDER, JBUI.scale(10)),
+                JBUI.Borders.empty(6, 10),
+            )
+            add(row, BorderLayout.CENTER)
         }
     }
 
@@ -264,7 +328,7 @@ class PromptEditorDialog(
             isOpaque = true
             background = CARD_BG
             border = JBUI.Borders.compound(
-                JBUI.Borders.customLine(CARD_BORDER, 1),
+                RoundedLineBorder(CARD_BORDER, JBUI.scale(12)),
                 JBUI.Borders.empty(10),
             )
             add(content, BorderLayout.CENTER)
@@ -616,6 +680,66 @@ class PromptEditorDialog(
         super.dispose()
     }
 
+    private class RoundedLineBorder(
+        private val lineColor: Color,
+        private val arc: Int,
+        private val thickness: Int = 1,
+    ) : AbstractBorder() {
+        override fun paintBorder(
+            c: java.awt.Component?,
+            g: Graphics?,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+        ) {
+            val graphics = g as? Graphics2D ?: return
+            val g2 = graphics.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
+                g2.color = lineColor
+                val safeThickness = thickness.coerceAtLeast(1)
+                repeat(safeThickness) { index ->
+                    val offset = index + 0.5f
+                    val drawWidth = width - index * 2 - 1f
+                    val drawHeight = height - index * 2 - 1f
+                    if (drawWidth <= 0f || drawHeight <= 0f) return@repeat
+                    val arcSize = (arc - index * 2).coerceAtLeast(2).toFloat()
+                    g2.draw(
+                        RoundRectangle2D.Float(
+                            x + offset,
+                            y + offset,
+                            drawWidth,
+                            drawHeight,
+                            arcSize,
+                            arcSize,
+                        ),
+                    )
+                }
+            } finally {
+                g2.dispose()
+            }
+        }
+
+        override fun getBorderInsets(c: java.awt.Component?): Insets = Insets(
+            thickness,
+            thickness,
+            thickness,
+            thickness,
+        )
+
+        override fun getBorderInsets(c: java.awt.Component?, insets: Insets): Insets {
+            insets.set(
+                thickness,
+                thickness,
+                thickness,
+                thickness,
+            )
+            return insets
+        }
+    }
+
     private data class GeneratedPromptDraft(
         val name: String,
         val content: String,
@@ -634,6 +758,11 @@ class PromptEditorDialog(
         private val CARD_BG = JBColor(Color(248, 251, 255), Color(58, 64, 74))
         private val CARD_BORDER = JBColor(Color(205, 218, 238), Color(92, 104, 121))
         private val BORDER_COLOR = JBColor(Color(189, 205, 230), Color(100, 112, 129))
+        private val HEADER_BG = JBColor(Color(243, 248, 255), Color(54, 61, 72))
+        private val HEADER_BORDER = JBColor(Color(195, 211, 236), Color(91, 103, 120))
+        private val INPUT_BG = JBColor(Color(252, 254, 255), Color(56, 62, 73))
+        private val FOOTER_BG = JBColor(Color(245, 249, 255), Color(56, 63, 74))
+        private val FOOTER_BORDER = JBColor(Color(200, 214, 235), Color(89, 102, 121))
 
         private val TITLE_FG = JBColor(Color(43, 64, 96), Color(214, 225, 241))
         private val SUBTITLE_FG = JBColor(Color(101, 116, 137), Color(176, 190, 210))

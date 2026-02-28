@@ -370,6 +370,148 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `clarification checklist should auto collapse previous detail editor when switching items`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-checklist-auto-collapse",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Checklist Collapse",
+            description = "clarification checklist collapse",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.showClarificationDraft(
+            phase = SpecPhase.SPECIFY,
+            input = "clarify details",
+            questionsMarkdown = "1. ???",
+            suggestedDetails = "",
+            structuredQuestions = listOf(
+                "问题A",
+                "问题B",
+            ),
+        )
+
+        panel.toggleClarificationQuestionForTest(0)
+        panel.setClarificationQuestionDetailForTest(0, "A 的补充")
+        assertEquals(0, panel.activeChecklistDetailIndexForTest())
+        assertEquals("CONFIRMED", panel.currentChecklistDecisionForTest(0))
+
+        panel.toggleClarificationQuestionForTest(1)
+        assertEquals(1, panel.activeChecklistDetailIndexForTest())
+        assertEquals("CONFIRMED", panel.currentChecklistDecisionForTest(0))
+        assertEquals("CONFIRMED", panel.currentChecklistDecisionForTest(1))
+    }
+
+    @Test
+    fun `clarification checklist should lock edits after confirm generate`() {
+        var confirmCalls = 0
+        val panel = createPanel(
+            onClarificationConfirm = { _, _ ->
+                confirmCalls += 1
+            },
+        )
+        val workflow = SpecWorkflow(
+            id = "wf-checklist-lock-after-confirm",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Checklist Lock",
+            description = "clarification checklist lock",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.showClarificationDraft(
+            phase = SpecPhase.SPECIFY,
+            input = "clarify details",
+            questionsMarkdown = "1. ???",
+            suggestedDetails = "",
+            structuredQuestions = listOf(
+                "问题A",
+                "问题B",
+            ),
+        )
+        panel.toggleClarificationQuestionForTest(0)
+        panel.setClarificationQuestionDetailForTest(0, "A 的补充")
+        val originalDetail = panel.currentChecklistDetailForTest(0)
+
+        panel.clickConfirmGenerateForTest()
+
+        assertEquals(1, confirmCalls)
+        assertTrue(panel.isClarificationChecklistReadOnlyForTest())
+
+        panel.toggleClarificationQuestionForTest(1)
+        assertEquals("UNDECIDED", panel.currentChecklistDecisionForTest(1))
+
+        panel.setClarificationQuestionDetailForTest(0, "被忽略的修改")
+        assertEquals(originalDetail, panel.currentChecklistDetailForTest(0))
+    }
+
+    @Test
+    fun `clarification collapse toggle should use explicit text labels`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-clarify-toggle-text",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Clarify Toggle Text",
+            description = "clarify toggle text",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.showClarificationDraft(
+            phase = SpecPhase.SPECIFY,
+            input = "build scheduler",
+            questionsMarkdown = "1. Should support offline?",
+            suggestedDetails = "",
+        )
+
+        assertEquals("Collapse", panel.clarificationQuestionsToggleTextForTest())
+        panel.toggleClarificationQuestionsExpandedForTest()
+        assertEquals("Expand", panel.clarificationQuestionsToggleTextForTest())
+    }
+
+    @Test
+    fun `checklist markdown bold markers should be parsed into bold segments`() {
+        val panel = createPanel()
+
+        val segments = panel.parseChecklistQuestionSegmentsForTest("**VIBE 你好** 和 **SPEC** 需要确认")
+
+        assertEquals(
+            listOf(
+                "VIBE 你好" to true,
+                " 和 " to false,
+                "SPEC" to true,
+                " 需要确认" to false,
+            ),
+            segments,
+        )
+    }
+
+    @Test
     fun `process timeline should show entries and clear properly`() {
         val panel = createPanel()
         val workflow = SpecWorkflow(
