@@ -214,6 +214,7 @@ class McpHub internal constructor(
             // 清除工具注册
             toolRegistry.clearServerTools(serverId)
             appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Server stopped")
+            appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Stop completed (state updated immediately)")
 
             // 通知状态变更
             notifyStatusChanged(serverId, ServerStatus.STOPPED)

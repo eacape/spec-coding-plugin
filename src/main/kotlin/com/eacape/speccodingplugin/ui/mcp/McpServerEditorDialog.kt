@@ -187,7 +187,7 @@ class McpServerEditorDialog(
                 SpecUiStyle.roundedLineBorder(INPUT_BORDER, JBUI.scale(10)),
                 JBUI.Borders.empty(),
             )
-            viewport.border = JBUI.Borders.empty()
+            viewportBorder = JBUI.Borders.empty()
             viewport.background = INPUT_BG
             horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
         }

@@ -630,10 +630,13 @@ class SpecDetailPanel(
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = false
+        button.isOpaque = false
         button.isBorderPainted = false
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         button.foreground = TREE_FILE_TEXT
-        button.margin = JBUI.insets(1, 8, 1, 8)
+        button.margin = JBUI.insets(0, 4, 0, 4)
+        button.preferredSize = JBUI.size(JBUI.scale(52), JBUI.scale(20))
+        button.minimumSize = JBUI.size(JBUI.scale(46), JBUI.scale(20))
         button.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
     }
 
@@ -646,12 +649,21 @@ class SpecDetailPanel(
         button.text = SpecCodingBundle.message(key)
         button.toolTipText = button.text
         button.isEnabled = enabled
-        button.foreground = if (enabled) TREE_FILE_TEXT else TREE_STATUS_PENDING_TEXT
+        button.foreground = when {
+            !enabled -> TREE_STATUS_PENDING_TEXT
+            expanded -> COLLAPSE_TOGGLE_TEXT_ACTIVE
+            else -> TREE_FILE_TEXT
+        }
         button.cursor = if (enabled) {
             Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         } else {
             Cursor.getDefaultCursor()
         }
+        val targetWidth = maxOf(
+            JBUI.scale(46),
+            button.getFontMetrics(button.font).stringWidth(button.text) + JBUI.scale(8),
+        )
+        button.preferredSize = JBUI.size(targetWidth, JBUI.scale(20))
     }
 
     private fun refreshCollapsibleToggleTexts() {
@@ -1290,7 +1302,7 @@ class SpecDetailPanel(
                     editable = checklistEditable,
                 ),
             )
-            clarificationChecklistPanel.add(Box.createVerticalStrut(JBUI.scale(6)))
+            clarificationChecklistPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
         }
         val confirmedCount = questionDecisions.values.count { it == ClarificationQuestionDecision.CONFIRMED }
         val notApplicableCount = questionDecisions.values.count { it == ClarificationQuestionDecision.NOT_APPLICABLE }
@@ -1407,7 +1419,7 @@ class SpecDetailPanel(
         }
         val detailPanel = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
             isOpaque = false
-            border = JBUI.Borders.empty(4, 16, 0, 2)
+            border = JBUI.Borders.empty(2, 14, 0, 2)
             isVisible = detailExpanded
             add(
                 JBLabel(SpecCodingBundle.message("spec.detail.clarify.checklist.detail.label")).apply {
@@ -1422,7 +1434,7 @@ class SpecDetailPanel(
                         border = JBUI.Borders.empty()
                         horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
                         verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                        preferredSize = JBUI.size(0, JBUI.scale(56))
+                        preferredSize = JBUI.size(0, JBUI.scale(44))
                     },
                     backgroundColor = CHECKLIST_DETAIL_BG,
                     borderColor = CHECKLIST_DETAIL_BORDER,
@@ -1430,18 +1442,8 @@ class SpecDetailPanel(
                 BorderLayout.CENTER,
             )
         }
-        val rowColors = checklistRowColors(decision)
-        val row = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
-            isOpaque = true
-            background = rowColors.background
-            border = SpecUiStyle.roundedCardBorder(
-                lineColor = rowColors.border,
-                arc = JBUI.scale(10),
-                top = 6,
-                left = 8,
-                bottom = 6,
-                right = 8,
-            )
+        val questionHeader = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
+            isOpaque = false
             add(indicator, BorderLayout.WEST)
             add(
                 JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
@@ -1451,6 +1453,20 @@ class SpecDetailPanel(
                 },
                 BorderLayout.CENTER,
             )
+        }
+        val rowColors = checklistRowColors(decision)
+        val row = JPanel(BorderLayout(0, 0)).apply {
+            isOpaque = true
+            background = rowColors.background
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = rowColors.border,
+                arc = JBUI.scale(10),
+                top = 4,
+                left = 8,
+                bottom = 4,
+                right = 8,
+            )
+            add(questionHeader, BorderLayout.NORTH)
             add(detailPanel, BorderLayout.SOUTH)
         }
         val toggleListener = object : MouseAdapter() {
@@ -2830,6 +2846,7 @@ class SpecDetailPanel(
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
         private val SECTION_TITLE_FG = JBColor(Color(36, 60, 101), Color(212, 223, 241))
+        private val COLLAPSE_TOGGLE_TEXT_ACTIVE = JBColor(Color(86, 115, 158), Color(187, 205, 230))
         private const val MAX_PROCESS_TIMELINE_ENTRIES = 18
         private const val CARD_PREVIEW = "preview"
         private const val CARD_EDIT = "edit"

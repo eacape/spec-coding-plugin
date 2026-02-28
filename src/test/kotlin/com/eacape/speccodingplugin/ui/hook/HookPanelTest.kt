@@ -132,6 +132,41 @@ class HookPanelTest {
         panel.dispose()
     }
 
+    @Test
+    fun `delete selected hook should call delete action and refresh list`() {
+        val deleteCalls = mutableListOf<String>()
+        val hooksState = mutableMapOf(
+            "h1" to HookDefinition(
+                id = "h1",
+                name = "Hook One",
+                event = HookEvent.FILE_SAVED,
+                enabled = true,
+                actions = listOf(HookAction(type = HookActionType.SHOW_NOTIFICATION, message = "ok")),
+            )
+        )
+
+        val panel = HookPanel(
+            project = fakeProject(),
+            listHooksAction = { hooksState.values.toList() },
+            setHookEnabledAction = { _, _ -> true },
+            deleteHookAction = { hookId ->
+                deleteCalls += hookId
+                hooksState.remove(hookId) != null
+            },
+            listLogsAction = { emptyList() },
+            clearLogsAction = { },
+            runSynchronously = true,
+        )
+
+        panel.selectHookForTest("h1")
+        panel.clickDeleteSelectedForTest()
+
+        assertEquals(listOf("h1"), deleteCalls)
+        assertTrue(panel.hooksForTest().isEmpty())
+
+        panel.dispose()
+    }
+
     private fun fakeProject(): Project {
         return mockk(relaxed = true) {
             every { isDisposed } returns false

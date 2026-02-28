@@ -5,6 +5,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import java.nio.charset.StandardCharsets
+import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -43,16 +44,25 @@ class HookConfigStore(private val project: Project) {
     fun saveHook(definition: HookDefinition) {
         synchronized(lock) {
             ensureLoaded()
+            val snapshot = hooks.toList()
             val normalized = normalize(definition)
             val index = hooks.indexOfFirst { it.id == normalized.id }
             if (index >= 0) {
                 hooks[index] = normalized
-                logger.info("Updated hook definition: ${normalized.id}")
             } else {
                 hooks.add(normalized)
-                logger.info("Saved hook definition: ${normalized.id}")
             }
-            persistToDisk()
+            if (persistToDisk()) {
+                if (index >= 0) {
+                    logger.info("Updated hook definition: ${normalized.id}")
+                } else {
+                    logger.info("Saved hook definition: ${normalized.id}")
+                }
+            } else {
+                hooks.clear()
+                hooks.addAll(snapshot)
+                logger.warn("Save hook rolled back due to persistence failure: ${normalized.id}")
+            }
         }
     }
 
@@ -64,12 +74,18 @@ class HookConfigStore(private val project: Project) {
 
         synchronized(lock) {
             ensureLoaded()
-            val removed = hooks.removeIf { it.id == normalizedId }
-            if (removed) {
-                logger.info("Deleted hook definition: $normalizedId")
-                persistToDisk()
+            val index = hooks.indexOfFirst { it.id == normalizedId }
+            if (index < 0) {
+                return false
             }
-            return removed
+            val removedHook = hooks.removeAt(index)
+            if (persistToDisk()) {
+                logger.info("Deleted hook definition: $normalizedId")
+                return true
+            }
+            hooks.add(index, removedHook)
+            logger.warn("Delete hook rolled back due to persistence failure: $normalizedId")
+            return false
         }
     }
 
@@ -85,9 +101,17 @@ class HookConfigStore(private val project: Project) {
             if (index < 0) {
                 return false
             }
-
-            hooks[index] = hooks[index].copy(enabled = enabled)
-            persistToDisk()
+            val previous = hooks[index]
+            val updated = previous.copy(enabled = enabled)
+            if (previous == updated) {
+                return true
+            }
+            hooks[index] = updated
+            if (!persistToDisk()) {
+                hooks[index] = previous
+                logger.warn("Set hook enabled rolled back due to persistence failure: $normalizedId -> $enabled")
+                return false
+            }
             logger.info("Hook enabled state updated: $normalizedId -> $enabled")
             return true
         }
@@ -130,22 +154,50 @@ class HookConfigStore(private val project: Project) {
         }
     }
 
-    private fun persistToDisk() {
-        val path = storePath() ?: return
+    private fun persistToDisk(): Boolean {
+        val path = storePath() ?: return false
+        val content = HookYamlCodec.serialize(hooks)
         try {
             path.parent?.let { Files.createDirectories(it) }
-            val content = HookYamlCodec.serialize(hooks)
-            Files.writeString(
-                path,
-                content,
-                StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING,
-            )
-            logger.debug("Persisted ${hooks.size} hooks to ${path.toAbsolutePath()}")
+            repeat(PERSIST_WRITE_MAX_RETRY) { attempt ->
+                tryMakeWritable(path)
+                runCatching {
+                    Files.writeString(
+                        path,
+                        content,
+                        StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.TRUNCATE_EXISTING,
+                        StandardOpenOption.WRITE,
+                    )
+                }.onSuccess {
+                    logger.debug("Persisted ${hooks.size} hooks to ${path.toAbsolutePath()}")
+                    return true
+                }.onFailure { error ->
+                    if (error is AccessDeniedException && attempt < PERSIST_WRITE_MAX_RETRY - 1) {
+                        Thread.sleep(PERSIST_WRITE_RETRY_INTERVAL_MILLIS * (attempt + 1))
+                    } else {
+                        throw error
+                    }
+                }
+            }
+            return false
         } catch (e: Exception) {
-            logger.error("Failed to persist hooks config", e)
+            if (e is AccessDeniedException) {
+                logger.warn("Failed to persist hooks config: access denied for ${e.file ?: path}")
+            } else {
+                logger.error("Failed to persist hooks config", e)
+            }
+            return false
         }
+    }
+
+    private fun tryMakeWritable(path: Path) {
+        if (!Files.exists(path)) {
+            return
+        }
+        runCatching { Files.setAttribute(path, "dos:readonly", false) }
+        runCatching { path.toFile().setWritable(true) }
     }
 
     private fun storePath(): Path? {
@@ -200,6 +252,9 @@ class HookConfigStore(private val project: Project) {
     }
 
     companion object {
+        private const val PERSIST_WRITE_MAX_RETRY = 3
+        private const val PERSIST_WRITE_RETRY_INTERVAL_MILLIS = 120L
+
         fun getInstance(project: Project): HookConfigStore = project.service()
     }
 }

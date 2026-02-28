@@ -2,13 +2,21 @@
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.core.SpecCodingProjectService
+import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
+import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
+import com.eacape.speccodingplugin.llm.ModelInfo
+import com.eacape.speccodingplugin.llm.ModelRegistry
+import com.eacape.speccodingplugin.llm.MockLlmProvider
 import com.eacape.speccodingplugin.prompt.PromptScope
 import com.eacape.speccodingplugin.prompt.PromptTemplate
+import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.JBColor
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -22,11 +30,13 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Font
+import java.awt.FlowLayout
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Insets
 import java.awt.RenderingHints
 import java.awt.geom.RoundRectangle2D
+import java.util.Locale
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
@@ -52,6 +62,7 @@ class PromptEditorDialog(
 ) : DialogWrapper(project, true) {
 
     private val projectService: SpecCodingProjectService = project.getService(SpecCodingProjectService::class.java)
+    private val modelRegistry = ModelRegistry.getInstance()
     private val promptJson = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -64,7 +75,8 @@ class PromptEditorDialog(
 
     private val aiRequirementArea = JBTextArea()
     private val aiGenerateButton = JButton()
-    private val aiStatusLabel = JBLabel("")
+    private val aiProviderCombo = ComboBox<String>()
+    private val aiModelCombo = ComboBox<ModelInfo>()
     private val aiProgressBar = JProgressBar()
     private val aiStepLabels = listOf(JBLabel(), JBLabel(), JBLabel(), JBLabel())
     private val aiAnimationTimer = Timer(AI_ANIMATION_INTERVAL_MILLIS) {
@@ -73,6 +85,7 @@ class PromptEditorDialog(
 
     private var aiAnimationTick = 0
     private var aiGenerating = false
+    private var syncingAiSelectors = false
 
     var result: PromptTemplate? = null
         private set
@@ -116,7 +129,7 @@ class PromptEditorDialog(
 
         if (!isCreateMode) {
             stack.add(createEditHeaderCard())
-            stack.add(Box.createVerticalStrut(JBUI.scale(8)))
+            stack.add(Box.createVerticalStrut(JBUI.scale(2)))
         }
         if (isCreateMode) {
             stack.add(createAiDraftCard())
@@ -137,7 +150,7 @@ class PromptEditorDialog(
         val subtitle = JBLabel(SpecCodingBundle.message("prompt.editor.edit.subtitle")).apply {
             font = JBUI.Fonts.smallFont()
             foreground = SUBTITLE_FG
-            border = JBUI.Borders.emptyTop(2)
+            border = JBUI.Borders.emptyTop(1)
         }
 
         val content = JPanel().apply {
@@ -152,7 +165,7 @@ class PromptEditorDialog(
             background = HEADER_BG
             border = JBUI.Borders.compound(
                 RoundedLineBorder(HEADER_BORDER, JBUI.scale(12)),
-                JBUI.Borders.empty(8, 10),
+                JBUI.Borders.empty(4, 8),
             )
             add(content, BorderLayout.CENTER)
         }
@@ -164,17 +177,17 @@ class PromptEditorDialog(
         aiRequirementArea.rows = 4
         aiRequirementArea.font = JBUI.Fonts.label().deriveFont(12f)
         aiRequirementArea.margin = JBUI.insets(6)
+        aiRequirementArea.emptyText.text = SpecCodingBundle.message("prompt.editor.ai.subtitle")
 
         aiGenerateButton.isFocusable = false
         aiGenerateButton.addActionListener { requestAiDraft() }
         stylePrimaryButton(aiGenerateButton)
 
+        setupAiGenerationSelectors()
+
         aiProgressBar.isIndeterminate = true
         aiProgressBar.isVisible = false
         aiProgressBar.preferredSize = JBUI.size(110, 6)
-
-        aiStatusLabel.font = JBUI.Fonts.smallFont()
-        aiStatusLabel.foreground = STATUS_NORMAL_FG
 
         val requirementScroll = JBScrollPane(aiRequirementArea).apply {
             preferredSize = JBUI.size(0, JBUI.scale(92))
@@ -185,29 +198,9 @@ class PromptEditorDialog(
             font = font.deriveFont(Font.BOLD, 13f)
             foreground = TITLE_FG
         }
-        val subtitle = JBLabel(SpecCodingBundle.message("prompt.editor.ai.subtitle")).apply {
-            font = JBUI.Fonts.smallFont()
-            foreground = SUBTITLE_FG
-            border = JBUI.Borders.emptyTop(2)
-        }
-
-        val titleColumn = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            add(header)
-            add(subtitle)
-        }
-
-        val actionRow = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            add(titleColumn, BorderLayout.WEST)
-            add(aiGenerateButton, BorderLayout.EAST)
-        }
-
         val stepsRow = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.X_AXIS)
             isOpaque = false
-            border = JBUI.Borders.emptyTop(6)
             aiStepLabels.forEachIndexed { index, label ->
                 label.font = JBUI.Fonts.smallFont()
                 label.border = JBUI.Borders.empty(2, 6)
@@ -218,11 +211,47 @@ class PromptEditorDialog(
             }
         }
 
-        val statusRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+        val titleRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            add(header)
+            add(stepsRow)
+        }
+
+        val titleColumn = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(titleRow)
+        }
+
+        val actionRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(titleColumn, BorderLayout.WEST)
+            add(aiGenerateButton, BorderLayout.EAST)
+        }
+
+        val selectorRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
             isOpaque = false
             border = JBUI.Borders.emptyTop(6)
-            add(aiProgressBar, BorderLayout.WEST)
-            add(aiStatusLabel, BorderLayout.CENTER)
+            add(
+                JBLabel(SpecCodingBundle.message("prompt.editor.ai.provider")).apply {
+                    font = JBUI.Fonts.smallFont()
+                    foreground = SUBTITLE_FG
+                },
+            )
+            add(aiProviderCombo)
+            add(
+                JBLabel(SpecCodingBundle.message("prompt.editor.ai.model")).apply {
+                    font = JBUI.Fonts.smallFont()
+                    foreground = SUBTITLE_FG
+                },
+            )
+            add(aiModelCombo)
+        }
+
+        val progressRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(6)
+            add(aiProgressBar)
         }
 
         val content = JPanel().apply {
@@ -231,16 +260,24 @@ class PromptEditorDialog(
             add(actionRow)
             add(Box.createVerticalStrut(JBUI.scale(6)))
             add(requirementScroll)
-            add(stepsRow)
-            add(statusRow)
+            add(selectorRow)
+            add(progressRow)
         }
 
-        return createCard(content)
+        return if (isCreateMode) {
+            createCard(content)
+        } else {
+            createCard(content, top = 8, left = 10, bottom = 8, right = 10)
+        }
     }
 
     private fun createEditorCard(): JPanel {
         val nameLabel = JBLabel(SpecCodingBundle.message("prompt.editor.field.name")).apply {
-            preferredSize = JBUI.size(36, 24)
+            preferredSize = if (isCreateMode) {
+                JBUI.size(36, 24)
+            } else {
+                JBUI.size(34, 22)
+            }
             foreground = TITLE_FG
         }
         nameField.emptyText.text = SpecCodingBundle.message("prompt.editor.placeholder.name")
@@ -248,7 +285,7 @@ class PromptEditorDialog(
         nameField.background = INPUT_BG
         nameField.border = JBUI.Borders.compound(
             RoundedLineBorder(BORDER_COLOR, JBUI.scale(10)),
-            JBUI.Borders.empty(4, 8),
+            if (isCreateMode) JBUI.Borders.empty(4, 8) else JBUI.Borders.empty(3, 8),
         )
         nameField.putClientProperty("JComponent.roundRectArc", JBUI.scale(10))
 
@@ -288,14 +325,18 @@ class PromptEditorDialog(
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             add(nameRow)
-            add(Box.createVerticalStrut(JBUI.scale(6)))
+            add(Box.createVerticalStrut(if (isCreateMode) JBUI.scale(6) else JBUI.scale(3)))
             add(editorScrollPane)
             if (isCreateMode) {
                 add(hintLabel)
             }
         }
 
-        return createCard(content)
+        return if (isCreateMode) {
+            createCard(content)
+        } else {
+            createCard(content, top = 6, left = 10, bottom = 6, right = 10)
+        }
     }
 
     private fun createInfoPanel(): JPanel {
@@ -323,13 +364,19 @@ class PromptEditorDialog(
         }
     }
 
-    private fun createCard(content: JComponent): JPanel {
+    private fun createCard(
+        content: JComponent,
+        top: Int = 10,
+        left: Int = 10,
+        bottom: Int = 10,
+        right: Int = 10,
+    ): JPanel {
         return JPanel(BorderLayout()).apply {
             isOpaque = true
             background = CARD_BG
             border = JBUI.Borders.compound(
                 RoundedLineBorder(CARD_BORDER, JBUI.scale(12)),
-                JBUI.Borders.empty(10),
+                JBUI.Borders.empty(top, left, bottom, right),
             )
             add(content, BorderLayout.CENTER)
         }
@@ -348,36 +395,176 @@ class PromptEditorDialog(
         aiStepLabels[3].text = SpecCodingBundle.message("prompt.editor.ai.step.polish")
 
         if (!aiGenerating) {
-            setAiStatus(
-                SpecCodingBundle.message("prompt.editor.ai.status.idle"),
-                STATUS_NORMAL_FG,
-            )
+            setErrorText(null)
             applyAiStepStyle(activeIndex = -1)
         }
     }
 
     private fun stylePrimaryButton(button: JButton) {
-        button.font = button.font.deriveFont(Font.BOLD, 11f)
+        button.font = button.font.deriveFont(Font.BOLD, 12f)
         button.background = ACTION_BG
         button.foreground = ACTION_FG
         button.isOpaque = true
         button.isContentAreaFilled = true
         button.isFocusPainted = false
         button.border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(ACTION_BORDER, 1),
-            JBUI.Borders.empty(5, 12),
+            RoundedLineBorder(ACTION_BORDER, JBUI.scale(20)),
+            JBUI.Borders.empty(5, 14),
         )
         button.putClientProperty("JButton.buttonType", "roundRect")
-        button.putClientProperty("JComponent.roundRectArc", JBUI.scale(16))
+        button.putClientProperty("JComponent.roundRectArc", JBUI.scale(20))
         updatePrimaryButtonSize(button)
     }
 
     private fun updatePrimaryButtonSize(button: JButton) {
         val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
         val insets = button.insets
-        val width = maxOf(textWidth + insets.left + insets.right + JBUI.scale(12), JBUI.scale(72))
-        button.preferredSize = JBUI.size(width, JBUI.scale(28))
+        val width = maxOf(textWidth + insets.left + insets.right + JBUI.scale(14), JBUI.scale(84))
+        button.preferredSize = JBUI.size(width, JBUI.scale(30))
         button.minimumSize = button.preferredSize
+    }
+
+    private fun setupAiGenerationSelectors() {
+        aiProviderCombo.renderer = SimpleListCellRenderer.create<String> { label, value, _ ->
+            label.text = providerDisplayName(value)
+        }
+        aiModelCombo.renderer = SimpleListCellRenderer.create<ModelInfo> { label, value, _ ->
+            label.text = value?.name.orEmpty()
+        }
+        styleAiSelectorCombo(aiProviderCombo, preferredWidth = 140)
+        styleAiSelectorCombo(aiModelCombo, preferredWidth = 240)
+
+        aiProviderCombo.addActionListener {
+            if (syncingAiSelectors) return@addActionListener
+            refreshAiModelCombo(preserveSelection = true)
+            setErrorText(null)
+        }
+        aiModelCombo.addActionListener {
+            if (syncingAiSelectors) return@addActionListener
+            setErrorText(null)
+        }
+
+        refreshAiProviderCombo(preserveSelection = false)
+    }
+
+    private fun styleAiSelectorCombo(comboBox: ComboBox<*>, preferredWidth: Int) {
+        val width = JBUI.scale(preferredWidth)
+        val height = JBUI.scale(28)
+        comboBox.preferredSize = JBUI.size(width, height)
+        comboBox.minimumSize = JBUI.size(JBUI.scale(100), height)
+        comboBox.maximumSize = JBUI.size(JBUI.scale(320), height)
+        comboBox.putClientProperty("JComponent.roundRect", false)
+        comboBox.putClientProperty("JComboBox.isBorderless", true)
+        comboBox.putClientProperty("ComboBox.isBorderless", true)
+        comboBox.putClientProperty("JComponent.outline", null)
+        comboBox.background = INPUT_BG
+        comboBox.foreground = TITLE_FG
+        comboBox.border = JBUI.Borders.compound(
+            RoundedLineBorder(BORDER_COLOR, JBUI.scale(10)),
+            JBUI.Borders.empty(0, 6, 0, 6),
+        )
+        comboBox.isOpaque = true
+        comboBox.font = JBUI.Fonts.smallFont()
+    }
+
+    private fun refreshAiProviderCombo(preserveSelection: Boolean) {
+        val settings = SpecCodingSettingsState.getInstance()
+        val previousSelection = if (preserveSelection) aiProviderCombo.selectedItem as? String else null
+        val providers = projectService.availableProviders()
+            .mapNotNull { it.trim().ifBlank { null } }
+            .distinct()
+
+        syncingAiSelectors = true
+        try {
+            aiProviderCombo.removeAllItems()
+            providers.forEach { aiProviderCombo.addItem(it) }
+
+            val preferred = when {
+                !previousSelection.isNullOrBlank() -> previousSelection
+                settings.defaultProvider.isNotBlank() -> settings.defaultProvider
+                else -> providers.firstOrNull()
+            }
+            val selectedProvider = providers.firstOrNull { it == preferred } ?: providers.firstOrNull()
+            aiProviderCombo.selectedItem = selectedProvider
+        } finally {
+            syncingAiSelectors = false
+        }
+
+        refreshAiModelCombo(preserveSelection = preserveSelection)
+    }
+
+    private fun refreshAiModelCombo(preserveSelection: Boolean) {
+        val settings = SpecCodingSettingsState.getInstance()
+        val selectedProvider = selectedAiProviderId()
+        val previousModelId = if (preserveSelection) {
+            (aiModelCombo.selectedItem as? ModelInfo)?.id?.trim().orEmpty()
+        } else {
+            ""
+        }
+
+        syncingAiSelectors = true
+        try {
+            aiModelCombo.removeAllItems()
+
+            if (selectedProvider.isNullOrBlank()) {
+                aiModelCombo.isEnabled = false
+                updateAiSelectorTooltips()
+                return
+            }
+
+            val savedModelId = settings.selectedCliModel.trim()
+            val models = modelRegistry.getModelsForProvider(selectedProvider)
+                .sortedBy { it.name.lowercase(Locale.ROOT) }
+                .toMutableList()
+
+            if (models.isEmpty() && savedModelId.isNotBlank() && selectedProvider == settings.defaultProvider) {
+                models += ModelInfo(
+                    id = savedModelId,
+                    name = savedModelId,
+                    provider = selectedProvider,
+                    contextWindow = 0,
+                    capabilities = emptySet(),
+                )
+            }
+
+            models.forEach { aiModelCombo.addItem(it) }
+            val preferredModelId = when {
+                previousModelId.isNotBlank() -> previousModelId
+                savedModelId.isNotBlank() -> savedModelId
+                else -> ""
+            }
+            val selectedModel = models.firstOrNull { it.id == preferredModelId } ?: models.firstOrNull()
+            if (selectedModel != null) {
+                aiModelCombo.selectedItem = selectedModel
+            }
+            aiModelCombo.isEnabled = models.isNotEmpty()
+            updateAiSelectorTooltips()
+        } finally {
+            syncingAiSelectors = false
+        }
+    }
+
+    private fun updateAiSelectorTooltips() {
+        aiProviderCombo.toolTipText = providerDisplayName(aiProviderCombo.selectedItem as? String)
+        aiModelCombo.toolTipText = (aiModelCombo.selectedItem as? ModelInfo)?.name
+    }
+
+    private fun selectedAiProviderId(): String? {
+        return (aiProviderCombo.selectedItem as? String)?.trim()?.ifBlank { null }
+    }
+
+    private fun selectedAiModelId(): String? {
+        return (aiModelCombo.selectedItem as? ModelInfo)?.id?.trim()?.ifBlank { null }
+    }
+
+    private fun providerDisplayName(providerId: String?): String {
+        return when (providerId) {
+            ClaudeCliLlmProvider.ID -> SpecCodingBundle.message("statusbar.modelSelector.provider.claudeCli")
+            CodexCliLlmProvider.ID -> SpecCodingBundle.message("statusbar.modelSelector.provider.codexCli")
+            MockLlmProvider.ID -> SpecCodingBundle.message("toolwindow.model.mock")
+            null -> ""
+            else -> providerId
+        }
     }
 
     private fun requestAiDraft() {
@@ -386,13 +573,24 @@ class PromptEditorDialog(
         }
         val requirement = aiRequirementArea.text.trim()
         if (requirement.isBlank()) {
-            setAiStatus(SpecCodingBundle.message("prompt.editor.ai.requirementRequired"), STATUS_ERROR_FG)
+            setErrorText(SpecCodingBundle.message("prompt.editor.ai.requirementRequired"))
+            return
+        }
+        val providerId = selectedAiProviderId()
+        if (providerId.isNullOrBlank()) {
+            setErrorText(SpecCodingBundle.message("prompt.editor.ai.providerRequired"))
+            return
+        }
+        val modelId = selectedAiModelId()
+        if (modelId.isNullOrBlank()) {
+            setErrorText(SpecCodingBundle.message("prompt.editor.ai.modelRequired", providerDisplayName(providerId)))
             return
         }
 
+        setErrorText(null)
         startAiAnimation()
         ApplicationManager.getApplication().executeOnPooledThread {
-            val draftResult = runBlocking { generatePromptDraftWithAi(requirement) }
+            val draftResult = runBlocking { generatePromptDraftWithAi(requirement, providerId, modelId) }
             SwingUtilities.invokeLater {
                 stopAiAnimation()
                 nameField.text = draftResult.draft.name
@@ -400,12 +598,9 @@ class PromptEditorDialog(
                 updateHighlightAndPreview()
 
                 if (draftResult.usedFallback) {
-                    setAiStatus(
-                        SpecCodingBundle.message("prompt.editor.ai.status.fallback", draftResult.reason.orEmpty()),
-                        STATUS_WARN_FG,
-                    )
+                    setErrorText(SpecCodingBundle.message("prompt.editor.ai.status.fallback", draftResult.reason.orEmpty()))
                 } else {
-                    setAiStatus(SpecCodingBundle.message("prompt.editor.ai.status.success"), STATUS_SUCCESS_FG)
+                    setErrorText(null)
                 }
             }
         }
@@ -416,7 +611,6 @@ class PromptEditorDialog(
         aiGenerateButton.isEnabled = false
         aiProgressBar.isVisible = true
         aiAnimationTick = 0
-        setAiStatus(SpecCodingBundle.message("prompt.editor.ai.status.running", aiStepLabels.first().text, "."), STATUS_NORMAL_FG)
         applyAiStepStyle(activeIndex = 0)
         aiAnimationTimer.start()
     }
@@ -434,12 +628,6 @@ class PromptEditorDialog(
             return
         }
         val stepIndex = (aiAnimationTick / AI_STEP_FRAME_COUNT) % aiStepLabels.size
-        val dots = ".".repeat((aiAnimationTick % 3) + 1)
-        val stepName = aiStepLabels[stepIndex].text
-        setAiStatus(
-            SpecCodingBundle.message("prompt.editor.ai.status.running", stepName, dots),
-            STATUS_NORMAL_FG,
-        )
         applyAiStepStyle(activeIndex = stepIndex)
         aiAnimationTick += 1
     }
@@ -458,21 +646,12 @@ class PromptEditorDialog(
         }
     }
 
-    private fun setAiStatus(text: String, color: Color) {
-        aiStatusLabel.text = text
-        aiStatusLabel.foreground = color
-    }
-
-    private suspend fun generatePromptDraftWithAi(requirement: String): PromptDraftResult {
+    private suspend fun generatePromptDraftWithAi(
+        requirement: String,
+        providerId: String,
+        modelId: String,
+    ): PromptDraftResult {
         val fallback = buildFallbackPromptDraft(requirement)
-        val providers = projectService.availableProviders()
-        val providerId = providers.firstOrNull()
-            ?: return PromptDraftResult(
-                draft = fallback,
-                usedFallback = true,
-                reason = SpecCodingBundle.message("prompt.manager.ai.reason.providerUnavailable"),
-            )
-
         val prompt = buildString {
             appendLine("You are generating a reusable prompt template for an IDE coding assistant.")
             appendLine("Return ONLY strict JSON, no markdown fences, no explanation.")
@@ -491,6 +670,7 @@ class PromptEditorDialog(
             projectService.chat(
                 providerId = providerId,
                 userInput = prompt,
+                modelId = modelId,
                 planExecuteVerifySections = false,
             ) { chunk ->
                 if (chunk.delta.isNotBlank()) {
@@ -771,11 +951,6 @@ class PromptEditorDialog(
         private val ACTION_BG = JBColor(Color(218, 232, 252), Color(79, 99, 130))
         private val ACTION_BORDER = JBColor(Color(161, 186, 223), Color(113, 132, 162))
         private val ACTION_FG = JBColor(Color(38, 57, 88), Color(222, 232, 246))
-
-        private val STATUS_NORMAL_FG = JBColor(Color(79, 95, 120), Color(184, 196, 214))
-        private val STATUS_SUCCESS_FG = JBColor(Color(38, 124, 70), Color(137, 212, 162))
-        private val STATUS_WARN_FG = JBColor(Color(146, 94, 31), Color(224, 190, 134))
-        private val STATUS_ERROR_FG = JBColor(Color(167, 53, 67), Color(228, 147, 157))
 
         private val STEP_IDLE_BG = JBColor(Color(236, 243, 252), Color(71, 79, 92))
         private val STEP_IDLE_FG = JBColor(Color(96, 112, 139), Color(173, 185, 204))

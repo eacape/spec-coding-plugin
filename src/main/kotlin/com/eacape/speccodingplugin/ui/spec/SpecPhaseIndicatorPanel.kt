@@ -26,8 +26,8 @@ class SpecPhaseIndicatorPanel : JPanel() {
     private val trackBg = JBColor(Color(208, 216, 228), Color(89, 99, 115))
 
     init {
-        preferredSize = Dimension(0, JBUI.scale(60))
-        minimumSize = Dimension(0, JBUI.scale(60))
+        preferredSize = Dimension(0, JBUI.scale(68))
+        minimumSize = Dimension(0, JBUI.scale(68))
         isOpaque = false
     }
 
@@ -54,9 +54,9 @@ class SpecPhaseIndicatorPanel : JPanel() {
         if (phases.isEmpty()) return
 
         val outerPaddingX = JBUI.scale(12)
-        val outerPaddingY = JBUI.scale(8)
+        val outerPaddingY = JBUI.scale(6)
         val cardWidth = (width - outerPaddingX * 2).coerceAtLeast(JBUI.scale(180))
-        val cardHeight = (height - outerPaddingY * 2).coerceAtLeast(JBUI.scale(44))
+        val cardHeight = (height - outerPaddingY * 2).coerceAtLeast(JBUI.scale(50))
         val cardX = ((width - cardWidth) / 2).coerceAtLeast(0)
         val cardY = ((height - cardHeight) / 2).coerceAtLeast(0)
         val cardArc = JBUI.scale(12)
@@ -70,8 +70,11 @@ class SpecPhaseIndicatorPanel : JPanel() {
         val phaseLabels = phases.map { it.displayName.lowercase() }
         val circleRadius = JBUI.scale(9)
         val labelFont = g2.font.deriveFont(Font.PLAIN, JBUI.scale(11).toFloat())
+        val activeLabelFont = labelFont.deriveFont(Font.BOLD)
+        val numberFont = g2.font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
         g2.font = labelFont
-        val labelWidths = phaseLabels.map { g2.fontMetrics.stringWidth(it) }
+        val labelMetrics = g2.fontMetrics
+        val labelWidths = phaseLabels.map { labelMetrics.stringWidth(it) }
         val leftPadding = maxOf(
             JBUI.scale(18),
             (labelWidths.firstOrNull() ?: 0) / 2 + JBUI.scale(8),
@@ -82,7 +85,14 @@ class SpecPhaseIndicatorPanel : JPanel() {
         )
         val totalWidth = (cardWidth - leftPadding - rightPadding).coerceAtLeast(JBUI.scale(140))
         val startX = cardX + leftPadding
-        val centerY = cardY + JBUI.scale(18)
+        val contentTop = cardY + JBUI.scale(6)
+        val contentBottom = cardY + cardHeight - JBUI.scale(6)
+        val labelGap = JBUI.scale(5)
+        val minCenterY = contentTop + circleRadius
+        val maxCenterY = contentBottom - circleRadius - labelGap - labelMetrics.height
+        val centerY = (contentTop + circleRadius + JBUI.scale(1))
+            .coerceIn(minCenterY, maxCenterY.coerceAtLeast(minCenterY))
+        val labelBaseline = centerY + circleRadius + labelGap + labelMetrics.ascent
         val spacing = totalWidth / (phases.size - 1).coerceAtLeast(1)
         val currentIndex = phases.indexOf(currentPhase).coerceAtLeast(0)
         val furthestCompletedIndex = phases.indexOfLast { it in completedPhases }.coerceAtLeast(0)
@@ -118,26 +128,22 @@ class SpecPhaseIndicatorPanel : JPanel() {
             g2.fillOval(cx - circleRadius, centerY - circleRadius, circleRadius * 2, circleRadius * 2)
 
             g2.color = Color.WHITE
-            g2.font = g2.font.deriveFont(Font.BOLD, JBUI.scale(10).toFloat())
+            g2.font = numberFont
             val numStr = if (phase in completedPhases) "\u2713" else "${index + 1}"
             val fm = g2.fontMetrics
             g2.drawString(numStr, cx - fm.stringWidth(numStr) / 2, centerY + fm.ascent / 2 - 1)
 
             val label = phaseLabels[index]
-            g2.font = g2.font.deriveFont(if (phase == currentPhase) Font.BOLD else Font.PLAIN, JBUI.scale(10.5f))
+            g2.font = if (phase == currentPhase) activeLabelFont else labelFont
             val lm = g2.fontMetrics
             val labelX = cx - lm.stringWidth(label) / 2
-            val labelY = centerY + circleRadius + lm.height
+            val labelY = labelBaseline
 
             g2.color = when {
                 phase == currentPhase -> textColor
                 phase in completedPhases -> completedColor
                 else -> pendingColor
             }
-            g2.font = g2.font.deriveFont(
-                if (phase == currentPhase) Font.BOLD else Font.PLAIN,
-                JBUI.scale(10.5f),
-            )
             g2.drawString(label, labelX, labelY)
         }
     }

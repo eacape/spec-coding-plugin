@@ -6,6 +6,7 @@ import com.eacape.speccodingplugin.hook.HookEvent
 import com.eacape.speccodingplugin.hook.HookExecutionLog
 import com.eacape.speccodingplugin.hook.HookManager
 import com.eacape.speccodingplugin.hook.HookYamlCodec
+import com.intellij.icons.AllIcons
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.llm.LlmMessage
@@ -16,10 +17,13 @@ import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
-import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -36,8 +40,14 @@ import kotlinx.coroutines.runBlocking
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.Point
+import java.awt.Rectangle
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import java.awt.event.MouseMotionAdapter
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -54,12 +64,16 @@ import javax.swing.JList
 import javax.swing.ListCellRenderer
 import javax.swing.JPanel
 import javax.swing.JSplitPane
+import javax.swing.SwingUtilities
 
 class HookPanel(
     private val project: Project,
     private val listHooksAction: () -> List<HookDefinition> = { HookManager.getInstance(project).listHooks() },
     private val setHookEnabledAction: (hookId: String, enabled: Boolean) -> Boolean = { hookId, enabled ->
         HookManager.getInstance(project).setHookEnabled(hookId, enabled)
+    },
+    private val deleteHookAction: (hookId: String) -> Boolean = { hookId ->
+        HookManager.getInstance(project).deleteHook(hookId)
     },
     private val listLogsAction: (limit: Int) -> List<HookExecutionLog> = { limit ->
         HookManager.getInstance(project).getExecutionLogs(limit)
@@ -111,6 +125,7 @@ class HookPanel(
             add(enableButton)
             add(disableButton)
         }
+        hookActionRow.border = JBUI.Borders.emptyBottom(2)
         guideLabel.font = JBUI.Fonts.smallFont()
         guideLabel.foreground = STATUS_TEXT_FG
 
@@ -129,16 +144,10 @@ class HookPanel(
         )
         statusChipPanel.add(statusLabel, BorderLayout.CENTER)
 
-        val footerPanel = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+        val metaRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
-            add(guideLabel, BorderLayout.NORTH)
-            add(
-                JPanel(BorderLayout()).apply {
-                    isOpaque = false
-                    add(statusChipPanel, BorderLayout.WEST)
-                },
-                BorderLayout.SOUTH,
-            )
+            add(guideLabel, BorderLayout.CENTER)
+            add(statusChipPanel, BorderLayout.EAST)
         }
 
         val toolbarCard = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
@@ -152,8 +161,8 @@ class HookPanel(
                 bottom = 8,
                 right = 10,
             )
-            add(hookActionRow, BorderLayout.CENTER)
-            add(footerPanel, BorderLayout.SOUTH)
+            add(hookActionRow, BorderLayout.NORTH)
+            add(metaRow, BorderLayout.SOUTH)
         }
         add(
             JPanel(BorderLayout()).apply {
@@ -167,6 +176,7 @@ class HookPanel(
         hooksList.selectionMode = javax.swing.ListSelectionModel.SINGLE_SELECTION
         hooksList.cellRenderer = HookListRenderer()
         hooksList.addListSelectionListener { updateButtonState() }
+        installHookListMouseInteractions()
 
         hooksList.background = PANEL_SECTION_BG
         hooksList.fixedCellHeight = JBUI.scale(34)
@@ -352,24 +362,30 @@ class HookPanel(
                     .onSuccess { target ->
                         val opened = openHookConfigInEditor(target.path)
                         if (opened) {
-                            statusLabel.text = if (target.created) {
+                            val feedback = if (target.created) {
                                 SpecCodingBundle.message("hook.status.config.created", target.path.fileName.toString())
                             } else {
                                 SpecCodingBundle.message("hook.status.config.opened", target.path.fileName.toString())
                             }
+                            statusLabel.text = feedback
+                            showHookFeedback(feedback, NotificationType.INFORMATION)
                             refreshHooks()
                         } else {
-                            statusLabel.text = SpecCodingBundle.message(
+                            val feedback = SpecCodingBundle.message(
                                 "hook.status.config.openFailed",
                                 SpecCodingBundle.message("common.unknown"),
                             )
+                            statusLabel.text = feedback
+                            showHookFeedback(feedback, NotificationType.ERROR)
                         }
                     }
                     .onFailure { error ->
-                        statusLabel.text = SpecCodingBundle.message(
+                        val feedback = SpecCodingBundle.message(
                             "hook.status.config.openFailed",
                             error.message ?: SpecCodingBundle.message("common.unknown"),
                         )
+                        statusLabel.text = feedback
+                        showHookFeedback(feedback, NotificationType.ERROR)
                     }
             }
         }
@@ -744,11 +760,121 @@ class HookPanel(
 
     private fun openHookConfigInEditor(path: Path): Boolean {
         val normalizedPath = path.toAbsolutePath().normalize()
-        val virtualFile = LocalFileSystem.getInstance()
-            .refreshAndFindFileByNioFile(normalizedPath)
+        val normalizedFile = normalizedPath.toFile()
+        val normalizedPathString = normalizedPath.toString().replace('\\', '/')
+        val localFileSystem = LocalFileSystem.getInstance()
+        val virtualFile = localFileSystem.refreshAndFindFileByIoFile(normalizedFile)
+            ?: localFileSystem.findFileByIoFile(normalizedFile)
+            ?: localFileSystem.refreshAndFindFileByPath(normalizedPathString)
+            ?: localFileSystem.findFileByPath(normalizedPathString)
             ?: return false
-        FileEditorManager.getInstance(project).openFile(virtualFile, true)
+        OpenFileDescriptor(project, virtualFile, 0, 0).navigate(true)
         return true
+    }
+
+    private fun installHookListMouseInteractions() {
+        hooksList.addMouseListener(
+            object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    if (e.button != MouseEvent.BUTTON1 || e.clickCount != 1) {
+                        return
+                    }
+                    val index = hooksList.locationToIndex(e.point)
+                    if (index < 0) {
+                        return
+                    }
+                    val cellBounds = hooksList.getCellBounds(index, index) ?: return
+                    if (!cellBounds.contains(e.point)) {
+                        return
+                    }
+                    if (!isDeleteIconHit(index, e.point, cellBounds)) {
+                        return
+                    }
+                    hooksList.selectedIndex = index
+                    deleteSelectedHook(confirmRequired = true)
+                    e.consume()
+                }
+
+                override fun mouseExited(e: MouseEvent) {
+                    hooksList.cursor = Cursor.getDefaultCursor()
+                }
+            },
+        )
+        hooksList.addMouseMotionListener(
+            object : MouseMotionAdapter() {
+                override fun mouseMoved(e: MouseEvent) {
+                    val index = hooksList.locationToIndex(e.point)
+                    if (index < 0) {
+                        hooksList.cursor = Cursor.getDefaultCursor()
+                        return
+                    }
+                    val cellBounds = hooksList.getCellBounds(index, index)
+                    val hoverDeleteIcon = if (cellBounds == null || !cellBounds.contains(e.point)) {
+                        false
+                    } else {
+                        isDeleteIconHit(index, e.point, cellBounds)
+                    }
+                    hooksList.cursor = if (hoverDeleteIcon) {
+                        Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    } else {
+                        Cursor.getDefaultCursor()
+                    }
+                }
+            },
+        )
+    }
+
+    private fun isDeleteIconHit(index: Int, clickPoint: Point, cellBounds: Rectangle): Boolean {
+        val hook = hooksModel.get(index)
+        val rendererComponent = hooksList.cellRenderer.getListCellRendererComponent(
+            hooksList,
+            hook,
+            index,
+            index == hooksList.selectedIndex,
+            false,
+        )
+        val renderer = rendererComponent as? HookListRenderer ?: return false
+        renderer.setBounds(0, 0, cellBounds.width, cellBounds.height)
+        renderer.doLayout()
+        val iconBoundsInRenderer = renderer.deleteIconBounds()
+        val iconBoundsInList = Rectangle(
+            cellBounds.x + iconBoundsInRenderer.x,
+            cellBounds.y + iconBoundsInRenderer.y,
+            iconBoundsInRenderer.width,
+            iconBoundsInRenderer.height,
+        )
+        return iconBoundsInList.contains(clickPoint)
+    }
+
+    private fun deleteSelectedHook(confirmRequired: Boolean) {
+        val selected = hooksList.selectedValue ?: return
+        if (confirmRequired) {
+            val result = Messages.showYesNoDialog(
+                project,
+                SpecCodingBundle.message("hook.delete.confirm.message", selected.name),
+                SpecCodingBundle.message("hook.delete.confirm.title"),
+                Messages.getWarningIcon(),
+            )
+            if (result != Messages.YES) {
+                return
+            }
+        }
+
+        runBackground {
+            val deleted = deleteHookAction(selected.id)
+            invokeLaterSafe {
+                if (deleted) {
+                    val feedback = SpecCodingBundle.message("hook.status.deleted", selected.name)
+                    statusLabel.text = feedback
+                    showHookFeedback(feedback, NotificationType.INFORMATION)
+                    refreshData()
+                } else {
+                    val feedback = SpecCodingBundle.message("hook.status.deleteFailed", selected.name)
+                    statusLabel.text = feedback
+                    showHookFeedback(feedback, NotificationType.ERROR)
+                }
+            }
+        }
     }
 
     private fun updateSelectedHookEnabled(enabled: Boolean) {
@@ -829,6 +955,13 @@ class HookPanel(
         }
     }
 
+    private fun showHookFeedback(content: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("SpecCoding.Notifications")
+            .createNotification(content, type)
+            .notify(project)
+    }
+
     private fun runBackground(task: () -> Unit) {
         if (runSynchronously) {
             task()
@@ -873,6 +1006,10 @@ class HookPanel(
         clearLogButton.doClick()
     }
 
+    internal fun clickDeleteSelectedForTest() {
+        deleteSelectedHook(confirmRequired = false)
+    }
+
     override fun dispose() {
         isDisposed = true
         scope.cancel()
@@ -882,15 +1019,19 @@ class HookPanel(
         private val nameLabel = JBLabel()
         private val eventChip = JBLabel()
         private val enabledChip = JBLabel()
+        private val deleteIconLabel = JBLabel(AllIcons.Actions.GC)
         private val chipPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0))
 
         init {
             isOpaque = true
             border = JBUI.Borders.empty(4, 8)
             nameLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            deleteIconLabel.preferredSize = JBUI.size(16, 16)
+            deleteIconLabel.minimumSize = deleteIconLabel.preferredSize
             chipPanel.isOpaque = false
             chipPanel.add(eventChip)
             chipPanel.add(enabledChip)
+            chipPanel.add(deleteIconLabel)
             add(nameLabel, BorderLayout.CENTER)
             add(chipPanel, BorderLayout.EAST)
         }
@@ -941,6 +1082,7 @@ class HookPanel(
                     borderColor = DISABLED_CHIP_BORDER,
                 )
             }
+            styleDeleteIcon()
             background = if (isSelected) ITEM_SELECTED_BG else ITEM_BG
             border = javax.swing.BorderFactory.createCompoundBorder(
                 SpecUiStyle.roundedLineBorder(
@@ -950,6 +1092,10 @@ class HookPanel(
                 JBUI.Borders.empty(4, 8, 4, 8),
             )
             return this
+        }
+
+        fun deleteIconBounds(): Rectangle {
+            return SwingUtilities.convertRectangle(deleteIconLabel.parent, deleteIconLabel.bounds, this)
         }
 
         private fun styleChip(
@@ -968,6 +1114,13 @@ class HookPanel(
                 SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(8)),
                 JBUI.Borders.empty(1, 6, 1, 6),
             )
+        }
+
+        private fun styleDeleteIcon() {
+            deleteIconLabel.toolTipText = SpecCodingBundle.message("hook.action.delete")
+            deleteIconLabel.icon = AllIcons.Actions.GC
+            deleteIconLabel.isOpaque = false
+            deleteIconLabel.border = JBUI.Borders.empty(0, 1)
         }
     }
 
@@ -1037,18 +1190,37 @@ class HookPanel(
         """
 
         private val DEFAULT_HOOK_CONFIG_TEMPLATE = """
+            # Spec Code Hook configuration tutorial
+            # version is currently fixed to 1
             version: 1
+
+            # hooks is a list of automation rules
             hooks:
+              # id must be unique in this file
               - id: sample-notify
+                # display name shown in UI
                 name: Sample Notify
+                # event enum:
+                # FILE_SAVED | GIT_COMMIT | SPEC_STAGE_CHANGED | CHAT_MODE_CHANGED
                 event: FILE_SAVED
                 enabled: true
+
+                # optional conditions:
+                # filePattern supports glob patterns, e.g. "**/*.kt", "**/*.md"
+                # specStage is used with SPEC_STAGE_CHANGED, e.g. "requirements"
                 conditions:
                   filePattern: "**/*.md"
+
                 actions:
+                  # action.type enum: RUN_COMMAND | SHOW_NOTIFICATION
                   - type: SHOW_NOTIFICATION
+                    # template variables: {{file.path}} {{spec.stage}} {{meta.xxx}}
                     message: "Hook triggered: {{file.path}}"
+                    # level enum for SHOW_NOTIFICATION: INFO | WARNING | ERROR
                     level: INFO
+                  # - type: RUN_COMMAND
+                  #   command: "echo changed {{file.path}}"
+                  #   timeoutMillis: 120000
         """.trimIndent() + "\n"
     }
 }

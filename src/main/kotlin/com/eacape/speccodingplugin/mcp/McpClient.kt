@@ -145,31 +145,47 @@ class McpClient(
         logger.info("Stopping MCP server: ${server.config.name}")
         emitRuntimeLog(McpRuntimeLogLevel.INFO, "Stopping server process")
 
+        val process = server.process
+        val errorReaderToClose = errorReader
+        val writerToClose = writer
+        val readerToClose = reader
+        val stderrJobToCancel = stderrJob
+        errorReader = null
+        writer = null
+        reader = null
+        stderrJob = null
         try {
-            stderrJob?.cancel()
-            errorReader?.close()
-            writer?.close()
-            reader?.close()
-            val process = server.process
-            process?.destroy()
+            stderrJobToCancel?.cancel()
             if (process != null) {
-                val exited = process.waitFor(STOP_WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                if (!exited) {
+                runCatching { process.destroy() }
+                if (process.isAlive) {
                     emitRuntimeLog(
                         McpRuntimeLogLevel.WARN,
-                        "Process did not exit in ${STOP_WAIT_TIMEOUT_MS}ms, forcing termination",
+                        "Process still alive after destroy, forcing termination",
                     )
-                    process.destroyForcibly()
-                    process.waitFor(FORCE_STOP_WAIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                    runCatching { process.destroyForcibly() }
                 }
             }
         } catch (e: Exception) {
             logger.warn("Error stopping MCP server", e)
+        } finally {
+            // Stream closing can block on some Windows process states; do it asynchronously.
+            scope.launch(Dispatchers.IO) {
+                runCatching { errorReaderToClose?.close() }
+                runCatching { writerToClose?.close() }
+                runCatching { readerToClose?.close() }
+            }
         }
 
         server.status = ServerStatus.STOPPED
         server.process = null
         initialized = false
+
+        val stopCause = CancellationException("MCP server stopped")
+        pendingRequests.values.forEach { deferred ->
+            deferred.completeExceptionally(stopCause)
+        }
+        pendingRequests.clear()
 
         emitRuntimeLog(McpRuntimeLogLevel.INFO, "Server stopped")
         logger.info("MCP server stopped: ${server.config.name}")
@@ -583,8 +599,6 @@ class McpClient(
         private const val STDERR_TAIL_MAX_LINES = 8
         private const val STDERR_TAIL_MAX_CHARS = 420
         private const val RUNTIME_LOG_MAX_CHARS = 600
-        private const val STOP_WAIT_TIMEOUT_MS = 1500L
-        private const val FORCE_STOP_WAIT_TIMEOUT_MS = 500L
         private val WINDOWS_EXEC_EXTENSIONS = listOf(".cmd", ".bat", ".exe", ".com")
     }
 }

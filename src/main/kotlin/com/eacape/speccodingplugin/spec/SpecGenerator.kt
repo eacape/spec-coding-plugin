@@ -234,12 +234,13 @@ class SpecGenerator(
             appendConfirmedContext(request.options.confirmedContext)
             appendLine()
             appendLine("要求：")
-            appendLine("1. 设计系统架构（Architecture Design）")
-            appendLine("2. 选择技术栈（Technology Stack）")
-            appendLine("3. 设计数据模型（Data Model）")
-            appendLine("4. 设计 API 接口（API Design）")
-            appendLine("5. 考虑非功能需求（性能、安全、可扩展性）")
-            appendLine("6. 使用 Markdown 格式，包含架构图（使用 Mermaid 或文字描述）")
+            appendLine("0. 只输出最终 design.md 正文，不要输出思考过程、工具日志、路径信息或 JSON。")
+            appendLine("1. 必须包含二级标题：## 架构设计、## 技术选型、## 数据模型。")
+            appendLine("2. 在“架构设计”中说明核心模块、职责与关键数据流。")
+            appendLine("3. 在“技术选型”中给出技术方案与取舍理由。")
+            appendLine("4. 在“数据模型”中描述核心实体、字段关系与约束。")
+            appendLine("5. 可补充 ## API 设计 与 ## 非功能设计（性能、安全、可扩展性）。")
+            appendLine("6. 使用 Markdown；若包含 Mermaid，只作为章节内代码块，不要替代正文结构。")
 
             if (request.options.includeExamples) {
                 appendLine()
@@ -296,6 +297,9 @@ class SpecGenerator(
         normalized = decodeEscapedTextIfNeeded(normalized)
         normalized = SpecMarkdownSanitizer.sanitize(normalized).ifBlank { normalized.trim() }
         normalized = trimToLikelyDocumentStart(phase, normalized)
+        if (phase == SpecPhase.DESIGN) {
+            normalized = ensureDesignStructure(normalized)
+        }
         if (phase == SpecPhase.IMPLEMENT) {
             normalized = ensureImplementStructure(normalized)
         }
@@ -306,17 +310,41 @@ class SpecGenerator(
         content: String,
         phase: SpecPhase,
     ): String {
-        val blocks = CODE_FENCE_REGEX.findAll(content)
+        val normalizedContent = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+        val trimmed = normalizedContent.trim()
+
+        val fullyWrapped = FULL_CODE_FENCE_REGEX.matchEntire(trimmed)
+        if (fullyWrapped != null) {
+            return fullyWrapped.groupValues[1].trim()
+        }
+
+        val blocks = CODE_FENCE_REGEX.findAll(normalizedContent)
             .map { it.groupValues[1].trim() }
             .filter { it.isNotBlank() }
             .toList()
         if (blocks.isEmpty()) return content
 
+        val outsideFenceText = CODE_FENCE_REGEX.replace(normalizedContent, "").trim()
+        if (outsideFenceText.isNotBlank()) {
+            // Keep the full markdown when code fences are only a part of the document.
+            return content
+        }
+
         val preferred = blocks.firstOrNull { block ->
             val decoded = decodeEscapedTextIfNeeded(block)
             decoded.lineSequence().any { line -> isLikelyPhaseDocumentLine(phase, line) }
         }
-        return preferred ?: blocks.maxByOrNull { it.length } ?: content
+        if (preferred != null) {
+            return preferred
+        }
+
+        return when (phase) {
+            // For requirements/design, keeping full markdown is safer than picking one random code block.
+            SpecPhase.SPECIFY, SpecPhase.DESIGN -> content
+            SpecPhase.IMPLEMENT -> blocks.maxByOrNull { it.length } ?: content
+        }
     }
 
     private fun extractJsonContentFieldIfPresent(content: String): String {
@@ -380,15 +408,62 @@ class SpecGenerator(
                 normalized.contains("用户故事") ||
                 normalized.contains("requirements")
             SpecPhase.DESIGN -> normalized.contains("架构设计") ||
+                normalized.contains("architecture design") ||
                 normalized.contains("技术选型") ||
+                normalized.contains("technology stack") ||
                 normalized.contains("数据模型") ||
-                normalized.contains("design")
+                normalized.contains("data model") ||
+                normalized.contains("api 设计") ||
+                normalized.contains("api design")
             SpecPhase.IMPLEMENT -> normalized.contains("任务列表") ||
                 normalized.contains("实现步骤") ||
                 normalized.contains("task list") ||
                 normalized.contains("implementation steps") ||
                 normalized.startsWith("task ")
         }
+    }
+
+    private fun ensureDesignStructure(content: String): String {
+        var normalized = content.trim()
+        if (normalized.isBlank()) {
+            return DESIGN_SKELETON
+        }
+
+        val hasArchitecture = containsAnyMarker(normalized, DESIGN_ARCHITECTURE_MARKERS)
+        val hasTechStack = containsAnyMarker(normalized, DESIGN_TECH_STACK_MARKERS)
+        val hasDataModel = containsAnyMarker(normalized, DESIGN_DATA_MODEL_MARKERS)
+
+        if (!hasArchitecture) {
+            normalized = buildString {
+                appendLine("## 架构设计")
+                appendLine()
+                appendLine(normalized)
+            }.trim()
+        }
+
+        if (!hasTechStack) {
+            normalized = buildString {
+                appendLine(normalized)
+                appendLine()
+                appendLine("## 技术选型")
+                appendLine()
+                appendLine("- 核心技术栈：待补充")
+                appendLine("- 选型理由：待补充")
+            }.trim()
+        }
+
+        if (!hasDataModel) {
+            normalized = buildString {
+                appendLine(normalized)
+                appendLine()
+                appendLine("## 数据模型")
+                appendLine()
+                appendLine("- 核心实体：待补充")
+                appendLine("- 实体关系与约束：待补充")
+            }.trim()
+        }
+
+        return normalized
     }
 
     private fun ensureImplementStructure(content: String): String {
@@ -854,11 +929,31 @@ class SpecGenerator(
             isLenient = true
         }
         private val CODE_FENCE_REGEX = Regex("```(?:[a-zA-Z0-9_-]+)?\\n([\\s\\S]*?)```")
+        private val FULL_CODE_FENCE_REGEX = Regex("^```(?:[a-zA-Z0-9_-]+)?\\n([\\s\\S]*?)```$", setOf(RegexOption.DOT_MATCHES_ALL))
         private val ESCAPED_NEWLINE_REGEX = Regex("""\\n|\\r\\n""")
         private val MARKDOWN_HEADING_REGEX = Regex("""^\s{0,3}#{1,6}\s+\S+""")
         private val CHECKBOX_ITEM_REGEX = Regex("""^\s*-\s*\[[ xX]\]\s+\S+""")
         private val ORDERED_ITEM_REGEX = Regex("""^\s*\d+\.\s+\S+""")
         private const val MAX_LEADING_NOISE_LINES = 24
+        private val DESIGN_ARCHITECTURE_MARKERS = listOf("## 架构设计", "架构设计", "系统架构", "Architecture Design", "Architecture")
+        private val DESIGN_TECH_STACK_MARKERS = listOf("## 技术选型", "技术选型", "技术方案", "Technology Stack")
+        private val DESIGN_DATA_MODEL_MARKERS = listOf("## 数据模型", "数据模型", "实体模型", "Data Model")
+        private val DESIGN_SKELETON = """
+            ## 架构设计
+            
+            - 核心模块：待补充
+            - 数据流与边界：待补充
+            
+            ## 技术选型
+            
+            - 核心技术栈：待补充
+            - 选型理由：待补充
+            
+            ## 数据模型
+            
+            - 核心实体：待补充
+            - 实体关系与约束：待补充
+        """.trimIndent()
         private val IMPLEMENT_TASK_LIST_MARKERS = listOf("## 任务列表", "任务列表", "Task List")
         private val IMPLEMENT_STEPS_MARKERS = listOf("## 实现步骤", "实现步骤", "Implementation Steps")
         private val IMPLEMENT_SKELETON = """

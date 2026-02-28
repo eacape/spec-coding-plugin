@@ -216,7 +216,7 @@ class McpServerDetailPanel(
         panel.add(
             JPanel(BorderLayout()).apply {
                 isOpaque = false
-                border = JBUI.Borders.emptyTop(6)
+                border = JBUI.Borders.emptyTop(4)
                 add(createLogsPanel(), BorderLayout.CENTER)
             },
             BorderLayout.SOUTH,
@@ -236,7 +236,7 @@ class McpServerDetailPanel(
         runtimeLogArea.foreground = TOOL_DETAIL_FG
         runtimeLogArea.lineWrap = true
         runtimeLogArea.wrapStyleWord = true
-        runtimeLogArea.rows = 7
+        runtimeLogArea.rows = 5
 
         val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
             isOpaque = false
@@ -247,7 +247,7 @@ class McpServerDetailPanel(
 
         val header = JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(8)
+            border = JBUI.Borders.emptyBottom(6)
             add(runtimeLogsLabel, BorderLayout.WEST)
             add(actionRow, BorderLayout.EAST)
         }
@@ -255,7 +255,7 @@ class McpServerDetailPanel(
         val scroll = JBScrollPane(runtimeLogArea).apply {
             border = JBUI.Borders.empty()
             viewport.background = LOG_BG
-            preferredSize = Dimension(0, 170)
+            preferredSize = Dimension(0, 132)
         }
 
         return JPanel(BorderLayout()).apply {
