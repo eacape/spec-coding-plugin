@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -285,6 +286,65 @@ class SpecEngineWorkflowTest {
         assertTrue(
             conflict.exceptionOrNull()?.message?.contains("revision conflict", ignoreCase = true) == true
         )
+    }
+
+    @Test
+    fun `reloadWorkflow should bypass in-memory cache and read latest document from storage`() {
+        val engine = SpecEngine(project, storage) {
+            SpecGenerationResult.Failure("not used")
+        }
+        val workflow = engine.createWorkflow(
+            title = "Reload Cache",
+            description = "verify force reload",
+        ).getOrThrow()
+
+        val initialContent = """
+            ## 功能需求
+            - 初始内容
+
+            ## 非功能需求
+            - 初始约束
+
+            ## 用户故事
+            As a user, I want the initial spec.
+        """.trimIndent()
+        engine.updateDocumentContent(
+            workflowId = workflow.id,
+            phase = SpecPhase.SPECIFY,
+            content = initialContent,
+        ).getOrThrow()
+
+        val cachedBeforeExternalChange = engine.loadWorkflow(workflow.id).getOrThrow()
+        val beforeDocument = cachedBeforeExternalChange.getDocument(SpecPhase.SPECIFY)
+        assertNotNull(beforeDocument)
+
+        val externalContent = """
+            ## 功能需求
+            - 外部修改后的内容
+
+            ## 非功能需求
+            - 外部约束
+
+            ## 用户故事
+            As a user, I want externally edited spec.
+        """.trimIndent()
+        val externallySavedDoc = beforeDocument!!.copy(
+            content = externalContent,
+            metadata = beforeDocument.metadata.copy(updatedAt = beforeDocument.metadata.updatedAt + 10_000),
+        )
+        storage.saveDocument(workflow.id, externallySavedDoc).getOrThrow()
+
+        val cachedAfterExternalChange = engine.loadWorkflow(workflow.id).getOrThrow()
+        assertTrue(cachedAfterExternalChange.getDocument(SpecPhase.SPECIFY)?.content?.contains("初始内容") == true)
+        assertNotEquals(
+            externalContent,
+            cachedAfterExternalChange.getDocument(SpecPhase.SPECIFY)?.content,
+        )
+
+        val reloaded = engine.reloadWorkflow(workflow.id).getOrThrow()
+        val reloadedContent = reloaded.getDocument(SpecPhase.SPECIFY)?.content.orEmpty()
+        assertTrue(reloadedContent.contains("外部修改后的内容"))
+        assertTrue(!reloadedContent.contains("初始内容"))
     }
 
     @Test

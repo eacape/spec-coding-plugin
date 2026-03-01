@@ -131,6 +131,17 @@ class SpecEngine(private val project: Project) {
     }
 
     /**
+     * 强制从存储重载工作流，覆盖内存缓存。
+     */
+    fun reloadWorkflow(workflowId: String): Result<SpecWorkflow> {
+        return runCatching {
+            val workflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            activeWorkflows[workflowId] = workflow
+            workflow
+        }
+    }
+
+    /**
      * 列出所有工作流
      */
     fun listWorkflows(): List<String> {

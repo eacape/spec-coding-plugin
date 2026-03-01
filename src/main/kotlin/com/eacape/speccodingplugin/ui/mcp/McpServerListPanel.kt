@@ -3,7 +3,7 @@ package com.eacape.speccodingplugin.ui.mcp
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.mcp.ServerStatus
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
-import com.intellij.openapi.util.IconLoader
+import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -242,7 +242,7 @@ class McpServerListPanel(
     }
 
     companion object {
-        private val MCP_SERVER_DELETE_ICON = IconLoader.getIcon("/icons/mcp-server-delete.svg", McpServerListPanel::class.java)
+        private val MCP_SERVER_DELETE_ICON = AllIcons.Actions.GC
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
         private val TITLE_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))

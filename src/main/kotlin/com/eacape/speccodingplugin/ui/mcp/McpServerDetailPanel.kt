@@ -7,6 +7,7 @@ import com.eacape.speccodingplugin.mcp.McpServer
 import com.eacape.speccodingplugin.mcp.McpTool
 import com.eacape.speccodingplugin.mcp.ServerStatus
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -567,9 +568,9 @@ class McpServerDetailPanel(
         private val MCP_SERVER_STOP_ICON = IconLoader.getIcon("/icons/mcp-server-stop.svg", McpServerDetailPanel::class.java)
         private val MCP_SERVER_RESTART_ICON = IconLoader.getIcon("/icons/mcp-server-restart.svg", McpServerDetailPanel::class.java)
         private val MCP_SERVER_EDIT_ICON = IconLoader.getIcon("/icons/mcp-server-edit.svg", McpServerDetailPanel::class.java)
-        private val MCP_SERVER_LOG_REFRESH_ICON = IconLoader.getIcon("/icons/mcp-server-log-refresh.svg", McpServerDetailPanel::class.java)
-        private val MCP_SERVER_LOG_CLEAR_ICON = IconLoader.getIcon("/icons/mcp-server-log-clear.svg", McpServerDetailPanel::class.java)
-        private val MCP_SERVER_LOG_COPY_ICON = IconLoader.getIcon("/icons/mcp-server-log-copy.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_LOG_REFRESH_ICON = AllIcons.Actions.Refresh
+        private val MCP_SERVER_LOG_CLEAR_ICON = AllIcons.Actions.GC
+        private val MCP_SERVER_LOG_COPY_ICON = AllIcons.Actions.Copy
         private val LOG_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
         private val HEADER_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val HEADER_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))

@@ -11,6 +11,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -35,7 +36,7 @@ class McpServerEditorDialog(
     private val nameField = JBTextField()
     private val commandField = JBTextField()
     private val argsField = JBTextField()
-    private val envArea = JTextArea(3, 40)
+    private val envArea = JBTextArea(4, 40)
     private val transportCombo = ComboBox(TransportType.entries.toTypedArray())
     private val autoStartCheckBox = JBCheckBox(
         SpecCodingBundle.message("mcp.dialog.field.autoStart")
@@ -73,17 +74,17 @@ class McpServerEditorDialog(
     }
 
     override fun createCenterPanel(): JComponent {
-        val panel = JPanel(BorderLayout(0, JBUI.scale(10)))
-        panel.preferredSize = Dimension(JBUI.scale(620), JBUI.scale(440))
-        panel.border = JBUI.Borders.empty(8, 8, 6, 8)
+        val panel = JPanel(BorderLayout(0, JBUI.scale(12)))
+        panel.preferredSize = Dimension(JBUI.scale(608), JBUI.scale(430))
+        panel.border = JBUI.Borders.empty(10, 10, 8, 10)
         panel.background = DIALOG_BG
 
         val formPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            add(createSectionCard(createBasicFormPanel()))
-            add(Box.createVerticalStrut(JBUI.scale(8)))
-            add(createSectionCard(createRuntimeFormPanel()))
+            add(createSectionCard("mcp.dialog.section.basic", createBasicFormPanel()))
+            add(Box.createVerticalStrut(JBUI.scale(10)))
+            add(createSectionCard("mcp.dialog.section.runtime", createRuntimeFormPanel()))
         }
         panel.add(formPanel, BorderLayout.CENTER)
         return panel
@@ -92,7 +93,7 @@ class McpServerEditorDialog(
     private fun createBasicFormPanel(): JPanel {
         val panel = JPanel(GridBagLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.empty(4, 4, 2, 4)
+            border = JBUI.Borders.empty(6, 8, 4, 8)
         }
 
         idField.emptyText.text = SpecCodingBundle.message("mcp.dialog.placeholder.id")
@@ -114,7 +115,7 @@ class McpServerEditorDialog(
     private fun createRuntimeFormPanel(): JPanel {
         val panel = JPanel(GridBagLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.empty(4, 4, 2, 4)
+            border = JBUI.Borders.empty(6, 8, 4, 8)
         }
         addEnvRow(panel, 0)
 
@@ -151,7 +152,7 @@ class McpServerEditorDialog(
                 weightx = 0.0
                 anchor = GridBagConstraints.WEST
                 fill = GridBagConstraints.NONE
-                insets = Insets(0, 0, JBUI.scale(8), JBUI.scale(10))
+                insets = Insets(0, 0, JBUI.scale(10), JBUI.scale(12))
             }
         )
         panel.add(
@@ -161,7 +162,7 @@ class McpServerEditorDialog(
                 gridy = row
                 weightx = 1.0
                 fill = GridBagConstraints.HORIZONTAL
-                insets = Insets(0, 0, JBUI.scale(8), 0)
+                insets = Insets(0, 0, JBUI.scale(10), 0)
             }
         )
     }
@@ -181,20 +182,21 @@ class McpServerEditorDialog(
 
         envArea.font = commandField.font
         val scroll = JBScrollPane(envArea).apply {
-            preferredSize = Dimension(0, JBUI.scale(86))
-            minimumSize = Dimension(0, JBUI.scale(86))
+            preferredSize = Dimension(0, JBUI.scale(96))
+            minimumSize = Dimension(0, JBUI.scale(96))
             border = BorderFactory.createCompoundBorder(
                 SpecUiStyle.roundedLineBorder(INPUT_BORDER, JBUI.scale(10)),
                 JBUI.Borders.empty(),
             )
             viewportBorder = JBUI.Borders.empty()
             viewport.background = INPUT_BG
-            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+            horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
         }
         envArea.border = JBUI.Borders.empty(6, 8, 6, 8)
         envArea.background = INPUT_BG
         envArea.foreground = INPUT_FG
-        envArea.lineWrap = false
+        envArea.lineWrap = true
+        envArea.wrapStyleWord = true
 
         panel.add(
             scroll,
@@ -202,13 +204,29 @@ class McpServerEditorDialog(
                 gridx = 1
                 gridy = row
                 weightx = 1.0
-                fill = GridBagConstraints.HORIZONTAL
+                fill = GridBagConstraints.BOTH
                 insets = Insets(0, 0, JBUI.scale(4), 0)
             }
         )
     }
 
-    private fun createSectionCard(content: JComponent): JPanel {
+    private fun createSectionCard(titleKey: String, content: JComponent): JPanel {
+        val titleLabel = JBLabel(SpecCodingBundle.message(titleKey)).apply {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            foreground = HEADER_FG
+            border = JBUI.Borders.empty(0, 2, 0, 2)
+        }
+        val header = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = HEADER_BG
+            border = BorderFactory.createMatteBorder(0, 0, 1, 0, HEADER_BORDER)
+            add(titleLabel, BorderLayout.WEST)
+        }
+        val contentHost = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(8)
+            add(content, BorderLayout.CENTER)
+        }
         return JPanel(BorderLayout()).apply {
             isOpaque = true
             background = CARD_BG
@@ -220,7 +238,8 @@ class McpServerEditorDialog(
                 bottom = 8,
                 right = 10,
             )
-            add(content, BorderLayout.CENTER)
+            add(header, BorderLayout.NORTH)
+            add(contentHost, BorderLayout.CENTER)
         }
     }
 
@@ -228,7 +247,7 @@ class McpServerEditorDialog(
         return JBLabel(label).apply {
             font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
             foreground = LABEL_FG
-            preferredSize = Dimension(JBUI.scale(LABEL_WIDTH), JBUI.scale(30))
+            preferredSize = Dimension(JBUI.scale(LABEL_WIDTH), JBUI.scale(28))
             minimumSize = preferredSize
             toolTipText = label
         }
@@ -241,10 +260,10 @@ class McpServerEditorDialog(
                 field.foreground = INPUT_FG
                 field.border = BorderFactory.createCompoundBorder(
                     SpecUiStyle.roundedLineBorder(INPUT_BORDER, JBUI.scale(10)),
-                    JBUI.Borders.empty(5, 8, 5, 8),
+                    JBUI.Borders.empty(4, 8, 4, 8),
                 )
-                field.preferredSize = Dimension(0, JBUI.scale(32))
-                field.minimumSize = Dimension(0, JBUI.scale(32))
+                field.preferredSize = Dimension(0, JBUI.scale(30))
+                field.minimumSize = Dimension(0, JBUI.scale(30))
                 field
             }
 
@@ -253,10 +272,10 @@ class McpServerEditorDialog(
                 field.foreground = INPUT_FG
                 field.border = BorderFactory.createCompoundBorder(
                     SpecUiStyle.roundedLineBorder(INPUT_BORDER, JBUI.scale(10)),
-                    JBUI.Borders.empty(3, 8, 3, 8),
+                    JBUI.Borders.empty(2, 8, 2, 8),
                 )
-                field.preferredSize = Dimension(0, JBUI.scale(32))
-                field.minimumSize = Dimension(0, JBUI.scale(32))
+                field.preferredSize = Dimension(0, JBUI.scale(30))
+                field.minimumSize = Dimension(0, JBUI.scale(30))
                 field
             }
 
@@ -269,6 +288,8 @@ class McpServerEditorDialog(
         trustedCheckBox.isOpaque = false
         autoStartCheckBox.foreground = CHECKBOX_FG
         trustedCheckBox.foreground = CHECKBOX_FG
+        autoStartCheckBox.font = JBUI.Fonts.smallFont()
+        trustedCheckBox.font = JBUI.Fonts.smallFont()
     }
 
     private fun styleDialogButtons() {
@@ -347,11 +368,14 @@ class McpServerEditorDialog(
     }
 
     companion object {
-        private const val LABEL_WIDTH = 170
+        private const val LABEL_WIDTH = 156
 
         private val DIALOG_BG = JBColor(Color(247, 250, 255), Color(53, 58, 66))
         private val CARD_BG = JBColor(Color(250, 252, 255), Color(57, 62, 70))
         private val CARD_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val HEADER_BG = JBColor(Color(236, 245, 255), Color(68, 76, 89))
+        private val HEADER_BORDER = JBColor(Color(198, 214, 236), Color(97, 110, 129))
+        private val HEADER_FG = JBColor(Color(53, 74, 107), Color(213, 224, 242))
         private val LABEL_FG = JBColor(Color(60, 78, 110), Color(203, 214, 232))
         private val INPUT_BG = JBColor(Color(245, 249, 255), Color(63, 69, 80))
         private val INPUT_BORDER = JBColor(Color(184, 200, 226), Color(103, 115, 133))

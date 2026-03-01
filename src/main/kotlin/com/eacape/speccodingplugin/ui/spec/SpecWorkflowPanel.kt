@@ -26,6 +26,9 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.vfs.newvfs.BulkFileListener
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
@@ -124,6 +127,7 @@ class SpecWorkflowPanel(
         CliDiscoveryService.getInstance().addDiscoveryListener(discoveryListener)
         subscribeToLocaleEvents()
         subscribeToWorkflowEvents()
+        subscribeToDocumentFileEvents()
         refreshWorkflows()
     }
 
@@ -152,32 +156,15 @@ class SpecWorkflowPanel(
         statusLabel.foreground = STATUS_TEXT_FG
         setupGenerationControls()
 
-        val modelRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        val controlsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(JBUI.scale(4))
             add(providerComboBox)
             add(modelLabel)
             add(modelComboBox)
             add(statusChipPanel)
         }
-        val modelHost = JPanel(BorderLayout()).apply {
+        val actionsRow = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(2)
-            add(
-                JBScrollPane(modelRow).apply {
-                    border = JBUI.Borders.empty()
-                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
-                    verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
-                    viewport.isOpaque = false
-                    isOpaque = false
-                    SpecUiStyle.applySlimHorizontalScrollBar(this, height = 7)
-                },
-                BorderLayout.CENTER,
-            )
-        }
-        val actionsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-            isOpaque = false
-            border = JBUI.Borders.emptyBottom(JBUI.scale(2))
             add(refreshButton)
             add(createWorktreeButton)
             add(mergeWorktreeButton)
@@ -185,11 +172,16 @@ class SpecWorkflowPanel(
             add(codeGraphButton)
             add(archiveButton)
         }
-        val actionsHost = JPanel(BorderLayout()).apply {
+        val toolbarRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(2)
+            border = JBUI.Borders.empty(0, 0, JBUI.scale(1), 0)
+            add(controlsRow, BorderLayout.CENTER)
+            add(actionsRow, BorderLayout.EAST)
+        }
+        val modelHost = JPanel(BorderLayout()).apply {
+            isOpaque = false
             add(
-                JBScrollPane(actionsRow).apply {
+                JBScrollPane(toolbarRow).apply {
                     border = JBUI.Borders.empty()
                     horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
@@ -223,8 +215,7 @@ class SpecWorkflowPanel(
                 bottom = 5,
                 right = 8,
             )
-            add(modelHost, BorderLayout.NORTH)
-            add(actionsHost, BorderLayout.CENTER)
+            add(modelHost, BorderLayout.CENTER)
         }
         add(
             JPanel(BorderLayout()).apply {
@@ -300,6 +291,8 @@ class SpecWorkflowPanel(
 
     private fun styleToolbarButton(button: JButton) {
         val iconOnly = button.icon != null && button.text.isNullOrBlank()
+        val buttonBg = if (iconOnly) ICON_BUTTON_BG else BUTTON_BG
+        val buttonBorder = if (iconOnly) ICON_BUTTON_BORDER else BUTTON_BORDER
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = true
@@ -307,9 +300,9 @@ class SpecWorkflowPanel(
         button.margin = if (iconOnly) JBUI.insets(0, 0, 0, 0) else JBUI.insets(1, 4, 1, 4)
         button.isOpaque = true
         button.foreground = BUTTON_FG
-        button.background = BUTTON_BG
+        button.background = buttonBg
         button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+            SpecUiStyle.roundedLineBorder(buttonBorder, JBUI.scale(10)),
             if (iconOnly) JBUI.Borders.empty(1, 1, 1, 1) else JBUI.Borders.empty(1, 5, 1, 5),
         )
         SpecUiStyle.applyRoundRect(button, arc = 10)
@@ -388,8 +381,8 @@ class SpecWorkflowPanel(
         modelComboBox.addActionListener {
             updateSelectorTooltips()
         }
-        configureToolbarCombo(providerComboBox, preferredWidth = 114)
-        configureToolbarCombo(modelComboBox, preferredWidth = 158)
+        configureToolbarCombo(providerComboBox, preferredWidth = 96)
+        configureToolbarCombo(modelComboBox, preferredWidth = 136)
         refreshProviderCombo(preserveSelection = false)
     }
 
@@ -585,7 +578,7 @@ class SpecWorkflowPanel(
         val previousSelectedWorkflowId = selectedWorkflowId
         selectedWorkflowId = workflowId
         scope.launch(Dispatchers.IO) {
-            val wf = specEngine.loadWorkflow(workflowId).getOrNull()
+            val wf = specEngine.reloadWorkflow(workflowId).getOrNull()
             currentWorkflow = wf
             invokeLaterSafe {
                 if (wf != null) {
@@ -1476,6 +1469,45 @@ class SpecWorkflowPanel(
         )
     }
 
+    private fun subscribeToDocumentFileEvents() {
+        project.messageBus.connect(this).subscribe(
+            VirtualFileManager.VFS_CHANGES,
+            object : BulkFileListener {
+                override fun after(events: List<VFileEvent>) {
+                    val workflowId = selectedWorkflowId ?: return
+                    val basePath = project.basePath ?: return
+                    if (!containsCurrentWorkflowDocumentChange(events, basePath, workflowId)) {
+                        return
+                    }
+                    reloadCurrentWorkflow()
+                }
+            },
+        )
+    }
+
+    private fun containsCurrentWorkflowDocumentChange(
+        events: List<VFileEvent>,
+        basePath: String,
+        workflowId: String,
+    ): Boolean {
+        if (events.isEmpty()) return false
+        val normalizedBasePath = basePath
+            .replace('\\', '/')
+            .trimEnd('/')
+            .lowercase(Locale.ROOT)
+        val targetPrefix = "$normalizedBasePath/.spec-coding/specs/$workflowId/"
+        return events.any { event ->
+            val normalizedPath = event.path
+                .replace('\\', '/')
+                .lowercase(Locale.ROOT)
+            if (!normalizedPath.startsWith(targetPrefix)) {
+                return@any false
+            }
+            val fileName = normalizedPath.substringAfterLast('/')
+            SPEC_DOCUMENT_FILE_NAMES.contains(fileName)
+        }
+    }
+
     private fun refreshLocalizedTexts() {
         listPanel.refreshLocalizedTexts()
         detailPanel.refreshLocalizedTexts()
@@ -1647,7 +1679,7 @@ class SpecWorkflowPanel(
     ) {
         val wfId = selectedWorkflowId ?: return
         scope.launch(Dispatchers.IO) {
-            val wf = specEngine.loadWorkflow(wfId).getOrNull()
+            val wf = specEngine.reloadWorkflow(wfId).getOrNull()
             currentWorkflow = wf
             invokeLaterSafe {
                 if (wf != null) {
@@ -1724,6 +1756,8 @@ class SpecWorkflowPanel(
     companion object {
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
+        private val ICON_BUTTON_BORDER = JBColor(Color(191, 206, 229), Color(98, 111, 130))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
@@ -1745,5 +1779,8 @@ class SpecWorkflowPanel(
         private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")
+        private val SPEC_DOCUMENT_FILE_NAMES = SpecPhase.entries
+            .map { it.outputFileName }
+            .toSet()
     }
 }

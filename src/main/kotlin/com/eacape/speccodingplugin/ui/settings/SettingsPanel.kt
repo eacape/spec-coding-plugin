@@ -225,12 +225,12 @@ class SettingsPanel(
         skillMarkdownArea.toolTipText = SpecCodingBundle.message("settings.skills.editor.markdown.placeholder")
 
         styleActionButton(detectCliButton)
-        styleActionButton(skillRefreshButton)
-        styleActionButton(skillNewDraftButton)
-        styleActionButton(skillAiDraftButton)
-        styleActionButton(skillDeleteButton)
-        styleActionButton(skillSaveButton, emphasized = true)
-        styleActionButton(skillSaveCurrentButton)
+        styleSkillActionIconButton(skillRefreshButton, SKILL_ACTION_REFRESH_ICON)
+        styleSkillActionIconButton(skillNewDraftButton, SKILL_ACTION_NEW_ICON)
+        styleSkillActionIconButton(skillAiDraftButton, SKILL_ACTION_AI_GENERATE_ICON)
+        styleSkillActionIconButton(skillDeleteButton, SKILL_ACTION_DELETE_ICON)
+        styleSkillActionIconButton(skillSaveButton, SKILL_ACTION_SAVE_TARGET_ICON)
+        styleSkillActionIconButton(skillSaveCurrentButton, SKILL_ACTION_SAVE_CURRENT_ICON)
         updateSkillComboPreferredSizes()
 
         buildSectionCards()
@@ -723,7 +723,7 @@ class SettingsPanel(
         sectionList.repaint()
         sectionList.revalidate()
 
-        sidebarToggleButton.icon = if (expanded) AllIcons.General.ArrowLeft else AllIcons.General.ArrowRight
+        sidebarToggleButton.icon = if (expanded) AllIcons.General.ChevronLeft else AllIcons.General.ChevronRight
         sidebarToggleButton.toolTipText = SpecCodingBundle.message(
             if (expanded) "settings.sidebar.collapse.tooltip" else "settings.sidebar.expand.tooltip",
         )
@@ -762,6 +762,37 @@ class SettingsPanel(
         )
         button.preferredSize = JBUI.size(width, JBUI.scale(28))
         button.minimumSize = button.preferredSize
+    }
+
+    private fun styleSkillActionIconButton(
+        button: JButton,
+        icon: Icon,
+    ) {
+        val label = button.text
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.isOpaque = true
+        button.isContentAreaFilled = true
+        button.margin = JBUI.emptyInsets()
+        button.foreground = ACTION_ICON_BUTTON_FG
+        button.background = ACTION_ICON_BUTTON_BG
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(
+                ACTION_ICON_BUTTON_BORDER,
+                JBUI.scale(9),
+            ),
+            JBUI.Borders.empty(0),
+        )
+        SpecUiStyle.applyRoundRect(button, arc = 9)
+        button.icon = icon
+        button.text = ""
+        button.margin = JBUI.emptyInsets()
+        button.preferredSize = JBUI.size(JBUI.scale(28), JBUI.scale(28))
+        button.minimumSize = button.preferredSize
+        button.maximumSize = button.preferredSize
+        button.toolTipText = label
+        button.accessibleContext.accessibleName = label
+        button.accessibleContext.accessibleDescription = label
     }
 
     private fun installAutoSaveBindings() {
@@ -2050,54 +2081,31 @@ class SettingsPanel(
             width: Int,
             height: Int,
         ) {
+            if (!selected || compact) {
+                return
+            }
             val baseGraphics = g as? Graphics2D ?: return
             val g2 = baseGraphics.create() as Graphics2D
             try {
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
 
-                val leftInset = if (compact) JBUI.scale(2).toFloat() else JBUI.scale(6).toFloat()
-                val arc = JBUI.scale(10).toFloat()
-                val outline = RoundRectangle2D.Float(
-                    x + leftInset,
-                    y + 0.5f,
-                    width - leftInset - 1f,
-                    height - 1f,
-                    arc,
-                    arc,
+                val barWidth = JBUI.scale(2).toFloat()
+                val barHeight = (height - JBUI.scale(14)).coerceAtLeast(JBUI.scale(12)).toFloat()
+                val barArc = JBUI.scale(3).toFloat()
+                val barX = x + JBUI.scale(2).toFloat()
+                val barY = y + (height - barHeight) / 2f
+                g2.color = SIDEBAR_ITEM_ACCENT
+                g2.fill(
+                    RoundRectangle2D.Float(
+                        barX,
+                        barY,
+                        barWidth,
+                        barHeight,
+                        barArc,
+                        barArc,
+                    ),
                 )
-                g2.color = if (selected) SIDEBAR_ITEM_SELECTED_BORDER else SIDEBAR_ITEM_BORDER
-                g2.draw(outline)
-
-                if (selected && !compact) {
-                    val glowOutline = RoundRectangle2D.Float(
-                        x + leftInset + 1f,
-                        y + 1.5f,
-                        width - leftInset - 3f,
-                        height - 3f,
-                        JBUI.scale(8).toFloat(),
-                        JBUI.scale(8).toFloat(),
-                    )
-                    g2.color = SIDEBAR_ITEM_SELECTED_GLOW
-                    g2.draw(glowOutline)
-
-                    val barWidth = JBUI.scale(2).toFloat()
-                    val barHeight = (height - JBUI.scale(14)).coerceAtLeast(JBUI.scale(12)).toFloat()
-                    val barArc = JBUI.scale(3).toFloat()
-                    val barX = x + JBUI.scale(2).toFloat()
-                    val barY = y + (height - barHeight) / 2f
-                    g2.color = SIDEBAR_ITEM_ACCENT
-                    g2.fill(
-                        RoundRectangle2D.Float(
-                            barX,
-                            barY,
-                            barWidth,
-                            barHeight,
-                            barArc,
-                            barArc,
-                        ),
-                    )
-                }
             } finally {
                 g2.dispose()
             }
@@ -2236,8 +2244,8 @@ class SettingsPanel(
     }
 
     companion object {
-        private const val SIDEBAR_EXPANDED_WIDTH = 128
-        private const val SIDEBAR_COLLAPSED_WIDTH = 56
+        private const val SIDEBAR_EXPANDED_WIDTH = 118
+        private const val SIDEBAR_COLLAPSED_WIDTH = 52
         private const val SIDEBAR_ITEM_HEIGHT = 40
         private val SIDEBAR_BG = JBColor(Color(237, 245, 255), Color(49, 57, 68))
         private val SIDEBAR_BORDER = JBColor(Color(182, 204, 233), Color(81, 94, 113))
@@ -2276,6 +2284,9 @@ class SettingsPanel(
         private val ACTION_PRIMARY_BG = JBColor(Color(213, 228, 250), Color(77, 98, 128))
         private val ACTION_PRIMARY_BORDER = JBColor(Color(154, 180, 219), Color(116, 137, 169))
         private val ACTION_PRIMARY_FG = JBColor(Color(37, 57, 89), Color(223, 232, 246))
+        private val ACTION_ICON_BUTTON_BG = JBColor(Color(241, 248, 255), Color(68, 79, 95))
+        private val ACTION_ICON_BUTTON_BORDER = JBColor(Color(181, 201, 230), Color(108, 124, 146))
+        private val ACTION_ICON_BUTTON_FG = JBColor(Color(51, 73, 108), Color(209, 220, 238))
         private val SKILL_STATUS_BG = JBColor(Color(238, 245, 255), Color(65, 76, 93))
         private val SKILL_STATUS_BORDER = JBColor(Color(182, 200, 226), Color(101, 118, 142))
         private val SKILL_ITEM_BG = JBColor(Color(250, 253, 255), Color(58, 66, 77))
@@ -2294,6 +2305,12 @@ class SettingsPanel(
         private val SKILL_CLAUDE_ICON = AllIcons.Vcs.History
         private val SKILL_PROJECT_ICON = AllIcons.Vcs.Branch
         private val SKILL_GLOBAL_ICON = IconLoader.getIcon("/icons/skill-global.svg", SettingsPanel::class.java)
+        private val SKILL_ACTION_NEW_ICON = AllIcons.General.Add
+        private val SKILL_ACTION_REFRESH_ICON = AllIcons.Actions.Refresh
+        private val SKILL_ACTION_AI_GENERATE_ICON = IconLoader.getIcon("/icons/spec-ai-change.svg", SettingsPanel::class.java)
+        private val SKILL_ACTION_DELETE_ICON = AllIcons.Actions.GC
+        private val SKILL_ACTION_SAVE_TARGET_ICON = AllIcons.General.Export
+        private val SKILL_ACTION_SAVE_CURRENT_ICON = IconLoader.getIcon("/icons/skill-action-save.svg", SettingsPanel::class.java)
         private val STATUS_NORMAL_FG = JBColor(Color(92, 106, 127), Color(177, 188, 204))
         private val STATUS_SUCCESS_FG = JBColor(Color(42, 128, 74), Color(131, 208, 157))
         private val STATUS_ERROR_FG = JBColor(Color(171, 55, 69), Color(226, 144, 154))

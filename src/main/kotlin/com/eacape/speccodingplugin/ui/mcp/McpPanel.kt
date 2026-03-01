@@ -9,7 +9,7 @@ import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.mcp.*
-import com.intellij.openapi.util.IconLoader
+import com.intellij.icons.AllIcons
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.openapi.Disposable
@@ -892,10 +892,10 @@ class McpPanel(
         private const val AI_REQUEST_TIMEOUT_SECONDS = AI_REQUEST_TIMEOUT_MS / 1_000
         private const val AI_MAX_CANDIDATE_ATTEMPTS = 3
         private const val STATUS_CHIP_MAX_TEXT_LENGTH = 26
-        private val MCP_TOOLBAR_AI_SETUP_ICON = IconLoader.getIcon("/icons/mcp-toolbar-ai-setup.svg", McpPanel::class.java)
-        private val MCP_TOOLBAR_AI_SETUP_STOP_ICON = IconLoader.getIcon("/icons/mcp-server-stop.svg", McpPanel::class.java)
-        private val MCP_TOOLBAR_ADD_ICON = IconLoader.getIcon("/icons/mcp-toolbar-add.svg", McpPanel::class.java)
-        private val MCP_TOOLBAR_REFRESH_ICON = IconLoader.getIcon("/icons/mcp-toolbar-refresh.svg", McpPanel::class.java)
+        private val MCP_TOOLBAR_AI_SETUP_ICON = AllIcons.General.GearPlain
+        private val MCP_TOOLBAR_AI_SETUP_STOP_ICON = AllIcons.Actions.Close
+        private val MCP_TOOLBAR_ADD_ICON = AllIcons.General.Add
+        private val MCP_TOOLBAR_REFRESH_ICON = AllIcons.Actions.Refresh
 
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))

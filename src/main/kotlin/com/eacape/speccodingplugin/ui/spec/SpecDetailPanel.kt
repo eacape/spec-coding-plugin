@@ -840,6 +840,8 @@ class SpecDetailPanel(
 
     private fun styleActionButton(button: JButton) {
         val iconOnly = button.icon != null && button.text.isNullOrBlank()
+        val buttonBg = if (iconOnly) ICON_BUTTON_BG else BUTTON_BG
+        val buttonBorder = if (iconOnly) ICON_BUTTON_BORDER else BUTTON_BORDER
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = true
@@ -847,9 +849,9 @@ class SpecDetailPanel(
         button.margin = if (iconOnly) JBUI.insets(0, 0, 0, 0) else JBUI.insets(1, 4, 1, 4)
         button.isOpaque = true
         button.foreground = BUTTON_FG
-        button.background = BUTTON_BG
+        button.background = buttonBg
         button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+            SpecUiStyle.roundedLineBorder(buttonBorder, JBUI.scale(10)),
             if (iconOnly) JBUI.Borders.empty(1, 1, 1, 1) else JBUI.Borders.empty(1, 5, 1, 5),
         )
         SpecUiStyle.applyRoundRect(button, arc = 10)
@@ -2919,6 +2921,8 @@ class SpecDetailPanel(
         private val TREE_STATUS_DRAFT_TEXT_SELECTED = JBColor(Color(124, 102, 77), Color(246, 223, 187))
         private val TREE_STATUS_PENDING_TEXT = JBColor(Color(120, 132, 149), Color(196, 210, 230))
         private val TREE_STATUS_PENDING_TEXT_SELECTED = JBColor(Color(100, 113, 131), Color(215, 224, 239))
+        private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
+        private val ICON_BUTTON_BORDER = JBColor(Color(191, 206, 229), Color(98, 111, 130))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
