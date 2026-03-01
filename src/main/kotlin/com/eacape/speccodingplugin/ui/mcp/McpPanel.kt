@@ -9,6 +9,7 @@ import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.mcp.*
+import com.intellij.openapi.util.IconLoader
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.openapi.Disposable
@@ -63,10 +64,9 @@ class McpPanel(
 
     private val statusLabel = JBLabel(SpecCodingBundle.message("toolwindow.status.ready"))
     private val guideLabel = JBLabel(SpecCodingBundle.message("mcp.panel.guide"))
-    private val aiSetupBtn = JButton(SpecCodingBundle.message("mcp.server.aiSetup"))
-    private val manualAddBtn = JButton(SpecCodingBundle.message("mcp.server.add"))
-    private val refreshBtn = JButton(SpecCodingBundle.message("mcp.server.refresh"))
-    private val titleLabel = JBLabel(SpecCodingBundle.message("mcp.panel.title"))
+    private val aiSetupBtn = JButton()
+    private val manualAddBtn = JButton()
+    private val refreshBtn = JButton()
     private val statusChipPanel = JPanel(BorderLayout())
 
     private var selectedServerId: String? = null
@@ -100,14 +100,13 @@ class McpPanel(
     }
 
     private fun setupUI() {
+        refreshToolbarActionButtonPresentation()
         listOf(manualAddBtn, refreshBtn).forEach { styleActionButton(it, primary = false) }
         styleActionButton(aiSetupBtn, primary = true)
 
         // 顶部工具栏
         val titleRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
-            titleLabel.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-            titleLabel.foreground = STATUS_TEXT_FG
             statusLabel.font = JBUI.Fonts.smallFont()
             statusLabel.foreground = STATUS_TEXT_FG
             statusLabel.horizontalAlignment = SwingConstants.LEFT
@@ -122,13 +121,11 @@ class McpPanel(
                 right = 8,
             )
             statusChipPanel.add(statusLabel, BorderLayout.CENTER)
-            add(titleLabel)
             add(statusChipPanel)
         }
 
         val actionsRow = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)).apply {
             isOpaque = false
-            aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip")
             add(aiSetupBtn)
             add(manualAddBtn)
             add(refreshBtn)
@@ -279,9 +276,7 @@ class McpPanel(
     }
 
     private fun refreshLocalizedTexts() {
-        titleLabel.text = SpecCodingBundle.message("mcp.panel.title")
-        manualAddBtn.text = SpecCodingBundle.message("mcp.server.add")
-        refreshBtn.text = SpecCodingBundle.message("mcp.server.refresh")
+        refreshToolbarActionButtonPresentation()
         styleActionButton(manualAddBtn, primary = false)
         styleActionButton(refreshBtn, primary = false)
         setAiSetupInProgress(aiSetupInProgress)
@@ -432,12 +427,15 @@ class McpPanel(
     private fun setAiSetupInProgress(inProgress: Boolean) {
         aiSetupInProgress = inProgress
         aiSetupBtn.isEnabled = true
-        aiSetupBtn.text = SpecCodingBundle.message("mcp.server.aiSetup")
-        if (inProgress) {
-            aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip.running")
+        aiSetupBtn.icon = if (inProgress) MCP_TOOLBAR_AI_SETUP_STOP_ICON else MCP_TOOLBAR_AI_SETUP_ICON
+        val tooltip = if (inProgress) {
+            SpecCodingBundle.message("mcp.server.aiSetup.tooltip.running")
         } else {
-            aiSetupBtn.toolTipText = SpecCodingBundle.message("mcp.server.aiSetup.tooltip")
+            SpecCodingBundle.message("mcp.server.aiSetup.tooltip")
         }
+        aiSetupBtn.toolTipText = tooltip
+        aiSetupBtn.accessibleContext?.accessibleName = tooltip
+        aiSetupBtn.accessibleContext?.accessibleDescription = tooltip
         styleActionButton(aiSetupBtn, primary = !inProgress)
     }
 
@@ -810,7 +808,35 @@ class McpPanel(
         logger.info("McpPanel disposed")
     }
 
+    private fun refreshToolbarActionButtonPresentation() {
+        configureToolbarActionButton(
+            button = aiSetupBtn,
+            icon = MCP_TOOLBAR_AI_SETUP_ICON,
+            tooltip = SpecCodingBundle.message("mcp.server.aiSetup.tooltip"),
+        )
+        configureToolbarActionButton(
+            button = manualAddBtn,
+            icon = MCP_TOOLBAR_ADD_ICON,
+            tooltip = SpecCodingBundle.message("mcp.server.add"),
+        )
+        configureToolbarActionButton(
+            button = refreshBtn,
+            icon = MCP_TOOLBAR_REFRESH_ICON,
+            tooltip = SpecCodingBundle.message("mcp.server.refresh"),
+        )
+    }
+
+    private fun configureToolbarActionButton(button: JButton, icon: javax.swing.Icon, tooltip: String) {
+        button.text = ""
+        button.icon = icon
+        button.iconTextGap = 0
+        button.toolTipText = tooltip
+        button.accessibleContext?.accessibleName = tooltip
+        button.accessibleContext?.accessibleDescription = tooltip
+    }
+
     private fun styleActionButton(button: JButton, primary: Boolean) {
+        val iconOnly = button.icon != null && button.text.isNullOrBlank()
         val bg = if (primary) BUTTON_PRIMARY_BG else BUTTON_BG
         val border = if (primary) BUTTON_PRIMARY_BORDER else BUTTON_BORDER
         val fg = if (primary) BUTTON_PRIMARY_FG else BUTTON_FG
@@ -819,23 +845,27 @@ class McpPanel(
         button.isContentAreaFilled = true
         button.isOpaque = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.margin = if (iconOnly) JBUI.emptyInsets() else JBUI.insets(1, 4, 1, 4)
         button.background = bg
         button.foreground = fg
         button.border = javax.swing.BorderFactory.createCompoundBorder(
             SpecUiStyle.roundedLineBorder(border, JBUI.scale(10)),
-            JBUI.Borders.empty(1, 6, 1, 6),
+            if (iconOnly) JBUI.Borders.empty(4) else JBUI.Borders.empty(1, 6, 1, 6),
         )
         SpecUiStyle.applyRoundRect(button, arc = 10)
-        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
-        val insets = button.insets
-        val lafWidth = button.preferredSize?.width ?: 0
-        val width = maxOf(
-            lafWidth,
-            textWidth + insets.left + insets.right + JBUI.scale(14),
-            JBUI.scale(72),
-        )
-        button.preferredSize = JBUI.size(width, JBUI.scale(28))
+        button.preferredSize = if (iconOnly) {
+            JBUI.size(JBUI.scale(28), JBUI.scale(28))
+        } else {
+            val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
+            val insets = button.insets
+            val lafWidth = button.preferredSize?.width ?: 0
+            val width = maxOf(
+                lafWidth,
+                textWidth + insets.left + insets.right + JBUI.scale(14),
+                JBUI.scale(72),
+            )
+            JBUI.size(width, JBUI.scale(28))
+        }
         button.minimumSize = button.preferredSize
     }
 
@@ -862,6 +892,10 @@ class McpPanel(
         private const val AI_REQUEST_TIMEOUT_SECONDS = AI_REQUEST_TIMEOUT_MS / 1_000
         private const val AI_MAX_CANDIDATE_ATTEMPTS = 3
         private const val STATUS_CHIP_MAX_TEXT_LENGTH = 26
+        private val MCP_TOOLBAR_AI_SETUP_ICON = IconLoader.getIcon("/icons/mcp-toolbar-ai-setup.svg", McpPanel::class.java)
+        private val MCP_TOOLBAR_AI_SETUP_STOP_ICON = IconLoader.getIcon("/icons/mcp-server-stop.svg", McpPanel::class.java)
+        private val MCP_TOOLBAR_ADD_ICON = IconLoader.getIcon("/icons/mcp-toolbar-add.svg", McpPanel::class.java)
+        private val MCP_TOOLBAR_REFRESH_ICON = IconLoader.getIcon("/icons/mcp-toolbar-refresh.svg", McpPanel::class.java)
 
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))

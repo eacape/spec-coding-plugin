@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.mcp
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.mcp.ServerStatus
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -30,7 +31,7 @@ class McpServerListPanel(
     private val listModel = DefaultListModel<ServerListItem>()
     private val serverList = JBList(listModel)
     private val listTitleLabel = JBLabel(SpecCodingBundle.message("mcp.server.list.title"))
-    private val deleteBtn = JButton(SpecCodingBundle.message("mcp.server.delete"))
+    private val deleteBtn = JButton()
 
     init {
         border = JBUI.Borders.empty()
@@ -40,6 +41,7 @@ class McpServerListPanel(
     }
 
     private fun setupUI() {
+        refreshDeleteButtonPresentation()
         styleActionButton(deleteBtn)
 
         // 工具栏
@@ -131,11 +133,21 @@ class McpServerListPanel(
 
     fun refreshLocalizedTexts() {
         listTitleLabel.text = SpecCodingBundle.message("mcp.server.list.title")
-        deleteBtn.text = SpecCodingBundle.message("mcp.server.delete")
+        refreshDeleteButtonPresentation()
         styleActionButton(deleteBtn)
         serverList.emptyText.text = SpecCodingBundle.message("mcp.server.empty")
         serverList.repaint()
         revalidate()
+    }
+
+    private fun refreshDeleteButtonPresentation() {
+        val tooltip = SpecCodingBundle.message("mcp.server.delete")
+        deleteBtn.text = ""
+        deleteBtn.icon = MCP_SERVER_DELETE_ICON
+        deleteBtn.iconTextGap = 0
+        deleteBtn.toolTipText = tooltip
+        deleteBtn.accessibleContext?.accessibleName = tooltip
+        deleteBtn.accessibleContext?.accessibleDescription = tooltip
     }
 
     private class ServerCellRenderer : ListCellRenderer<ServerListItem> {
@@ -205,26 +217,32 @@ class McpServerListPanel(
     }
 
     private fun styleActionButton(button: JButton) {
+        val iconOnly = button.icon != null && button.text.isNullOrBlank()
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = true
         button.isOpaque = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.margin = if (iconOnly) JBUI.emptyInsets() else JBUI.insets(1, 4, 1, 4)
         button.background = BUTTON_BG
         button.foreground = BUTTON_FG
         button.border = BorderFactory.createCompoundBorder(
             SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
-            JBUI.Borders.empty(1, 6, 1, 6),
+            if (iconOnly) JBUI.Borders.empty(4) else JBUI.Borders.empty(1, 6, 1, 6),
         )
         SpecUiStyle.applyRoundRect(button, arc = 10)
-        button.preferredSize = JBUI.size(
-            maxOf(button.preferredSize.width, JBUI.scale(56)),
-            JBUI.scale(28),
-        )
+        button.preferredSize = if (iconOnly) {
+            JBUI.size(JBUI.scale(28), JBUI.scale(28))
+        } else {
+            JBUI.size(
+                maxOf(button.preferredSize.width, JBUI.scale(56)),
+                JBUI.scale(28),
+            )
+        }
     }
 
     companion object {
+        private val MCP_SERVER_DELETE_ICON = IconLoader.getIcon("/icons/mcp-server-delete.svg", McpServerListPanel::class.java)
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
         private val TITLE_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))

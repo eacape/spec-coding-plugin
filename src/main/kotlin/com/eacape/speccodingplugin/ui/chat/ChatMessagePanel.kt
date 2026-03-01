@@ -35,6 +35,7 @@ import javax.swing.border.Border
 import javax.swing.border.CompoundBorder
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
+import javax.swing.text.StyledDocument
 
 /**
  * 单条聊天消息的 UI 组件
@@ -177,14 +178,44 @@ open class ChatMessagePanel(
             contentHost.removeAll()
             contentHost.add(contentPane, BorderLayout.CENTER)
             val doc = contentPane.styledDocument
-            doc.remove(0, doc.length)
-            val attrs = SimpleAttributeSet()
-            StyleConstants.setFontFamily(attrs, "Monospaced")
-            StyleConstants.setFontSize(attrs, 13)
-            doc.insertString(0, content, attrs)
+            if (role == MessageRole.USER) {
+                renderUserPromptAwareContent(doc, content)
+            } else {
+                doc.remove(0, doc.length)
+                val attrs = SimpleAttributeSet()
+                StyleConstants.setFontFamily(attrs, "Monospaced")
+                StyleConstants.setFontSize(attrs, 13)
+                doc.insertString(0, content, attrs)
+            }
         }
         revalidate()
         repaint()
+    }
+
+    private fun renderUserPromptAwareContent(doc: StyledDocument, content: String) {
+        doc.remove(0, doc.length)
+
+        val baseAttrs = SimpleAttributeSet().apply {
+            StyleConstants.setFontFamily(this, "Monospaced")
+            StyleConstants.setFontSize(this, 13)
+        }
+        doc.insertString(0, content, baseAttrs)
+
+        val promptAttrs = SimpleAttributeSet().apply {
+            StyleConstants.setFontFamily(this, "Monospaced")
+            StyleConstants.setFontSize(this, 13)
+            StyleConstants.setBold(this, true)
+            StyleConstants.setForeground(this, PROMPT_REFERENCE_FG)
+            StyleConstants.setBackground(this, PROMPT_REFERENCE_BG)
+        }
+        PROMPT_REFERENCE_TOKEN_REGEX.findAll(content).forEach { match ->
+            doc.setCharacterAttributes(
+                match.range.first,
+                match.value.length,
+                promptAttrs,
+                true,
+            )
+        }
     }
 
     private fun renderAssistantTraceContent(
@@ -1754,8 +1785,17 @@ open class ChatMessagePanel(
         private val CODE_CARD_META_FG = JBColor(java.awt.Color(101, 118, 146), java.awt.Color(156, 178, 210))
         private val CODE_CARD_CODE_BG = JBColor(java.awt.Color(239, 244, 250), java.awt.Color(39, 45, 53))
         private val CODE_CARD_CODE_FG = JBColor(java.awt.Color(49, 59, 72), java.awt.Color(214, 223, 236))
+        private val PROMPT_REFERENCE_FG = JBColor(
+            java.awt.Color(23, 96, 186),
+            java.awt.Color(136, 188, 255),
+        )
+        private val PROMPT_REFERENCE_BG = JBColor(
+            java.awt.Color(226, 239, 255),
+            java.awt.Color(55, 75, 101),
+        )
         private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s+.*$""")
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+\.\s+.*""")
+        private val PROMPT_REFERENCE_TOKEN_REGEX = Regex("""(?<!\S)#([\p{L}\p{N}_.-]+)""")
         private val WORKFLOW_HEADING_TITLES = setOf(
             "plan", "planning", "计划", "规划",
             "execute", "execution", "implement", "执行", "实施",

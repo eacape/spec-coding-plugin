@@ -20,6 +20,8 @@ class HookConfigStore(private val project: Project) {
 
     @Volatile
     private var loaded = false
+    @Volatile
+    private var storeFingerprint: StoreFingerprint? = null
 
     private val hooks = mutableListOf<HookDefinition>()
 
@@ -118,21 +120,42 @@ class HookConfigStore(private val project: Project) {
     }
 
     private fun ensureLoaded() {
-        if (loaded) {
-            return
-        }
-
         synchronized(lock) {
-            if (loaded) {
+            val path = storePath()
+            val currentFingerprint = snapshotStore(path)
+            if (loaded && currentFingerprint == storeFingerprint) {
                 return
             }
-            loadFromDisk()
+            loadFromDisk(path)
             loaded = true
+            storeFingerprint = snapshotStore(path)
         }
     }
 
-    private fun loadFromDisk() {
-        val path = storePath() ?: return
+    private fun snapshotStore(path: Path?): StoreFingerprint? {
+        if (path == null) {
+            return null
+        }
+        if (!path.exists()) {
+            return StoreFingerprint(exists = false, lastModifiedMillis = 0L, size = 0L)
+        }
+        return runCatching {
+            StoreFingerprint(
+                exists = true,
+                lastModifiedMillis = Files.getLastModifiedTime(path).toMillis(),
+                size = Files.size(path),
+            )
+        }.getOrElse { error ->
+            logger.debug("Failed to read hooks store fingerprint: ${path.toAbsolutePath()}", error)
+            StoreFingerprint(exists = true, lastModifiedMillis = -1L, size = -1L)
+        }
+    }
+
+    private fun loadFromDisk(path: Path?) {
+        if (path == null) {
+            hooks.clear()
+            return
+        }
 
         if (!path.exists()) {
             logger.info("No hooks config found, starting with empty hook set")
@@ -171,6 +194,7 @@ class HookConfigStore(private val project: Project) {
                         StandardOpenOption.WRITE,
                     )
                 }.onSuccess {
+                    storeFingerprint = snapshotStore(path)
                     logger.debug("Persisted ${hooks.size} hooks to ${path.toAbsolutePath()}")
                     return true
                 }.onFailure { error ->
@@ -257,4 +281,10 @@ class HookConfigStore(private val project: Project) {
 
         fun getInstance(project: Project): HookConfigStore = project.service()
     }
+
+    private data class StoreFingerprint(
+        val exists: Boolean,
+        val lastModifiedMillis: Long,
+        val size: Long,
+    )
 }

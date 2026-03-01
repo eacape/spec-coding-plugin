@@ -105,4 +105,53 @@ class HookConfigStoreTest {
         assertEquals("existing", loaded.first().id)
         assertNotNull(store.getHookById("existing"))
     }
+
+    @Test
+    fun `listHooks should reload after hooks yaml is externally updated`() {
+        val hooksDir = tempDir.resolve("repo").resolve(".spec-coding")
+        Files.createDirectories(hooksDir)
+        val hooksFile = hooksDir.resolve("hooks.yaml")
+        Files.writeString(
+            hooksFile,
+            """
+                version: 1
+                hooks:
+                  - id: first
+                    name: First Hook
+                    event: FILE_SAVED
+                    actions:
+                      - type: SHOW_NOTIFICATION
+                        message: first
+            """.trimIndent()
+        )
+
+        val store = HookConfigStore(project)
+        assertEquals(listOf("first"), store.listHooks().map { it.id })
+
+        Files.writeString(
+            hooksFile,
+            """
+                version: 1
+                hooks:
+                  - id: second
+                    name: Second Hook
+                    event: FILE_SAVED
+                    actions:
+                      - type: SHOW_NOTIFICATION
+                        message: second
+                  - id: notify
+                    name: Notify Hook
+                    event: GIT_COMMIT
+                    actions:
+                      - type: SHOW_NOTIFICATION
+                        message: notify
+            """.trimIndent()
+        )
+
+        val reloaded = store.listHooks()
+        assertEquals(2, reloaded.size)
+        assertEquals(setOf("second", "notify"), reloaded.map { it.id }.toSet())
+        assertNotNull(store.getHookById("second"))
+        assertNotNull(store.getHookById("notify"))
+    }
 }

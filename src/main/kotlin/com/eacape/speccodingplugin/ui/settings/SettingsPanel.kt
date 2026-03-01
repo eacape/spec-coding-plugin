@@ -151,6 +151,9 @@ class SettingsPanel(
     private val sectionList = JBList(sectionListModel)
     private val sectionCardLayout = CardLayout()
     private val sectionCardPanel = JPanel(sectionCardLayout)
+    private val sidebarToggleButton = JButton()
+    private lateinit var sidebarCardPanel: JPanel
+    private var sidebarExpanded = false
     private var syncingUi = false
     private val autoSaveTimer = Timer(AUTO_SAVE_DEBOUNCE_MILLIS) {
         persistSettings(reason = "settings-panel-auto-save")
@@ -291,11 +294,22 @@ class SettingsPanel(
     }
 
     private fun createSidebarCard(): JPanel {
+        styleSidebarToggleButton(sidebarToggleButton)
+        sidebarToggleButton.addActionListener {
+            setSidebarExpanded(!sidebarExpanded)
+        }
+
         val scrollPane = JBScrollPane(sectionList).apply {
             border = JBUI.Borders.empty()
             viewport.isOpaque = false
             isOpaque = false
             horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        }
+
+        val toggleHost = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 4, 2, 4)
+            add(sidebarToggleButton, BorderLayout.EAST)
         }
 
         val navSurface = JPanel(BorderLayout()).apply {
@@ -309,10 +323,11 @@ class SettingsPanel(
                 bottom = 1,
                 right = 1,
             )
+            add(toggleHost, BorderLayout.NORTH)
             add(scrollPane, BorderLayout.CENTER)
         }
 
-        return JPanel(BorderLayout()).apply {
+        sidebarCardPanel = JPanel(BorderLayout()).apply {
             isOpaque = true
             background = SIDEBAR_BG
             border = SpecUiStyle.roundedCardBorder(
@@ -323,10 +338,10 @@ class SettingsPanel(
                 bottom = 5,
                 right = 5,
             )
-            preferredSize = JBUI.size(SIDEBAR_WIDTH, 0)
-            minimumSize = JBUI.size(SIDEBAR_WIDTH, 0)
             add(navSurface, BorderLayout.CENTER)
         }
+        setSidebarExpanded(expanded = false)
+        return sidebarCardPanel
     }
 
     private fun createContentCard(): JPanel {
@@ -674,6 +689,49 @@ class SettingsPanel(
     private fun showSelectedSection() {
         val selected = sectionList.selectedValue ?: SidebarSection.BASIC
         sectionCardLayout.show(sectionCardPanel, selected.cardId)
+    }
+
+    private fun styleSidebarToggleButton(button: JButton) {
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.isOpaque = false
+        button.isContentAreaFilled = false
+        button.border = JBUI.Borders.empty()
+        button.margin = JBUI.emptyInsets()
+        button.horizontalAlignment = SwingConstants.CENTER
+        button.verticalAlignment = SwingConstants.CENTER
+        button.preferredSize = JBUI.size(20, 20)
+        button.minimumSize = button.preferredSize
+        button.putClientProperty("JButton.buttonType", "toolbar")
+    }
+
+    private fun setSidebarExpanded(expanded: Boolean) {
+        sidebarExpanded = expanded
+        if (!::sidebarCardPanel.isInitialized) {
+            return
+        }
+
+        val sidebarWidth = if (expanded) SIDEBAR_EXPANDED_WIDTH else SIDEBAR_COLLAPSED_WIDTH
+        sidebarCardPanel.preferredSize = JBUI.size(sidebarWidth, 0)
+        sidebarCardPanel.minimumSize = sidebarCardPanel.preferredSize
+
+        sectionList.border = if (expanded) {
+            JBUI.Borders.empty(6, 6, 6, 6)
+        } else {
+            JBUI.Borders.empty(6, 4, 6, 4)
+        }
+        sectionList.repaint()
+        sectionList.revalidate()
+
+        sidebarToggleButton.icon = if (expanded) AllIcons.General.ArrowLeft else AllIcons.General.ArrowRight
+        sidebarToggleButton.toolTipText = SpecCodingBundle.message(
+            if (expanded) "settings.sidebar.collapse.tooltip" else "settings.sidebar.expand.tooltip",
+        )
+
+        sidebarCardPanel.revalidate()
+        sidebarCardPanel.repaint()
+        revalidate()
+        repaint()
     }
 
     private fun styleActionButton(
@@ -1947,7 +2005,7 @@ class SettingsPanel(
         }
     }
 
-    private class SidebarSectionRenderer : DefaultListCellRenderer() {
+    private inner class SidebarSectionRenderer : DefaultListCellRenderer() {
         override fun getListCellRendererComponent(
             list: JList<*>?,
             value: Any?,
@@ -1958,14 +2016,18 @@ class SettingsPanel(
             val component = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
             val label = component as? JLabel ?: return component
             val section = value as? SidebarSection ?: return component
-            label.text = SpecCodingBundle.message(section.titleKey)
+            val title = SpecCodingBundle.message(section.titleKey)
+            label.text = if (sidebarExpanded) title else ""
             label.icon = section.icon
-            label.iconTextGap = JBUI.scale(6)
+            label.toolTipText = if (sidebarExpanded) null else title
+            label.iconTextGap = if (sidebarExpanded) JBUI.scale(6) else 0
+            label.horizontalAlignment = if (sidebarExpanded) SwingConstants.LEFT else SwingConstants.CENTER
+            label.horizontalTextPosition = SwingConstants.RIGHT
             label.border = BorderFactory.createCompoundBorder(
                 JBUI.Borders.empty(1, 2, 1, 2),
                 BorderFactory.createCompoundBorder(
-                    SidebarItemBorder(isSelected),
-                    JBUI.Borders.empty(6, 7, 6, 8),
+                    SidebarItemBorder(isSelected, compact = !sidebarExpanded),
+                    if (sidebarExpanded) JBUI.Borders.empty(6, 7, 6, 8) else JBUI.Borders.empty(6, 0, 6, 0),
                 ),
             )
             label.background = if (isSelected) SIDEBAR_ITEM_SELECTED_BG else SIDEBAR_ITEM_BG
@@ -1978,6 +2040,7 @@ class SettingsPanel(
 
     private class SidebarItemBorder(
         private val selected: Boolean,
+        private val compact: Boolean = false,
     ) : AbstractBorder() {
         override fun paintBorder(
             c: Component?,
@@ -1993,7 +2056,7 @@ class SettingsPanel(
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
 
-                val leftInset = JBUI.scale(6).toFloat()
+                val leftInset = if (compact) JBUI.scale(2).toFloat() else JBUI.scale(6).toFloat()
                 val arc = JBUI.scale(10).toFloat()
                 val outline = RoundRectangle2D.Float(
                     x + leftInset,
@@ -2006,7 +2069,7 @@ class SettingsPanel(
                 g2.color = if (selected) SIDEBAR_ITEM_SELECTED_BORDER else SIDEBAR_ITEM_BORDER
                 g2.draw(outline)
 
-                if (selected) {
+                if (selected && !compact) {
                     val glowOutline = RoundRectangle2D.Float(
                         x + leftInset + 1f,
                         y + 1.5f,
@@ -2042,7 +2105,7 @@ class SettingsPanel(
 
         override fun getBorderInsets(c: Component?): Insets = Insets(
             JBUI.scale(1),
-            JBUI.scale(6),
+            if (compact) JBUI.scale(2) else JBUI.scale(6),
             JBUI.scale(1),
             JBUI.scale(2),
         )
@@ -2050,7 +2113,7 @@ class SettingsPanel(
         override fun getBorderInsets(c: Component?, insets: Insets): Insets {
             insets.set(
                 JBUI.scale(1),
-                JBUI.scale(6),
+                if (compact) JBUI.scale(2) else JBUI.scale(6),
                 JBUI.scale(1),
                 JBUI.scale(2),
             )
@@ -2173,7 +2236,8 @@ class SettingsPanel(
     }
 
     companion object {
-        private const val SIDEBAR_WIDTH = 128
+        private const val SIDEBAR_EXPANDED_WIDTH = 128
+        private const val SIDEBAR_COLLAPSED_WIDTH = 56
         private const val SIDEBAR_ITEM_HEIGHT = 40
         private val SIDEBAR_BG = JBColor(Color(237, 245, 255), Color(49, 57, 68))
         private val SIDEBAR_BORDER = JBColor(Color(182, 204, 233), Color(81, 94, 113))

@@ -137,6 +137,44 @@ class CompletionProviderTest {
     }
 
     @Test
+    fun `hash prompt completion should insert template name instead of id`() {
+        every { promptManager.listPromptTemplates() } returns listOf(
+            PromptTemplate(
+                id = "ide",
+                name = "中文IDE实现助手模板",
+                content = "content 1",
+                scope = PromptScope.PROJECT,
+            ),
+            PromptTemplate(
+                id = "prompt",
+                name = "老工程师",
+                content = "content 2",
+                scope = PromptScope.PROJECT,
+            ),
+        )
+
+        val provider = createProvider(
+            fileCompletions = emptyList(),
+            isDumbMode = false,
+            classNames = emptyArray(),
+        )
+
+        val completions = provider.getCompletions(
+            TriggerParseResult(
+                triggerType = TriggerType.HASH,
+                triggerOffset = 0,
+                query = "ide",
+            ),
+        )
+
+        assertTrue(completions.any { item ->
+            item.displayText == "#中文IDE实现助手模板" &&
+                item.insertText == "#中文IDE实现助手模板" &&
+                item.description.endsWith("· ide")
+        })
+    }
+
+    @Test
     fun `file completion should return injected file candidates with context`() {
         every { promptManager.listPromptTemplates() } returns emptyList()
 

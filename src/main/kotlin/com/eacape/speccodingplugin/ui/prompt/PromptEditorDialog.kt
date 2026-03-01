@@ -29,6 +29,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Dimension
 import java.awt.Font
 import java.awt.FlowLayout
 import java.awt.Graphics
@@ -150,7 +151,7 @@ class PromptEditorDialog(
         val subtitle = JBLabel(SpecCodingBundle.message("prompt.editor.edit.subtitle")).apply {
             font = JBUI.Fonts.smallFont()
             foreground = SUBTITLE_FG
-            border = JBUI.Borders.emptyTop(1)
+            border = JBUI.Borders.emptyTop(0)
         }
 
         val content = JPanel().apply {
@@ -160,15 +161,16 @@ class PromptEditorDialog(
             add(subtitle)
         }
 
-        return JPanel(BorderLayout()).apply {
+        val card = JPanel(BorderLayout()).apply {
             isOpaque = true
             background = HEADER_BG
             border = JBUI.Borders.compound(
                 RoundedLineBorder(HEADER_BORDER, JBUI.scale(12)),
-                JBUI.Borders.empty(4, 8),
+                JBUI.Borders.empty(2, 8),
             )
             add(content, BorderLayout.CENTER)
         }
+        return lockPreferredHeight(card)
     }
 
     private fun createAiDraftCard(): JPanel {
@@ -272,11 +274,16 @@ class PromptEditorDialog(
     }
 
     private fun createEditorCard(): JPanel {
-        val nameLabel = JBLabel(SpecCodingBundle.message("prompt.editor.field.name")).apply {
+        val nameLabelText = SpecCodingBundle.message("prompt.editor.field.name")
+        val nameLabel = JBLabel(nameLabelText).apply {
+            val labelWidth = maxOf(
+                JBUI.scale(34),
+                getFontMetrics(font).stringWidth(nameLabelText) + JBUI.scale(6),
+            )
             preferredSize = if (isCreateMode) {
-                JBUI.size(36, 24)
+                JBUI.size(labelWidth, 24)
             } else {
-                JBUI.size(34, 22)
+                JBUI.size(labelWidth, 20)
             }
             foreground = TITLE_FG
         }
@@ -285,15 +292,17 @@ class PromptEditorDialog(
         nameField.background = INPUT_BG
         nameField.border = JBUI.Borders.compound(
             RoundedLineBorder(BORDER_COLOR, JBUI.scale(10)),
-            if (isCreateMode) JBUI.Borders.empty(4, 8) else JBUI.Borders.empty(3, 8),
+            if (isCreateMode) JBUI.Borders.empty(4, 8) else JBUI.Borders.empty(2, 8),
         )
         nameField.putClientProperty("JComponent.roundRectArc", JBUI.scale(10))
 
-        val nameRow = JPanel(BorderLayout(JBUI.scale(2), 0)).apply {
-            isOpaque = false
-            add(nameLabel, BorderLayout.WEST)
-            add(nameField, BorderLayout.CENTER)
-        }
+        val nameRow = lockPreferredHeight(
+            JPanel(BorderLayout(JBUI.scale(2), 0)).apply {
+                isOpaque = false
+                add(nameLabel, BorderLayout.WEST)
+                add(nameField, BorderLayout.CENTER)
+            },
+        )
 
         contentPane.font = JBUI.Fonts.label().deriveFont(13f)
         contentPane.background = INPUT_BG
@@ -325,7 +334,7 @@ class PromptEditorDialog(
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             add(nameRow)
-            add(Box.createVerticalStrut(if (isCreateMode) JBUI.scale(6) else JBUI.scale(3)))
+            add(Box.createVerticalStrut(if (isCreateMode) JBUI.scale(6) else JBUI.scale(2)))
             add(editorScrollPane)
             if (isCreateMode) {
                 add(hintLabel)
@@ -335,7 +344,7 @@ class PromptEditorDialog(
         return if (isCreateMode) {
             createCard(content)
         } else {
-            createCard(content, top = 6, left = 10, bottom = 6, right = 10)
+            createCard(content, top = 4, left = 10, bottom = 6, right = 10)
         }
     }
 
@@ -380,6 +389,11 @@ class PromptEditorDialog(
             )
             add(content, BorderLayout.CENTER)
         }
+    }
+
+    private fun <T : JComponent> lockPreferredHeight(component: T): T {
+        component.maximumSize = Dimension(Int.MAX_VALUE, component.preferredSize.height)
+        return component
     }
 
     private fun refreshLocalizedTexts() {

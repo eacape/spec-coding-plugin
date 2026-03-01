@@ -7,6 +7,7 @@ import com.eacape.speccodingplugin.mcp.McpServer
 import com.eacape.speccodingplugin.mcp.McpTool
 import com.eacape.speccodingplugin.mcp.ServerStatus
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -42,10 +43,10 @@ class McpServerDetailPanel(
     private val statusLabel = JBLabel("")
     private val commandLabel = JBLabel("")
     private val errorLabel = JBLabel("")
-    private val startBtn = JButton(SpecCodingBundle.message("mcp.server.start"))
-    private val stopBtn = JButton(SpecCodingBundle.message("mcp.server.stop"))
-    private val restartBtn = JButton(SpecCodingBundle.message("mcp.server.restart"))
-    private val editBtn = JButton(SpecCodingBundle.message("mcp.server.edit"))
+    private val startBtn = JButton()
+    private val stopBtn = JButton()
+    private val restartBtn = JButton()
+    private val editBtn = JButton()
 
     private val toolsLabel = JBLabel("")
     private val toolListModel = DefaultListModel<McpTool>()
@@ -53,9 +54,9 @@ class McpServerDetailPanel(
     private val toolDetailArea = JBTextArea()
     private val runtimeLogsLabel = JBLabel(SpecCodingBundle.message("mcp.server.logs"))
     private val runtimeLogArea = JBTextArea()
-    private val refreshLogsBtn = JButton(SpecCodingBundle.message("mcp.server.logs.refresh"))
-    private val clearLogsBtn = JButton(SpecCodingBundle.message("mcp.server.logs.clear"))
-    private val copyLogsBtn = JButton(SpecCodingBundle.message("mcp.server.logs.copy"))
+    private val refreshLogsBtn = JButton()
+    private val clearLogsBtn = JButton()
+    private val copyLogsBtn = JButton()
 
     private val emptyLabel = JBLabel(SpecCodingBundle.message("mcp.server.select"))
 
@@ -69,6 +70,7 @@ class McpServerDetailPanel(
         isOpaque = true
         background = DETAIL_SECTION_BG
         bindActions()
+        refreshActionButtonPresentation()
         listOf(startBtn, stopBtn, restartBtn, editBtn, refreshLogsBtn, clearLogsBtn, copyLogsBtn).forEach(::styleActionButton)
         showEmpty()
     }
@@ -87,6 +89,27 @@ class McpServerDetailPanel(
                 currentServerId?.let(onCopyLogs)
             }
         }
+    }
+
+    private fun refreshActionButtonPresentation() {
+        configureActionButton(startBtn, MCP_SERVER_START_ICON, "mcp.server.start")
+        configureActionButton(stopBtn, MCP_SERVER_STOP_ICON, "mcp.server.stop")
+        configureActionButton(restartBtn, MCP_SERVER_RESTART_ICON, "mcp.server.restart")
+        configureActionButton(editBtn, MCP_SERVER_EDIT_ICON, "mcp.server.edit")
+        configureActionButton(refreshLogsBtn, MCP_SERVER_LOG_REFRESH_ICON, "mcp.server.logs.refresh")
+        configureActionButton(clearLogsBtn, MCP_SERVER_LOG_CLEAR_ICON, "mcp.server.logs.clear")
+        configureActionButton(copyLogsBtn, MCP_SERVER_LOG_COPY_ICON, "mcp.server.logs.copy")
+    }
+
+    private fun configureActionButton(button: JButton, icon: Icon, tooltipKey: String) {
+        val tooltip = SpecCodingBundle.message(tooltipKey)
+        button.text = ""
+        button.icon = icon
+        button.iconTextGap = 0
+        button.toolTipText = tooltip
+        button.putClientProperty(DEFAULT_TOOLTIP_CLIENT_KEY, tooltip)
+        button.accessibleContext?.accessibleName = tooltip
+        button.accessibleContext?.accessibleDescription = tooltip
     }
 
     private fun buildContentUI() {
@@ -189,9 +212,11 @@ class McpServerDetailPanel(
         toolDetailArea.border = JBUI.Borders.empty(6)
         toolDetailArea.background = TOOL_DETAIL_BG
         toolDetailArea.foreground = TOOL_DETAIL_FG
+        toolDetailArea.rows = 2
         val detailScroll = JBScrollPane(toolDetailArea).apply {
             border = JBUI.Borders.empty()
             viewport.background = TOOL_DETAIL_BG
+            preferredSize = Dimension(0, JBUI.scale(56))
         }
 
         val splitPane = JSplitPane(
@@ -236,7 +261,7 @@ class McpServerDetailPanel(
         runtimeLogArea.foreground = TOOL_DETAIL_FG
         runtimeLogArea.lineWrap = true
         runtimeLogArea.wrapStyleWord = true
-        runtimeLogArea.rows = 5
+        runtimeLogArea.rows = 3
 
         val actionRow = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
             isOpaque = false
@@ -255,7 +280,7 @@ class McpServerDetailPanel(
         val scroll = JBScrollPane(runtimeLogArea).apply {
             border = JBUI.Borders.empty()
             viewport.background = LOG_BG
-            preferredSize = Dimension(0, 132)
+            preferredSize = Dimension(0, JBUI.scale(88))
         }
 
         return JPanel(BorderLayout()).apply {
@@ -335,13 +360,7 @@ class McpServerDetailPanel(
     }
 
     fun refreshLocalizedTexts() {
-        startBtn.text = SpecCodingBundle.message("mcp.server.start")
-        stopBtn.text = SpecCodingBundle.message("mcp.server.stop")
-        restartBtn.text = SpecCodingBundle.message("mcp.server.restart")
-        editBtn.text = SpecCodingBundle.message("mcp.server.edit")
-        refreshLogsBtn.text = SpecCodingBundle.message("mcp.server.logs.refresh")
-        clearLogsBtn.text = SpecCodingBundle.message("mcp.server.logs.clear")
-        copyLogsBtn.text = SpecCodingBundle.message("mcp.server.logs.copy")
+        refreshActionButtonPresentation()
         styleActionButton(startBtn)
         styleActionButton(stopBtn)
         styleActionButton(restartBtn)
@@ -391,7 +410,7 @@ class McpServerDetailPanel(
         if (!trusted && (status == ServerStatus.STOPPED || status == ServerStatus.ERROR)) {
             startBtn.toolTipText = SpecCodingBundle.message("mcp.server.untrusted")
         } else {
-            startBtn.toolTipText = null
+            startBtn.toolTipText = startBtn.getClientProperty(DEFAULT_TOOLTIP_CLIENT_KEY) as? String
         }
     }
 
@@ -497,23 +516,28 @@ class McpServerDetailPanel(
     }
 
     private fun styleActionButton(button: JButton) {
+        val iconOnly = button.icon != null && button.text.isNullOrBlank()
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = true
         button.isOpaque = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.margin = if (iconOnly) JBUI.emptyInsets() else JBUI.insets(1, 4, 1, 4)
         button.background = BUTTON_BG
         button.foreground = BUTTON_FG
         button.border = BorderFactory.createCompoundBorder(
             SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
-            JBUI.Borders.empty(1, 6, 1, 6),
+            if (iconOnly) JBUI.Borders.empty(4) else JBUI.Borders.empty(1, 6, 1, 6),
         )
         SpecUiStyle.applyRoundRect(button, arc = 10)
-        button.preferredSize = JBUI.size(
-            maxOf(button.preferredSize.width, JBUI.scale(56)),
-            JBUI.scale(28),
-        )
+        button.preferredSize = if (iconOnly) {
+            JBUI.size(JBUI.scale(28), JBUI.scale(28))
+        } else {
+            JBUI.size(
+                maxOf(button.preferredSize.width, JBUI.scale(56)),
+                JBUI.scale(28),
+            )
+        }
     }
 
     private fun createSectionContainer(content: JComponent): JPanel {
@@ -538,6 +562,14 @@ class McpServerDetailPanel(
     }
 
     companion object {
+        private const val DEFAULT_TOOLTIP_CLIENT_KEY = "mcp.detail.action.default.tooltip"
+        private val MCP_SERVER_START_ICON = IconLoader.getIcon("/icons/mcp-server-start.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_STOP_ICON = IconLoader.getIcon("/icons/mcp-server-stop.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_RESTART_ICON = IconLoader.getIcon("/icons/mcp-server-restart.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_EDIT_ICON = IconLoader.getIcon("/icons/mcp-server-edit.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_LOG_REFRESH_ICON = IconLoader.getIcon("/icons/mcp-server-log-refresh.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_LOG_CLEAR_ICON = IconLoader.getIcon("/icons/mcp-server-log-clear.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_LOG_COPY_ICON = IconLoader.getIcon("/icons/mcp-server-log-copy.svg", McpServerDetailPanel::class.java)
         private val LOG_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
         private val HEADER_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val HEADER_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))

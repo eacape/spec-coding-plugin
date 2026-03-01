@@ -6,6 +6,7 @@ import com.eacape.speccodingplugin.ui.completion.TriggerParseResult
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
+import java.awt.Color
 import java.awt.event.ActionEvent
 import java.awt.event.InputEvent
 import java.awt.Graphics
@@ -20,6 +21,7 @@ import javax.swing.JTextArea
 import javax.swing.Timer
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.text.DefaultHighlighter
 
 /**
  * 增强输入框
@@ -34,6 +36,8 @@ class SmartInputField(
     private val onPasteIntercept: (() -> Boolean)? = null,
 ) : JTextArea() {
     private val logger = logger<SmartInputField>()
+    private val promptReferenceHighlighter = DefaultHighlighter.DefaultHighlightPainter(PROMPT_REFERENCE_BG)
+    private val promptReferenceHighlightTags = mutableListOf<Any>()
 
     private var debounceTimer: Timer? = null
     private var lastTrigger: TriggerParseResult? = null
@@ -164,10 +168,15 @@ class SmartInputField(
 
     private fun setupDocumentListener() {
         document.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) = scheduleCheck()
-            override fun removeUpdate(e: DocumentEvent) = scheduleCheck()
-            override fun changedUpdate(e: DocumentEvent) = scheduleCheck()
+            override fun insertUpdate(e: DocumentEvent) = onInputChanged()
+            override fun removeUpdate(e: DocumentEvent) = onInputChanged()
+            override fun changedUpdate(e: DocumentEvent) = onInputChanged()
         })
+    }
+
+    private fun onInputChanged() {
+        refreshPromptReferenceHighlights()
+        scheduleCheck()
     }
 
     private fun scheduleCheck() {
@@ -175,6 +184,36 @@ class SmartInputField(
         debounceTimer = Timer(150) { checkTrigger() }
         debounceTimer?.isRepeats = false
         debounceTimer?.start()
+    }
+
+    private fun refreshPromptReferenceHighlights() {
+        val currentHighlighter = highlighter ?: return
+        clearPromptReferenceHighlights(currentHighlighter)
+
+        val currentText = text.orEmpty()
+        if (currentText.isBlank()) return
+
+        PROMPT_REFERENCE_REGEX
+            .findAll(currentText)
+            .take(MAX_PROMPT_REFERENCE_HIGHLIGHTS)
+            .forEach { match ->
+                runCatching {
+                    val tag = currentHighlighter.addHighlight(
+                        match.range.first,
+                        match.range.last + 1,
+                        promptReferenceHighlighter,
+                    )
+                    promptReferenceHighlightTags += tag
+                }
+            }
+    }
+
+    private fun clearPromptReferenceHighlights(currentHighlighter: javax.swing.text.Highlighter) {
+        if (promptReferenceHighlightTags.isEmpty()) return
+        promptReferenceHighlightTags.forEach { tag ->
+            currentHighlighter.removeHighlight(tag)
+        }
+        promptReferenceHighlightTags.clear()
     }
 
     private fun checkTrigger() {
@@ -208,6 +247,7 @@ class SmartInputField(
         }
 
         lastTrigger = null
+        refreshPromptReferenceHighlights()
         onCompletionSelect(item)
     }
 
@@ -261,5 +301,11 @@ class SmartInputField(
         private const val ACTION_COMPLETION_DOWN = "specCoding.completionDown"
         private const val ACTION_COMPLETION_CONFIRM = "specCoding.completionConfirm"
         private const val ACTION_PASTE_CONTENT = "specCoding.pasteContent"
+        private const val MAX_PROMPT_REFERENCE_HIGHLIGHTS = 200
+        private val PROMPT_REFERENCE_REGEX = Regex("""(?<!\S)#([\p{L}\p{N}_.-]+)""")
+        private val PROMPT_REFERENCE_BG = JBColor(
+            Color(224, 237, 255),
+            Color(59, 80, 108),
+        )
     }
 }

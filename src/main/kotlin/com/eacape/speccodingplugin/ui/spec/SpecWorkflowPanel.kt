@@ -17,11 +17,13 @@ import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
 import com.eacape.speccodingplugin.worktree.WorktreeStatus
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.JBColor
@@ -45,6 +47,7 @@ import java.nio.file.Path
 import java.util.Locale
 import javax.swing.BorderFactory
 import javax.swing.JButton
+import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.ScrollPaneConstants
@@ -80,12 +83,12 @@ class SpecWorkflowPanel(
     private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))
     private val providerComboBox = ComboBox<String>()
     private val modelComboBox = ComboBox<ModelInfo>()
-    private val createWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.createWorktree.short"))
-    private val mergeWorktreeButton = JButton(SpecCodingBundle.message("spec.workflow.mergeWorktree.short"))
-    private val deltaButton = JButton(SpecCodingBundle.message("spec.workflow.delta.short"))
-    private val codeGraphButton = JButton(SpecCodingBundle.message("spec.workflow.codeGraph.short"))
-    private val archiveButton = JButton(SpecCodingBundle.message("spec.workflow.archive.short"))
-    private val refreshButton = JButton(SpecCodingBundle.message("spec.workflow.refresh.short"))
+    private val createWorktreeButton = JButton()
+    private val mergeWorktreeButton = JButton()
+    private val deltaButton = JButton()
+    private val codeGraphButton = JButton()
+    private val archiveButton = JButton()
+    private val refreshButton = JButton()
     private val pendingClarificationRetryByWorkflowId = mutableMapOf<String, ClarificationRetryPayload>()
 
     private var selectedWorkflowId: String? = null
@@ -137,6 +140,7 @@ class SpecWorkflowPanel(
         codeGraphButton.addActionListener { onShowCodeGraph() }
         archiveButton.addActionListener { onArchiveWorkflow() }
 
+        applyToolbarButtonPresentation()
         styleToolbarButton(refreshButton)
         styleToolbarButton(createWorktreeButton)
         styleToolbarButton(mergeWorktreeButton)
@@ -150,7 +154,7 @@ class SpecWorkflowPanel(
 
         val modelRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(JBUI.scale(6))
+            border = JBUI.Borders.emptyBottom(JBUI.scale(4))
             add(providerComboBox)
             add(modelLabel)
             add(modelComboBox)
@@ -173,7 +177,7 @@ class SpecWorkflowPanel(
         }
         val actionsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(JBUI.scale(6))
+            border = JBUI.Borders.emptyBottom(JBUI.scale(2))
             add(refreshButton)
             add(createWorktreeButton)
             add(mergeWorktreeButton)
@@ -214,10 +218,10 @@ class SpecWorkflowPanel(
             border = SpecUiStyle.roundedCardBorder(
                 lineColor = TOOLBAR_BORDER,
                 arc = JBUI.scale(14),
-                top = 8,
-                left = 10,
-                bottom = 8,
-                right = 10,
+                top = 5,
+                left = 8,
+                bottom = 5,
+                right = 8,
             )
             add(modelHost, BorderLayout.NORTH)
             add(actionsHost, BorderLayout.CENTER)
@@ -295,29 +299,77 @@ class SpecWorkflowPanel(
     }
 
     private fun styleToolbarButton(button: JButton) {
+        val iconOnly = button.icon != null && button.text.isNullOrBlank()
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.margin = if (iconOnly) JBUI.insets(0, 0, 0, 0) else JBUI.insets(1, 4, 1, 4)
         button.isOpaque = true
         button.foreground = BUTTON_FG
         button.background = BUTTON_BG
         button.border = BorderFactory.createCompoundBorder(
             SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
-            JBUI.Borders.empty(1, 5, 1, 5),
+            if (iconOnly) JBUI.Borders.empty(1, 1, 1, 1) else JBUI.Borders.empty(1, 5, 1, 5),
         )
         SpecUiStyle.applyRoundRect(button, arc = 10)
-        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
-        val insets = button.insets
-        val lafWidth = button.preferredSize?.width ?: 0
-        val width = maxOf(
-            lafWidth,
-            textWidth + insets.left + insets.right + JBUI.scale(10),
-            JBUI.scale(40),
+        if (iconOnly) {
+            val size = JBUI.scale(24)
+            button.preferredSize = JBUI.size(size, size)
+            button.minimumSize = button.preferredSize
+        } else {
+            val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
+            val insets = button.insets
+            val lafWidth = button.preferredSize?.width ?: 0
+            val width = maxOf(
+                lafWidth,
+                textWidth + insets.left + insets.right + JBUI.scale(10),
+                JBUI.scale(40),
+            )
+            button.preferredSize = JBUI.size(width, JBUI.scale(28))
+            button.minimumSize = button.preferredSize
+        }
+    }
+
+    private fun applyToolbarButtonPresentation() {
+        configureToolbarIconButton(
+            button = refreshButton,
+            icon = AllIcons.General.InlineRefresh,
+            tooltipKey = "spec.workflow.refresh",
         )
-        button.preferredSize = JBUI.size(width, JBUI.scale(28))
-        button.minimumSize = button.preferredSize
+        configureToolbarIconButton(
+            button = createWorktreeButton,
+            icon = WORKFLOW_ICON_CREATE_WORKTREE,
+            tooltipKey = "spec.workflow.createWorktree",
+        )
+        configureToolbarIconButton(
+            button = mergeWorktreeButton,
+            icon = WORKFLOW_ICON_MERGE_WORKTREE,
+            tooltipKey = "spec.workflow.mergeWorktree",
+        )
+        configureToolbarIconButton(
+            button = deltaButton,
+            icon = WORKFLOW_ICON_DELTA,
+            tooltipKey = "spec.workflow.delta",
+        )
+        configureToolbarIconButton(
+            button = codeGraphButton,
+            icon = WORKFLOW_ICON_GRAPH,
+            tooltipKey = "spec.workflow.codeGraph",
+        )
+        configureToolbarIconButton(
+            button = archiveButton,
+            icon = AllIcons.General.Export,
+            tooltipKey = "spec.workflow.archive",
+        )
+    }
+
+    private fun configureToolbarIconButton(button: JButton, icon: Icon, tooltipKey: String) {
+        val tooltip = SpecCodingBundle.message(tooltipKey)
+        button.icon = icon
+        button.text = ""
+        button.toolTipText = tooltip
+        button.accessibleContext.accessibleName = tooltip
     }
 
     private fun setupGenerationControls() {
@@ -1427,12 +1479,7 @@ class SpecWorkflowPanel(
     private fun refreshLocalizedTexts() {
         listPanel.refreshLocalizedTexts()
         detailPanel.refreshLocalizedTexts()
-        refreshButton.text = SpecCodingBundle.message("spec.workflow.refresh.short")
-        createWorktreeButton.text = SpecCodingBundle.message("spec.workflow.createWorktree.short")
-        mergeWorktreeButton.text = SpecCodingBundle.message("spec.workflow.mergeWorktree.short")
-        deltaButton.text = SpecCodingBundle.message("spec.workflow.delta.short")
-        codeGraphButton.text = SpecCodingBundle.message("spec.workflow.codeGraph.short")
-        archiveButton.text = SpecCodingBundle.message("spec.workflow.archive.short")
+        applyToolbarButtonPresentation()
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
         styleToolbarButton(refreshButton)
         styleToolbarButton(createWorktreeButton)
@@ -1691,6 +1738,10 @@ class SpecWorkflowPanel(
         private val PHASE_SECTION_BG = JBColor(Color(240, 246, 255), Color(62, 69, 80))
         private val DETAIL_SECTION_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
         private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
+        private val WORKFLOW_ICON_CREATE_WORKTREE = IconLoader.getIcon("/icons/spec-workflow-create-worktree.svg", SpecWorkflowPanel::class.java)
+        private val WORKFLOW_ICON_MERGE_WORKTREE = IconLoader.getIcon("/icons/spec-workflow-merge-worktree.svg", SpecWorkflowPanel::class.java)
+        private val WORKFLOW_ICON_DELTA = IconLoader.getIcon("/icons/spec-workflow-delta.svg", SpecWorkflowPanel::class.java)
+        private val WORKFLOW_ICON_GRAPH = IconLoader.getIcon("/icons/spec-workflow-graph.svg", SpecWorkflowPanel::class.java)
         private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")

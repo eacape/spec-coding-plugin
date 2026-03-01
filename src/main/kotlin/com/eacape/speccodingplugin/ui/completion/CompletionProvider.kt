@@ -99,9 +99,9 @@ class CompletionProvider internal constructor(
             .take(12)
             .map { template ->
                 CompletionItem(
-                    displayText = "#${template.id}",
-                    insertText = "#${template.id}",
-                    description = "${SpecCodingBundle.message("completion.template.description.prompt")} · ${template.name}",
+                    displayText = "#${template.name}",
+                    insertText = "#${template.name}",
+                    description = "${SpecCodingBundle.message("completion.template.description.prompt")} · ${template.id}",
                 )
             }
             .toList()

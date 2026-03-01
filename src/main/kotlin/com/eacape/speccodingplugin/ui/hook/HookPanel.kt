@@ -22,6 +22,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -60,10 +61,12 @@ import java.util.Locale
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.Icon
 import javax.swing.JList
 import javax.swing.ListCellRenderer
 import javax.swing.JPanel
 import javax.swing.JSplitPane
+import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 
 class HookPanel(
@@ -96,12 +99,12 @@ class HookPanel(
 
     private val statusLabel = JBLabel("")
     private val guideLabel = JBLabel(SpecCodingBundle.message("hook.guide.quickStart"))
-    private val openConfigButton = JButton(SpecCodingBundle.message("hook.action.openConfig"))
-    private val aiQuickConfigButton = JButton(SpecCodingBundle.message("hook.action.aiQuickConfig"))
-    private val enableButton = JButton(SpecCodingBundle.message("hook.action.enable"))
-    private val disableButton = JButton(SpecCodingBundle.message("hook.action.disable"))
-    private val refreshLogButton = JButton(SpecCodingBundle.message("hook.log.refresh"))
-    private val clearLogButton = JButton(SpecCodingBundle.message("hook.log.clear"))
+    private val openConfigButton = JButton()
+    private val aiQuickConfigButton = JButton()
+    private val enableButton = JButton()
+    private val disableButton = JButton()
+    private val refreshLogButton = JButton()
+    private val clearLogButton = JButton()
     private val statusChipPanel = JPanel(BorderLayout())
 
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -115,6 +118,7 @@ class HookPanel(
     }
 
     private fun setupUi() {
+        applyActionButtonPresentation()
         listOf(openConfigButton, aiQuickConfigButton, enableButton, disableButton, refreshLogButton, clearLogButton)
             .forEach(::styleActionButton)
 
@@ -231,16 +235,55 @@ class HookPanel(
             JBUI.Borders.empty(1, 5, 1, 5),
         )
         SpecUiStyle.applyRoundRect(button, arc = 10)
-        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
-        val insets = button.insets
-        val lafWidth = button.preferredSize?.width ?: 0
-        val width = maxOf(
-            lafWidth,
-            textWidth + insets.left + insets.right + JBUI.scale(10),
-            JBUI.scale(40),
-        )
+        button.horizontalAlignment = SwingConstants.CENTER
+        button.verticalAlignment = SwingConstants.CENTER
+        button.horizontalTextPosition = SwingConstants.CENTER
+        button.verticalTextPosition = SwingConstants.CENTER
+        button.iconTextGap = 0
+        val width = JBUI.scale(28)
         button.preferredSize = JBUI.size(width, JBUI.scale(28))
         button.minimumSize = button.preferredSize
+    }
+
+    private fun applyActionButtonPresentation() {
+        applyButtonIcon(
+            button = openConfigButton,
+            icon = OPEN_CONFIG_ICON,
+            tooltip = SpecCodingBundle.message("hook.action.openConfig"),
+        )
+        applyButtonIcon(
+            button = aiQuickConfigButton,
+            icon = AI_QUICK_CONFIG_ICON,
+            tooltip = SpecCodingBundle.message("hook.action.aiQuickConfig"),
+        )
+        applyButtonIcon(
+            button = enableButton,
+            icon = ENABLE_HOOK_ICON,
+            tooltip = SpecCodingBundle.message("hook.action.enable"),
+        )
+        applyButtonIcon(
+            button = disableButton,
+            icon = DISABLE_HOOK_ICON,
+            tooltip = SpecCodingBundle.message("hook.action.disable"),
+        )
+        applyButtonIcon(
+            button = refreshLogButton,
+            icon = REFRESH_LOG_ICON,
+            tooltip = SpecCodingBundle.message("hook.log.refresh"),
+        )
+        applyButtonIcon(
+            button = clearLogButton,
+            icon = CLEAR_LOG_ICON,
+            tooltip = SpecCodingBundle.message("hook.log.clear"),
+        )
+    }
+
+    private fun applyButtonIcon(button: JButton, icon: Icon, tooltip: String) {
+        button.text = ""
+        button.icon = icon
+        button.toolTipText = tooltip
+        button.accessibleContext.accessibleName = tooltip
+        button.accessibleContext.accessibleDescription = tooltip
     }
 
     private fun createSectionContainer(content: JComponent): JPanel {
@@ -900,12 +943,7 @@ class HookPanel(
 
     private fun refreshLocalizedTexts() {
         guideLabel.text = SpecCodingBundle.message("hook.guide.quickStart")
-        openConfigButton.text = SpecCodingBundle.message("hook.action.openConfig")
-        aiQuickConfigButton.text = SpecCodingBundle.message("hook.action.aiQuickConfig")
-        enableButton.text = SpecCodingBundle.message("hook.action.enable")
-        disableButton.text = SpecCodingBundle.message("hook.action.disable")
-        refreshLogButton.text = SpecCodingBundle.message("hook.log.refresh")
-        clearLogButton.text = SpecCodingBundle.message("hook.log.clear")
+        applyActionButtonPresentation()
         styleActionButton(openConfigButton)
         styleActionButton(aiQuickConfigButton)
         styleActionButton(enableButton)
@@ -1156,6 +1194,12 @@ class HookPanel(
     }
 
     companion object {
+        private val OPEN_CONFIG_ICON = IconLoader.getIcon("/icons/mcp-server-edit.svg", HookPanel::class.java)
+        private val AI_QUICK_CONFIG_ICON = IconLoader.getIcon("/icons/spec-ai-change.svg", HookPanel::class.java)
+        private val ENABLE_HOOK_ICON = IconLoader.getIcon("/icons/mcp-server-start.svg", HookPanel::class.java)
+        private val DISABLE_HOOK_ICON = IconLoader.getIcon("/icons/mcp-server-stop.svg", HookPanel::class.java)
+        private val REFRESH_LOG_ICON = IconLoader.getIcon("/icons/mcp-server-log-refresh.svg", HookPanel::class.java)
+        private val CLEAR_LOG_ICON = IconLoader.getIcon("/icons/mcp-server-log-clear.svg", HookPanel::class.java)
         private val ITEM_BG = JBColor(Color(245, 249, 255), Color(58, 64, 74))
         private val ITEM_BORDER = JBColor(Color(202, 214, 234), Color(91, 101, 117))
         private val ITEM_SELECTED_BG = JBColor(Color(224, 237, 255), Color(74, 86, 103))

@@ -8,6 +8,7 @@ import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.ui.chat.MarkdownRenderer
+import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -27,6 +28,7 @@ import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.BorderFactory
 import javax.swing.JButton
+import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.JTextPane
@@ -95,20 +97,20 @@ class SpecDetailPanel(
     private lateinit var bottomPanelContainer: JPanel
     private lateinit var mainSplitPane: JSplitPane
 
-    private val generateButton = JButton(SpecCodingBundle.message("spec.detail.generate"))
-    private val nextPhaseButton = JButton(SpecCodingBundle.message("spec.detail.nextPhase"))
-    private val goBackButton = JButton(SpecCodingBundle.message("spec.detail.goBack"))
-    private val completeButton = JButton(SpecCodingBundle.message("spec.detail.complete"))
-    private val pauseResumeButton = JButton(SpecCodingBundle.message("spec.detail.pause"))
-    private val openEditorButton = JButton(SpecCodingBundle.message("spec.detail.openInEditor"))
-    private val historyDiffButton = JButton(SpecCodingBundle.message("spec.detail.historyDiff"))
-    private val editButton = JButton(SpecCodingBundle.message("spec.detail.edit"))
-    private val saveButton = JButton(SpecCodingBundle.message("spec.detail.save"))
-    private val cancelEditButton = JButton(SpecCodingBundle.message("spec.detail.cancel"))
-    private val confirmGenerateButton = JButton(SpecCodingBundle.message("spec.detail.clarify.confirmGenerate"))
-    private val regenerateClarificationButton = JButton(SpecCodingBundle.message("spec.detail.clarify.regenerate"))
-    private val skipClarificationButton = JButton(SpecCodingBundle.message("spec.detail.clarify.skip"))
-    private val cancelClarificationButton = JButton(SpecCodingBundle.message("spec.detail.clarify.cancel"))
+    private val generateButton = JButton()
+    private val nextPhaseButton = JButton()
+    private val goBackButton = JButton()
+    private val completeButton = JButton()
+    private val pauseResumeButton = JButton()
+    private val openEditorButton = JButton()
+    private val historyDiffButton = JButton()
+    private val editButton = JButton()
+    private val saveButton = JButton()
+    private val cancelEditButton = JButton()
+    private val confirmGenerateButton = JButton()
+    private val regenerateClarificationButton = JButton()
+    private val skipClarificationButton = JButton()
+    private val cancelClarificationButton = JButton()
 
     private var currentWorkflow: SpecWorkflow? = null
     private var selectedPhase: SpecPhase? = null
@@ -265,7 +267,7 @@ class SpecDetailPanel(
         bottomPanelContainer = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
             isOpaque = true
             background = INPUT_COLUMN_BG
-            border = JBUI.Borders.emptyTop(8)
+            border = JBUI.Borders.emptyTop(6)
         }
 
         inputArea.lineWrap = true
@@ -288,15 +290,15 @@ class SpecDetailPanel(
         )
         bottomPanelContainer.add(inputSectionContainer, BorderLayout.CENTER)
 
-        val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+        val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(JBUI.scale(8))
+            border = JBUI.Borders.emptyBottom(JBUI.scale(2))
         }
         setupButtons(buttonPanel)
         bottomPanelContainer.add(
             createSectionContainer(
                 JBScrollPane(buttonPanel).apply {
-                    border = JBUI.Borders.empty(6, 4)
+                    border = JBUI.Borders.empty(2, 3)
                     horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
                     viewport.isOpaque = false
@@ -321,6 +323,7 @@ class SpecDetailPanel(
     }
 
     private fun setupButtons(panel: JPanel) {
+        applyActionButtonPresentation()
         styleActionButton(generateButton)
         styleActionButton(nextPhaseButton)
         styleActionButton(goBackButton)
@@ -435,6 +438,94 @@ class SpecDetailPanel(
         panel.add(cancelClarificationButton)
 
         disableAllButtons()
+    }
+
+    private fun applyActionButtonPresentation() {
+        configureIconActionButton(
+            button = generateButton,
+            icon = AllIcons.Actions.Execute,
+            tooltipKey = "spec.detail.generate",
+        )
+        configureIconActionButton(
+            button = nextPhaseButton,
+            icon = AllIcons.General.ArrowRight,
+            tooltipKey = "spec.detail.nextPhase",
+        )
+        configureIconActionButton(
+            button = goBackButton,
+            icon = AllIcons.General.ArrowLeft,
+            tooltipKey = "spec.detail.goBack",
+        )
+        configureIconActionButton(
+            button = completeButton,
+            icon = AllIcons.General.GreenCheckmark,
+            tooltipKey = "spec.detail.complete",
+        )
+        configureIconActionButton(
+            button = openEditorButton,
+            icon = AllIcons.General.OpenInToolWindow,
+            tooltipKey = "spec.detail.openInEditor",
+        )
+        configureIconActionButton(
+            button = historyDiffButton,
+            icon = AllIcons.Vcs.HistoryInline,
+            tooltipKey = "spec.detail.historyDiff",
+        )
+        configureIconActionButton(
+            button = editButton,
+            icon = AllIcons.General.Inline_edit,
+            tooltipKey = "spec.detail.edit",
+        )
+        configureIconActionButton(
+            button = saveButton,
+            icon = AllIcons.General.OpenDisk,
+            tooltipKey = "spec.detail.save",
+        )
+        configureIconActionButton(
+            button = cancelEditButton,
+            icon = AllIcons.Actions.Close,
+            tooltipKey = "spec.detail.cancel",
+        )
+        configureIconActionButton(
+            button = confirmGenerateButton,
+            icon = AllIcons.Actions.Execute,
+            tooltipKey = "spec.detail.clarify.confirmGenerate",
+        )
+        configureIconActionButton(
+            button = regenerateClarificationButton,
+            icon = AllIcons.General.InlineRefresh,
+            tooltipKey = "spec.detail.clarify.regenerate",
+        )
+        configureIconActionButton(
+            button = skipClarificationButton,
+            icon = AllIcons.Actions.Forward,
+            tooltipKey = "spec.detail.clarify.skip",
+        )
+        configureIconActionButton(
+            button = cancelClarificationButton,
+            icon = AllIcons.Actions.Close,
+            tooltipKey = "spec.detail.clarify.cancel",
+        )
+        updatePauseResumeButtonPresentation(currentWorkflow?.status)
+    }
+
+    private fun configureIconActionButton(button: JButton, icon: Icon, tooltipKey: String) {
+        val tooltip = SpecCodingBundle.message(tooltipKey)
+        button.icon = icon
+        button.text = ""
+        button.toolTipText = tooltip
+        button.accessibleContext.accessibleName = tooltip
+    }
+
+    private fun updatePauseResumeButtonPresentation(status: WorkflowStatus?) {
+        val isPaused = status == WorkflowStatus.PAUSED
+        val tooltipKey = if (isPaused) "spec.detail.resume" else "spec.detail.pause"
+        val icon = if (isPaused) AllIcons.Actions.Resume else AllIcons.General.InspectionsPause
+        configureIconActionButton(
+            button = pauseResumeButton,
+            icon = icon,
+            tooltipKey = tooltipKey,
+        )
     }
 
     private fun configurePreviewModePanel() {
@@ -748,29 +839,36 @@ class SpecDetailPanel(
     }
 
     private fun styleActionButton(button: JButton) {
+        val iconOnly = button.icon != null && button.text.isNullOrBlank()
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.margin = if (iconOnly) JBUI.insets(0, 0, 0, 0) else JBUI.insets(1, 4, 1, 4)
         button.isOpaque = true
         button.foreground = BUTTON_FG
         button.background = BUTTON_BG
         button.border = BorderFactory.createCompoundBorder(
             SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
-            JBUI.Borders.empty(1, 5, 1, 5),
+            if (iconOnly) JBUI.Borders.empty(1, 1, 1, 1) else JBUI.Borders.empty(1, 5, 1, 5),
         )
         SpecUiStyle.applyRoundRect(button, arc = 10)
-        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
-        val insets = button.insets
-        val lafWidth = button.preferredSize?.width ?: 0
-        val width = maxOf(
-            lafWidth,
-            textWidth + insets.left + insets.right + JBUI.scale(10),
-            JBUI.scale(40),
-        )
-        button.preferredSize = JBUI.size(width, JBUI.scale(28))
-        button.minimumSize = button.preferredSize
+        if (iconOnly) {
+            val size = JBUI.scale(24)
+            button.preferredSize = JBUI.size(size, size)
+            button.minimumSize = button.preferredSize
+        } else {
+            val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
+            val insets = button.insets
+            val lafWidth = button.preferredSize?.width ?: 0
+            val width = maxOf(
+                lafWidth,
+                textWidth + insets.left + insets.right + JBUI.scale(10),
+                JBUI.scale(40),
+            )
+            button.preferredSize = JBUI.size(width, JBUI.scale(28))
+            button.minimumSize = button.preferredSize
+        }
         updateButtonCursor(button)
     }
 
@@ -814,25 +912,8 @@ class SpecDetailPanel(
         clarificationQuestionsLabel.text = SpecCodingBundle.message("spec.detail.clarify.questions.title")
         clarificationChecklistHintLabel.text = SpecCodingBundle.message("spec.detail.clarify.checklist.hint")
         clarificationPreviewLabel.text = SpecCodingBundle.message("spec.detail.clarify.preview.title")
-        generateButton.text = SpecCodingBundle.message("spec.detail.generate")
-        nextPhaseButton.text = SpecCodingBundle.message("spec.detail.nextPhase")
-        goBackButton.text = SpecCodingBundle.message("spec.detail.goBack")
-        completeButton.text = SpecCodingBundle.message("spec.detail.complete")
-        openEditorButton.text = SpecCodingBundle.message("spec.detail.openInEditor")
-        historyDiffButton.text = SpecCodingBundle.message("spec.detail.historyDiff")
-        editButton.text = SpecCodingBundle.message("spec.detail.edit")
-        saveButton.text = SpecCodingBundle.message("spec.detail.save")
-        cancelEditButton.text = SpecCodingBundle.message("spec.detail.cancel")
-        confirmGenerateButton.text = SpecCodingBundle.message("spec.detail.clarify.confirmGenerate")
-        regenerateClarificationButton.text = SpecCodingBundle.message("spec.detail.clarify.regenerate")
-        skipClarificationButton.text = SpecCodingBundle.message("spec.detail.clarify.skip")
-        cancelClarificationButton.text = SpecCodingBundle.message("spec.detail.clarify.cancel")
+        applyActionButtonPresentation()
         updateInputPlaceholder(currentWorkflow?.currentPhase)
-        pauseResumeButton.text = if (currentWorkflow?.status == WorkflowStatus.PAUSED) {
-            SpecCodingBundle.message("spec.detail.resume")
-        } else {
-            SpecCodingBundle.message("spec.detail.pause")
-        }
         styleActionButton(previewModeButton)
         styleActionButton(clarificationModeButton)
         styleActionButton(generateButton)
@@ -2422,11 +2503,7 @@ class SpecDetailPanel(
                 && workflow.getDocument(SpecPhase.IMPLEMENT)?.validationResult?.valid == true
                 && standardModeEnabled
         pauseResumeButton.isEnabled = !isEditing
-        pauseResumeButton.text = if (workflow.status == WorkflowStatus.PAUSED) {
-            SpecCodingBundle.message("spec.detail.resume")
-        } else {
-            SpecCodingBundle.message("spec.detail.pause")
-        }
+        updatePauseResumeButtonPresentation(workflow.status)
         styleActionButton(pauseResumeButton)
         openEditorButton.isEnabled = !isEditing && !clarifying && selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
         historyDiffButton.isEnabled = !isEditing && !clarifying && selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
@@ -2616,7 +2693,7 @@ class SpecDetailPanel(
             "goBackEnabled" to goBackButton.isEnabled,
             "completeEnabled" to completeButton.isEnabled,
             "pauseResumeEnabled" to pauseResumeButton.isEnabled,
-            "pauseResumeText" to pauseResumeButton.text,
+            "pauseResumeText" to (pauseResumeButton.toolTipText ?: pauseResumeButton.text),
             "openEditorEnabled" to openEditorButton.isEnabled,
             "historyDiffEnabled" to historyDiffButton.isEnabled,
             "confirmGenerateEnabled" to confirmGenerateButton.isEnabled,
