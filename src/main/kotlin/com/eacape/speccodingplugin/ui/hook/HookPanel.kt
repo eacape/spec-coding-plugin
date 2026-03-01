@@ -218,6 +218,10 @@ class HookPanel(
             border = JBUI.Borders.empty()
             isContinuousLayout = true
             background = PANEL_SECTION_BG
+            SpecUiStyle.applyChatLikeSpecDivider(
+                splitPane = this,
+                dividerSize = JBUI.scale(4),
+            )
         }
         add(splitPane, BorderLayout.CENTER)
 

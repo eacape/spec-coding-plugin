@@ -230,11 +230,9 @@ class McpServerDetailPanel(
         splitPane.border = JBUI.Borders.empty()
         splitPane.isContinuousLayout = true
         splitPane.background = DETAIL_SECTION_BG
-        SpecUiStyle.applySplitPaneDivider(
+        SpecUiStyle.applyChatLikeSpecDivider(
             splitPane = splitPane,
             dividerSize = JBUI.scale(6),
-            dividerBackground = DIVIDER_BG,
-            dividerBorderColor = DIVIDER_BORDER,
         )
 
         panel.add(toolsLabel, BorderLayout.NORTH)
@@ -637,7 +635,5 @@ class McpServerDetailPanel(
         private val EMPTY_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
         private val EMPTY_FG = JBColor(Color(106, 121, 141), Color(173, 187, 208))
         private val ERROR_FG = JBColor(Color(176, 60, 73), Color(236, 149, 161))
-        private val DIVIDER_BG = JBColor(Color(236, 240, 246), Color(74, 80, 89))
-        private val DIVIDER_BORDER = JBColor(Color(217, 223, 232), Color(87, 94, 105))
     }
 }

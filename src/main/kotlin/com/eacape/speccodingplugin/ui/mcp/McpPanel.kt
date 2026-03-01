@@ -187,11 +187,9 @@ class McpPanel(
         splitPane.isContinuousLayout = true
         splitPane.border = JBUI.Borders.empty()
         splitPane.background = PANEL_SECTION_BG
-        SpecUiStyle.applySplitPaneDivider(
+        SpecUiStyle.applyChatLikeSpecDivider(
             splitPane = splitPane,
             dividerSize = JBUI.scale(8),
-            dividerBackground = DIVIDER_BG,
-            dividerBorderColor = DIVIDER_BORDER,
         )
         add(splitPane, BorderLayout.CENTER)
 
@@ -960,8 +958,6 @@ class McpPanel(
         private val GUIDE_TEXT_FG = JBColor(Color(86, 100, 122), Color(173, 186, 206))
         private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
         private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
-        private val DIVIDER_BG = JBColor(Color(236, 240, 246), Color(74, 80, 89))
-        private val DIVIDER_BORDER = JBColor(Color(217, 223, 232), Color(87, 94, 105))
     }
 
     private data class AiRequestCandidate(

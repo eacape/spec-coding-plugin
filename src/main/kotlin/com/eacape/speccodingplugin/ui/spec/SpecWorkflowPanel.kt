@@ -158,14 +158,14 @@ class SpecWorkflowPanel(
         statusLabel.foreground = STATUS_TEXT_FG
         setupGenerationControls()
 
-        val controlsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        val controlsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
             isOpaque = false
             add(providerComboBox)
             add(modelLabel)
             add(modelComboBox)
             add(statusChipPanel)
         }
-        val actionsRow = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
+        val actionsRow = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(3), 0)).apply {
             isOpaque = false
             add(refreshButton)
             add(deltaButton)
@@ -197,22 +197,22 @@ class SpecWorkflowPanel(
         statusChipPanel.border = SpecUiStyle.roundedCardBorder(
             lineColor = STATUS_CHIP_BORDER,
             arc = JBUI.scale(12),
-            top = 2,
+            top = 1,
             left = 8,
-            bottom = 2,
+            bottom = 1,
             right = 8,
         )
         statusChipPanel.removeAll()
         statusChipPanel.add(statusLabel, BorderLayout.CENTER)
-        val toolbarCard = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
+        val toolbarCard = JPanel(BorderLayout(0, JBUI.scale(1))).apply {
             isOpaque = true
             background = TOOLBAR_BG
             border = SpecUiStyle.roundedCardBorder(
                 lineColor = TOOLBAR_BORDER,
                 arc = JBUI.scale(14),
-                top = 5,
+                top = 3,
                 left = 8,
-                bottom = 5,
+                bottom = 3,
                 right = 8,
             )
             add(modelHost, BorderLayout.CENTER)
@@ -220,7 +220,7 @@ class SpecWorkflowPanel(
         add(
             JPanel(BorderLayout()).apply {
                 isOpaque = false
-                border = JBUI.Borders.emptyBottom(8)
+                border = JBUI.Borders.emptyBottom(6)
                 add(toolbarCard, BorderLayout.CENTER)
             },
             BorderLayout.NORTH,
@@ -229,15 +229,6 @@ class SpecWorkflowPanel(
         val rightPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = true
             background = DETAIL_COLUMN_BG
-            add(
-                JPanel(BorderLayout()).apply {
-                    isOpaque = true
-                    background = PHASE_SECTION_BG
-                    border = JBUI.Borders.emptyBottom(JBUI.scale(2))
-                    add(phaseIndicator, BorderLayout.CENTER)
-                },
-                BorderLayout.NORTH,
-            )
             add(
                 createSectionContainer(
                     detailPanel,
@@ -262,7 +253,10 @@ class SpecWorkflowPanel(
             isContinuousLayout = true
             border = JBUI.Borders.empty()
             background = PANEL_SECTION_BG
-            SpecUiStyle.applySplitPaneDivider(this, dividerSize = JBUI.scale(8))
+            SpecUiStyle.applyChatLikeSpecDivider(
+                splitPane = this,
+                dividerSize = JBUI.scale(4),
+            )
         }
         split.addComponentListener(
             object : ComponentAdapter() {
@@ -302,7 +296,7 @@ class SpecWorkflowPanel(
         if (iconOnly) {
             installToolbarIconButtonStateTracking(button)
             applyToolbarIconButtonVisualState(button)
-            val size = JBUI.scale(24)
+            val size = JBUI.scale(22)
             button.preferredSize = JBUI.size(size, size)
             button.minimumSize = button.preferredSize
         } else {
@@ -319,7 +313,7 @@ class SpecWorkflowPanel(
                 textWidth + insets.left + insets.right + JBUI.scale(10),
                 JBUI.scale(40),
             )
-            button.preferredSize = JBUI.size(width, JBUI.scale(28))
+            button.preferredSize = JBUI.size(width, JBUI.scale(26))
             button.minimumSize = button.preferredSize
         }
     }
@@ -418,7 +412,7 @@ class SpecWorkflowPanel(
 
     private fun configureToolbarCombo(comboBox: ComboBox<*>, preferredWidth: Int) {
         val width = JBUI.scale(preferredWidth)
-        val height = JBUI.scale(28)
+        val height = JBUI.scale(24)
         comboBox.preferredSize = JBUI.size(width, height)
         comboBox.minimumSize = JBUI.size(JBUI.scale(92), height)
         comboBox.maximumSize = JBUI.size(JBUI.scale(260), height)

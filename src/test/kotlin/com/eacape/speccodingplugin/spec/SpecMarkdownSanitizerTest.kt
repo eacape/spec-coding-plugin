@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.spec
 
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -87,5 +88,40 @@ class SpecMarkdownSanitizerTest {
         assertTrue(sanitized.contains("## 技术选型"))
         assertTrue(sanitized.contains("```mermaid"))
         assertTrue(sanitized.contains("graph TD"))
+    }
+
+    @Test
+    fun `sanitize should not unwrap mermaid-only fenced document`() {
+        val raw = """
+            ```mermaid
+            erDiagram
+            TEAM ||--o{ SNAPSHOT : has
+            ```
+        """.trimIndent()
+
+        val sanitized = SpecMarkdownSanitizer.sanitize(raw)
+
+        assertEquals(raw, sanitized)
+    }
+
+    @Test
+    fun `sanitize should unwrap markdown wrapper while preserving inner mermaid block`() {
+        val raw = """
+            ```markdown
+            ## 数据模型
+            
+            ```mermaid
+            erDiagram
+            TEAM ||--o{ SNAPSHOT : has
+            ```
+            ```
+        """.trimIndent()
+
+        val sanitized = SpecMarkdownSanitizer.sanitize(raw)
+
+        assertTrue(sanitized.startsWith("## 数据模型"))
+        assertTrue(sanitized.contains("```mermaid"))
+        assertTrue(sanitized.contains("TEAM ||--o{ SNAPSHOT : has"))
+        assertFalse(sanitized.startsWith("```markdown"))
     }
 }

@@ -822,6 +822,10 @@ class ImprovedChatPanel(
         return event.status == ChatTraceStatus.DONE || event.status == ChatTraceStatus.ERROR
     }
 
+    private fun shouldAutoStopAfterMcpVerification(event: ChatStreamEvent): Boolean {
+        return looksLikeMcpSignal(event) && isMcpVerificationTerminalEvent(event)
+    }
+
     private fun containsMcpKeyword(value: String?): Boolean {
         val normalized = value?.trim()?.lowercase(Locale.ROOT).orEmpty()
         if (normalized.isBlank()) {
@@ -942,7 +946,6 @@ class ImprovedChatPanel(
             val assistantContent = StringBuilder()
             val pendingDelta = StringBuilder()
             val pendingEvents = mutableListOf<ChatStreamEvent>()
-            val mcpSignalDetected = AtomicBoolean(false)
             val autoStopIssued = AtomicBoolean(false)
             var pendingChunks = 0
             var lastFlushAtNanos = System.nanoTime()
@@ -998,10 +1001,7 @@ class ImprovedChatPanel(
                         ?.let { event ->
                             pendingEvents += event
                             streamedTraceEvents += event
-                            if (looksLikeMcpSignal(event)) {
-                                mcpSignalDetected.set(true)
-                            }
-                            if (mcpSignalDetected.get() && isMcpVerificationTerminalEvent(event)) {
+                            if (shouldAutoStopAfterMcpVerification(event)) {
                                 requestAutoStopAfterMcpVerification(
                                     providerId = resolvedProviderId,
                                     requestId = requestId,
@@ -5016,7 +5016,6 @@ class ImprovedChatPanel(
             val assistantContent = StringBuilder()
             val pendingDelta = StringBuilder()
             val pendingEvents = mutableListOf<ChatStreamEvent>()
-            val mcpSignalDetected = AtomicBoolean(false)
             val autoStopIssued = AtomicBoolean(false)
             var pendingChunks = 0
             var lastFlushAtNanos = System.nanoTime()
@@ -5070,10 +5069,7 @@ class ImprovedChatPanel(
                         ?.let { event ->
                             pendingEvents += event
                             streamedTraceEvents += event
-                            if (looksLikeMcpSignal(event)) {
-                                mcpSignalDetected.set(true)
-                            }
-                            if (mcpSignalDetected.get() && isMcpVerificationTerminalEvent(event)) {
+                            if (shouldAutoStopAfterMcpVerification(event)) {
                                 requestAutoStopAfterMcpVerification(
                                     providerId = resolvedProviderId,
                                     requestId = requestId,
@@ -5361,7 +5357,7 @@ class ImprovedChatPanel(
         private const val MAX_CONVERSATION_HISTORY = 240
         private const val MAX_RESTORED_MESSAGES = 240
         private const val SESSION_LOAD_FETCH_LIMIT = 5000
-        private const val WORKFLOW_COMMAND_TIMEOUT_SECONDS = 120L
+        private const val WORKFLOW_COMMAND_TIMEOUT_SECONDS = 1800L
         private const val WORKFLOW_COMMAND_JOIN_TIMEOUT_MILLIS = 2000L
         private const val WORKFLOW_COMMAND_STOP_GRACE_SECONDS = 3L
         private const val WORKFLOW_COMMAND_OUTPUT_MAX_CHARS = 12_000

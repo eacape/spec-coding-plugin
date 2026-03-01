@@ -55,13 +55,14 @@ object SpecMarkdownSanitizer {
         if (escapedNewlineCount >= 2 && escapedNewlineCount > source.count { it == '\n' }) {
             return true
         }
-        val looksLikeDocument = source.lineSequence()
-            .take(MAX_INITIAL_DOC_SCAN_LINES)
-            .any(::isLikelyDocumentStartLine)
-        return !looksLikeDocument && CODE_FENCE_REGEX.containsMatchIn(source)
+        val wrappedFenceLanguage = wrappedFenceLanguageOrNull(source) ?: return false
+        return wrappedFenceLanguage.isBlank() || wrappedFenceLanguage in PAYLOAD_WRAPPER_FENCE_LANGUAGES
     }
 
     private fun extractLikelyPayloadFromCodeFence(content: String): String {
+        extractWrappedFenceBody(content)?.let { wrappedBody ->
+            if (wrappedBody.isNotBlank()) return wrappedBody
+        }
         val blocks = CODE_FENCE_REGEX.findAll(content)
             .map { it.groupValues[1].trim() }
             .filter { it.isNotBlank() }
@@ -73,6 +74,57 @@ object SpecMarkdownSanitizer {
             decoded.lineSequence().any(::isLikelyDocumentStartLine)
         }
         return preferred ?: blocks.maxByOrNull { it.length } ?: content
+    }
+
+    private fun wrappedFenceLanguageOrNull(source: String): String? {
+        val lines = source
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lines()
+        if (lines.isEmpty()) return null
+
+        var first = 0
+        while (first < lines.size && lines[first].isBlank()) {
+            first += 1
+        }
+        if (first >= lines.size) return null
+
+        val opening = FENCE_OPEN_LINE_REGEX.matchEntire(lines[first].trim()) ?: return null
+        var last = lines.lastIndex
+        while (last > first && lines[last].isBlank()) {
+            last -= 1
+        }
+        if (last <= first) return null
+        if (!FENCE_CLOSE_LINE_REGEX.matches(lines[last].trim())) return null
+
+        val outsideHasContent = lines.take(first).any { it.isNotBlank() } ||
+            lines.drop(last + 1).any { it.isNotBlank() }
+        if (outsideHasContent) return null
+
+        return opening.groupValues[1].trim().lowercase(Locale.ROOT)
+    }
+
+    private fun extractWrappedFenceBody(source: String): String? {
+        val language = wrappedFenceLanguageOrNull(source) ?: return null
+        if (language.isNotBlank() && language !in PAYLOAD_WRAPPER_FENCE_LANGUAGES) {
+            return null
+        }
+
+        val lines = source
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lines()
+        var first = 0
+        while (first < lines.size && lines[first].isBlank()) {
+            first += 1
+        }
+        var last = lines.lastIndex
+        while (last > first && lines[last].isBlank()) {
+            last -= 1
+        }
+        if (last <= first) return null
+
+        return lines.subList(first + 1, last).joinToString("\n")
     }
 
     private fun extractJsonContentFieldIfPresent(content: String): String {
@@ -197,6 +249,8 @@ object SpecMarkdownSanitizer {
         isLenient = true
     }
     private val CODE_FENCE_REGEX = Regex("```(?:[a-zA-Z0-9_-]+)?\\n([\\s\\S]*?)```")
+    private val FENCE_OPEN_LINE_REGEX = Regex("""^```\s*([a-zA-Z0-9_-]*)\s*$""")
+    private val FENCE_CLOSE_LINE_REGEX = Regex("""^```\s*$""")
     private val ESCAPED_NEWLINE_REGEX = Regex("""\\n|\\r\\n""")
     private val TOOL_CALL_BLOCK_REGEX = Regex(
         pattern = "<tool_calls?>.*?</tool_calls?>",
@@ -225,6 +279,17 @@ object SpecMarkdownSanitizer {
     )
     private const val MAX_LEADING_NOISE_LINES = 24
     private const val MAX_INITIAL_DOC_SCAN_LINES = 40
+    private val PAYLOAD_WRAPPER_FENCE_LANGUAGES = setOf(
+        "markdown",
+        "md",
+        "text",
+        "txt",
+        "json",
+        "yaml",
+        "yml",
+        "plain",
+        "plaintext",
+    )
     private val MARKDOWN_HEADING_REGEX = Regex("""^\s{0,3}#{1,6}\s+\S+""")
     private val CHECKBOX_ITEM_REGEX = Regex("""^\s*-\s*\[[ xX]\]\s+\S+""")
     private val RAW_CHECKBOX_ITEM_REGEX = Regex("""^\s*\[[ xX]\]\s+\S+""")

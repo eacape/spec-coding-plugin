@@ -609,11 +609,11 @@ class HistorySessionListPanel(
         private val HISTORY_OPEN_ICON = IconLoader.getIcon("/icons/history-open-new-tab.svg", HistorySessionListPanel::class.java)
         private val CONTINUE_ICON_COLOR = JBColor(Color(69, 160, 96), Color(146, 224, 165))
 
-        private const val ACTION_ICON_SCALE = 1.26f
-        private val ACTION_HIT_SIZE = JBUI.scale(24)
-        private val ACTION_ICON_GAP = JBUI.scale(7)
-        private val ACTION_STRIP_LEFT_PADDING = JBUI.scale(6)
-        private val ACTION_STRIP_RIGHT_PADDING = JBUI.scale(11)
+        private const val ACTION_ICON_SCALE = 1.0f
+        private val ACTION_HIT_SIZE = JBUI.scale(20)
+        private val ACTION_ICON_GAP = JBUI.scale(5)
+        private val ACTION_STRIP_LEFT_PADDING = JBUI.scale(4)
+        private val ACTION_STRIP_RIGHT_PADDING = JBUI.scale(8)
         private val ACTION_ZONE_TOP = JBUI.scale(7)
         private val ACTION_STRIP_WIDTH = ACTION_STRIP_LEFT_PADDING +
             ACTION_STRIP_RIGHT_PADDING +

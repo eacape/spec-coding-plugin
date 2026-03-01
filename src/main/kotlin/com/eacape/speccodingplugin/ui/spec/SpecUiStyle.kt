@@ -17,6 +17,7 @@ import javax.swing.JSplitPane
 import javax.swing.border.AbstractBorder
 import javax.swing.border.Border
 import javax.swing.border.CompoundBorder
+import javax.swing.plaf.basic.BasicSplitPaneDivider
 import javax.swing.plaf.basic.BasicSplitPaneUI
 
 internal object SpecUiStyle {
@@ -77,6 +78,7 @@ internal object SpecUiStyle {
         dividerSize: Int = JBUI.scale(8),
         dividerBackground: Color = JBColor(Color(236, 240, 246), Color(66, 72, 82)),
         dividerBorderColor: Color = JBColor(Color(217, 223, 232), Color(78, 86, 98, 110)),
+        drawDarkBorder: Boolean = false,
     ) {
         val horizontal = splitPane.orientation == JSplitPane.HORIZONTAL_SPLIT
         val cursorType = if (horizontal) Cursor.E_RESIZE_CURSOR else Cursor.N_RESIZE_CURSOR
@@ -86,12 +88,114 @@ internal object SpecUiStyle {
         (splitPane.ui as? BasicSplitPaneUI)?.divider?.let { divider ->
             divider.cursor = cursor
             divider.background = dividerBackground
-            divider.border = if (StartupUiUtil.isUnderDarcula) {
-                JBUI.Borders.empty()
-            } else if (horizontal) {
-                JBUI.Borders.customLine(dividerBorderColor, 0, 1, 0, 1)
+            divider.border = if (horizontal) {
+                if (StartupUiUtil.isUnderDarcula && !drawDarkBorder) {
+                    JBUI.Borders.empty()
+                } else {
+                    JBUI.Borders.customLine(dividerBorderColor, 0, 1, 0, 1)
+                }
             } else {
-                JBUI.Borders.customLine(dividerBorderColor, 1, 0, 1, 0)
+                if (StartupUiUtil.isUnderDarcula && !drawDarkBorder) {
+                    JBUI.Borders.empty()
+                } else {
+                    JBUI.Borders.customLine(dividerBorderColor, 1, 0, 1, 0)
+                }
+            }
+        }
+    }
+
+    fun applyChatLikeSpecDivider(
+        splitPane: JSplitPane,
+        dividerSize: Int = JBUI.scale(4),
+    ) {
+        splitPane.ui = GripSplitPaneUI()
+        applySplitPaneDivider(
+            splitPane = splitPane,
+            dividerSize = dividerSize,
+            dividerBackground = JBColor(
+                Color(236, 240, 246),
+                Color(74, 80, 89),
+            ),
+            dividerBorderColor = JBColor(
+                Color(217, 223, 232),
+                Color(87, 94, 105),
+            ),
+            drawDarkBorder = true,
+        )
+    }
+
+    private class GripSplitPaneUI : BasicSplitPaneUI() {
+        override fun createDefaultDivider(): BasicSplitPaneDivider {
+            return object : BasicSplitPaneDivider(this) {
+                override fun paint(g: Graphics) {
+                    super.paint(g)
+                    val g2 = g as? Graphics2D ?: return
+                    val horizontal = splitPane?.orientation == JSplitPane.HORIZONTAL_SPLIT
+                    val w = width
+                    val h = height
+                    if (w <= 0 || h <= 0) return
+
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    if (horizontal) {
+                        paintVerticalGrip(g2, w, h)
+                    } else {
+                        paintHorizontalGrip(g2, w, h)
+                    }
+                }
+
+                private fun paintVerticalGrip(g2: Graphics2D, w: Int, h: Int) {
+                    val trackWidth = JBUI.scale(3)
+                    val trackHeight = JBUI.scale(30)
+                    val trackX = (w - trackWidth) / 2
+                    val trackY = (h - trackHeight) / 2
+                    g2.color = JBColor(
+                        Color(225, 232, 242),
+                        Color(92, 99, 111),
+                    )
+                    g2.fillRoundRect(trackX, trackY, trackWidth, trackHeight, trackWidth, trackWidth)
+
+                    val dotSize = JBUI.scale(2)
+                    val dotStep = JBUI.scale(5)
+                    val dotX = (w - dotSize) / 2
+                    val dotStart = trackY + JBUI.scale(5)
+                    val dotEnd = trackY + trackHeight - dotSize - JBUI.scale(4)
+                    g2.color = JBColor(
+                        Color(152, 166, 186),
+                        Color(167, 179, 196),
+                    )
+                    var y = dotStart
+                    while (y <= dotEnd) {
+                        g2.fillOval(dotX, y, dotSize, dotSize)
+                        y += dotStep
+                    }
+                }
+
+                private fun paintHorizontalGrip(g2: Graphics2D, w: Int, h: Int) {
+                    val trackWidth = JBUI.scale(30)
+                    val trackHeight = JBUI.scale(3)
+                    val trackX = (w - trackWidth) / 2
+                    val trackY = (h - trackHeight) / 2
+                    g2.color = JBColor(
+                        Color(225, 232, 242),
+                        Color(92, 99, 111),
+                    )
+                    g2.fillRoundRect(trackX, trackY, trackWidth, trackHeight, trackHeight, trackHeight)
+
+                    val dotSize = JBUI.scale(2)
+                    val dotStep = JBUI.scale(5)
+                    val dotY = (h - dotSize) / 2
+                    val dotStart = trackX + JBUI.scale(5)
+                    val dotEnd = trackX + trackWidth - dotSize - JBUI.scale(4)
+                    g2.color = JBColor(
+                        Color(152, 166, 186),
+                        Color(167, 179, 196),
+                    )
+                    var x = dotStart
+                    while (x <= dotEnd) {
+                        g2.fillOval(x, dotY, dotSize, dotSize)
+                        x += dotStep
+                    }
+                }
             }
         }
     }

@@ -370,8 +370,8 @@ class SettingsPanel(
             .addLabeledComponent(SpecCodingBundle.message("settings.engine.claudePath"), claudeCodeCliPathField)
             .addLabeledComponent(SpecCodingBundle.message("settings.engine.codexPath"), codexCliPathField)
             .addLabeledComponent(" ", cliDetectPanel)
-            .addLabeledComponent("claude cli:", claudeCliStatusLabel)
-            .addLabeledComponent("codex cli:", codexCliStatusLabel)
+            .addLabeledComponent(SpecCodingBundle.message("settings.cli.claudeLabel"), claudeCliStatusLabel)
+            .addLabeledComponent(SpecCodingBundle.message("settings.cli.codexLabel"), codexCliStatusLabel)
             .panel.apply {
                 isOpaque = false
                 border = JBUI.Borders.empty()
@@ -600,6 +600,10 @@ class SettingsPanel(
             isOneTouchExpandable = false
             dividerSize = JBUI.scale(9)
             border = JBUI.Borders.empty()
+            SpecUiStyle.applyChatLikeSpecDivider(
+                splitPane = this,
+                dividerSize = JBUI.scale(9),
+            )
         }
 
         return JPanel(BorderLayout()).apply {

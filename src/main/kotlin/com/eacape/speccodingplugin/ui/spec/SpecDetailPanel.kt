@@ -23,6 +23,8 @@ import java.awt.Component
 import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import javax.swing.Box
@@ -133,6 +135,7 @@ class SpecDetailPanel(
     private var isClarificationQuestionsExpanded: Boolean = true
     private var isClarificationPreviewExpanded: Boolean = true
     private var isClarificationPreviewContentVisible: Boolean = true
+    private var hasAppliedInitialBottomHeight: Boolean = false
     private val processTimelineEntries = mutableListOf<ProcessTimelineEntry>()
 
     init {
@@ -174,7 +177,10 @@ class SpecDetailPanel(
             isContinuousLayout = true
             border = JBUI.Borders.empty()
             background = PANEL_BG
-            SpecUiStyle.applySplitPaneDivider(this, dividerSize = JBUI.scale(8))
+            SpecUiStyle.applyChatLikeSpecDivider(
+                splitPane = this,
+                dividerSize = JBUI.scale(4),
+            )
         }
 
         documentTree.isRootVisible = false
@@ -283,7 +289,7 @@ class SpecDetailPanel(
         updateInputPlaceholder(null)
         val inputScroll = JBScrollPane(inputArea)
         inputScroll.border = JBUI.Borders.empty()
-        inputScroll.preferredSize = java.awt.Dimension(0, JBUI.scale(80))
+        inputScroll.preferredSize = java.awt.Dimension(0, JBUI.scale(20))
         inputSectionContainer = createSectionContainer(
             inputScroll,
             backgroundColor = INPUT_SECTION_BG,
@@ -291,15 +297,15 @@ class SpecDetailPanel(
         )
         bottomPanelContainer.add(inputSectionContainer, BorderLayout.CENTER)
 
-        val buttonPanel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+        val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 3, 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(JBUI.scale(2))
+            border = JBUI.Borders.emptyBottom(JBUI.scale(1))
         }
         setupButtons(buttonPanel)
         bottomPanelContainer.add(
             createSectionContainer(
                 JBScrollPane(buttonPanel).apply {
-                    border = JBUI.Borders.empty(2, 3)
+                    border = JBUI.Borders.empty(1, 3)
                     horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
                     viewport.isOpaque = false
@@ -318,9 +324,35 @@ class SpecDetailPanel(
             resizeWeight = 0.67
             border = JBUI.Borders.empty()
             background = PANEL_BG
-            SpecUiStyle.applySplitPaneDivider(this, dividerSize = JBUI.scale(8))
+            SpecUiStyle.applyChatLikeSpecDivider(
+                splitPane = this,
+                dividerSize = JBUI.scale(4),
+            )
         }
+        mainSplitPane.addComponentListener(
+            object : ComponentAdapter() {
+                override fun componentResized(e: ComponentEvent?) {
+                    applyInitialBottomPanelHeightIfNeeded()
+                }
+            },
+        )
         add(mainSplitPane, BorderLayout.CENTER)
+        SwingUtilities.invokeLater {
+            applyInitialBottomPanelHeightIfNeeded()
+        }
+    }
+
+    private fun applyInitialBottomPanelHeightIfNeeded() {
+        if (hasAppliedInitialBottomHeight || !::mainSplitPane.isInitialized || !::bottomPanelContainer.isInitialized) {
+            return
+        }
+        val total = mainSplitPane.height - mainSplitPane.dividerSize
+        if (total <= 0) {
+            return
+        }
+        val desiredBottomHeight = bottomPanelContainer.preferredSize.height.coerceAtLeast(JBUI.scale(44))
+        mainSplitPane.dividerLocation = (total - desiredBottomHeight).coerceIn(0, total)
+        hasAppliedInitialBottomHeight = true
     }
 
     private fun setupButtons(panel: JPanel) {
@@ -642,7 +674,10 @@ class SpecDetailPanel(
                 resizeWeight = 0.58
                 border = JBUI.Borders.empty()
                 background = PANEL_BG
-                SpecUiStyle.applySplitPaneDivider(this, dividerSize = JBUI.scale(8))
+                SpecUiStyle.applyChatLikeSpecDivider(
+                    splitPane = this,
+                    dividerSize = JBUI.scale(4),
+                )
             }
             add(clarificationSplitPane, BorderLayout.CENTER)
             refreshClarificationSectionsLayout()
@@ -853,7 +888,7 @@ class SpecDetailPanel(
         if (iconOnly) {
             installActionIconButtonStateTracking(button)
             applyActionIconButtonVisualState(button)
-            val size = JBUI.scale(24)
+            val size = JBUI.scale(22)
             button.preferredSize = JBUI.size(size, size)
             button.minimumSize = button.preferredSize
         } else {
@@ -870,7 +905,7 @@ class SpecDetailPanel(
                 textWidth + insets.left + insets.right + JBUI.scale(10),
                 JBUI.scale(40),
             )
-            button.preferredSize = JBUI.size(width, JBUI.scale(28))
+            button.preferredSize = JBUI.size(width, JBUI.scale(26))
             button.minimumSize = button.preferredSize
         }
         updateButtonCursor(button)
@@ -2194,7 +2229,7 @@ class SpecDetailPanel(
                 clarificationSplitPane.bottomComponent = clarificationPreviewSection
             }
             clarificationSplitPane.resizeWeight = 0.58
-            clarificationSplitPane.dividerSize = JBUI.scale(8)
+            clarificationSplitPane.dividerSize = JBUI.scale(4)
             SwingUtilities.invokeLater {
                 if (!::clarificationSplitPane.isInitialized) {
                     return@invokeLater
@@ -3017,7 +3052,7 @@ class SpecDetailPanel(
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
-        private val SPEC_DETAIL_GENERATE_ICON = IconLoader.getIcon("/icons/spec-detail-generate.svg", SpecDetailPanel::class.java)
+        private val SPEC_DETAIL_GENERATE_ICON = IconLoader.getIcon("/icons/spec-detail-generate-run-all.svg", SpecDetailPanel::class.java)
         private val SECTION_TITLE_FG = JBColor(Color(36, 60, 101), Color(212, 223, 241))
         private val COLLAPSE_TOGGLE_TEXT_ACTIVE = JBColor(Color(86, 115, 158), Color(187, 205, 230))
         private const val MAX_PROCESS_TIMELINE_ENTRIES = 18

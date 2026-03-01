@@ -106,11 +106,9 @@ class WorktreePanel(
             isContinuousLayout = true
             border = JBUI.Borders.empty()
             background = PANEL_SECTION_BG
-            SpecUiStyle.applySplitPaneDivider(
+            SpecUiStyle.applyChatLikeSpecDivider(
                 splitPane = this,
                 dividerSize = JBUI.scale(8),
-                dividerBackground = DIVIDER_BG,
-                dividerBorderColor = DIVIDER_BORDER,
             )
         }
         add(splitPane, BorderLayout.CENTER)
@@ -355,7 +353,5 @@ class WorktreePanel(
         private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
         private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
         private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
-        private val DIVIDER_BG = JBColor(Color(236, 240, 246), Color(74, 80, 89))
-        private val DIVIDER_BORDER = JBColor(Color(217, 223, 232), Color(87, 94, 105))
     }
 }
