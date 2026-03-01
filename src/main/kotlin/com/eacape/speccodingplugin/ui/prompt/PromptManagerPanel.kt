@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.prompt.PromptManager
+import com.eacape.speccodingplugin.prompt.PromptScope
 import com.eacape.speccodingplugin.prompt.PromptTemplate
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -145,8 +146,14 @@ class PromptManagerPanel(
             promptList.cursor = Cursor.getDefaultCursor()
             return
         }
+        val selected = listModel.getElementAt(index)
         val action = PromptListCellRenderer.resolveRowAction(cellBounds, point)
-        promptList.cursor = if (action != null) {
+        val clickable = when (action) {
+            PromptListCellRenderer.RowAction.DELETE -> selected.scope == PromptScope.PROJECT
+            PromptListCellRenderer.RowAction.EDIT -> true
+            null -> false
+        }
+        promptList.cursor = if (clickable) {
             Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         } else {
             Cursor.getDefaultCursor()
@@ -166,7 +173,7 @@ class PromptManagerPanel(
         promptList.selectedIndex = index
         when (PromptListCellRenderer.resolveRowAction(cellBounds, point)) {
             PromptListCellRenderer.RowAction.EDIT -> onEdit(selected)
-            PromptListCellRenderer.RowAction.DELETE -> onDelete(selected)
+            PromptListCellRenderer.RowAction.DELETE -> if (selected.scope == PromptScope.PROJECT) onDelete(selected)
             null -> if (clickCount >= 2) onEdit(selected)
         }
     }

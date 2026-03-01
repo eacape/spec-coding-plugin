@@ -84,6 +84,48 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `updateWorkflow should keep full markdown when mermaid block exists in design document`() {
+        val panel = createPanel()
+        val designContent = """
+            # 设计文档示例
+            
+            ## 架构设计
+            - 使用三层架构
+            
+            ```mermaid
+            erDiagram
+              TEAM ||--o{ TEAM_ALIAS : has
+            ```
+            
+            ## 技术选型
+            - Kotlin
+        """.trimIndent()
+        val workflow = SpecWorkflow(
+            id = "wf-mermaid-preview",
+            currentPhase = SpecPhase.DESIGN,
+            documents = mapOf(
+                SpecPhase.DESIGN to document(
+                    phase = SpecPhase.DESIGN,
+                    content = designContent,
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Mermaid",
+            description = "Preview should keep full markdown",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(workflow)
+
+        val preview = panel.currentPreviewTextForTest()
+        assertTrue(preview.contains("## 架构设计"))
+        assertTrue(preview.contains("## 技术选型"))
+        assertTrue(preview.contains("erDiagram"))
+    }
+
+    @Test
     fun `updateWorkflow should follow current phase when requested`() {
         val panel = createPanel()
         val specifyContent = "requirements content"

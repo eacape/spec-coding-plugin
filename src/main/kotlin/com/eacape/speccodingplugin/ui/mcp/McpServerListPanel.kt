@@ -81,6 +81,7 @@ class McpServerListPanel(
         // 列表
         serverList.selectionMode = ListSelectionModel.SINGLE_SELECTION
         serverList.cellRenderer = ServerCellRenderer()
+        serverList.fixedCellHeight = JBUI.scale(44)
         serverList.emptyText.text = SpecCodingBundle.message("mcp.server.empty")
         serverList.background = LIST_BG
         serverList.selectionBackground = LIST_ROW_SELECTED_BG
@@ -184,15 +185,42 @@ class McpServerListPanel(
             cellHasFocus: Boolean
         ): Component {
             if (value != null) {
-                nameLabel.text = value.name
+                val contentWidth = (list.width - JBUI.scale(34)).coerceAtLeast(JBUI.scale(52))
+                val nameWidth = (contentWidth - JBUI.scale(14)).coerceAtLeast(JBUI.scale(36))
+                val fullName = value.name
                 val statusText = when (value.status) {
                     ServerStatus.RUNNING -> SpecCodingBundle.message("mcp.server.status.running")
                     ServerStatus.STOPPED -> SpecCodingBundle.message("mcp.server.status.stopped")
                     ServerStatus.STARTING -> SpecCodingBundle.message("mcp.server.status.starting")
                     ServerStatus.ERROR -> SpecCodingBundle.message("mcp.server.status.error")
                 }
-                infoLabel.text = SpecCodingBundle.message("mcp.server.list.info", statusText, value.toolCount)
+                val fullInfo = SpecCodingBundle.message("mcp.server.list.info", statusText, value.toolCount)
+                val (nameText, nameTruncated) = truncateByPixel(
+                    text = fullName,
+                    fontMetrics = nameLabel.getFontMetrics(nameLabel.font),
+                    maxWidthPx = nameWidth,
+                )
+                val (infoText, infoTruncated) = truncateByPixel(
+                    text = fullInfo,
+                    fontMetrics = infoLabel.getFontMetrics(infoLabel.font),
+                    maxWidthPx = contentWidth,
+                )
+                nameLabel.text = nameText
+                infoLabel.text = infoText
+                val tooltip = when {
+                    nameTruncated && infoTruncated -> "$fullName\n$fullInfo"
+                    nameTruncated -> fullName
+                    infoTruncated -> fullInfo
+                    else -> null
+                }
+                panel.toolTipText = tooltip
+                nameLabel.toolTipText = tooltip
+                infoLabel.toolTipText = tooltip
                 statusDot.background = getStatusColor(value.status)
+            } else {
+                panel.toolTipText = null
+                nameLabel.toolTipText = null
+                infoLabel.toolTipText = null
             }
             panel.background = if (isSelected) {
                 LIST_ROW_SELECTED_BG
@@ -214,6 +242,34 @@ class McpServerListPanel(
             ServerStatus.STARTING -> JBColor(Color(255, 152, 0), Color(255, 167, 38))
             ServerStatus.ERROR -> JBColor(Color(244, 67, 54), Color(239, 83, 80))
         }
+
+        private fun truncateByPixel(
+            text: String,
+            fontMetrics: FontMetrics,
+            maxWidthPx: Int,
+        ): Pair<String, Boolean> {
+            val normalized = text.trim()
+            if (normalized.isEmpty()) return "" to false
+            if (maxWidthPx <= 0) return ELLIPSIS to true
+            if (fontMetrics.stringWidth(normalized) <= maxWidthPx) return normalized to false
+            val ellipsisWidth = fontMetrics.stringWidth(ELLIPSIS)
+            if (maxWidthPx <= ellipsisWidth) return ELLIPSIS to true
+            var low = 0
+            var high = normalized.length
+            while (low < high) {
+                val mid = (low + high + 1) / 2
+                val candidate = normalized.substring(0, mid)
+                val width = fontMetrics.stringWidth(candidate) + ellipsisWidth
+                if (width <= maxWidthPx) {
+                    low = mid
+                } else {
+                    high = mid - 1
+                }
+            }
+            val kept = normalized.substring(0, low).trimEnd()
+            val output = if (kept.isEmpty()) ELLIPSIS else "$kept$ELLIPSIS"
+            return output to true
+        }
     }
 
     private fun styleActionButton(button: JButton) {
@@ -224,13 +280,18 @@ class McpServerListPanel(
         button.isOpaque = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         button.margin = if (iconOnly) JBUI.emptyInsets() else JBUI.insets(1, 4, 1, 4)
-        button.background = BUTTON_BG
         button.foreground = BUTTON_FG
-        button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
-            if (iconOnly) JBUI.Borders.empty(4) else JBUI.Borders.empty(1, 6, 1, 6),
-        )
         SpecUiStyle.applyRoundRect(button, arc = 10)
+        if (iconOnly) {
+            installActionIconButtonStateTracking(button)
+            applyActionIconButtonVisualState(button)
+        } else {
+            button.background = BUTTON_BG
+            button.border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+                JBUI.Borders.empty(1, 6, 1, 6),
+            )
+        }
         button.preferredSize = if (iconOnly) {
             JBUI.size(JBUI.scale(28), JBUI.scale(28))
         } else {
@@ -241,11 +302,49 @@ class McpServerListPanel(
         }
     }
 
+    private fun installActionIconButtonStateTracking(button: JButton) {
+        if (button.getClientProperty("mcp.list.iconStyleInstalled") == true) return
+        button.putClientProperty("mcp.list.iconStyleInstalled", true)
+        button.isRolloverEnabled = true
+        button.addChangeListener { applyActionIconButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") { applyActionIconButtonVisualState(button) }
+    }
+
+    private fun applyActionIconButtonVisualState(button: JButton) {
+        val model = button.model
+        val background = when {
+            !button.isEnabled -> ICON_BUTTON_BG_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BG_ACTIVE
+            model.isRollover -> ICON_BUTTON_BG_HOVER
+            else -> ICON_BUTTON_BG
+        }
+        val borderColor = when {
+            !button.isEnabled -> ICON_BUTTON_BORDER_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BORDER_ACTIVE
+            model.isRollover -> ICON_BUTTON_BORDER_HOVER
+            else -> ICON_BUTTON_BORDER
+        }
+        button.background = background
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10)),
+            JBUI.Borders.empty(4),
+        )
+    }
+
     companion object {
+        private const val ELLIPSIS = "…"
         private val MCP_SERVER_DELETE_ICON = AllIcons.Actions.GC
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
         private val TITLE_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val ICON_BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val ICON_BUTTON_BG_HOVER = JBColor(Color(233, 243, 255), Color(72, 81, 94))
+        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 254), Color(82, 92, 107))
+        private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
+        private val ICON_BUTTON_BORDER = JBColor(Color(138, 186, 144), Color(118, 168, 126))
+        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(120, 172, 128), Color(132, 185, 141))
+        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(104, 160, 113), Color(146, 201, 156))
+        private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))

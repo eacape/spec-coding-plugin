@@ -77,6 +77,7 @@ import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.wm.ToolWindowManager
@@ -220,7 +221,7 @@ class ImprovedChatPanel(
         Color(0xC6CBD3),
     )
     private lateinit var inputField: SmartInputField
-    private val sendButton = StopAwareButton()
+    private val sendButton = JButton()
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var statusAutoHideTimer: Timer? = null
     private var dividerPersistTimer: Timer? = null
@@ -3974,16 +3975,15 @@ class ImprovedChatPanel(
         val tooltip = SpecCodingBundle.message(tooltipKey)
         sendButton.toolTipText = tooltip
         sendButton.accessibleContext.accessibleName = tooltip
-        sendButton.stopMode = stopMode
         sendButton.icon = if (stopMode) {
-            null
+            CHAT_STOP_ICON
         } else {
-            AllIcons.Actions.Execute
+            CHAT_SEND_ICON
         }
     }
 
     private fun configureActionButtons() {
-        sendButton.icon = AllIcons.Actions.Execute
+        sendButton.icon = CHAT_SEND_ICON
         sendButton.text = ""
         sendButton.isFocusable = false
         sendButton.isFocusPainted = false
@@ -3996,70 +3996,6 @@ class ImprovedChatPanel(
         sendButton.maximumSize = ACTION_ICON_BUTTON_SIZE
         sendButton.putClientProperty("JButton.buttonType", "toolbar")
         refreshActionButtonTexts()
-    }
-
-    private class StopAwareButton : JButton() {
-        private val stopGlyph = JBColor(
-            Color(194, 66, 56),
-            Color(235, 118, 109),
-        )
-        private val stopGlyphDisabled = JBColor(
-            Color(170, 170, 170),
-            Color(126, 126, 126),
-        )
-        private val stopBgIdle = JBColor(
-            Color(194, 66, 56, 24),
-            Color(235, 118, 109, 36),
-        )
-        private val stopBgHover = JBColor(
-            Color(194, 66, 56, 34),
-            Color(235, 118, 109, 50),
-        )
-        private val stopBgPressed = JBColor(
-            Color(194, 66, 56, 48),
-            Color(235, 118, 109, 64),
-        )
-
-        var stopMode: Boolean = false
-            set(value) {
-                if (field == value) return
-                field = value
-                isContentAreaFilled = !value
-                repaint()
-            }
-
-        override fun paintComponent(g: Graphics) {
-            if (!stopMode) {
-                super.paintComponent(g)
-                return
-            }
-            val g2 = g.create() as Graphics2D
-            try {
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-
-                val bgSize = minOf(width, height, JBUI.scale(18))
-                val bgX = (width - bgSize) / 2
-                val bgY = (height - bgSize) / 2
-                val arc = JBUI.scale(8)
-                g2.color = when {
-                    !isEnabled -> stopBgIdle
-                    model.isPressed -> stopBgPressed
-                    model.isRollover -> stopBgHover
-                    else -> stopBgIdle
-                }
-                g2.fillRoundRect(bgX, bgY, bgSize, bgSize, arc, arc)
-
-                val glyphSize = maxOf(JBUI.scale(6), minOf(JBUI.scale(8), bgSize - JBUI.scale(8)))
-                val glyphX = bgX + (bgSize - glyphSize) / 2
-                val glyphY = bgY + (bgSize - glyphSize) / 2
-                val glyphArc = JBUI.scale(2)
-                g2.color = if (isEnabled) stopGlyph else stopGlyphDisabled
-                g2.fillRoundRect(glyphX, glyphY, glyphSize, glyphSize, glyphArc, glyphArc)
-            }
-            finally {
-                g2.dispose()
-            }
-        }
     }
 
     private fun configureSpecSidebarToggleButton() {
@@ -5416,6 +5352,8 @@ class ImprovedChatPanel(
 
         private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"
         private val HISTORY_CONTENT_DATA_KEY = Key.create<String>(HISTORY_CONTENT_KEY)
+        private val CHAT_SEND_ICON = IconLoader.getIcon("/icons/chat-send.svg", ImprovedChatPanel::class.java)
+        private val CHAT_STOP_ICON = IconLoader.getIcon("/icons/chat-stop.svg", ImprovedChatPanel::class.java)
         private val ACTION_ICON_BUTTON_SIZE = JBDimension(28, 24)
         private const val SPEC_WORKFLOW_COMBO_MIN_WIDTH = 120
         private const val SPEC_WORKFLOW_COMBO_MAX_WIDTH = 220

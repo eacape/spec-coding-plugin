@@ -5,6 +5,7 @@ import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecWorkflow
+import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.worktree.WorktreeManager
 import com.eacape.speccodingplugin.worktree.WorktreeBinding
 import com.eacape.speccodingplugin.worktree.WorktreeMergeResult
@@ -24,7 +25,6 @@ import java.awt.Color
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Font
-import javax.swing.BorderFactory
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 
@@ -85,6 +85,8 @@ class WorktreePanel(
 
     init {
         border = JBUI.Borders.empty(8)
+        isOpaque = true
+        background = PANEL_BG
         setupUI()
         subscribeToLocaleEvents()
         refreshWorktrees()
@@ -100,10 +102,16 @@ class WorktreePanel(
         ).apply {
             dividerLocation = 320
             resizeWeight = 0.38
-            dividerSize = JBUI.scale(6)
+            dividerSize = JBUI.scale(8)
             isContinuousLayout = true
             border = JBUI.Borders.empty()
             background = PANEL_SECTION_BG
+            SpecUiStyle.applySplitPaneDivider(
+                splitPane = this,
+                dividerSize = JBUI.scale(8),
+                dividerBackground = DIVIDER_BG,
+                dividerBorderColor = DIVIDER_BORDER,
+            )
         }
         add(splitPane, BorderLayout.CENTER)
     }
@@ -116,9 +124,13 @@ class WorktreePanel(
         val statusChip = JPanel(BorderLayout()).apply {
             isOpaque = true
             background = STATUS_CHIP_BG
-            border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(STATUS_CHIP_BORDER, 1),
-                JBUI.Borders.empty(3, 8),
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = STATUS_CHIP_BORDER,
+                arc = JBUI.scale(12),
+                top = 2,
+                left = 8,
+                bottom = 2,
+                right = 8,
             )
             add(statusLabel, BorderLayout.CENTER)
         }
@@ -126,9 +138,13 @@ class WorktreePanel(
         val headerCard = JPanel(BorderLayout()).apply {
             isOpaque = true
             background = HEADER_BG
-            border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(HEADER_BORDER, 1),
-                JBUI.Borders.empty(8, 10),
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = HEADER_BORDER,
+                arc = JBUI.scale(14),
+                top = 8,
+                left = 10,
+                bottom = 8,
+                right = 10,
             )
             add(titleLabel, BorderLayout.WEST)
             add(statusChip, BorderLayout.EAST)
@@ -145,9 +161,13 @@ class WorktreePanel(
         return JPanel(BorderLayout()).apply {
             isOpaque = true
             background = PANEL_SECTION_BG
-            border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(PANEL_SECTION_BORDER, 1),
-                JBUI.Borders.empty(2),
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = PANEL_SECTION_BORDER,
+                arc = JBUI.scale(12),
+                top = 3,
+                left = 3,
+                bottom = 3,
+                right = 3,
             )
             add(content, BorderLayout.CENTER)
         }
@@ -327,12 +347,15 @@ class WorktreePanel(
     }
 
     companion object {
-        private val HEADER_BG = JBColor(Color(248, 250, 253), Color(58, 63, 71))
-        private val HEADER_BORDER = JBColor(Color(214, 222, 236), Color(82, 90, 102))
-        private val STATUS_CHIP_BG = JBColor(Color(239, 245, 253), Color(64, 74, 88))
-        private val STATUS_CHIP_BORDER = JBColor(Color(186, 201, 224), Color(96, 111, 131))
-        private val STATUS_TEXT_FG = JBColor(Color(60, 76, 100), Color(194, 207, 225))
-        private val PANEL_SECTION_BG = JBColor(Color(251, 252, 254), Color(50, 54, 61))
-        private val PANEL_SECTION_BORDER = JBColor(Color(211, 218, 232), Color(79, 85, 96))
+        private val PANEL_BG = JBColor(Color(247, 250, 255), Color(52, 57, 65))
+        private val HEADER_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
+        private val HEADER_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val STATUS_CHIP_BG = JBColor(Color(236, 244, 255), Color(66, 76, 91))
+        private val STATUS_CHIP_BORDER = JBColor(Color(178, 198, 226), Color(99, 116, 140))
+        private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
+        private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val DIVIDER_BG = JBColor(Color(236, 240, 246), Color(74, 80, 89))
+        private val DIVIDER_BORDER = JBColor(Color(217, 223, 232), Color(87, 94, 105))
     }
 }

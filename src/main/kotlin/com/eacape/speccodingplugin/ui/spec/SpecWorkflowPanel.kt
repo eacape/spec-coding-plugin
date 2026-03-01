@@ -135,6 +135,8 @@ class SpecWorkflowPanel(
         refreshButton.addActionListener { refreshWorkflows() }
         createWorktreeButton.isEnabled = false
         mergeWorktreeButton.isEnabled = false
+        createWorktreeButton.isVisible = false
+        mergeWorktreeButton.isVisible = false
         deltaButton.isEnabled = false
         codeGraphButton.isEnabled = true
         archiveButton.isEnabled = false
@@ -166,8 +168,6 @@ class SpecWorkflowPanel(
         val actionsRow = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
             isOpaque = false
             add(refreshButton)
-            add(createWorktreeButton)
-            add(mergeWorktreeButton)
             add(deltaButton)
             add(codeGraphButton)
             add(archiveButton)
@@ -291,8 +291,6 @@ class SpecWorkflowPanel(
 
     private fun styleToolbarButton(button: JButton) {
         val iconOnly = button.icon != null && button.text.isNullOrBlank()
-        val buttonBg = if (iconOnly) ICON_BUTTON_BG else BUTTON_BG
-        val buttonBorder = if (iconOnly) ICON_BUTTON_BORDER else BUTTON_BORDER
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = true
@@ -300,17 +298,19 @@ class SpecWorkflowPanel(
         button.margin = if (iconOnly) JBUI.insets(0, 0, 0, 0) else JBUI.insets(1, 4, 1, 4)
         button.isOpaque = true
         button.foreground = BUTTON_FG
-        button.background = buttonBg
-        button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(buttonBorder, JBUI.scale(10)),
-            if (iconOnly) JBUI.Borders.empty(1, 1, 1, 1) else JBUI.Borders.empty(1, 5, 1, 5),
-        )
         SpecUiStyle.applyRoundRect(button, arc = 10)
         if (iconOnly) {
+            installToolbarIconButtonStateTracking(button)
+            applyToolbarIconButtonVisualState(button)
             val size = JBUI.scale(24)
             button.preferredSize = JBUI.size(size, size)
             button.minimumSize = button.preferredSize
         } else {
+            button.background = BUTTON_BG
+            button.border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+                JBUI.Borders.empty(1, 5, 1, 5),
+            )
             val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
             val insets = button.insets
             val lafWidth = button.preferredSize?.width ?: 0
@@ -322,6 +322,35 @@ class SpecWorkflowPanel(
             button.preferredSize = JBUI.size(width, JBUI.scale(28))
             button.minimumSize = button.preferredSize
         }
+    }
+
+    private fun installToolbarIconButtonStateTracking(button: JButton) {
+        if (button.getClientProperty("spec.toolbar.iconStyleInstalled") == true) return
+        button.putClientProperty("spec.toolbar.iconStyleInstalled", true)
+        button.isRolloverEnabled = true
+        button.addChangeListener { applyToolbarIconButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") { applyToolbarIconButtonVisualState(button) }
+    }
+
+    private fun applyToolbarIconButtonVisualState(button: JButton) {
+        val model = button.model
+        val background = when {
+            !button.isEnabled -> ICON_BUTTON_BG_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BG_ACTIVE
+            model.isRollover -> ICON_BUTTON_BG_HOVER
+            else -> ICON_BUTTON_BG
+        }
+        val borderColor = when {
+            !button.isEnabled -> ICON_BUTTON_BORDER_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BORDER_ACTIVE
+            model.isRollover -> ICON_BUTTON_BORDER_HOVER
+            else -> ICON_BUTTON_BORDER
+        }
+        button.background = background
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10)),
+            JBUI.Borders.empty(1, 1, 1, 1),
+        )
     }
 
     private fun applyToolbarButtonPresentation() {
@@ -352,7 +381,7 @@ class SpecWorkflowPanel(
         )
         configureToolbarIconButton(
             button = archiveButton,
-            icon = AllIcons.General.Export,
+            icon = WORKFLOW_ICON_ARCHIVE,
             tooltipKey = "spec.workflow.archive",
         )
     }
@@ -360,6 +389,7 @@ class SpecWorkflowPanel(
     private fun configureToolbarIconButton(button: JButton, icon: Icon, tooltipKey: String) {
         val tooltip = SpecCodingBundle.message(tooltipKey)
         button.icon = icon
+        button.disabledIcon = IconLoader.getDisabledIcon(icon)
         button.text = ""
         button.toolTipText = tooltip
         button.accessibleContext.accessibleName = tooltip
@@ -1757,7 +1787,13 @@ class SpecWorkflowPanel(
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
         private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
-        private val ICON_BUTTON_BORDER = JBColor(Color(191, 206, 229), Color(98, 111, 130))
+        private val ICON_BUTTON_BORDER = JBColor(Color(98, 174, 108), Color(132, 188, 142))
+        private val ICON_BUTTON_BG_HOVER = JBColor(Color(238, 246, 255), Color(76, 84, 98))
+        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(70, 158, 83), Color(152, 210, 163))
+        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(230, 240, 254), Color(84, 94, 111))
+        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(46, 144, 61), Color(174, 226, 184))
+        private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
+        private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
@@ -1774,8 +1810,9 @@ class SpecWorkflowPanel(
         private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
         private val WORKFLOW_ICON_CREATE_WORKTREE = IconLoader.getIcon("/icons/spec-workflow-create-worktree.svg", SpecWorkflowPanel::class.java)
         private val WORKFLOW_ICON_MERGE_WORKTREE = IconLoader.getIcon("/icons/spec-workflow-merge-worktree.svg", SpecWorkflowPanel::class.java)
-        private val WORKFLOW_ICON_DELTA = IconLoader.getIcon("/icons/spec-workflow-delta.svg", SpecWorkflowPanel::class.java)
-        private val WORKFLOW_ICON_GRAPH = IconLoader.getIcon("/icons/spec-workflow-graph.svg", SpecWorkflowPanel::class.java)
+        private val WORKFLOW_ICON_DELTA = IconLoader.getIcon("/icons/spec-workflow-diff.svg", SpecWorkflowPanel::class.java)
+        private val WORKFLOW_ICON_GRAPH = IconLoader.getIcon("/icons/spec-workflow-graphql-tool-window.svg", SpecWorkflowPanel::class.java)
+        private val WORKFLOW_ICON_ARCHIVE = IconLoader.getIcon("/icons/spec-workflow-archive.svg", SpecWorkflowPanel::class.java)
         private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")

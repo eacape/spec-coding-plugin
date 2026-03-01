@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.StartupUiUtil
 import java.awt.Color
 import java.awt.Cursor
 import java.awt.Graphics
@@ -74,8 +75,8 @@ internal object SpecUiStyle {
     fun applySplitPaneDivider(
         splitPane: JSplitPane,
         dividerSize: Int = JBUI.scale(8),
-        dividerBackground: Color = JBColor(Color(236, 240, 246), Color(74, 80, 89)),
-        dividerBorderColor: Color = JBColor(Color(217, 223, 232), Color(87, 94, 105)),
+        dividerBackground: Color = JBColor(Color(236, 240, 246), Color(66, 72, 82)),
+        dividerBorderColor: Color = JBColor(Color(217, 223, 232), Color(78, 86, 98, 110)),
     ) {
         val horizontal = splitPane.orientation == JSplitPane.HORIZONTAL_SPLIT
         val cursorType = if (horizontal) Cursor.E_RESIZE_CURSOR else Cursor.N_RESIZE_CURSOR
@@ -85,7 +86,9 @@ internal object SpecUiStyle {
         (splitPane.ui as? BasicSplitPaneUI)?.divider?.let { divider ->
             divider.cursor = cursor
             divider.background = dividerBackground
-            divider.border = if (horizontal) {
+            divider.border = if (StartupUiUtil.isUnderDarcula) {
+                JBUI.Borders.empty()
+            } else if (horizontal) {
                 JBUI.Borders.customLine(dividerBorderColor, 0, 1, 0, 1)
             } else {
                 JBUI.Borders.customLine(dividerBorderColor, 1, 0, 1, 0)

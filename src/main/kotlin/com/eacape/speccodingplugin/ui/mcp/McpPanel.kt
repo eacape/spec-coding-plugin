@@ -16,6 +16,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
@@ -170,10 +171,16 @@ class McpPanel(
         add(north, BorderLayout.NORTH)
 
         // 主体: 左右分割
+        val listSection = createSectionContainer(serverListPanel).apply {
+            minimumSize = JBUI.size(JBUI.scale(192), 0)
+        }
+        val detailSection = createSectionContainer(serverDetailPanel).apply {
+            minimumSize = JBUI.size(JBUI.scale(360), 0)
+        }
         val splitPane = JSplitPane(
             JSplitPane.HORIZONTAL_SPLIT,
-            createSectionContainer(serverListPanel),
-            createSectionContainer(serverDetailPanel),
+            listSection,
+            detailSection,
         )
         splitPane.dividerLocation = JBUI.scale(252)
         splitPane.dividerSize = JBUI.scale(8)
@@ -846,13 +853,18 @@ class McpPanel(
         button.isOpaque = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         button.margin = if (iconOnly) JBUI.emptyInsets() else JBUI.insets(1, 4, 1, 4)
-        button.background = bg
         button.foreground = fg
-        button.border = javax.swing.BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(border, JBUI.scale(10)),
-            if (iconOnly) JBUI.Borders.empty(4) else JBUI.Borders.empty(1, 6, 1, 6),
-        )
         SpecUiStyle.applyRoundRect(button, arc = 10)
+        if (iconOnly) {
+            installToolbarIconButtonStateTracking(button)
+            applyToolbarIconButtonVisualState(button)
+        } else {
+            button.background = bg
+            button.border = javax.swing.BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(border, JBUI.scale(10)),
+                JBUI.Borders.empty(1, 6, 1, 6),
+            )
+        }
         button.preferredSize = if (iconOnly) {
             JBUI.size(JBUI.scale(28), JBUI.scale(28))
         } else {
@@ -867,6 +879,35 @@ class McpPanel(
             JBUI.size(width, JBUI.scale(28))
         }
         button.minimumSize = button.preferredSize
+    }
+
+    private fun installToolbarIconButtonStateTracking(button: JButton) {
+        if (button.getClientProperty("mcp.toolbar.iconStyleInstalled") == true) return
+        button.putClientProperty("mcp.toolbar.iconStyleInstalled", true)
+        button.isRolloverEnabled = true
+        button.addChangeListener { applyToolbarIconButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") { applyToolbarIconButtonVisualState(button) }
+    }
+
+    private fun applyToolbarIconButtonVisualState(button: JButton) {
+        val model = button.model
+        val background = when {
+            !button.isEnabled -> ICON_BUTTON_BG_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BG_ACTIVE
+            model.isRollover -> ICON_BUTTON_BG_HOVER
+            else -> ICON_BUTTON_BG
+        }
+        val borderColor = when {
+            !button.isEnabled -> ICON_BUTTON_BORDER_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BORDER_ACTIVE
+            model.isRollover -> ICON_BUTTON_BORDER_HOVER
+            else -> ICON_BUTTON_BORDER
+        }
+        button.background = background
+        button.border = javax.swing.BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10)),
+            JBUI.Borders.empty(4),
+        )
     }
 
     private fun createSectionContainer(content: JComponent): JPanel {
@@ -892,13 +933,21 @@ class McpPanel(
         private const val AI_REQUEST_TIMEOUT_SECONDS = AI_REQUEST_TIMEOUT_MS / 1_000
         private const val AI_MAX_CANDIDATE_ATTEMPTS = 3
         private const val STATUS_CHIP_MAX_TEXT_LENGTH = 26
-        private val MCP_TOOLBAR_AI_SETUP_ICON = AllIcons.General.GearPlain
+        private val MCP_TOOLBAR_AI_SETUP_ICON = IconLoader.getIcon("/icons/mcp-ai-generated.svg", McpPanel::class.java)
         private val MCP_TOOLBAR_AI_SETUP_STOP_ICON = AllIcons.Actions.Close
         private val MCP_TOOLBAR_ADD_ICON = AllIcons.General.Add
         private val MCP_TOOLBAR_REFRESH_ICON = AllIcons.Actions.Refresh
 
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val ICON_BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val ICON_BUTTON_BG_HOVER = JBColor(Color(233, 243, 255), Color(72, 81, 94))
+        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 254), Color(82, 92, 107))
+        private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
+        private val ICON_BUTTON_BORDER = JBColor(Color(138, 186, 144), Color(118, 168, 126))
+        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(120, 172, 128), Color(132, 185, 141))
+        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(104, 160, 113), Color(146, 201, 156))
+        private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))

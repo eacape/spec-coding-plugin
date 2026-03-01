@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.history
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.session.SessionSummary
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -515,33 +516,10 @@ class HistorySessionListPanel(
     )
 
     private enum class RowAction(val icon: Icon, val tooltipKey: String) {
-        OPEN(OpenSessionIcon(), "history.action.open"),
+        OPEN(HISTORY_OPEN_ICON, "history.action.open"),
         CONTINUE(ContinueSessionIcon(), "history.action.continue"),
         BRANCH(AllIcons.Vcs.Branch, "history.action.branch"),
         DELETE(AllIcons.Actions.GC, "history.action.delete"),
-    }
-
-    private class OpenSessionIcon : Icon {
-        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
-            val g2 = g.create() as Graphics2D
-            try {
-                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE)
-                g2.color = OPEN_ICON_COLOR
-                g2.stroke = BasicStroke(1.15f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-                g2.translate(x.toDouble(), y.toDouble())
-                g2.drawRoundRect(1, 2, 7, 10, 2, 2)
-                g2.drawLine(8, 8, 14, 8)
-                g2.drawLine(11, 5, 14, 8)
-                g2.drawLine(11, 11, 14, 8)
-            } finally {
-                g2.dispose()
-            }
-        }
-
-        override fun getIconWidth(): Int = 16
-
-        override fun getIconHeight(): Int = 16
     }
 
     private class ContinueSessionIcon : Icon {
@@ -628,7 +606,7 @@ class HistorySessionListPanel(
         private val ACTION_ICON_HOVER_BORDER = JBColor(Color(158, 184, 226), Color(122, 145, 175))
         private val ACTION_ICON_HOVER_BG_SELECTED = JBColor(Color(206, 224, 251), Color(92, 112, 139))
         private val ACTION_ICON_HOVER_BORDER_SELECTED = JBColor(Color(120, 156, 219), Color(139, 167, 201))
-        private val OPEN_ICON_COLOR = JBColor(Color(93, 110, 134), Color(176, 188, 205))
+        private val HISTORY_OPEN_ICON = IconLoader.getIcon("/icons/history-open-new-tab.svg", HistorySessionListPanel::class.java)
         private val CONTINUE_ICON_COLOR = JBColor(Color(69, 160, 96), Color(146, 224, 165))
 
         private const val ACTION_ICON_SCALE = 1.26f

@@ -101,6 +101,7 @@ class HookPanel(
     private val guideLabel = JBLabel(SpecCodingBundle.message("hook.guide.quickStart"))
     private val openConfigButton = JButton()
     private val aiQuickConfigButton = JButton()
+    private val refreshHooksButton = JButton()
     private val enableButton = JButton()
     private val disableButton = JButton()
     private val refreshLogButton = JButton()
@@ -119,13 +120,22 @@ class HookPanel(
 
     private fun setupUi() {
         applyActionButtonPresentation()
-        listOf(openConfigButton, aiQuickConfigButton, enableButton, disableButton, refreshLogButton, clearLogButton)
+        listOf(
+            openConfigButton,
+            aiQuickConfigButton,
+            refreshHooksButton,
+            enableButton,
+            disableButton,
+            refreshLogButton,
+            clearLogButton,
+        )
             .forEach(::styleActionButton)
 
         val hookActionRow = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
             isOpaque = false
             add(openConfigButton)
             add(aiQuickConfigButton)
+            add(refreshHooksButton)
             add(enableButton)
             add(disableButton)
         }
@@ -213,6 +223,7 @@ class HookPanel(
 
         openConfigButton.addActionListener { openHookConfig() }
         aiQuickConfigButton.addActionListener { quickSetupWithAi() }
+        refreshHooksButton.addActionListener { refreshHooks() }
         refreshLogButton.addActionListener { refreshLogs() }
         enableButton.addActionListener { updateSelectedHookEnabled(true) }
         disableButton.addActionListener { updateSelectedHookEnabled(false) }
@@ -222,19 +233,25 @@ class HookPanel(
     }
 
     private fun styleActionButton(button: JButton) {
+        val iconOnly = button.icon != null && button.text.isNullOrBlank()
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        button.margin = JBUI.insets(1, 4, 1, 4)
+        button.margin = if (iconOnly) JBUI.emptyInsets() else JBUI.insets(1, 4, 1, 4)
         button.isOpaque = true
         button.foreground = BUTTON_FG
-        button.background = BUTTON_BG
-        button.border = javax.swing.BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
-            JBUI.Borders.empty(1, 5, 1, 5),
-        )
         SpecUiStyle.applyRoundRect(button, arc = 10)
+        if (iconOnly) {
+            installHookIconButtonStateTracking(button)
+            applyHookIconButtonVisualState(button)
+        } else {
+            button.background = BUTTON_BG
+            button.border = javax.swing.BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+                JBUI.Borders.empty(1, 5, 1, 5),
+            )
+        }
         button.horizontalAlignment = SwingConstants.CENTER
         button.verticalAlignment = SwingConstants.CENTER
         button.horizontalTextPosition = SwingConstants.CENTER
@@ -243,6 +260,35 @@ class HookPanel(
         val width = JBUI.scale(28)
         button.preferredSize = JBUI.size(width, JBUI.scale(28))
         button.minimumSize = button.preferredSize
+    }
+
+    private fun installHookIconButtonStateTracking(button: JButton) {
+        if (button.getClientProperty("hook.toolbar.iconStyleInstalled") == true) return
+        button.putClientProperty("hook.toolbar.iconStyleInstalled", true)
+        button.isRolloverEnabled = true
+        button.addChangeListener { applyHookIconButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") { applyHookIconButtonVisualState(button) }
+    }
+
+    private fun applyHookIconButtonVisualState(button: JButton) {
+        val model = button.model
+        val background = when {
+            !button.isEnabled -> ICON_BUTTON_BG_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BG_ACTIVE
+            model.isRollover -> ICON_BUTTON_BG_HOVER
+            else -> ICON_BUTTON_BG
+        }
+        val borderColor = when {
+            !button.isEnabled -> ICON_BUTTON_BORDER_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BORDER_ACTIVE
+            model.isRollover -> ICON_BUTTON_BORDER_HOVER
+            else -> ICON_BUTTON_BORDER
+        }
+        button.background = background
+        button.border = javax.swing.BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10)),
+            JBUI.Borders.empty(4),
+        )
     }
 
     private fun applyActionButtonPresentation() {
@@ -255,6 +301,11 @@ class HookPanel(
             button = aiQuickConfigButton,
             icon = AI_QUICK_CONFIG_ICON,
             tooltip = SpecCodingBundle.message("hook.action.aiQuickConfig"),
+        )
+        applyButtonIcon(
+            button = refreshHooksButton,
+            icon = REFRESH_HOOKS_ICON,
+            tooltip = SpecCodingBundle.message("hook.action.refresh"),
         )
         applyButtonIcon(
             button = enableButton,
@@ -946,6 +997,7 @@ class HookPanel(
         applyActionButtonPresentation()
         styleActionButton(openConfigButton)
         styleActionButton(aiQuickConfigButton)
+        styleActionButton(refreshHooksButton)
         styleActionButton(enableButton)
         styleActionButton(disableButton)
         styleActionButton(refreshLogButton)
@@ -1194,12 +1246,13 @@ class HookPanel(
     }
 
     companion object {
-        private val OPEN_CONFIG_ICON = IconLoader.getIcon("/icons/mcp-server-edit.svg", HookPanel::class.java)
+        private val OPEN_CONFIG_ICON = IconLoader.getIcon("/icons/hook-config.svg", HookPanel::class.java)
         private val AI_QUICK_CONFIG_ICON = IconLoader.getIcon("/icons/spec-ai-change.svg", HookPanel::class.java)
-        private val ENABLE_HOOK_ICON = IconLoader.getIcon("/icons/mcp-server-start.svg", HookPanel::class.java)
-        private val DISABLE_HOOK_ICON = IconLoader.getIcon("/icons/mcp-server-stop.svg", HookPanel::class.java)
-        private val REFRESH_LOG_ICON = IconLoader.getIcon("/icons/hook-log-refresh.svg", HookPanel::class.java)
-        private val CLEAR_LOG_ICON = IconLoader.getIcon("/icons/hook-log-clear.svg", HookPanel::class.java)
+        private val REFRESH_HOOKS_ICON = AllIcons.Actions.Refresh
+        private val ENABLE_HOOK_ICON = IconLoader.getIcon("/icons/mcp-thread-running.svg", HookPanel::class.java)
+        private val DISABLE_HOOK_ICON = IconLoader.getIcon("/icons/hook-status-disabled.svg", HookPanel::class.java)
+        private val REFRESH_LOG_ICON = AllIcons.Actions.Refresh
+        private val CLEAR_LOG_ICON = AllIcons.Actions.GC
         private val ITEM_BG = JBColor(Color(245, 249, 255), Color(58, 64, 74))
         private val ITEM_BORDER = JBColor(Color(202, 214, 234), Color(91, 101, 117))
         private val ITEM_SELECTED_BG = JBColor(Color(224, 237, 255), Color(74, 86, 103))
@@ -1217,6 +1270,14 @@ class HookPanel(
         private val DISABLED_CHIP_FG = JBColor(Color(126, 63, 63), Color(228, 201, 201))
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val ICON_BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val ICON_BUTTON_BG_HOVER = JBColor(Color(233, 243, 255), Color(72, 81, 94))
+        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 254), Color(82, 92, 107))
+        private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
+        private val ICON_BUTTON_BORDER = JBColor(Color(138, 186, 144), Color(118, 168, 126))
+        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(120, 172, 128), Color(132, 185, 141))
+        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(104, 160, 113), Color(146, 201, 156))
+        private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))

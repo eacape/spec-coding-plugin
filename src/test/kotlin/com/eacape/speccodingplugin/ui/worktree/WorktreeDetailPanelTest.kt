@@ -26,8 +26,8 @@ class WorktreeDetailPanelTest {
         panel.updateWorktree(item)
 
         assertTrue(panel.displayedSpecTaskIdForTest().contains("SPEC-42"))
-        assertTrue(panel.displayedStatusForTest().contains("ERROR"))
-        assertTrue(panel.displayedStatusForTest().contains("Active"))
+        assertTrue(panel.displayedStatusForTest().contains("error"))
+        assertTrue(panel.displayedStatusForTest().contains("active"))
         assertEquals("merge conflict", panel.displayedLastErrorForTest())
         assertTrue(!panel.isShowingEmptyForTest())
     }
@@ -55,4 +55,3 @@ class WorktreeDetailPanelTest {
         assertTrue(panel.isShowingEmptyForTest())
     }
 }
-

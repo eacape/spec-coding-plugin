@@ -13,6 +13,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.ui.Messages
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -443,7 +444,7 @@ class SpecDetailPanel(
     private fun applyActionButtonPresentation() {
         configureIconActionButton(
             button = generateButton,
-            icon = AllIcons.Actions.Execute,
+            icon = SPEC_DETAIL_GENERATE_ICON,
             tooltipKey = "spec.detail.generate",
         )
         configureIconActionButton(
@@ -488,7 +489,7 @@ class SpecDetailPanel(
         )
         configureIconActionButton(
             button = confirmGenerateButton,
-            icon = AllIcons.Actions.Execute,
+            icon = SPEC_DETAIL_GENERATE_ICON,
             tooltipKey = "spec.detail.clarify.confirmGenerate",
         )
         configureIconActionButton(
@@ -512,6 +513,7 @@ class SpecDetailPanel(
     private fun configureIconActionButton(button: JButton, icon: Icon, tooltipKey: String) {
         val tooltip = SpecCodingBundle.message(tooltipKey)
         button.icon = icon
+        button.disabledIcon = IconLoader.getDisabledIcon(icon)
         button.text = ""
         button.toolTipText = tooltip
         button.accessibleContext.accessibleName = tooltip
@@ -840,8 +842,6 @@ class SpecDetailPanel(
 
     private fun styleActionButton(button: JButton) {
         val iconOnly = button.icon != null && button.text.isNullOrBlank()
-        val buttonBg = if (iconOnly) ICON_BUTTON_BG else BUTTON_BG
-        val buttonBorder = if (iconOnly) ICON_BUTTON_BORDER else BUTTON_BORDER
         button.isFocusable = false
         button.isFocusPainted = false
         button.isContentAreaFilled = true
@@ -849,17 +849,19 @@ class SpecDetailPanel(
         button.margin = if (iconOnly) JBUI.insets(0, 0, 0, 0) else JBUI.insets(1, 4, 1, 4)
         button.isOpaque = true
         button.foreground = BUTTON_FG
-        button.background = buttonBg
-        button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(buttonBorder, JBUI.scale(10)),
-            if (iconOnly) JBUI.Borders.empty(1, 1, 1, 1) else JBUI.Borders.empty(1, 5, 1, 5),
-        )
         SpecUiStyle.applyRoundRect(button, arc = 10)
         if (iconOnly) {
+            installActionIconButtonStateTracking(button)
+            applyActionIconButtonVisualState(button)
             val size = JBUI.scale(24)
             button.preferredSize = JBUI.size(size, size)
             button.minimumSize = button.preferredSize
         } else {
+            button.background = BUTTON_BG
+            button.border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+                JBUI.Borders.empty(1, 5, 1, 5),
+            )
             val textWidth = button.getFontMetrics(button.font).stringWidth(button.text ?: "")
             val insets = button.insets
             val lafWidth = button.preferredSize?.width ?: 0
@@ -872,6 +874,35 @@ class SpecDetailPanel(
             button.minimumSize = button.preferredSize
         }
         updateButtonCursor(button)
+    }
+
+    private fun installActionIconButtonStateTracking(button: JButton) {
+        if (button.getClientProperty("spec.detail.iconStyleInstalled") == true) return
+        button.putClientProperty("spec.detail.iconStyleInstalled", true)
+        button.isRolloverEnabled = true
+        button.addChangeListener { applyActionIconButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") { applyActionIconButtonVisualState(button) }
+    }
+
+    private fun applyActionIconButtonVisualState(button: JButton) {
+        val model = button.model
+        val background = when {
+            !button.isEnabled -> ICON_BUTTON_BG_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BG_ACTIVE
+            model.isRollover -> ICON_BUTTON_BG_HOVER
+            else -> ICON_BUTTON_BG
+        }
+        val borderColor = when {
+            !button.isEnabled -> ICON_BUTTON_BORDER_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BORDER_ACTIVE
+            model.isRollover -> ICON_BUTTON_BORDER_HOVER
+            else -> ICON_BUTTON_BORDER
+        }
+        button.background = background
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10)),
+            JBUI.Borders.empty(1, 1, 1, 1),
+        )
     }
 
     private fun updateButtonCursor(button: JButton) {
@@ -2362,7 +2393,12 @@ class SpecDetailPanel(
     }
 
     private fun renderPreviewMarkdown(content: String) {
-        val displayContent = SpecMarkdownSanitizer.sanitize(content)
+        val normalizedRaw = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        val sanitized = SpecMarkdownSanitizer.sanitize(normalizedRaw)
+        val displayContent = choosePreviewContent(rawContent = normalizedRaw, sanitizedContent = sanitized)
         previewSourceText = displayContent
         runCatching {
             MarkdownRenderer.render(previewPane, displayContent)
@@ -2371,6 +2407,55 @@ class SpecDetailPanel(
             previewPane.text = displayContent
             previewPane.caretPosition = 0
         }
+    }
+
+    private fun choosePreviewContent(rawContent: String, sanitizedContent: String): String {
+        val raw = rawContent.trim()
+        val sanitized = sanitizedContent.trim()
+        if (raw.isBlank()) return sanitized
+        if (sanitized.isBlank()) return raw
+
+        if (shouldUseSanitizedPreview(raw)) {
+            return sanitized
+        }
+        if (shouldPreferRawPreview(raw, sanitized)) {
+            return raw
+        }
+        return sanitized
+    }
+
+    private fun shouldUseSanitizedPreview(rawContent: String): Boolean {
+        if (TOOL_NOISE_MARKER_REGEX.containsMatchIn(rawContent)) return true
+        val trimmed = rawContent.trimStart()
+        if (trimmed.startsWith("{") && trimmed.contains("\"content\"")) return true
+        val escapedNewlineCount = ESCAPED_NEWLINE_REGEX.findAll(rawContent).count()
+        val realNewlineCount = rawContent.count { it == '\n' }
+        return escapedNewlineCount >= 2 && escapedNewlineCount > realNewlineCount
+    }
+
+    private fun shouldPreferRawPreview(rawContent: String, sanitizedContent: String): Boolean {
+        if (!CODE_FENCE_MARKER_REGEX.containsMatchIn(rawContent)) return false
+
+        val rawLooksDocument = rawContent
+            .lineSequence()
+            .take(MAX_PREVIEW_DOC_SCAN_LINES)
+            .any { line ->
+                val trimmed = line.trim()
+                HEADING_LINE_REGEX.matches(trimmed) || LIST_OR_CHECKBOX_LINE_REGEX.matches(trimmed)
+            }
+        if (!rawLooksDocument) return false
+
+        val sanitizedLooksDocument = sanitizedContent
+            .lineSequence()
+            .take(MAX_PREVIEW_DOC_SCAN_LINES)
+            .any { line ->
+                val trimmed = line.trim()
+                HEADING_LINE_REGEX.matches(trimmed) || LIST_OR_CHECKBOX_LINE_REGEX.matches(trimmed)
+            }
+        if (sanitizedLooksDocument) return false
+
+        val ratio = sanitizedContent.length.toDouble() / rawContent.length.toDouble()
+        return ratio <= PREVIEW_SANITIZE_COLLAPSE_RATIO
     }
 
     private fun buildValidationIssuesMarkdown(
@@ -2922,10 +3007,17 @@ class SpecDetailPanel(
         private val TREE_STATUS_PENDING_TEXT = JBColor(Color(120, 132, 149), Color(196, 210, 230))
         private val TREE_STATUS_PENDING_TEXT_SELECTED = JBColor(Color(100, 113, 131), Color(215, 224, 239))
         private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
-        private val ICON_BUTTON_BORDER = JBColor(Color(191, 206, 229), Color(98, 111, 130))
+        private val ICON_BUTTON_BORDER = JBColor(Color(98, 174, 108), Color(132, 188, 142))
+        private val ICON_BUTTON_BG_HOVER = JBColor(Color(238, 246, 255), Color(76, 84, 98))
+        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(70, 158, 83), Color(152, 210, 163))
+        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(230, 240, 254), Color(84, 94, 111))
+        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(46, 144, 61), Color(174, 226, 184))
+        private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
+        private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val SPEC_DETAIL_GENERATE_ICON = IconLoader.getIcon("/icons/spec-detail-generate.svg", SpecDetailPanel::class.java)
         private val SECTION_TITLE_FG = JBColor(Color(36, 60, 101), Color(212, 223, 241))
         private val COLLAPSE_TOGGLE_TEXT_ACTIVE = JBColor(Color(86, 115, 158), Color(187, 205, 230))
         private const val MAX_PROCESS_TIMELINE_ENTRIES = 18
@@ -2936,5 +3028,15 @@ class SpecDetailPanel(
         private const val CLARIFY_QUESTIONS_CARD_CHECKLIST = "clarify.questions.checklist"
         private val BOLD_MARKDOWN_REGEX = Regex("\\*\\*(.+?)\\*\\*")
         private val DETAIL_LINE_REGEX = Regex("^-\\s*(detail|details|补充|说明)\\s*[:：]\\s*(.+)$", RegexOption.IGNORE_CASE)
+        private val CODE_FENCE_MARKER_REGEX = Regex("```")
+        private val HEADING_LINE_REGEX = Regex("""^\s{0,3}#{1,6}\s+\S+""")
+        private val LIST_OR_CHECKBOX_LINE_REGEX = Regex("""^\s*(?:[-*]\s+\S+|\d+\.\s+\S+|-?\s*\[[ xX]\]\s+\S+)""")
+        private val TOOL_NOISE_MARKER_REGEX = Regex(
+            pattern = """<tool_|"tool_(?:calls?|name|input)"|plan_file_path""",
+            options = setOf(RegexOption.IGNORE_CASE),
+        )
+        private val ESCAPED_NEWLINE_REGEX = Regex("""\\n|\\r\\n""")
+        private const val MAX_PREVIEW_DOC_SCAN_LINES = 60
+        private const val PREVIEW_SANITIZE_COLLAPSE_RATIO = 0.85
     }
 }

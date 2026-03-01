@@ -563,7 +563,6 @@ class SettingsPanel(
             isOpaque = false
             add(skillDeleteButton)
             add(skillSaveButton)
-            add(skillSaveCurrentButton)
         }
         val editorActionRow = JPanel(BorderLayout()).apply {
             isOpaque = false
@@ -775,15 +774,8 @@ class SettingsPanel(
         button.isContentAreaFilled = true
         button.margin = JBUI.emptyInsets()
         button.foreground = ACTION_ICON_BUTTON_FG
-        button.background = ACTION_ICON_BUTTON_BG
-        button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(
-                ACTION_ICON_BUTTON_BORDER,
-                JBUI.scale(9),
-            ),
-            JBUI.Borders.empty(0),
-        )
         SpecUiStyle.applyRoundRect(button, arc = 9)
+        installSkillActionIconButtonStateTracking(button)
         button.icon = icon
         button.text = ""
         button.margin = JBUI.emptyInsets()
@@ -793,6 +785,36 @@ class SettingsPanel(
         button.toolTipText = label
         button.accessibleContext.accessibleName = label
         button.accessibleContext.accessibleDescription = label
+        applySkillActionIconButtonVisualState(button)
+    }
+
+    private fun installSkillActionIconButtonStateTracking(button: JButton) {
+        if (button.getClientProperty("settings.skills.iconStyleInstalled") == true) return
+        button.putClientProperty("settings.skills.iconStyleInstalled", true)
+        button.isRolloverEnabled = true
+        button.addChangeListener { applySkillActionIconButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") { applySkillActionIconButtonVisualState(button) }
+    }
+
+    private fun applySkillActionIconButtonVisualState(button: JButton) {
+        val model = button.model
+        val background = when {
+            !button.isEnabled -> ACTION_ICON_BUTTON_BG_DISABLED
+            model.isPressed || model.isSelected -> ACTION_ICON_BUTTON_BG_ACTIVE
+            model.isRollover -> ACTION_ICON_BUTTON_BG_HOVER
+            else -> ACTION_ICON_BUTTON_BG
+        }
+        val borderColor = when {
+            !button.isEnabled -> ACTION_ICON_BUTTON_BORDER_DISABLED
+            model.isPressed || model.isSelected -> ACTION_ICON_BUTTON_BORDER_ACTIVE
+            model.isRollover -> ACTION_ICON_BUTTON_BORDER_HOVER
+            else -> ACTION_ICON_BUTTON_BORDER
+        }
+        button.background = background
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(9)),
+            JBUI.Borders.empty(0),
+        )
     }
 
     private fun installAutoSaveBindings() {
@@ -2285,7 +2307,13 @@ class SettingsPanel(
         private val ACTION_PRIMARY_BORDER = JBColor(Color(154, 180, 219), Color(116, 137, 169))
         private val ACTION_PRIMARY_FG = JBColor(Color(37, 57, 89), Color(223, 232, 246))
         private val ACTION_ICON_BUTTON_BG = JBColor(Color(241, 248, 255), Color(68, 79, 95))
-        private val ACTION_ICON_BUTTON_BORDER = JBColor(Color(181, 201, 230), Color(108, 124, 146))
+        private val ACTION_ICON_BUTTON_BG_HOVER = JBColor(Color(236, 246, 255), Color(76, 88, 103))
+        private val ACTION_ICON_BUTTON_BG_ACTIVE = JBColor(Color(229, 241, 255), Color(84, 96, 112))
+        private val ACTION_ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
+        private val ACTION_ICON_BUTTON_BORDER = JBColor(Color(138, 186, 144), Color(118, 168, 126))
+        private val ACTION_ICON_BUTTON_BORDER_HOVER = JBColor(Color(120, 172, 128), Color(132, 185, 141))
+        private val ACTION_ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(104, 160, 113), Color(146, 201, 156))
+        private val ACTION_ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val ACTION_ICON_BUTTON_FG = JBColor(Color(51, 73, 108), Color(209, 220, 238))
         private val SKILL_STATUS_BG = JBColor(Color(238, 245, 255), Color(65, 76, 93))
         private val SKILL_STATUS_BORDER = JBColor(Color(182, 200, 226), Color(101, 118, 142))

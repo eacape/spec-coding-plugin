@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.worktree
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.worktree.WorktreeStatus
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -64,9 +65,13 @@ class WorktreeListPanel(
         val toolbarCard = JPanel(BorderLayout()).apply {
             isOpaque = true
             background = TOOLBAR_BG
-            border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(TOOLBAR_BORDER, 1),
-                JBUI.Borders.empty(8),
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = TOOLBAR_BORDER,
+                arc = JBUI.scale(12),
+                top = 8,
+                left = 8,
+                bottom = 8,
+                right = 8,
             )
             add(toolbar, BorderLayout.CENTER)
         }
@@ -84,6 +89,9 @@ class WorktreeListPanel(
         worktreeList.fixedCellHeight = -1
         worktreeList.visibleRowCount = -1
         worktreeList.border = JBUI.Borders.empty()
+        worktreeList.background = LIST_BG
+        worktreeList.selectionBackground = LIST_ROW_SELECTED_BG
+        worktreeList.selectionForeground = LIST_ROW_SELECTED_FG
         worktreeList.emptyText.text = SpecCodingBundle.message("worktree.list.empty")
         worktreeList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
@@ -95,9 +103,13 @@ class WorktreeListPanel(
         updateButtonStates(null)
         add(
             JBScrollPane(worktreeList).apply {
-                border = BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(LIST_BORDER, 1),
-                    JBUI.Borders.empty(2),
+                border = SpecUiStyle.roundedCardBorder(
+                    lineColor = LIST_BORDER,
+                    arc = JBUI.scale(12),
+                    top = 2,
+                    left = 2,
+                    bottom = 2,
+                    right = 2,
                 )
                 viewport.isOpaque = false
                 isOpaque = false
@@ -177,9 +189,23 @@ class WorktreeListPanel(
 
     private fun styleToolbarButton(button: JButton) {
         button.isFocusable = false
-        button.putClientProperty("JButton.buttonType", "roundRect")
-        button.putClientProperty("JComponent.roundRectArc", JBUI.scale(10))
-        button.margin = JBUI.insets(4, 8, 4, 8)
+        button.isFocusPainted = false
+        button.isContentAreaFilled = true
+        button.isOpaque = true
+        button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        button.margin = JBUI.insets(4, 10, 4, 10)
+        button.background = BUTTON_BG
+        button.foreground = BUTTON_FG
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+            JBUI.Borders.empty(0),
+        )
+        SpecUiStyle.applyRoundRect(button, arc = 10)
+        button.preferredSize = JBUI.size(
+            maxOf(JBUI.scale(52), button.preferredSize.width),
+            JBUI.scale(28),
+        )
+        button.minimumSize = button.preferredSize
     }
 
     private fun updateButtonStates(selected: WorktreeListItem?) {
@@ -246,6 +272,13 @@ class WorktreeListPanel(
             }
 
             panel.background = if (isSelected) list.selectionBackground else list.background
+            panel.border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(
+                    if (isSelected) LIST_ROW_SELECTED_BORDER else LIST_ROW_BORDER,
+                    JBUI.scale(10),
+                ),
+                JBUI.Borders.empty(8, 10),
+            )
             titleLabel.foreground = if (isSelected) list.selectionForeground else list.foreground
             subtitleLabel.foreground = if (isSelected) list.selectionForeground else SUBTITLE_FG
             detailLabel.foreground = if (isSelected) list.selectionForeground else statusColor(value?.status ?: WorktreeStatus.ACTIVE)
@@ -267,8 +300,16 @@ class WorktreeListPanel(
     }
 
     companion object {
-        private val TOOLBAR_BG = JBColor(Color(248, 250, 253), Color(58, 63, 71))
-        private val TOOLBAR_BORDER = JBColor(Color(214, 222, 236), Color(82, 90, 102))
-        private val LIST_BORDER = JBColor(Color(211, 218, 232), Color(79, 85, 96))
+        private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
+        private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
+        private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val LIST_BG = JBColor(Color(248, 251, 255), Color(56, 62, 72))
+        private val LIST_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val LIST_ROW_BORDER = JBColor(Color(212, 223, 239), Color(90, 100, 116))
+        private val LIST_ROW_SELECTED_BORDER = JBColor(Color(158, 186, 223), Color(119, 139, 170))
+        private val LIST_ROW_SELECTED_BG = JBColor(Color(226, 238, 255), Color(75, 91, 114))
+        private val LIST_ROW_SELECTED_FG = JBColor(Color(35, 55, 86), Color(229, 237, 249))
     }
 }

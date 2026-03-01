@@ -524,13 +524,18 @@ class McpServerDetailPanel(
         button.isOpaque = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         button.margin = if (iconOnly) JBUI.emptyInsets() else JBUI.insets(1, 4, 1, 4)
-        button.background = BUTTON_BG
         button.foreground = BUTTON_FG
-        button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
-            if (iconOnly) JBUI.Borders.empty(4) else JBUI.Borders.empty(1, 6, 1, 6),
-        )
         SpecUiStyle.applyRoundRect(button, arc = 10)
+        if (iconOnly) {
+            installActionIconButtonStateTracking(button)
+            applyActionIconButtonVisualState(button)
+        } else {
+            button.background = BUTTON_BG
+            button.border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
+                JBUI.Borders.empty(1, 6, 1, 6),
+            )
+        }
         button.preferredSize = if (iconOnly) {
             JBUI.size(JBUI.scale(28), JBUI.scale(28))
         } else {
@@ -539,6 +544,35 @@ class McpServerDetailPanel(
                 JBUI.scale(28),
             )
         }
+    }
+
+    private fun installActionIconButtonStateTracking(button: JButton) {
+        if (button.getClientProperty("mcp.detail.iconStyleInstalled") == true) return
+        button.putClientProperty("mcp.detail.iconStyleInstalled", true)
+        button.isRolloverEnabled = true
+        button.addChangeListener { applyActionIconButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") { applyActionIconButtonVisualState(button) }
+    }
+
+    private fun applyActionIconButtonVisualState(button: JButton) {
+        val model = button.model
+        val background = when {
+            !button.isEnabled -> ICON_BUTTON_BG_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BG_ACTIVE
+            model.isRollover -> ICON_BUTTON_BG_HOVER
+            else -> ICON_BUTTON_BG
+        }
+        val borderColor = when {
+            !button.isEnabled -> ICON_BUTTON_BORDER_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BORDER_ACTIVE
+            model.isRollover -> ICON_BUTTON_BORDER_HOVER
+            else -> ICON_BUTTON_BORDER
+        }
+        button.background = background
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10)),
+            JBUI.Borders.empty(4),
+        )
     }
 
     private fun createSectionContainer(content: JComponent): JPanel {
@@ -564,9 +598,9 @@ class McpServerDetailPanel(
 
     companion object {
         private const val DEFAULT_TOOLTIP_CLIENT_KEY = "mcp.detail.action.default.tooltip"
-        private val MCP_SERVER_START_ICON = IconLoader.getIcon("/icons/mcp-server-start.svg", McpServerDetailPanel::class.java)
-        private val MCP_SERVER_STOP_ICON = IconLoader.getIcon("/icons/mcp-server-stop.svg", McpServerDetailPanel::class.java)
-        private val MCP_SERVER_RESTART_ICON = IconLoader.getIcon("/icons/mcp-server-restart.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_START_ICON = IconLoader.getIcon("/icons/mcp-thread-running.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_STOP_ICON = IconLoader.getIcon("/icons/mcp-single-stopped-container.svg", McpServerDetailPanel::class.java)
+        private val MCP_SERVER_RESTART_ICON = IconLoader.getIcon("/icons/mcp-restart-stop.svg", McpServerDetailPanel::class.java)
         private val MCP_SERVER_EDIT_ICON = IconLoader.getIcon("/icons/mcp-server-edit.svg", McpServerDetailPanel::class.java)
         private val MCP_SERVER_LOG_REFRESH_ICON = AllIcons.Actions.Refresh
         private val MCP_SERVER_LOG_CLEAR_ICON = AllIcons.Actions.GC
@@ -576,6 +610,14 @@ class McpServerDetailPanel(
         private val HEADER_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
         private val SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
         private val SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val ICON_BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val ICON_BUTTON_BG_HOVER = JBColor(Color(233, 243, 255), Color(72, 81, 94))
+        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 254), Color(82, 92, 107))
+        private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
+        private val ICON_BUTTON_BORDER = JBColor(Color(138, 186, 144), Color(118, 168, 126))
+        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(120, 172, 128), Color(132, 185, 141))
+        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(104, 160, 113), Color(146, 201, 156))
+        private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))

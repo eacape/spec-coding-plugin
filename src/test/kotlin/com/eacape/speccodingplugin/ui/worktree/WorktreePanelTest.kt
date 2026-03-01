@@ -42,7 +42,7 @@ class WorktreePanelTest {
         assertEquals(2, panel.itemsForTest().size)
         assertEquals("wt-1", panel.selectedWorktreeIdForTest())
         assertTrue(panel.detailSpecTaskIdTextForTest().contains("SPEC-1"))
-        assertTrue(panel.detailStatusTextForTest().contains("ACTIVE"))
+        assertTrue(panel.detailStatusTextForTest().contains("active"))
 
         panel.dispose()
     }
@@ -109,7 +109,7 @@ class WorktreePanelTest {
 
         assertEquals("wt-err", panel.selectedWorktreeIdForTest())
         assertTrue(panel.listPanelButtonStatesForTest()["switchEnabled"] == true)
-        assertTrue(panel.detailStatusTextForTest().contains("ACTIVE"))
+        assertTrue(panel.detailStatusTextForTest().contains("active"))
 
         panel.dispose()
     }

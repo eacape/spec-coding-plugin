@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.prompt
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.prompt.PromptScope
 import com.eacape.speccodingplugin.prompt.PromptTemplate
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
@@ -66,8 +67,10 @@ class PromptListCellRenderer : ListCellRenderer<PromptTemplate> {
         actionPanel.border = JBUI.Borders.emptyRight(ACTION_RIGHT_PAD)
         editActionLabel.preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
         editActionLabel.minimumSize = editActionLabel.preferredSize
+        editActionLabel.isOpaque = false
         deleteActionLabel.preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
         deleteActionLabel.minimumSize = deleteActionLabel.preferredSize
+        deleteActionLabel.isOpaque = false
         editActionLabel.toolTipText = SpecCodingBundle.message("prompt.manager.edit")
         deleteActionLabel.toolTipText = SpecCodingBundle.message("prompt.manager.delete")
         actionPanel.add(editActionLabel)
@@ -108,7 +111,8 @@ class PromptListCellRenderer : ListCellRenderer<PromptTemplate> {
             tagLabel.foreground = TAG_TEXT_FG
             tagsPanel.add(tagLabel)
         }
-        deleteActionLabel.isEnabled = true
+        editActionLabel.isEnabled = true
+        deleteActionLabel.isEnabled = value.scope == PromptScope.PROJECT
 
         val cardBackground = if (isSelected) CARD_BG_SELECTED else CARD_BG_DEFAULT
         val cardBorder = if (isSelected) CARD_BORDER_SELECTED else CARD_BORDER_DEFAULT
@@ -122,7 +126,8 @@ class PromptListCellRenderer : ListCellRenderer<PromptTemplate> {
         scopeLabel.foreground = scopeFg
         editActionLabel.icon = if (isSelected) AllIcons.Actions.EditSource else AllIcons.Actions.Edit
         deleteActionLabel.icon = AllIcons.Actions.GC
-
+        editActionLabel.border = JBUI.Borders.empty()
+        deleteActionLabel.border = JBUI.Borders.empty()
         return rowPanel
     }
 
