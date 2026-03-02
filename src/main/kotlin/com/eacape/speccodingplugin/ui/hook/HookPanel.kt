@@ -15,6 +15,7 @@ import com.eacape.speccodingplugin.llm.LlmRole
 import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
+import com.eacape.speccodingplugin.ui.RefreshFeedback
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.notification.NotificationGroupManager
@@ -227,8 +228,8 @@ class HookPanel(
 
         openConfigButton.addActionListener { openHookConfig() }
         aiQuickConfigButton.addActionListener { quickSetupWithAi() }
-        refreshHooksButton.addActionListener { refreshHooks() }
-        refreshLogButton.addActionListener { refreshLogs() }
+        refreshHooksButton.addActionListener { refreshHooks(showRefreshFeedback = true) }
+        refreshLogButton.addActionListener { refreshLogs(showRefreshFeedback = true) }
         enableButton.addActionListener { updateSelectedHookEnabled(true) }
         disableButton.addActionListener { updateSelectedHookEnabled(false) }
         clearLogButton.addActionListener { clearLogs() }
@@ -389,7 +390,7 @@ class HookPanel(
         refreshLogs()
     }
 
-    private fun refreshHooks() {
+    private fun refreshHooks(showRefreshFeedback: Boolean = false) {
         val selectedId = hooksList.selectedValue?.id
         runBackground {
             val hooks = listHooksAction().sortedBy { it.name }
@@ -407,11 +408,16 @@ class HookPanel(
                 statusLabel.text = SpecCodingBundle.message("hook.status.count", hooks.size)
                 hooksList.repaint()
                 updateButtonState()
+                if (showRefreshFeedback) {
+                    val successText = SpecCodingBundle.message("common.refresh.success")
+                    RefreshFeedback.flashButtonSuccess(refreshHooksButton, successText)
+                    RefreshFeedback.flashLabelSuccess(statusLabel, successText, STATUS_SUCCESS_FG)
+                }
             }
         }
     }
 
-    private fun refreshLogs() {
+    private fun refreshLogs(showRefreshFeedback: Boolean = false) {
         runBackground {
             val logs = listLogsAction(200)
             invokeLaterSafe {
@@ -436,6 +442,11 @@ class HookPanel(
                         }
                 }
                 logArea.caretPosition = logArea.document.length
+                if (showRefreshFeedback) {
+                    val successText = SpecCodingBundle.message("common.refresh.success")
+                    RefreshFeedback.flashButtonSuccess(refreshLogButton, successText)
+                    RefreshFeedback.flashLabelSuccess(statusLabel, successText, STATUS_SUCCESS_FG)
+                }
             }
         }
     }
@@ -1288,6 +1299,7 @@ class HookPanel(
         private val STATUS_CHIP_BG = JBColor(Color(236, 244, 255), Color(66, 76, 91))
         private val STATUS_CHIP_BORDER = JBColor(Color(178, 198, 226), Color(99, 116, 140))
         private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val STATUS_SUCCESS_FG = JBColor(Color(42, 128, 74), Color(131, 208, 157))
         private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
         private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
         private val CODE_FENCE_PATTERN = Regex("```(?:yaml|yml)?\\s*([\\s\\S]*?)```", RegexOption.IGNORE_CASE)

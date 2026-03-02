@@ -32,7 +32,9 @@ import com.eacape.speccodingplugin.prompt.PromptTemplate
 import com.eacape.speccodingplugin.rollback.Changeset
 import com.eacape.speccodingplugin.rollback.ChangesetStore
 import com.eacape.speccodingplugin.rollback.WorkspaceChangesetCollector
+import com.eacape.speccodingplugin.session.ConversationMessage
 import com.eacape.speccodingplugin.session.ConversationRole
+import com.eacape.speccodingplugin.session.ConversationSession
 import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.skill.SkillExecutor
 import com.eacape.speccodingplugin.skill.SkillContext
@@ -241,6 +243,7 @@ class ImprovedChatPanel(
     private var isGenerating = false
     private var isRestoringSession = false
     private var suppressSpecWorkflowSelectionEvents = false
+    private var suppressInteractionModeSelectionEvents = false
     @Volatile
     private var activeOperationJob: Job? = null
     @Volatile
@@ -262,7 +265,17 @@ class ImprovedChatPanel(
         val messageKey: String,
     ) {
         VIBE("vibe", "toolwindow.chat.mode.vibe"),
-        SPEC("spec", "toolwindow.chat.mode.spec"),
+        SPEC("spec", "toolwindow.chat.mode.spec");
+
+        companion object {
+            fun fromPersistedKeyOrDefault(value: String?): ChatInteractionMode {
+                val normalized = value?.trim().orEmpty()
+                if (normalized.isBlank()) {
+                    return VIBE
+                }
+                return entries.firstOrNull { mode -> mode.key.equals(normalized, ignoreCase = true) } ?: VIBE
+            }
+        }
     }
 
     private var lastInteractionMode: ChatInteractionMode = ChatInteractionMode.VIBE
@@ -540,8 +553,12 @@ class ImprovedChatPanel(
                 return label
             }
         }
-        interactionModeComboBox.selectedItem = ChatInteractionMode.VIBE
-        lastInteractionMode = ChatInteractionMode.VIBE
+        val restoredInteractionMode = ChatInteractionMode.fromPersistedKeyOrDefault(
+            windowStateStore.snapshot().chatInteractionMode,
+        )
+        interactionModeComboBox.selectedItem = restoredInteractionMode
+        lastInteractionMode = restoredInteractionMode
+        windowStateStore.updateChatInteractionMode(restoredInteractionMode.key)
         interactionModeComboBox.addActionListener { onInteractionModeChanged() }
         interactionModeComboBox.toolTipText = SpecCodingBundle.message("toolwindow.chat.mode.tooltip")
         configureCompactCombo(interactionModeComboBox, 74)
@@ -3028,6 +3045,11 @@ class ImprovedChatPanel(
                     return@invokeLater
                 }
 
+                setInteractionMode(
+                    mode = inferInteractionModeForSession(session, messages),
+                    resetSessionOnSpecSwitch = false,
+                    emitHook = false,
+                )
                 activeSpecWorkflowId = session.specTaskId?.trim()?.ifBlank { null }
                 restoreSessionMessages(messages)
                 currentSessionId = session.id
@@ -3127,6 +3149,32 @@ class ImprovedChatPanel(
         }
         refreshContinueActions(interactionMode)
         messagesPanel.scrollToBottom()
+    }
+
+    private fun inferInteractionModeForSession(
+        session: ConversationSession,
+        messages: List<ConversationMessage>,
+    ): ChatInteractionMode {
+        if (!session.specTaskId.isNullOrBlank()) {
+            return ChatInteractionMode.SPEC
+        }
+
+        val hasSpecCardMessage = messages.any { message ->
+            message.role == ConversationRole.ASSISTANT && SpecCardMetadataCodec.decode(message.metadataJson) != null
+        }
+        if (hasSpecCardMessage) {
+            return ChatInteractionMode.SPEC
+        }
+
+        val hasSpecSlashCommand = messages.any { message ->
+            message.role == ConversationRole.USER &&
+                message.content.trim().startsWith("/spec", ignoreCase = true)
+        }
+        return if (hasSpecSlashCommand) {
+            ChatInteractionMode.SPEC
+        } else {
+            ChatInteractionMode.VIBE
+        }
     }
 
     private fun ensureActiveSpecSession(titleSeed: String, providerId: String?, specTaskId: String?): String? {
@@ -4052,20 +4100,49 @@ class ImprovedChatPanel(
     }
 
     private fun onInteractionModeChanged() {
-        val mode = currentInteractionMode()
-        val previousMode = lastInteractionMode
-        if (mode == previousMode) {
+        if (suppressInteractionModeSelectionEvents) {
             return
         }
+        setInteractionMode(
+            mode = currentInteractionMode(),
+            resetSessionOnSpecSwitch = true,
+            emitHook = true,
+        )
+    }
+
+    private fun setInteractionMode(
+        mode: ChatInteractionMode,
+        resetSessionOnSpecSwitch: Boolean,
+        emitHook: Boolean,
+    ) {
+        if (currentInteractionMode() != mode) {
+            suppressInteractionModeSelectionEvents = true
+            try {
+                interactionModeComboBox.selectedItem = mode
+            } finally {
+                suppressInteractionModeSelectionEvents = false
+            }
+        }
+
+        val previousMode = lastInteractionMode
+        if (mode == previousMode) {
+            applyInteractionModeUi(mode)
+            windowStateStore.updateChatInteractionMode(mode.key)
+            return
+        }
+
         lastInteractionMode = mode
-        if (mode == ChatInteractionMode.SPEC) {
+        if (mode == ChatInteractionMode.SPEC && resetSessionOnSpecSwitch) {
             val workflowId = resolveMostRecentSpecWorkflowIdOrNull()
             startNewSession()
             activeSpecWorkflowId = workflowId
             refreshSpecWorkflowComboBox(selectWorkflowId = workflowId)
         }
         applyInteractionModeUi(mode)
-        emitChatModeChangedHook(previousMode = previousMode, currentMode = mode)
+        windowStateStore.updateChatInteractionMode(mode.key)
+        if (emitHook) {
+            emitChatModeChangedHook(previousMode = previousMode, currentMode = mode)
+        }
     }
 
     private fun emitChatModeChangedHook(

@@ -13,6 +13,7 @@ import com.eacape.speccodingplugin.llm.MockLlmProvider
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.spec.*
+import com.eacape.speccodingplugin.ui.RefreshFeedback
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
@@ -132,7 +133,7 @@ class SpecWorkflowPanel(
     }
 
     private fun setupUI() {
-        refreshButton.addActionListener { refreshWorkflows() }
+        refreshButton.addActionListener { refreshWorkflows(showRefreshFeedback = true) }
         createWorktreeButton.isEnabled = false
         mergeWorktreeButton.isEnabled = false
         createWorktreeButton.isVisible = false
@@ -541,7 +542,7 @@ class SpecWorkflowPanel(
         }
     }
 
-    fun refreshWorkflows(selectWorkflowId: String? = null) {
+    fun refreshWorkflows(selectWorkflowId: String? = null, showRefreshFeedback: Boolean = false) {
         scope.launch(Dispatchers.IO) {
             val ids = specEngine.listWorkflows()
             val items = ids.mapNotNull { id ->
@@ -575,6 +576,11 @@ class SpecWorkflowPanel(
                     mergeWorktreeButton.isEnabled = false
                     deltaButton.isEnabled = false
                     archiveButton.isEnabled = false
+                }
+                if (showRefreshFeedback) {
+                    val successText = SpecCodingBundle.message("common.refresh.success")
+                    RefreshFeedback.flashButtonSuccess(refreshButton, successText)
+                    RefreshFeedback.flashLabelSuccess(statusLabel, successText, STATUS_SUCCESS_FG)
                 }
             }
         }
@@ -1794,6 +1800,7 @@ class SpecWorkflowPanel(
         private val STATUS_CHIP_BG = JBColor(Color(236, 244, 255), Color(66, 76, 91))
         private val STATUS_CHIP_BORDER = JBColor(Color(178, 198, 226), Color(99, 116, 140))
         private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val STATUS_SUCCESS_FG = JBColor(Color(42, 128, 74), Color(131, 208, 157))
         private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
         private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
         private val DETAIL_COLUMN_BG = JBColor(Color(244, 249, 255), Color(56, 62, 72))

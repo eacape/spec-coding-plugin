@@ -13,12 +13,14 @@ class WindowStateStoreTest {
         store.updateSelectedTabTitle("History")
         store.updateActiveSessionId("session-1")
         store.updateOperationMode("AGENT")
+        store.updateChatInteractionMode("spec")
         store.updateChatSpecSidebar(visible = true, dividerLocation = 640)
 
         val snapshot = store.snapshot()
         assertEquals("History", snapshot.selectedTabTitle)
         assertEquals("session-1", snapshot.activeSessionId)
         assertEquals("AGENT", snapshot.operationMode)
+        assertEquals("spec", snapshot.chatInteractionMode)
         assertEquals(true, snapshot.chatSpecSidebarVisible)
         assertEquals(640, snapshot.chatSpecSidebarDividerLocation)
     }
@@ -32,6 +34,7 @@ class WindowStateStoreTest {
                 selectedTabTitle = "Specs",
                 activeSessionId = "",
                 operationMode = "PLAN",
+                chatInteractionMode = "vibe",
                 chatSpecSidebarVisible = true,
                 chatSpecSidebarDividerLocation = 420,
                 updatedAt = 42L,
@@ -45,6 +48,7 @@ class WindowStateStoreTest {
         assertEquals("Specs", snapshot.selectedTabTitle)
         assertNull(snapshot.activeSessionId)
         assertEquals("PLAN", snapshot.operationMode)
+        assertEquals("vibe", snapshot.chatInteractionMode)
         assertEquals(true, snapshot.chatSpecSidebarVisible)
         assertEquals(420, snapshot.chatSpecSidebarDividerLocation)
     }

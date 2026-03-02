@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.hook
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileDocumentManagerListener
 import com.intellij.openapi.project.Project
@@ -12,27 +13,37 @@ class HookFileSaveListener(
 ) : FileDocumentManagerListener {
 
     override fun beforeDocumentSaving(document: com.intellij.openapi.editor.Document) {
+        val application = ApplicationManager.getApplication()
+        if (application.isDisposed || application.isDisposeInProgress) {
+            return
+        }
         val file = FileDocumentManager.getInstance().getFile(document) ?: return
         if (!file.isValid || file.isDirectory) {
             return
         }
 
         ProjectManager.getInstance().openProjects.forEach { project ->
+            if (project.isDisposed) {
+                return@forEach
+            }
             val basePath = project.basePath ?: return@forEach
             val filePath = file.path
             val projectRelativePath = filePath.takeIf { isPathUnderBase(it, basePath) }
                 ?.let { toRelativePath(it, basePath) }
+                ?: return@forEach
 
-            hookManagerProvider(project).trigger(
-                event = HookEvent.FILE_SAVED,
-                triggerContext = HookTriggerContext(
-                    filePath = projectRelativePath ?: filePath,
-                    metadata = mapOf(
-                        "absolutePath" to filePath,
-                        "projectName" to project.name,
+            runCatching {
+                hookManagerProvider(project).trigger(
+                    event = HookEvent.FILE_SAVED,
+                    triggerContext = HookTriggerContext(
+                        filePath = projectRelativePath,
+                        metadata = mapOf(
+                            "absolutePath" to filePath,
+                            "projectName" to project.name,
+                        ),
                     ),
-                ),
-            )
+                )
+            }
         }
     }
 

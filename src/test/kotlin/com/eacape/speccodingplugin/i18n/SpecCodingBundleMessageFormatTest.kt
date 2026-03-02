@@ -21,4 +21,11 @@ class SpecCodingBundleMessageFormatTest {
         assertTrue(text.contains("42"))
         assertFalse(text.contains("{0}"))
     }
+
+    @Test
+    fun `toolwindow title key should resolve to concrete text`() {
+        val text = SpecCodingBundle.message("toolwindow.title")
+        assertFalse(text.startsWith("!"))
+        assertFalse(text.endsWith("!"))
+    }
 }

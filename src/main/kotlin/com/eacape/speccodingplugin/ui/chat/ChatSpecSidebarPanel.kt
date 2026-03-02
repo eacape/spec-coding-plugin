@@ -5,6 +5,7 @@ import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.WorkflowStatus
+import com.eacape.speccodingplugin.ui.RefreshFeedback
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -84,7 +85,7 @@ internal class ChatSpecSidebarPanel(
         val headerActions = JPanel(FlowLayout(FlowLayout.RIGHT, RHYTHM_XS, 0))
         headerActions.isOpaque = false
         styleIconActionButton(refreshButton, AllIcons.Actions.Refresh)
-        refreshButton.addActionListener { refreshCurrentWorkflow() }
+        refreshButton.addActionListener { refreshCurrentWorkflow(showFeedback = true) }
         styleIconActionButton(editWorkflowButton, AllIcons.Actions.Edit)
         editWorkflowButton.addActionListener {
             val handler = onEditWorkflow ?: return@addActionListener
@@ -190,8 +191,8 @@ internal class ChatSpecSidebarPanel(
         reloadWorkflow(preferredPhase = preferredPhase, allowFallbackToLatest = false)
     }
 
-    fun refreshCurrentWorkflow() {
-        reloadWorkflow(preferredPhase = null, allowFallbackToLatest = true)
+    fun refreshCurrentWorkflow(showFeedback: Boolean = false) {
+        reloadWorkflow(preferredPhase = null, allowFallbackToLatest = true, showRefreshFeedback = showFeedback)
     }
 
     fun hasFocusedWorkflow(workflowId: String?): Boolean {
@@ -217,7 +218,11 @@ internal class ChatSpecSidebarPanel(
         openCurrentPhaseDocument()
     }
 
-    private fun reloadWorkflow(preferredPhase: SpecPhase?, allowFallbackToLatest: Boolean) {
+    private fun reloadWorkflow(
+        preferredPhase: SpecPhase?,
+        allowFallbackToLatest: Boolean,
+        showRefreshFeedback: Boolean = false,
+    ) {
         val workflowId = currentWorkflowId
             ?.trim()
             ?.takeIf { it.isNotBlank() }
@@ -244,6 +249,11 @@ internal class ChatSpecSidebarPanel(
                     else -> selectedPhase
                 }
                 renderCurrentWorkflow()
+                if (showRefreshFeedback) {
+                    val successText = SpecCodingBundle.message("common.refresh.success")
+                    RefreshFeedback.flashButtonSuccess(refreshButton, successText)
+                    RefreshFeedback.flashLabelSuccess(statusLabel, successText, REFRESH_SUCCESS_FG)
+                }
             }
             .onFailure { error ->
                 showEmptyState(
@@ -521,5 +531,6 @@ internal class ChatSpecSidebarPanel(
         private const val CARD_HORIZONTAL_PADDING = 9
         private const val CONTROL_HEIGHT = 22
         private const val PHASE_CHIP_MIN_WIDTH = 76
+        private val REFRESH_SUCCESS_FG = JBColor(Color(74, 154, 80), Color(112, 191, 118))
     }
 }

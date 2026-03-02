@@ -30,6 +30,7 @@ class WindowStateStore : PersistentStateComponent<WindowStateStore.WindowState> 
             selectedTabTitle = state.selectedTabTitle,
             activeSessionId = state.activeSessionId,
             operationMode = state.operationMode,
+            chatInteractionMode = state.chatInteractionMode,
             chatSpecSidebarVisible = state.chatSpecSidebarVisible,
             chatSpecSidebarDividerLocation = state.chatSpecSidebarDividerLocation,
             updatedAt = state.updatedAt,
@@ -56,6 +57,12 @@ class WindowStateStore : PersistentStateComponent<WindowStateStore.WindowState> 
     }
 
     @Synchronized
+    fun updateChatInteractionMode(modeKey: String?) {
+        state.chatInteractionMode = modeKey?.trim()?.ifBlank { null }
+        state.updatedAt = System.currentTimeMillis()
+    }
+
+    @Synchronized
     fun updateChatSpecSidebar(visible: Boolean, dividerLocation: Int?) {
         state.chatSpecSidebarVisible = visible
         if (dividerLocation != null && dividerLocation > 0) {
@@ -68,6 +75,7 @@ class WindowStateStore : PersistentStateComponent<WindowStateStore.WindowState> 
         var selectedTabTitle: String = "Chat",
         var activeSessionId: String? = null,
         var operationMode: String? = null,
+        var chatInteractionMode: String? = null,
         var chatSpecSidebarVisible: Boolean = false,
         var chatSpecSidebarDividerLocation: Int = 0,
         var updatedAt: Long = 0L,
@@ -82,6 +90,7 @@ data class WindowRuntimeState(
     val selectedTabTitle: String,
     val activeSessionId: String?,
     val operationMode: String?,
+    val chatInteractionMode: String?,
     val chatSpecSidebarVisible: Boolean,
     val chatSpecSidebarDividerLocation: Int,
     val updatedAt: Long,

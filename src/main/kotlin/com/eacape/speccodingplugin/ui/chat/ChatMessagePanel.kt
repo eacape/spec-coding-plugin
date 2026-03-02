@@ -63,6 +63,14 @@ open class ChatMessagePanel(
     private var outputExpanded = false
     private var outputFilterLevel = OutputFilterLevel.KEY
     private var messageFinished = false
+    private var contentVersion = 0
+    private var traceVersion = 0
+    private var cachedAssistantAnswerVersion = -1
+    private var cachedAssistantAnswerContent = ""
+    private var cachedTraceSnapshotContentVersion = -1
+    private var cachedTraceSnapshotTraceVersion = -1
+    private var cachedTraceSnapshotIncludeRawContent = true
+    private var cachedTraceSnapshot: StreamingTraceAssembler.TraceSnapshot? = null
 
     enum class MessageRole {
         USER, ASSISTANT, SYSTEM, ERROR
@@ -105,10 +113,11 @@ open class ChatMessagePanel(
     }
 
     fun appendStreamContent(text: String, event: ChatStreamEvent? = null) {
-        if (event != null && role == MessageRole.ASSISTANT) {
-            traceAssembler.onStructuredEvent(event)
+        if (event == null) {
+            appendStreamContent(text = text, events = emptyList())
+            return
         }
-        appendStreamContent(text = text, events = emptyList())
+        appendStreamContent(text = text, events = listOf(event))
     }
 
     fun appendStreamContent(text: String, events: List<ChatStreamEvent>) {
@@ -116,9 +125,11 @@ open class ChatMessagePanel(
             events.forEach { event ->
                 traceAssembler.onStructuredEvent(event)
             }
+            traceVersion += 1
         }
         if (text.isNotEmpty()) {
             contentBuilder.append(text)
+            contentVersion += 1
         }
         renderContent()
     }
@@ -154,6 +165,7 @@ open class ChatMessagePanel(
     fun finishMessage() {
         messageFinished = true
         traceAssembler.markRunningItemsDone()
+        traceVersion += 1
         renderContent(structured = true)
         extractCodeBlocks()
         addActionButtons()
@@ -163,9 +175,10 @@ open class ChatMessagePanel(
         val useStructured = (structured || messageFinished) && workflowSectionsEnabled
         val content = contentBuilder.toString()
         if (role == MessageRole.ASSISTANT) {
-            val traceSnapshot = traceAssembler.snapshot(content)
+            val traceSnapshot = resolveTraceSnapshot(content)
             if (traceSnapshot.hasTrace) {
-                renderAssistantTraceContent(content, traceSnapshot, useStructured)
+                val answerContent = resolveAssistantAnswerContent(content)
+                renderAssistantTraceContent(answerContent, traceSnapshot, useStructured)
             } else if (useStructured) {
                 contentHost.removeAll()
                 contentHost.add(createAssistantAnswerComponent(content, structured = true), BorderLayout.CENTER)
@@ -190,6 +203,43 @@ open class ChatMessagePanel(
         }
         revalidate()
         repaint()
+    }
+
+    private fun resolveAssistantAnswerContent(content: String): String {
+        if (cachedAssistantAnswerVersion == contentVersion) {
+            return cachedAssistantAnswerContent
+        }
+        val extracted = extractAssistantAnswerContent(content)
+        cachedAssistantAnswerContent = extracted
+        cachedAssistantAnswerVersion = contentVersion
+        return extracted
+    }
+
+    private fun resolveTraceSnapshot(content: String): StreamingTraceAssembler.TraceSnapshot {
+        val preferStructuredOnly = !messageFinished &&
+            content.length >= TRACE_RAW_PARSE_SKIP_THRESHOLD &&
+            traceAssembler.hasStructuredItems()
+        val includeRawContent = !preferStructuredOnly
+
+        val cached = cachedTraceSnapshot
+        if (
+            cached != null &&
+            cachedTraceSnapshotContentVersion == contentVersion &&
+            cachedTraceSnapshotTraceVersion == traceVersion &&
+            cachedTraceSnapshotIncludeRawContent == includeRawContent
+        ) {
+            return cached
+        }
+
+        val snapshot = traceAssembler.snapshot(
+            content = content,
+            includeRawContent = includeRawContent,
+        )
+        cachedTraceSnapshot = snapshot
+        cachedTraceSnapshotContentVersion = contentVersion
+        cachedTraceSnapshotTraceVersion = traceVersion
+        cachedTraceSnapshotIncludeRawContent = includeRawContent
+        return snapshot
     }
 
     private fun renderUserPromptAwareContent(doc: StyledDocument, content: String) {
@@ -219,11 +269,10 @@ open class ChatMessagePanel(
     }
 
     private fun renderAssistantTraceContent(
-        content: String,
+        answerContent: String,
         traceSnapshot: StreamingTraceAssembler.TraceSnapshot,
         structured: Boolean,
     ) {
-        val answerContent = extractAssistantAnswerContent(content)
         val container = JPanel()
         container.layout = BoxLayout(container, BoxLayout.Y_AXIS)
         container.isOpaque = false
@@ -453,6 +502,7 @@ open class ChatMessagePanel(
         val mergedOutput = mergeOutputItemsForDisplay(
             items = items.takeLast(MAX_TIMELINE_VISIBLE_ITEMS),
             filterLevel = outputFilterLevel,
+            charBudget = if (outputExpanded) null else OUTPUT_COLLAPSED_CHAR_BUDGET,
         )
         val wrapper = JPanel(BorderLayout())
         wrapper.isOpaque = true
@@ -677,7 +727,7 @@ open class ChatMessagePanel(
         val previewLength = if (forceVerbose) TRACE_OUTPUT_PREVIEW_LENGTH else TRACE_DETAIL_PREVIEW_LENGTH
         val hasOverflow = item.detail.length > previewLength
         val collapsed = !alwaysExpanded && verbose && key !in expandedVerboseEntries
-        val markdownLike = looksLikeMarkdown(item.detail)
+        val markdownLike = looksLikeMarkdown(item.detail, scanLimit = MARKDOWN_DETECTION_SCAN_LIMIT)
         val previewText = if (markdownLike) {
             toMarkdownPreview(item.detail, previewLength)
         } else {
@@ -984,7 +1034,7 @@ open class ChatMessagePanel(
     }
 
     private fun renderTraceDetail(pane: JTextPane, content: String) {
-        if (looksLikeMarkdown(content)) {
+        if (looksLikeMarkdown(content, scanLimit = MARKDOWN_DETECTION_SCAN_LIMIT)) {
             MarkdownRenderer.render(pane, content)
             return
         }
@@ -996,15 +1046,29 @@ open class ChatMessagePanel(
         doc.insertString(0, content, attrs)
     }
 
-    private fun looksLikeMarkdown(content: String): Boolean {
-        if (content.contains("**") || content.contains('`')) return true
-        return content.lineSequence().any { line ->
+    private fun looksLikeMarkdown(content: String, scanLimit: Int = Int.MAX_VALUE): Boolean {
+        val markerSample = if (scanLimit == Int.MAX_VALUE) {
+            content
+        } else {
+            content.take(scanLimit.coerceAtLeast(0))
+        }
+        if (markerSample.contains("**") || markerSample.contains('`')) return true
+        var scannedChars = 0
+        for (line in content.lineSequence()) {
             val trimmed = line.trimStart()
-            MARKDOWN_HEADING_REGEX.matches(trimmed) ||
+            scannedChars += line.length + 1
+            val matched = MARKDOWN_HEADING_REGEX.matches(trimmed) ||
                 trimmed.startsWith("- ") ||
                 trimmed.startsWith("* ") ||
                 ORDERED_LIST_ITEM_REGEX.matches(trimmed)
+            if (matched) {
+                return true
+            }
+            if (scannedChars >= scanLimit) {
+                break
+            }
         }
+        return false
     }
 
     private fun kindLabel(kind: ExecutionTimelineParser.Kind): String = when (kind) {
@@ -1115,6 +1179,7 @@ open class ChatMessagePanel(
     private fun mergeOutputItemsForDisplay(
         items: List<StreamingTraceAssembler.TraceItem>,
         filterLevel: OutputFilterLevel,
+        charBudget: Int? = null,
     ): OutputDisplay {
         if (items.isEmpty()) {
             return OutputDisplay(
@@ -1128,23 +1193,48 @@ open class ChatMessagePanel(
         val lines = mutableListOf<String>()
         var previousLine: String? = null
         var previousBlank = false
-        items.forEach { item ->
-            item.detail
-                .replace("\r\n", "\n")
-                .lines()
-                .forEach { raw ->
-                    val line = raw.trimEnd()
-                    val blank = line.isBlank()
-                    if (blank && previousBlank) return@forEach
-                    if (line.isNotBlank() && line == previousLine) return@forEach
-                    lines += line
-                    previousLine = line
-                    previousBlank = blank
+        var consumedChars = 0
+        var truncated = false
+        outer@ for (item in items) {
+            for (raw in item.detail.lineSequence()) {
+                val line = raw.trimEnd('\r').trimEnd()
+                val blank = line.isBlank()
+                if (blank && previousBlank) continue
+                if (line.isNotBlank() && line == previousLine) continue
+
+                val estimatedChars = line.length + 1
+                if (charBudget != null && consumedChars + estimatedChars > charBudget) {
+                    truncated = true
+                    break@outer
                 }
+
+                lines += line
+                previousLine = line
+                previousBlank = blank
+                consumedChars += estimatedChars
+            }
         }
 
-        val mergedDetail = lines.joinToString("\n").trim().ifBlank {
-            items.firstOrNull()?.detail?.trim().orEmpty()
+        val mergedDetail = when {
+            lines.isNotEmpty() -> buildString {
+                append(lines.joinToString("\n").trim())
+                if (truncated && isNotBlank()) {
+                    append("\n...")
+                }
+            }
+            charBudget != null -> {
+                val fallback = items.firstOrNull()
+                    ?.detail
+                    ?.take(charBudget.coerceAtLeast(1))
+                    ?.trim()
+                    .orEmpty()
+                if (fallback.length >= charBudget.coerceAtLeast(1) && fallback.isNotBlank()) {
+                    "$fallback\n..."
+                } else {
+                    fallback
+                }
+            }
+            else -> items.firstOrNull()?.detail?.trim().orEmpty()
         }
 
         return OutputDisplay(
@@ -1227,7 +1317,18 @@ open class ChatMessagePanel(
     }
 
     private fun entryKey(item: StreamingTraceAssembler.TraceItem): String {
-        return "${item.kind.name}:${item.detail.lowercase()}"
+        val detail = item.detail
+        if (detail.isBlank()) {
+            return "${item.kind.name}:_"
+        }
+        val head = detail.take(ENTRY_KEY_HEAD_CHARS).lowercase(Locale.ROOT)
+        val tail = if (detail.length > ENTRY_KEY_HEAD_CHARS) {
+            detail.takeLast(ENTRY_KEY_TAIL_CHARS).lowercase(Locale.ROOT)
+        } else {
+            ""
+        }
+        val digest = 31 * (31 + detail.length) + head.hashCode() + 31 * tail.hashCode()
+        return "${item.kind.name}:$digest"
     }
 
     private fun extractCodeBlocks() {
@@ -1436,28 +1537,57 @@ open class ChatMessagePanel(
     }
 
     private fun toPreview(text: String, limit: Int): String {
-        val compact = text
-            .lineSequence()
-            .joinToString(" ") { it.trim() }
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        if (compact.length <= limit) {
-            return compact
+        if (text.isBlank()) return ""
+        val targetLength = limit.coerceAtLeast(1)
+        val scanBudget = targetLength + PREVIEW_EXTRA_SCAN_CHARS
+        val compact = StringBuilder(scanBudget)
+        var sawNonWhitespace = false
+        var pendingSpace = false
+        var index = 0
+
+        while (index < text.length && compact.length < scanBudget) {
+            val ch = text[index]
+            if (ch.isWhitespace()) {
+                if (sawNonWhitespace) {
+                    pendingSpace = true
+                }
+            } else {
+                if (pendingSpace && compact.isNotEmpty() && compact.length < scanBudget) {
+                    compact.append(' ')
+                }
+                compact.append(ch)
+                sawNonWhitespace = true
+                pendingSpace = false
+            }
+            index += 1
         }
-        return compact.take(limit).trimEnd() + "..."
+
+        val normalized = compact.toString().trim()
+        if (normalized.isEmpty()) return ""
+        val hasOverflow = index < text.length || normalized.length > targetLength
+        return if (!hasOverflow) {
+            normalized
+        } else {
+            normalized.take(targetLength).trimEnd() + "..."
+        }
     }
 
     private fun toMarkdownPreview(text: String, limit: Int): String {
-        val normalized = text
+        if (text.isBlank()) return ""
+        val targetLength = limit.coerceAtLeast(1)
+        val rawBudget = (targetLength + MARKDOWN_PREVIEW_EXTRA_SCAN_CHARS).coerceAtLeast(targetLength)
+        val sampled = text.take(rawBudget)
+        val normalized = sampled
             .replace("\r\n", "\n")
+            .replace('\r', '\n')
             .trim()
-        if (normalized.length <= limit) {
+        if (normalized.length <= targetLength && sampled.length == text.length) {
             return normalized
         }
 
-        val clipped = normalized.take(limit).trimEnd()
+        val clipped = normalized.take(targetLength).trimEnd()
         val splitAt = clipped.lastIndexOf('\n')
-        if (splitAt >= limit / 2) {
+        if (splitAt >= targetLength / 2) {
             return clipped.substring(0, splitAt).trimEnd() + "\n..."
         }
         return clipped + "..."
@@ -1770,6 +1900,13 @@ open class ChatMessagePanel(
         private const val TRACE_GROUP_DETAIL_PREVIEW_LENGTH = 96
         private const val TRACE_GROUP_DETAIL_SAMPLE_COUNT = 2
         private const val MAX_TIMELINE_VISIBLE_ITEMS = 10
+        private const val TRACE_RAW_PARSE_SKIP_THRESHOLD = 6_000
+        private const val OUTPUT_COLLAPSED_CHAR_BUDGET = 12_000
+        private const val MARKDOWN_DETECTION_SCAN_LIMIT = 6_000
+        private const val ENTRY_KEY_HEAD_CHARS = 160
+        private const val ENTRY_KEY_TAIL_CHARS = 80
+        private const val PREVIEW_EXTRA_SCAN_CHARS = 120
+        private const val MARKDOWN_PREVIEW_EXTRA_SCAN_CHARS = 240
         private const val OUTPUT_FILTER_MIN_LINES = 2
         private const val OUTPUT_FILTER_MAX_LINES = 24
         private const val OUTPUT_FILTER_FALLBACK_LINES = 6

@@ -15,6 +15,7 @@ import com.eacape.speccodingplugin.skill.SkillDiscoverySnapshot
 import com.eacape.speccodingplugin.skill.SkillRegistry
 import com.eacape.speccodingplugin.skill.SkillScope
 import com.eacape.speccodingplugin.skill.SkillSourceType
+import com.eacape.speccodingplugin.ui.RefreshFeedback
 import com.eacape.speccodingplugin.ui.hook.HookPanel
 import com.eacape.speccodingplugin.ui.mcp.McpPanel
 import com.eacape.speccodingplugin.ui.prompt.PromptManagerPanel
@@ -22,6 +23,7 @@ import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.window.GlobalConfigSyncService
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.util.IconLoader
@@ -196,7 +198,7 @@ class SettingsPanel(
         codexCliPathField.emptyText.text = SpecCodingBundle.message("settings.cli.codexPath.placeholder")
 
         detectCliButton.addActionListener { detectCliTools() }
-        skillRefreshButton.addActionListener { refreshSkillDiscovery(forceReload = true) }
+        skillRefreshButton.addActionListener { refreshSkillDiscovery(forceReload = true, showRefreshFeedback = true) }
         skillNewDraftButton.addActionListener { resetSkillEditorForNewDraft() }
         skillAiDraftButton.addActionListener { generateSkillDraftWithAi() }
         skillDeleteButton.addActionListener { deleteSkillFromCurrentSource() }
@@ -1089,7 +1091,7 @@ class SettingsPanel(
         }
     }
 
-    private fun refreshSkillDiscovery(forceReload: Boolean) {
+    private fun refreshSkillDiscovery(forceReload: Boolean, showRefreshFeedback: Boolean = false) {
         skillRefreshButton.isEnabled = false
         setSkillDiscoveryStatus(
             SpecCodingBundle.message("settings.skills.discovery.scanning"),
@@ -1109,6 +1111,11 @@ class SettingsPanel(
                         applySkillDiscoverySnapshot(snapshot)
                         if (skillsList.selectedValue == null && skillsListModel.size() > 0) {
                             skillsList.selectedIndex = 0
+                        }
+                        if (showRefreshFeedback) {
+                            val successText = SpecCodingBundle.message("common.refresh.success")
+                            RefreshFeedback.flashButtonSuccess(skillRefreshButton, successText)
+                            RefreshFeedback.flashLabelSuccess(skillDiscoveryStatusLabel, successText, STATUS_SUCCESS_FG)
                         }
                     }
                     .onFailure { error ->
@@ -1937,7 +1944,10 @@ class SettingsPanel(
         isDisposed = true
         if (autoSaveTimer.isRunning) {
             autoSaveTimer.stop()
-            persistSettings(reason = "settings-panel-dispose-auto-save")
+            val application = ApplicationManager.getApplication()
+            if (!application.isDisposed && !application.isDisposeInProgress) {
+                persistSettings(reason = "settings-panel-dispose-auto-save")
+            }
         }
         scope.cancel()
     }

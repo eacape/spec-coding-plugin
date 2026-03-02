@@ -105,7 +105,7 @@ object MarkdownRenderer {
         // 语言标签
         if (language.isNotEmpty()) {
             val langAttrs = SimpleAttributeSet()
-            StyleConstants.setFontSize(langAttrs, 11)
+            StyleConstants.setFontSize(langAttrs, 10)
             StyleConstants.setForeground(langAttrs, JBColor(CODE_LANG_FG_LIGHT, CODE_LANG_FG_DARK))
             StyleConstants.setSpaceAbove(langAttrs, 2f)
             doc.insertString(
@@ -118,7 +118,7 @@ object MarkdownRenderer {
         // 代码内容
         val codeAttrs = SimpleAttributeSet()
         StyleConstants.setFontFamily(codeAttrs, CODE_FONT_FAMILY)
-        StyleConstants.setFontSize(codeAttrs, 12)
+        StyleConstants.setFontSize(codeAttrs, 11)
         StyleConstants.setBackground(codeAttrs, JBColor(BLOCK_CODE_BG_LIGHT, BLOCK_CODE_BG_DARK))
         StyleConstants.setForeground(codeAttrs, JBColor(BLOCK_CODE_FG_LIGHT, BLOCK_CODE_FG_DARK))
         StyleConstants.setLeftIndent(codeAttrs, 10f)
@@ -145,11 +145,11 @@ object MarkdownRenderer {
         val attrs = SimpleAttributeSet()
         StyleConstants.setBold(attrs, true)
         val fontSize = when (level) {
-            1 -> 18
-            2 -> 16
-            3 -> 14
-            4 -> 13
-            else -> 12
+            1 -> 16
+            2 -> 14
+            3 -> 13
+            4 -> 12
+            else -> 11
         }
         StyleConstants.setFontSize(attrs, fontSize)
         StyleConstants.setFontFamily(attrs, proseFontFamily)
@@ -165,7 +165,7 @@ object MarkdownRenderer {
 
         val bulletAttrs = SimpleAttributeSet()
         StyleConstants.setFontFamily(bulletAttrs, proseFontFamily)
-        StyleConstants.setFontSize(bulletAttrs, 12)
+        StyleConstants.setFontSize(bulletAttrs, 11)
 
         val trimmed = line.trimStart()
         val bullet = if (ordered) {
@@ -207,20 +207,20 @@ object MarkdownRenderer {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setBold(attrs, true)
                     StyleConstants.setFontFamily(attrs, proseFontFamily)
-                    StyleConstants.setFontSize(attrs, 12)
+                    StyleConstants.setFontSize(attrs, 11)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.Italic -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setItalic(attrs, true)
                     StyleConstants.setFontFamily(attrs, proseFontFamily)
-                    StyleConstants.setFontSize(attrs, 12)
+                    StyleConstants.setFontSize(attrs, 11)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.InlineCode -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setFontFamily(attrs, CODE_FONT_FAMILY)
-                    StyleConstants.setFontSize(attrs, 11)
+                    StyleConstants.setFontSize(attrs, 10)
                     StyleConstants.setBackground(attrs, JBColor(CODE_BG_LIGHT, CODE_BG_DARK))
                     StyleConstants.setForeground(attrs, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
                     doc.insertString(doc.length, token.text, attrs)
@@ -228,7 +228,7 @@ object MarkdownRenderer {
                 is InlineToken.Plain -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setFontFamily(attrs, proseFontFamily)
-                    StyleConstants.setFontSize(attrs, 12)
+                    StyleConstants.setFontSize(attrs, 11)
                     doc.insertString(doc.length, token.text, attrs)
                 }
             }

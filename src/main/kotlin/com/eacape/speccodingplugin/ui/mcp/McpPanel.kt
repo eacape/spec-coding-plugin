@@ -9,6 +9,7 @@ import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.mcp.*
+import com.eacape.speccodingplugin.ui.RefreshFeedback
 import com.intellij.icons.AllIcons
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
@@ -194,7 +195,7 @@ class McpPanel(
         add(splitPane, BorderLayout.CENTER)
 
         // 刷新按钮
-        refreshBtn.addActionListener { refreshServers() }
+        refreshBtn.addActionListener { refreshServers(showRefreshFeedback = true) }
         aiSetupBtn.addActionListener { onAiQuickSetup() }
         manualAddBtn.addActionListener { onAddServer() }
         setAiSetupInProgress(false)
@@ -242,7 +243,7 @@ class McpPanel(
         }
     }
 
-    fun refreshServers() {
+    fun refreshServers(showRefreshFeedback: Boolean = false) {
         val servers = mcpHub.getAllServers()
         val items = servers.map { server ->
             McpServerListPanel.ServerListItem(
@@ -254,6 +255,11 @@ class McpPanel(
         }
         serverListPanel.updateServers(items)
         updateServerCountStatus()
+        if (showRefreshFeedback) {
+            val successText = SpecCodingBundle.message("common.refresh.success")
+            RefreshFeedback.flashButtonSuccess(refreshBtn, successText)
+            RefreshFeedback.flashLabelSuccess(statusLabel, successText, STATUS_SUCCESS_FG)
+        }
     }
 
     private fun updateServerCountStatus() {
@@ -955,6 +961,7 @@ class McpPanel(
         private val STATUS_CHIP_BG = JBColor(Color(236, 244, 255), Color(66, 76, 91))
         private val STATUS_CHIP_BORDER = JBColor(Color(178, 198, 226), Color(99, 116, 140))
         private val STATUS_TEXT_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val STATUS_SUCCESS_FG = JBColor(Color(42, 128, 74), Color(131, 208, 157))
         private val GUIDE_TEXT_FG = JBColor(Color(86, 100, 122), Color(173, 186, 206))
         private val PANEL_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
         private val PANEL_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))

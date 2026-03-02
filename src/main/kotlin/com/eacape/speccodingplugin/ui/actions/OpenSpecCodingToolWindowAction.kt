@@ -9,7 +9,8 @@ import com.intellij.openapi.wm.ToolWindowManager
 class OpenSpecCodingToolWindowAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val toolWindowId = SpecCodingBundle.message("toolwindow.title")
+        // ToolWindow lookup must use stable id from plugin.xml, not localized title.
+        val toolWindowId = TOOL_WINDOW_ID
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(toolWindowId)
         toolWindow?.show()
     }
@@ -22,4 +23,8 @@ class OpenSpecCodingToolWindowAction : AnAction() {
     }
 
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
+    companion object {
+        private const val TOOL_WINDOW_ID = "Spec Code"
+    }
 }

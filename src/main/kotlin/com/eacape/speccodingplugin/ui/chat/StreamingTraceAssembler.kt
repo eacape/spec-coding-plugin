@@ -24,9 +24,11 @@ internal class StreamingTraceAssembler {
     }
 
     private val structuredItems = linkedMapOf<String, ExecutionTimelineParser.TimelineItem>()
+    private var cachedParsedContent: CachedParsedContent? = null
 
     fun clear() {
         structuredItems.clear()
+        cachedParsedContent = null
     }
 
     fun onStructuredEvent(event: ChatStreamEvent) {
@@ -37,6 +39,8 @@ internal class StreamingTraceAssembler {
         )
     }
 
+    fun hasStructuredItems(): Boolean = structuredItems.isNotEmpty()
+
     fun markRunningItemsDone() {
         if (structuredItems.isEmpty()) return
         structuredItems.entries.toList().forEach { (key, item) ->
@@ -46,12 +50,13 @@ internal class StreamingTraceAssembler {
         }
     }
 
-    fun snapshot(content: String): TraceSnapshot {
+    fun snapshot(content: String, includeRawContent: Boolean = true): TraceSnapshot {
         val merged = linkedMapOf<String, ExecutionTimelineParser.TimelineItem>()
 
-        ExecutionTimelineParser.parse(content).forEach { item ->
-            val sanitizedDetail = sanitizeDetail(item.detail) ?: return@forEach
-            mergeItem(item.copy(detail = sanitizedDetail), merged)
+        if (includeRawContent) {
+            sanitizedTimelineItems(content).forEach { item ->
+                mergeItem(item, merged)
+            }
         }
         structuredItems.values.forEach { item ->
             val sanitizedDetail = sanitizeDetail(item.detail) ?: return@forEach
@@ -68,6 +73,30 @@ internal class StreamingTraceAssembler {
                 )
             }
         )
+    }
+
+    private fun sanitizedTimelineItems(content: String): List<ExecutionTimelineParser.TimelineItem> {
+        val fingerprint = ContentFingerprint(
+            length = content.length,
+            hash = content.hashCode(),
+        )
+        val cached = cachedParsedContent
+        if (cached != null && cached.fingerprint == fingerprint) {
+            return cached.items
+        }
+
+        val parsed = ExecutionTimelineParser.parse(content)
+            .asSequence()
+            .mapNotNull { item ->
+                val sanitizedDetail = sanitizeDetail(item.detail) ?: return@mapNotNull null
+                item.copy(detail = sanitizedDetail)
+            }
+            .toList()
+        cachedParsedContent = CachedParsedContent(
+            fingerprint = fingerprint,
+            items = parsed,
+        )
+        return parsed
     }
 
     private fun extractFileAction(item: ExecutionTimelineParser.TimelineItem): WorkflowQuickActionParser.FileAction? {
@@ -183,4 +212,14 @@ internal class StreamingTraceAssembler {
             Charset.forName("Big5"),
         )
     }
+
+    private data class ContentFingerprint(
+        val length: Int,
+        val hash: Int,
+    )
+
+    private data class CachedParsedContent(
+        val fingerprint: ContentFingerprint,
+        val items: List<ExecutionTimelineParser.TimelineItem>,
+    )
 }
