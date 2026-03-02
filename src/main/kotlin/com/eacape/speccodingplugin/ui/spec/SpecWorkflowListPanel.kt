@@ -260,6 +260,8 @@ class SpecWorkflowListPanel(
 
             phaseLabel.font = phaseLabel.font.deriveFont(Font.PLAIN, 10.5f)
             statusLabel.font = statusLabel.font.deriveFont(Font.BOLD, 10.5f)
+            statusLabel.horizontalAlignment = SwingConstants.RIGHT
+            statusLabel.horizontalTextPosition = SwingConstants.RIGHT
 
             textPanel.isOpaque = false
             textPanel.layout = javax.swing.BoxLayout(textPanel, javax.swing.BoxLayout.Y_AXIS)
@@ -331,6 +333,11 @@ class SpecWorkflowListPanel(
 
             val statusText = localizeStatus(value.status).lowercase()
             statusLabel.text = statusText
+            val statusMetrics = statusLabel.getFontMetrics(statusLabel.font)
+            val statusColumnWidth = statusColumnWidth(statusMetrics)
+            statusLabel.preferredSize = JBUI.size(statusColumnWidth, statusMetrics.height)
+            statusLabel.minimumSize = statusLabel.preferredSize
+            statusLabel.maximumSize = JBUI.size(statusColumnWidth, Int.MAX_VALUE)
 
             val description = value.description.trim()
             descriptionLabel.isVisible = description.isNotBlank()
@@ -352,8 +359,7 @@ class SpecWorkflowListPanel(
                 SpecChangeIntent.INCREMENTAL -> SpecCodingBundle.message("spec.workflow.intent.incremental.short")
             }
             val fullPhaseText = "${value.currentPhase.displayName.lowercase()} · $intentLabelText"
-            val statusWidth = statusLabel.getFontMetrics(statusLabel.font).stringWidth(statusText)
-            val phaseWidth = (textAreaWidth - statusWidth - META_STATUS_GAP).coerceAtLeast(MIN_PHASE_TEXT_WIDTH)
+            val phaseWidth = (textAreaWidth - statusColumnWidth - META_STATUS_GAP).coerceAtLeast(MIN_PHASE_TEXT_WIDTH)
             val phaseText = truncateByPixel(
                 value = fullPhaseText,
                 fontMetrics = phaseLabel.getFontMetrics(phaseLabel.font),
@@ -440,6 +446,12 @@ class SpecWorkflowListPanel(
             WorkflowStatus.PAUSED -> SpecCodingBundle.message("spec.workflow.status.paused")
             WorkflowStatus.COMPLETED -> SpecCodingBundle.message("spec.workflow.status.completed")
             WorkflowStatus.FAILED -> SpecCodingBundle.message("spec.workflow.status.failed")
+        }
+
+        private fun statusColumnWidth(fontMetrics: FontMetrics): Int {
+            val maxTextWidth = WorkflowStatus.entries
+                .maxOf { status -> fontMetrics.stringWidth(localizeStatus(status).lowercase()) }
+            return (maxTextWidth + STATUS_COLUMN_SIDE_PADDING).coerceAtLeast(MIN_STATUS_COLUMN_WIDTH)
         }
 
         private class RoundedCardPanel(private val arc: Int) : JPanel() {
@@ -535,6 +547,8 @@ class SpecWorkflowListPanel(
             private val MIN_TEXT_WIDTH = JBUI.scale(76)
             private val META_STATUS_GAP = JBUI.scale(10)
             private val MIN_PHASE_TEXT_WIDTH = JBUI.scale(36)
+            private val STATUS_COLUMN_SIDE_PADDING = JBUI.scale(6)
+            private val MIN_STATUS_COLUMN_WIDTH = JBUI.scale(52)
         }
     }
 

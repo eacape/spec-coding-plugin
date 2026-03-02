@@ -60,6 +60,19 @@ class ExecutionTimelineParserTest {
     }
 
     @Test
+    fun `parse should ignore markdown headings that only describe verification steps`() {
+        val content = """
+            ## 常见问题排查
+            ### 验证 IDE
+            ### 验证 Markdown 插件安装
+            - 验证 Mermaid 渲染结果
+        """.trimIndent()
+
+        val items = ExecutionTimelineParser.parse(content)
+        assertTrue(items.isEmpty())
+    }
+
+    @Test
     fun `parse should merge lifecycle updates for same logical task`() {
         val content = """
             [Task] implement streaming trace running

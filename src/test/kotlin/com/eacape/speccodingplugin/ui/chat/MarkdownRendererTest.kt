@@ -61,7 +61,7 @@ class MarkdownRendererTest {
     }
 
     @Test
-    fun `render should convert markdown table into grid text`() {
+    fun `render should convert markdown table into normalized pipe table`() {
         val pane = JTextPane()
 
         runOnEdt {
@@ -77,11 +77,12 @@ class MarkdownRendererTest {
         }
 
         val text = pane.text
-        assertTrue(text.contains("┌"))
-        assertTrue(text.contains("┬"))
+        assertTrue(text.contains("| 层"))
+        assertTrue(text.contains("| 前端"))
         assertTrue(text.contains("前端"))
         assertTrue(text.contains("Kotlin"))
-        assertFalse(text.contains("| --- | --- |"))
+        assertTrue(text.contains("---"))
+        assertFalse(text.contains("┌"))
     }
 
     @Test
@@ -100,7 +101,7 @@ class MarkdownRendererTest {
 
         val text = pane.text
         assertTrue(text.contains("A | B"))
-        assertFalse(text.contains("┌"))
+        assertFalse(text.contains("| ---"))
     }
 
     private fun runOnEdt(block: () -> Unit) {

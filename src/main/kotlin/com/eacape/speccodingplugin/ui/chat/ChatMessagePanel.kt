@@ -175,7 +175,8 @@ open class ChatMessagePanel(
 
     private fun renderContent(structured: Boolean = false) {
         val useStructured = (structured || messageFinished) && workflowSectionsEnabled
-        val content = contentBuilder.toString()
+        val rawContent = contentBuilder.toString()
+        val content = if (role == MessageRole.ASSISTANT) sanitizeAssistantDisplayContent(rawContent) else rawContent
         val outputFontSize = configuredOutputFontSize()
         applyConfiguredOutputFont(contentPane, outputFontSize)
         if (role == MessageRole.ASSISTANT) {
@@ -377,6 +378,21 @@ open class ChatMessagePanel(
         if (lead.length > ASSISTANT_ACK_LEAD_MAX_LENGTH) return content
 
         return "**$lead**\n\n$body"
+    }
+
+    private fun sanitizeAssistantDisplayContent(content: String): String {
+        if (content.isBlank()) return content
+        val normalized = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+        val withoutThinkingTags = THINKING_TAG_REGEX.replace(normalized, "")
+            .replace(EXCESSIVE_EMPTY_LINES_REGEX, "\n\n")
+            .trim()
+        return if (withoutThinkingTags.isBlank()) {
+            normalized.trim()
+        } else {
+            withoutThinkingTags
+        }
     }
 
     private fun hasAssistantAcknowledgementPrefix(content: String): Boolean {
@@ -1133,6 +1149,7 @@ open class ChatMessagePanel(
         }
         if (markerSample.contains("**") || markerSample.contains('`')) return true
         var scannedChars = 0
+        var previousPipeLikeLine = false
         for (line in content.lineSequence()) {
             val trimmed = line.trimStart()
             scannedChars += line.length + 1
@@ -1143,6 +1160,11 @@ open class ChatMessagePanel(
             if (matched) {
                 return true
             }
+            val currentPipeLikeLine = PIPE_TABLE_ROW_REGEX.matches(trimmed)
+            if (previousPipeLikeLine && PIPE_TABLE_SEPARATOR_REGEX.matches(trimmed)) {
+                return true
+            }
+            previousPipeLikeLine = currentPipeLikeLine
             if (scannedChars >= scanLimit) {
                 break
             }
@@ -1411,7 +1433,11 @@ open class ChatMessagePanel(
     }
 
     private fun extractCodeBlocks() {
-        val content = contentBuilder.toString()
+        val content = if (role == MessageRole.ASSISTANT) {
+            sanitizeAssistantDisplayContent(contentBuilder.toString())
+        } else {
+            contentBuilder.toString()
+        }
         val regex = Regex("```\\w*\\n([\\s\\S]*?)```")
         codeBlocks.clear()
         regex.findAll(content).forEach {
@@ -1437,7 +1463,12 @@ open class ChatMessagePanel(
             tooltip = SpecCodingBundle.message("chat.message.copy.all"),
         )
         copyAllBtn.addActionListener {
-            val copied = copyToClipboard(contentBuilder.toString())
+            val copyPayload = if (role == MessageRole.ASSISTANT) {
+                sanitizeAssistantDisplayContent(contentBuilder.toString())
+            } else {
+                contentBuilder.toString()
+            }
+            val copied = copyToClipboard(copyPayload)
             showCopyFeedback(copyAllBtn, copied = copied, iconOnly = true)
         }
         buttonPanel.add(copyAllBtn)
@@ -2013,7 +2044,11 @@ open class ChatMessagePanel(
         )
         private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s+.*$""")
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+\.\s+.*""")
+        private val PIPE_TABLE_ROW_REGEX = Regex("""^\s*\|?(?:[^|\n]+\|){1,}[^|\n]*\|?\s*$""")
+        private val PIPE_TABLE_SEPARATOR_REGEX = Regex("""^\s*\|?(?:\s*:?-{3,}:?\s*\|){1,}\s*$""")
         private val PROMPT_REFERENCE_TOKEN_REGEX = Regex("""(?<!\S)#([\p{L}\p{N}_.-]+)""")
+        private val THINKING_TAG_REGEX = Regex("""</?thinking>""", RegexOption.IGNORE_CASE)
+        private val EXCESSIVE_EMPTY_LINES_REGEX = Regex("""\n{3,}""")
         private val ASSISTANT_ACK_SENTENCE_END_REGEX = Regex("[。！？!?]")
         private val ASSISTANT_ACK_COMMA_REGEX = Regex("[，,]")
         private val ASSISTANT_ACK_PREFIXES_ZH = listOf(

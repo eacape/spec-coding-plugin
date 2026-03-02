@@ -80,29 +80,15 @@ internal object ExecutionTimelineParser {
         val normalized = line.lowercase()
 
         return when {
-            normalized.startsWith("[thinking]") || normalized.startsWith("thinking") || line.startsWith("思考") -> Kind.THINK
-            normalized.startsWith("[read]") || normalized.contains("read file") || line.contains("读取文件") || line.contains("批量读取文件") -> Kind.READ
-            normalized.startsWith("[edit]") || normalized.contains("edit file") || normalized.contains("apply patch") || line.contains("编辑文件") || line.contains("修改文件") -> Kind.EDIT
-            normalized.startsWith("[task]") || normalized.startsWith("task") || line.startsWith("任务") || line.startsWith("子任务") || TASK_PROGRESS_REGEX.containsMatchIn(line) -> Kind.TASK
-            normalized.startsWith("[verify]") ||
-                normalized.startsWith("verify") ||
-                normalized.startsWith("test") ||
-                line.startsWith("验证") ||
-                line.startsWith("测试") ||
-                line.contains("运行测试") ||
-                line.contains("执行测试") ||
-                normalized.contains("ran test") ||
-                normalized.contains("tests passed") -> Kind.VERIFY
-            normalized.startsWith("[tool]") ||
-                normalized.startsWith("tool") ||
-                line.startsWith("工具调用") ||
-                line.startsWith("调用工具") -> Kind.TOOL
-            normalized.startsWith("[output]") ||
-                normalized.startsWith("output") ||
-                normalized.startsWith("[stdout]") ||
-                normalized.startsWith("[stderr]") ||
-                line.startsWith("输出") ||
-                line.startsWith("工具输出") -> Kind.OUTPUT
+            THINK_SIGNAL_REGEX.containsMatchIn(line) -> Kind.THINK
+            READ_SIGNAL_REGEX.containsMatchIn(line) -> Kind.READ
+            EDIT_SIGNAL_REGEX.containsMatchIn(line) -> Kind.EDIT
+            TASK_SIGNAL_REGEX.containsMatchIn(line) -> Kind.TASK
+            VERIFY_SIGNAL_REGEX.containsMatchIn(line) ||
+                normalized.startsWith("ran test") ||
+                normalized.startsWith("tests passed") -> Kind.VERIFY
+            TOOL_SIGNAL_REGEX.containsMatchIn(line) -> Kind.TOOL
+            OUTPUT_SIGNAL_REGEX.containsMatchIn(line) -> Kind.OUTPUT
             else -> null
         }
     }
@@ -220,6 +206,34 @@ internal object ExecutionTimelineParser {
     private val TASK_PROGRESS_REGEX = Regex("""(\d+)\s*/\s*(\d+)""")
     private val TASK_PROGRESS_PREFIX_REGEX = Regex("""^\d+\s*/\s*\d+\s*""")
     private val MERGE_NOISE_REGEX = Regex("""\b(running|done|completed|finished|success|failed|error|进行中|已完成|完成|失败|错误)\b""")
+    private val THINK_SIGNAL_REGEX = Regex(
+        """^(\[thinking\]\s*|(?:thinking|思考)\s*[:：>\-]+\s*)""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val READ_SIGNAL_REGEX = Regex(
+        """^(\[read\]\s*|read\s+files?\b\s*[:：>\-]?\s*|(?:读取文件|批量读取文件)(?:\s|[:：>\-]|$))""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val EDIT_SIGNAL_REGEX = Regex(
+        """^(\[edit\]\s*|edit\s+files?\b\s*[:：>\-]?\s*|apply\s+patch\b\s*[:：>\-]?\s*|(?:编辑文件|修改文件)(?:\s|[:：>\-]|$))""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val TASK_SIGNAL_REGEX = Regex(
+        """^(\[task\]\s*|(?:task|subtask)\b\s*[:：>\-]+\s*|(?:任务|子任务)\s*[:：>\-]+\s*|(?:任务|子任务)\s+\d+\s*/\s*\d+)""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val VERIFY_SIGNAL_REGEX = Regex(
+        """^(\[verify\]\s*|verify\b\s*[:：>\-]+\s*|test\b\s*[:：>\-]+\s*|(?:验证|测试)\s*[:：>\-]+\s*|(?:运行测试|执行测试)\s*[:：>\-]?\s*)""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val TOOL_SIGNAL_REGEX = Regex(
+        """^(\[tool\]\s*|tool\b\s*[:：>\-]+\s*|(?:工具调用|调用工具)\s*[:：>\-]?\s*)""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val OUTPUT_SIGNAL_REGEX = Regex(
+        """^((?:\[output\]|\[stdout\]|\[stderr\])\s*|output\b\s*[:：>\-]+\s*|(?:输出|工具输出)\s*[:：>\-]+\s*)""",
+        RegexOption.IGNORE_CASE,
+    )
     private val THINK_PREFIX_REGEX = Regex("""^(\[thinking\]|thinking|思考)\s*[:：>\-]*\s*""", RegexOption.IGNORE_CASE)
     private val READ_PREFIX_REGEX = Regex("""^(\[read\]|read\s+files?|读取文件|批量读取文件)\s*[:：>\-]*\s*""", RegexOption.IGNORE_CASE)
     private val EDIT_PREFIX_REGEX = Regex("""^(\[edit\]|edit\s+files?|apply\s+patch|编辑文件|修改文件)\s*[:：>\-]*\s*""", RegexOption.IGNORE_CASE)

@@ -9,6 +9,7 @@ import javax.swing.JPanel
 import javax.swing.Scrollable
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingUtilities
+import javax.swing.JViewport
 
 /**
  * 消息列表面板
@@ -20,6 +21,7 @@ class ChatMessagesListPanel(
 
     private val messages = mutableListOf<ChatMessagePanel>()
     private val scrollPane: JBScrollPane
+    private val scrollUnitIncrementPx = JBUI.scale(DEFAULT_SCROLL_UNIT_INCREMENT)
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -28,7 +30,11 @@ class ChatMessagesListPanel(
         scrollPane = JBScrollPane(this)
         scrollPane.border = JBUI.Borders.empty()
         scrollPane.horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-        scrollPane.verticalScrollBar.unitIncrement = 16
+        scrollPane.verticalScrollBar.unitIncrement = scrollUnitIncrementPx
+        scrollPane.verticalScrollBar.blockIncrement = JBUI.scale(DEFAULT_SCROLL_BLOCK_INCREMENT)
+        scrollPane.verticalScrollBar.putClientProperty("JScrollBar.fastWheelScrolling", true)
+        scrollPane.viewport.scrollMode = JViewport.BLIT_SCROLL_MODE
+        scrollPane.putClientProperty("JScrollPane.smoothScrolling", true)
     }
 
     fun getScrollPane(): JBScrollPane = scrollPane
@@ -110,11 +116,11 @@ class ChatMessagesListPanel(
     override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
 
     override fun getScrollableUnitIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int {
-        return DEFAULT_SCROLL_UNIT_INCREMENT
+        return scrollUnitIncrementPx
     }
 
     override fun getScrollableBlockIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int {
-        return (visibleRect.height - DEFAULT_SCROLL_UNIT_INCREMENT).coerceAtLeast(DEFAULT_SCROLL_UNIT_INCREMENT)
+        return (visibleRect.height - scrollUnitIncrementPx).coerceAtLeast(scrollUnitIncrementPx)
     }
 
     override fun getScrollableTracksViewportWidth(): Boolean = true
@@ -124,6 +130,7 @@ class ChatMessagesListPanel(
     companion object {
         private const val DEFAULT_MAX_VISIBLE_MESSAGES = 240
         private const val DEFAULT_NEAR_BOTTOM_THRESHOLD_PX = 80
-        private const val DEFAULT_SCROLL_UNIT_INCREMENT = 16
+        private const val DEFAULT_SCROLL_UNIT_INCREMENT = 28
+        private const val DEFAULT_SCROLL_BLOCK_INCREMENT = 112
     }
 }

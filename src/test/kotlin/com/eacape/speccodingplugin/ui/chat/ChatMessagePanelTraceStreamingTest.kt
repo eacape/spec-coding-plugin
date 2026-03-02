@@ -133,6 +133,31 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
+    fun `assistant output should hide thinking tags in rendered text`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                <thinking>
+                先分析结构
+                </thinking>
+                给你一个可执行方案。
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val allText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertFalse(allText.contains("<thinking>"))
+        assertFalse(allText.contains("</thinking>"))
+        assertTrue(allText.contains("给你一个可执行方案。"))
+    }
+
+    @Test
     fun `running trace status should become done when message finishes`() {
         val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
 

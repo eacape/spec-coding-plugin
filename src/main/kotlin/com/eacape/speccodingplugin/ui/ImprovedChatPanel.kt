@@ -3915,10 +3915,20 @@ class ImprovedChatPanel(
     private fun sanitizeStreamEvent(event: ChatStreamEvent): ChatStreamEvent? {
         val normalizedDetail = sanitizeDisplayText(event.detail, dropGarbledLines = true)
         if (normalizedDetail.isBlank()) return null
+        if (isNonInformativeTraceDetail(event.kind, normalizedDetail)) return null
         return if (normalizedDetail == event.detail) {
             event
         } else {
             event.copy(detail = normalizedDetail)
+        }
+    }
+
+    private fun isNonInformativeTraceDetail(kind: ChatTraceKind, detail: String): Boolean {
+        val normalized = detail.trim().lowercase(Locale.ROOT)
+        return when (kind) {
+            ChatTraceKind.VERIFY -> normalized in NON_INFORMATIVE_VERIFY_TRACE_DETAILS
+            ChatTraceKind.TASK -> normalized in NON_INFORMATIVE_TASK_TRACE_DETAILS
+            else -> false
         }
     }
 
@@ -5472,6 +5482,20 @@ class ImprovedChatPanel(
         private const val UI_GARBLED_MIN_RATIO = 0.15
         private const val UI_PLACEHOLDER_MAX_LENGTH = 4
         private val UI_PLACEHOLDER_LINE_REGEX = Regex("""^[\p{P}\p{S}]+$""")
+        private val NON_INFORMATIVE_VERIFY_TRACE_DETAILS = setOf(
+            "result: done",
+            "result: complete",
+            "result: completed",
+            "done",
+            "completed",
+            "success",
+        )
+        private val NON_INFORMATIVE_TASK_TRACE_DETAILS = setOf(
+            "done",
+            "completed",
+            "success",
+            "result: done",
+        )
         private const val CONTINUE_PROMPT_UNWRAP_MAX_DEPTH = 8
         private val CONTINUE_CODE_LIKE_FOCUS_REGEX = Regex("""^[a-z0-9_.:+\-/]{2,64}$""", RegexOption.IGNORE_CASE)
         private val PASTED_TEXT_MARKER_REGEX = Regex("""\[Pasted text #\d+ \+\d+ lines]""")
