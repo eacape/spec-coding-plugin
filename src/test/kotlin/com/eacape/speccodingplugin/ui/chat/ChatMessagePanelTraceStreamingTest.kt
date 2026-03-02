@@ -114,6 +114,25 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
+    fun `assistant acknowledgement lead should be emphasized in rendered answer`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val formatted = invokeAssistantLeadFormatter(
+            panel = panel,
+            content = "好的，我来处理这个问题。先检查配置，再给出最小改动。",
+        )
+        assertEquals(
+            "**好的，我来处理这个问题。**\n\n先检查配置，再给出最小改动。",
+            formatted,
+        )
+
+        val untouched = invokeAssistantLeadFormatter(
+            panel = panel,
+            content = "先检查配置，再给出最小改动。",
+        )
+        assertEquals("先检查配置，再给出最小改动。", untouched)
+    }
+
+    @Test
     fun `running trace status should become done when message finishes`() {
         val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
 
@@ -562,5 +581,14 @@ class ChatMessagePanelTraceStreamingTest {
             return
         }
         SwingUtilities.invokeAndWait(block)
+    }
+
+    private fun invokeAssistantLeadFormatter(panel: ChatMessagePanel, content: String): String {
+        val method = ChatMessagePanel::class.java.getDeclaredMethod(
+            "formatAssistantAcknowledgementLead",
+            String::class.java,
+        )
+        method.isAccessible = true
+        return method.invoke(panel, content) as String
     }
 }

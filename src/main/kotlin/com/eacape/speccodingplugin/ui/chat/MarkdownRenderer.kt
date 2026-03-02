@@ -22,6 +22,7 @@ import javax.swing.text.StyledDocument
  * - 无序列表 (- item)
  * - 有序列表 (1. item)
  * - 分隔线 (---)
+ * - 表格 (| col | col |)
  */
 object MarkdownRenderer {
 
@@ -41,6 +42,7 @@ object MarkdownRenderer {
         val doc = textPane.styledDocument
         doc.remove(0, doc.length)
         val proseFontFamily = textPane.font?.family ?: Font.SANS_SERIF
+        val baseFontSize = resolveBaseFontSize(textPane)
 
         val lines = markdown.lines()
         var i = 0
@@ -55,7 +57,16 @@ object MarkdownRenderer {
             if (trimmedLine.startsWith("```")) {
                 if (!firstBlock) insertNewline(doc)
                 firstBlock = false
-                i = renderCodeBlock(doc, lines, i)
+                i = renderCodeBlock(doc, lines, i, baseFontSize)
+                continue
+            }
+
+            val tableBlock = parseTableBlock(lines, i)
+            if (tableBlock != null) {
+                if (!firstBlock) insertNewline(doc)
+                firstBlock = false
+                renderTable(doc, tableBlock, baseFontSize)
+                i = tableBlock.nextIndex
                 continue
             }
 
@@ -65,16 +76,16 @@ object MarkdownRenderer {
             when {
                 headingMatch != null -> {
                     val level = headingMatch.groupValues[1].length.coerceIn(1, 6)
-                    renderHeading(doc, headingMatch.groupValues[2], level, proseFontFamily)
+                    renderHeading(doc, headingMatch.groupValues[2], level, proseFontFamily, baseFontSize)
                 }
                 trimmedLine.startsWith("- ") || trimmedLine.startsWith("* ") ->
-                    renderListItem(doc, line, ordered = false, proseFontFamily = proseFontFamily)
+                    renderListItem(doc, line, ordered = false, proseFontFamily = proseFontFamily, baseFontSize = baseFontSize)
                 ORDERED_LIST_REGEX.matches(trimmedLine) ->
-                    renderListItem(doc, line, ordered = true, proseFontFamily = proseFontFamily)
+                    renderListItem(doc, line, ordered = true, proseFontFamily = proseFontFamily, baseFontSize = baseFontSize)
                 line.trim() == "---" || line.trim() == "***" || line.trim() == "___" ->
-                    renderHorizontalRule(doc)
+                    renderHorizontalRule(doc, baseFontSize)
                 line.isBlank() -> { /* 空行，newline 已在上面插入 */ }
-                else -> renderInlineMarkdown(doc, line, proseFontFamily)
+                else -> renderInlineMarkdown(doc, line, proseFontFamily, baseFontSize)
             }
 
             i++
@@ -85,7 +96,7 @@ object MarkdownRenderer {
      * 渲染代码块
      * @return 下一行的索引
      */
-    private fun renderCodeBlock(doc: StyledDocument, lines: List<String>, startIndex: Int): Int {
+    private fun renderCodeBlock(doc: StyledDocument, lines: List<String>, startIndex: Int, baseFontSize: Int): Int {
         val firstLine = lines[startIndex].trimStart()
         val language = firstLine.removePrefix("```").trim()
 
@@ -105,7 +116,7 @@ object MarkdownRenderer {
         // 语言标签
         if (language.isNotEmpty()) {
             val langAttrs = SimpleAttributeSet()
-            StyleConstants.setFontSize(langAttrs, 10)
+            StyleConstants.setFontSize(langAttrs, (baseFontSize - 1).coerceAtLeast(MIN_INLINE_FONT_SIZE))
             StyleConstants.setForeground(langAttrs, JBColor(CODE_LANG_FG_LIGHT, CODE_LANG_FG_DARK))
             StyleConstants.setSpaceAbove(langAttrs, 2f)
             doc.insertString(
@@ -118,7 +129,7 @@ object MarkdownRenderer {
         // 代码内容
         val codeAttrs = SimpleAttributeSet()
         StyleConstants.setFontFamily(codeAttrs, CODE_FONT_FAMILY)
-        StyleConstants.setFontSize(codeAttrs, 11)
+        StyleConstants.setFontSize(codeAttrs, baseFontSize)
         StyleConstants.setBackground(codeAttrs, JBColor(BLOCK_CODE_BG_LIGHT, BLOCK_CODE_BG_DARK))
         StyleConstants.setForeground(codeAttrs, JBColor(BLOCK_CODE_FG_LIGHT, BLOCK_CODE_FG_DARK))
         StyleConstants.setLeftIndent(codeAttrs, 10f)
@@ -132,6 +143,238 @@ object MarkdownRenderer {
         return i
     }
 
+    private fun parseTableBlock(lines: List<String>, startIndex: Int): TableBlock? {
+        if (startIndex + 1 >= lines.size) return null
+        val headerCells = splitTableCells(lines[startIndex])
+        if (headerCells.size < MIN_TABLE_COLUMNS) return null
+
+        val separatorCells = splitTableCells(lines[startIndex + 1])
+        if (!isTableSeparatorRow(separatorCells)) return null
+
+        val rows = mutableListOf(headerCells)
+        var index = startIndex + 2
+        while (index < lines.size) {
+            val rowCells = splitTableCells(lines[index])
+            if (rowCells.size < MIN_TABLE_COLUMNS) break
+            rows.add(rowCells)
+            index += 1
+        }
+
+        return TableBlock(
+            rows = normalizeTableRows(rows),
+            nextIndex = index,
+        )
+    }
+
+    private fun splitTableCells(line: String): List<String> {
+        val trimmed = line.trim()
+        if (!trimmed.contains('|')) return emptyList()
+
+        var content = trimmed
+        if (content.startsWith('|')) {
+            content = content.substring(1)
+        }
+        if (content.endsWith('|')) {
+            content = content.dropLast(1)
+        }
+        if (!content.contains('|')) return emptyList()
+
+        val cells = mutableListOf<String>()
+        val cellBuilder = StringBuilder()
+        var escaped = false
+        for (ch in content) {
+            if (escaped) {
+                cellBuilder.append(ch)
+                escaped = false
+                continue
+            }
+
+            when (ch) {
+                '\\' -> escaped = true
+                '|' -> {
+                    cells.add(cellBuilder.toString().trim())
+                    cellBuilder.setLength(0)
+                }
+                else -> cellBuilder.append(ch)
+            }
+        }
+        if (escaped) {
+            cellBuilder.append('\\')
+        }
+        cells.add(cellBuilder.toString().trim())
+        return cells
+    }
+
+    private fun isTableSeparatorRow(cells: List<String>): Boolean {
+        if (cells.size < MIN_TABLE_COLUMNS) return false
+        return cells.all { cell ->
+            TABLE_SEPARATOR_CELL_REGEX.matches(cell.trim())
+        }
+    }
+
+    private fun normalizeTableRows(rows: List<List<String>>): List<List<String>> {
+        if (rows.isEmpty()) return emptyList()
+        val columnCount = rows.maxOf { it.size }.coerceAtLeast(MIN_TABLE_COLUMNS)
+        return rows.map { row ->
+            List(columnCount) { index ->
+                row.getOrNull(index).orEmpty()
+            }
+        }
+    }
+
+    private fun renderTable(doc: StyledDocument, tableBlock: TableBlock, baseFontSize: Int) {
+        val rows = tableBlock.rows
+        if (rows.isEmpty()) return
+        val columnWidths = computeTableColumnWidths(rows)
+
+        val tableAttrs = SimpleAttributeSet()
+        StyleConstants.setFontFamily(tableAttrs, CODE_FONT_FAMILY)
+        StyleConstants.setFontSize(tableAttrs, baseFontSize)
+        StyleConstants.setForeground(tableAttrs, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
+        StyleConstants.setLeftIndent(tableAttrs, 4f)
+        StyleConstants.setSpaceAbove(tableAttrs, 1f)
+        StyleConstants.setSpaceBelow(tableAttrs, 1f)
+
+        val wrappedRows = rows.map { wrapTableRow(it, columnWidths) }
+        wrappedRows.firstOrNull()?.forEachIndexed { index, lineCells ->
+            if (index > 0) insertNewline(doc)
+            doc.insertString(doc.length, buildPipeTableLine(lineCells, columnWidths), tableAttrs)
+        }
+
+        insertNewline(doc)
+        doc.insertString(doc.length, buildPipeSeparatorLine(columnWidths), tableAttrs)
+
+        wrappedRows.drop(1).forEach { rowLines ->
+            rowLines.forEach { lineCells ->
+                insertNewline(doc)
+                doc.insertString(doc.length, buildPipeTableLine(lineCells, columnWidths), tableAttrs)
+            }
+        }
+    }
+
+    private fun computeTableColumnWidths(rows: List<List<String>>): List<Int> {
+        if (rows.isEmpty()) return emptyList()
+        val columnCount = rows.maxOf { it.size }
+        return List(columnCount) { column ->
+            rows.maxOf { row ->
+                displayWidth(row.getOrNull(column).orEmpty().trim())
+            }
+                .coerceAtLeast(TABLE_MIN_COLUMN_DISPLAY_WIDTH)
+                .coerceAtMost(TABLE_MAX_COLUMN_DISPLAY_WIDTH)
+        }
+    }
+
+    private fun wrapTableRow(row: List<String>, widths: List<Int>): List<List<String>> {
+        val wrappedByColumn = widths.indices.map { index ->
+            wrapCellText(
+                text = row.getOrNull(index).orEmpty(),
+                maxWidth = widths[index],
+            )
+        }
+        val lineCount = wrappedByColumn.maxOfOrNull { it.size } ?: 1
+        return List(lineCount) { lineIndex ->
+            widths.indices.map { column ->
+                wrappedByColumn[column].getOrElse(lineIndex) { "" }
+            }
+        }
+    }
+
+    private fun wrapCellText(text: String, maxWidth: Int): List<String> {
+        val normalized = text
+            .replace('\t', ' ')
+            .trim()
+        if (normalized.isEmpty()) return listOf("")
+
+        val lines = mutableListOf<String>()
+        val current = StringBuilder()
+        var currentWidth = 0
+
+        fun flush() {
+            lines += current.toString().trimEnd()
+            current.setLength(0)
+            currentWidth = 0
+        }
+
+        for (ch in normalized) {
+            if (ch == '\n' || ch == '\r') {
+                if (current.isNotEmpty()) {
+                    flush()
+                } else if (lines.isEmpty()) {
+                    lines += ""
+                }
+                continue
+            }
+            if (ch == ' ' && current.isEmpty()) continue
+
+            val width = charDisplayWidth(ch)
+            if (currentWidth + width > maxWidth && current.isNotEmpty()) {
+                flush()
+            }
+            current.append(ch)
+            currentWidth += width
+        }
+        if (current.isNotEmpty()) {
+            flush()
+        }
+        return if (lines.isEmpty()) listOf("") else lines
+    }
+
+    private fun buildPipeSeparatorLine(widths: List<Int>): String {
+        return buildString {
+            append('|')
+            widths.forEach { width ->
+                append(' ')
+                append("-".repeat(width.coerceAtLeast(TABLE_MIN_SEPARATOR_WIDTH)))
+                append(' ')
+                append('|')
+            }
+        }
+    }
+
+    private fun buildPipeTableLine(cells: List<String>, widths: List<Int>): String {
+        return buildString {
+            append('|')
+            widths.forEachIndexed { index, width ->
+                val cell = cells.getOrNull(index).orEmpty().trim()
+                append(' ')
+                append(padToDisplayWidth(cell, width))
+                append(' ')
+                append('|')
+            }
+        }
+    }
+
+    private fun padToDisplayWidth(text: String, width: Int): String {
+        val delta = width - displayWidth(text)
+        if (delta <= 0) return text
+        return text + " ".repeat(delta)
+    }
+
+    private fun displayWidth(text: String): Int {
+        if (text.isEmpty()) return 0
+        var width = 0
+        for (ch in text) {
+            width += charDisplayWidth(ch)
+        }
+        return width
+    }
+
+    private fun charDisplayWidth(ch: Char): Int {
+        if (ch == '\t') return 4
+        if (ch.isHighSurrogate()) return 2
+        if (ch.isLowSurrogate()) return 0
+        if (ch.code in 0..31 || ch.code == 127) return 0
+
+        val block = Character.UnicodeBlock.of(ch)
+        if (block != null && block in WIDE_UNICODE_BLOCKS) {
+            return 2
+        }
+        if (ch.code in 0xFF01..0xFF60 || ch.code in 0xFFE0..0xFFE6) {
+            return 2
+        }
+        return 1
+    }
+
     private fun normalizeCodeBlockContent(raw: String): String {
         return raw
             .replace("\t", "    ")
@@ -141,15 +384,21 @@ object MarkdownRenderer {
     /**
      * 渲染标题
      */
-    private fun renderHeading(doc: StyledDocument, text: String, level: Int, proseFontFamily: String) {
+    private fun renderHeading(
+        doc: StyledDocument,
+        text: String,
+        level: Int,
+        proseFontFamily: String,
+        baseFontSize: Int,
+    ) {
         val attrs = SimpleAttributeSet()
         StyleConstants.setBold(attrs, true)
         val fontSize = when (level) {
-            1 -> 16
-            2 -> 14
-            3 -> 13
-            4 -> 12
-            else -> 11
+            1 -> baseFontSize + 5
+            2 -> baseFontSize + 3
+            3 -> baseFontSize + 2
+            4 -> baseFontSize + 1
+            else -> baseFontSize
         }
         StyleConstants.setFontSize(attrs, fontSize)
         StyleConstants.setFontFamily(attrs, proseFontFamily)
@@ -159,13 +408,19 @@ object MarkdownRenderer {
     /**
      * 渲染列表项
      */
-    private fun renderListItem(doc: StyledDocument, line: String, ordered: Boolean, proseFontFamily: String) {
+    private fun renderListItem(
+        doc: StyledDocument,
+        line: String,
+        ordered: Boolean,
+        proseFontFamily: String,
+        baseFontSize: Int,
+    ) {
         val indent = line.length - line.trimStart().length
         val prefix = "  ".repeat(indent / 2)
 
         val bulletAttrs = SimpleAttributeSet()
         StyleConstants.setFontFamily(bulletAttrs, proseFontFamily)
-        StyleConstants.setFontSize(bulletAttrs, 11)
+        StyleConstants.setFontSize(bulletAttrs, baseFontSize)
 
         val trimmed = line.trimStart()
         val bullet = if (ordered) {
@@ -183,23 +438,23 @@ object MarkdownRenderer {
         } else {
             trimmed.removePrefix("- ").removePrefix("* ")
         }
-        renderInlineMarkdown(doc, content, proseFontFamily)
+        renderInlineMarkdown(doc, content, proseFontFamily, baseFontSize)
     }
 
     /**
      * 渲染分隔线
      */
-    private fun renderHorizontalRule(doc: StyledDocument) {
+    private fun renderHorizontalRule(doc: StyledDocument, baseFontSize: Int) {
         val attrs = SimpleAttributeSet()
         StyleConstants.setForeground(attrs, JBColor.GRAY)
-        StyleConstants.setFontSize(attrs, 10)
+        StyleConstants.setFontSize(attrs, (baseFontSize - 1).coerceAtLeast(MIN_INLINE_FONT_SIZE))
         doc.insertString(doc.length, "\u2500".repeat(40), attrs)
     }
 
     /**
      * 渲染行内 Markdown（粗体、斜体、行内代码）
      */
-    private fun renderInlineMarkdown(doc: StyledDocument, text: String, proseFontFamily: String) {
+    private fun renderInlineMarkdown(doc: StyledDocument, text: String, proseFontFamily: String, baseFontSize: Int) {
         val tokens = tokenizeInline(text)
         for (token in tokens) {
             when (token) {
@@ -207,20 +462,20 @@ object MarkdownRenderer {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setBold(attrs, true)
                     StyleConstants.setFontFamily(attrs, proseFontFamily)
-                    StyleConstants.setFontSize(attrs, 11)
+                    StyleConstants.setFontSize(attrs, baseFontSize)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.Italic -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setItalic(attrs, true)
                     StyleConstants.setFontFamily(attrs, proseFontFamily)
-                    StyleConstants.setFontSize(attrs, 11)
+                    StyleConstants.setFontSize(attrs, baseFontSize)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.InlineCode -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setFontFamily(attrs, CODE_FONT_FAMILY)
-                    StyleConstants.setFontSize(attrs, 10)
+                    StyleConstants.setFontSize(attrs, (baseFontSize - 1).coerceAtLeast(MIN_INLINE_FONT_SIZE))
                     StyleConstants.setBackground(attrs, JBColor(CODE_BG_LIGHT, CODE_BG_DARK))
                     StyleConstants.setForeground(attrs, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
                     doc.insertString(doc.length, token.text, attrs)
@@ -228,11 +483,16 @@ object MarkdownRenderer {
                 is InlineToken.Plain -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setFontFamily(attrs, proseFontFamily)
-                    StyleConstants.setFontSize(attrs, 11)
+                    StyleConstants.setFontSize(attrs, baseFontSize)
                     doc.insertString(doc.length, token.text, attrs)
                 }
             }
         }
+    }
+
+    private fun resolveBaseFontSize(textPane: JTextPane): Int {
+        val raw = textPane.font?.size ?: DEFAULT_BASE_FONT_SIZE
+        return raw.coerceIn(MIN_BASE_FONT_SIZE, MAX_BASE_FONT_SIZE)
     }
 
     private fun insertNewline(doc: StyledDocument) {
@@ -295,6 +555,34 @@ object MarkdownRenderer {
 
     private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+(.*)$""")
     private val ORDERED_LIST_REGEX = Regex("""^\d+\.\s.*$""")
+    private val TABLE_SEPARATOR_CELL_REGEX = Regex("""^:?-{3,}:?$""")
+    private const val MIN_TABLE_COLUMNS = 2
+    private const val TABLE_MIN_COLUMN_DISPLAY_WIDTH = 3
+    private const val TABLE_MAX_COLUMN_DISPLAY_WIDTH = 28
+    private const val TABLE_MIN_SEPARATOR_WIDTH = 3
+    private val WIDE_UNICODE_BLOCKS = setOf(
+        Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
+        Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A,
+        Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B,
+        Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS,
+        Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION,
+        Character.UnicodeBlock.HIRAGANA,
+        Character.UnicodeBlock.KATAKANA,
+        Character.UnicodeBlock.KATAKANA_PHONETIC_EXTENSIONS,
+        Character.UnicodeBlock.HANGUL_JAMO,
+        Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO,
+        Character.UnicodeBlock.HANGUL_SYLLABLES,
+        Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS,
+    )
+    private const val MIN_INLINE_FONT_SIZE = 9
+    private const val DEFAULT_BASE_FONT_SIZE = 11
+    private const val MIN_BASE_FONT_SIZE = 9
+    private const val MAX_BASE_FONT_SIZE = 36
+
+    private data class TableBlock(
+        val rows: List<List<String>>,
+        val nextIndex: Int,
+    )
 
     private sealed class InlineToken {
         abstract val text: String

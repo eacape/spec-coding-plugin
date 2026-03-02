@@ -105,6 +105,7 @@ class WorktreePanelTest {
         panel.setSelectedWorktreeForTest("wt-err")
         panel.clickSwitchForTest()
         panel.clickMergeForTest()
+        assertTrue(panel.detailLastErrorTextForTest().contains("merge failed"))
         panel.clickCleanupForTest()
 
         assertEquals("wt-err", panel.selectedWorktreeIdForTest())

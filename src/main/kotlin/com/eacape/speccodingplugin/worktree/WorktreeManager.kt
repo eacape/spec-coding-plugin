@@ -89,6 +89,20 @@ class WorktreeManager internal constructor(
         }
     }
 
+    fun suggestBaseBranch(defaultBranch: String = DEFAULT_BASE_BRANCH): String {
+        val normalizedDefault = defaultBranch.trim().ifBlank { DEFAULT_BASE_BRANCH }
+        val basePath = project.basePath?.trim()?.ifBlank { null } ?: return normalizedDefault
+        val currentBranch = gitExecutor.resolveCurrentBranch(basePath)
+            .getOrNull()
+            ?.trim()
+            ?.ifBlank { null }
+        if (currentBranch != null) {
+            return currentBranch
+        }
+        return gitExecutor.resolveBaseBranch(basePath, normalizedDefault)
+            .getOrDefault(normalizedDefault)
+    }
+
     fun switchWorktree(worktreeId: String): Result<WorktreeBinding> {
         return runCatching {
             val normalizedId = worktreeId.trim()
@@ -221,6 +235,7 @@ class WorktreeManager internal constructor(
     }
 
     companion object {
+        private const val DEFAULT_BASE_BRANCH = "main"
         fun getInstance(project: Project): WorktreeManager = project.service()
     }
 }

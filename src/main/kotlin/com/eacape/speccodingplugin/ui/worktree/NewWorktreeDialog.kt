@@ -7,6 +7,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import java.awt.Dimension
+import java.util.UUID
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JComponent
@@ -15,11 +16,12 @@ import javax.swing.JPanel
 class NewWorktreeDialog(
     specTaskId: String? = null,
     specTitle: String? = null,
+    baseBranch: String = DEFAULT_BASE_BRANCH,
 ) : DialogWrapper(true) {
 
-    private val specTaskIdField = JBTextField(specTaskId.orEmpty())
+    private val resolvedSpecTaskId = resolveSpecTaskId(specTaskId)
     private val shortNameField = JBTextField()
-    private val baseBranchField = JBTextField(DEFAULT_BASE_BRANCH)
+    private val baseBranchField = JBTextField(baseBranch.trim().ifBlank { DEFAULT_BASE_BRANCH })
 
     var resultSpecTaskId: String? = null
         private set
@@ -42,8 +44,6 @@ class NewWorktreeDialog(
             border = JBUI.Borders.empty(8)
         }
 
-        panel.add(labeledField(SpecCodingBundle.message("worktree.dialog.field.specTaskId"), specTaskIdField))
-        panel.add(Box.createVerticalStrut(10))
         panel.add(labeledField(SpecCodingBundle.message("worktree.dialog.field.shortName"), shortNameField))
         panel.add(Box.createVerticalStrut(10))
         panel.add(labeledField(SpecCodingBundle.message("worktree.dialog.field.baseBranch"), baseBranchField))
@@ -53,13 +53,6 @@ class NewWorktreeDialog(
 
     override fun doValidate(): ValidationInfo? {
         return when (validateInput(readInput())) {
-            NewWorktreeValidationError.SPEC_TASK_ID_REQUIRED -> {
-                ValidationInfo(
-                    SpecCodingBundle.message("worktree.dialog.validation.specTaskIdRequired"),
-                    specTaskIdField,
-                )
-            }
-
             NewWorktreeValidationError.SHORT_NAME_REQUIRED -> {
                 ValidationInfo(
                     SpecCodingBundle.message("worktree.dialog.validation.shortNameRequired"),
@@ -105,7 +98,7 @@ class NewWorktreeDialog(
 
     private fun readInput(): NewWorktreeInput {
         return NewWorktreeInput(
-            specTaskId = specTaskIdField.text.orEmpty(),
+            specTaskId = resolvedSpecTaskId,
             shortName = shortNameField.text.orEmpty(),
             baseBranch = baseBranchField.text.orEmpty(),
         )
@@ -114,10 +107,11 @@ class NewWorktreeDialog(
     companion object {
         internal const val DEFAULT_BASE_BRANCH: String = "main"
 
+        internal fun resolveSpecTaskId(specTaskId: String?): String {
+            return specTaskId?.trim()?.ifBlank { null } ?: UUID.randomUUID().toString()
+        }
+
         internal fun validateInput(input: NewWorktreeInput): NewWorktreeValidationError? {
-            if (input.specTaskId.isBlank()) {
-                return NewWorktreeValidationError.SPEC_TASK_ID_REQUIRED
-            }
             if (input.shortName.isBlank()) {
                 return NewWorktreeValidationError.SHORT_NAME_REQUIRED
             }
@@ -144,7 +138,6 @@ internal data class NewWorktreeInput(
 )
 
 internal enum class NewWorktreeValidationError {
-    SPEC_TASK_ID_REQUIRED,
     SHORT_NAME_REQUIRED,
     BASE_BRANCH_REQUIRED,
 }

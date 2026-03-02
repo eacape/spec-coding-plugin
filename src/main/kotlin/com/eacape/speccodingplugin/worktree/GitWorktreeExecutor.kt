@@ -6,6 +6,14 @@ package com.eacape.speccodingplugin.worktree
  */
 interface GitWorktreeExecutor {
     /**
+     * Resolve current checked-out branch for the repository.
+     * Default implementation indicates executor does not support probing.
+     */
+    fun resolveCurrentBranch(repoPath: String): Result<String> {
+        return Result.failure(IllegalStateException("Current branch probe is not supported"))
+    }
+
+    /**
      * Resolve the base branch/ref used for creating a worktree.
      * Default implementation keeps the requested value unchanged.
      */

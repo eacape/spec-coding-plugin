@@ -112,6 +112,7 @@ class SettingsPanel(
     private val proxyPortField = JBTextField()
     private val autoSaveCheckBox = JBCheckBox()
     private val maxHistorySizeField = JBTextField()
+    private val chatOutputFontSizeField = JBTextField()
     private val codexCliPathField = JBTextField()
     private val claudeCodeCliPathField = JBTextField()
     private val detectCliButton = JButton(SpecCodingBundle.message("settings.cli.detectButton"))
@@ -408,6 +409,10 @@ class SettingsPanel(
         val otherPanel = FormBuilder.createFormBuilder()
             .addComponent(autoSaveCheckBox.apply { text = SpecCodingBundle.message("settings.other.autoSave") })
             .addLabeledComponent(SpecCodingBundle.message("settings.other.maxHistorySize"), maxHistorySizeField)
+            .addLabeledComponent(
+                SpecCodingBundle.message("settings.other.chatOutputFontSize"),
+                chatOutputFontSizeField,
+            )
             .panel.apply {
                 isOpaque = false
                 border = JBUI.Borders.empty()
@@ -836,6 +841,7 @@ class SettingsPanel(
             proxyHostField,
             proxyPortField,
             maxHistorySizeField,
+            chatOutputFontSizeField,
             codexCliPathField,
             claudeCodeCliPathField,
             defaultModeField,
@@ -921,6 +927,9 @@ class SettingsPanel(
         proxyPortField.text = settings.proxyPort.toString()
         autoSaveCheckBox.isSelected = settings.autoSaveConversation
         maxHistorySizeField.text = settings.maxHistorySize.toString()
+        chatOutputFontSizeField.text = SpecCodingSettingsState.normalizeChatOutputFontSize(
+            settings.chatOutputFontSize,
+        ).toString()
         codexCliPathField.text = settings.codexCliPath
         claudeCodeCliPathField.text = settings.claudeCodeCliPath
         defaultModeField.text = settings.defaultOperationMode.lowercase(Locale.ROOT)
@@ -942,6 +951,9 @@ class SettingsPanel(
         val nextProxyPort = proxyPortField.text.toIntOrNull() ?: settings.proxyPort
         val nextAutoSave = autoSaveCheckBox.isSelected
         val nextMaxHistory = maxHistorySizeField.text.toIntOrNull() ?: settings.maxHistorySize
+        val nextChatOutputFontSize = SpecCodingSettingsState.normalizeChatOutputFontSize(
+            chatOutputFontSizeField.text.toIntOrNull() ?: settings.chatOutputFontSize,
+        )
         val nextCodexPath = codexCliPathField.text
         val nextClaudePath = claudeCodeCliPathField.text
         val nextDefaultMode = normalizeOperationMode(defaultModeField.text)
@@ -961,6 +973,7 @@ class SettingsPanel(
                 nextProxyPort != settings.proxyPort ||
                 nextAutoSave != settings.autoSaveConversation ||
                 nextMaxHistory != settings.maxHistorySize ||
+                nextChatOutputFontSize != settings.chatOutputFontSize ||
                 nextCodexPath != settings.codexCliPath ||
                 nextClaudePath != settings.claudeCodeCliPath ||
                 nextDefaultMode != settings.defaultOperationMode
@@ -982,6 +995,7 @@ class SettingsPanel(
         settings.proxyPort = nextProxyPort
         settings.autoSaveConversation = nextAutoSave
         settings.maxHistorySize = nextMaxHistory
+        settings.chatOutputFontSize = nextChatOutputFontSize
         settings.codexCliPath = nextCodexPath
         settings.claudeCodeCliPath = nextClaudePath
         settings.defaultOperationMode = nextDefaultMode

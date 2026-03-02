@@ -31,6 +31,7 @@ class SpecCodingSettingsState : PersistentStateComponent<SpecCodingSettingsState
     // 其他设置
     var autoSaveConversation: Boolean = true
     var maxHistorySize: Int = 100
+    var chatOutputFontSize: Int = DEFAULT_CHAT_OUTPUT_FONT_SIZE
 
     // 引擎路径配置
     var codexCliPath: String = ""
@@ -80,6 +81,14 @@ class SpecCodingSettingsState : PersistentStateComponent<SpecCodingSettingsState
     }
 
     companion object {
+        const val MIN_CHAT_OUTPUT_FONT_SIZE = 11
+        const val MAX_CHAT_OUTPUT_FONT_SIZE = 22
+        const val DEFAULT_CHAT_OUTPUT_FONT_SIZE = 13
+
+        fun normalizeChatOutputFontSize(value: Int): Int {
+            return value.coerceIn(MIN_CHAT_OUTPUT_FONT_SIZE, MAX_CHAT_OUTPUT_FONT_SIZE)
+        }
+
         fun getInstance(): SpecCodingSettingsState {
             return com.intellij.openapi.components.service()
         }

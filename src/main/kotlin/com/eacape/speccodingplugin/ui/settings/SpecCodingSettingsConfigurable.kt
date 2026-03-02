@@ -53,6 +53,7 @@ class SpecCodingSettingsConfigurable : Configurable {
     // 其他设置
     private val autoSaveCheckBox = JBCheckBox()
     private val maxHistorySizeField = JBTextField()
+    private val chatOutputFontSizeField = JBTextField()
 
     // 引擎路径
     private val codexCliPathField = JBTextField()
@@ -137,6 +138,10 @@ class SpecCodingSettingsConfigurable : Configurable {
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.other")}</b></html>"))
             .addComponent(autoSaveCheckBox.apply { text = SpecCodingBundle.message("settings.other.autoSave") })
             .addLabeledComponent(SpecCodingBundle.message("settings.other.maxHistorySize"), maxHistorySizeField)
+            .addLabeledComponent(
+                SpecCodingBundle.message("settings.other.chatOutputFontSize"),
+                chatOutputFontSizeField,
+            )
             .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.operationMode")}</b></html>"))
             .addLabeledComponent(SpecCodingBundle.message("settings.operationMode.defaultMode"), defaultModeField)
@@ -158,6 +163,12 @@ class SpecCodingSettingsConfigurable : Configurable {
         if (proxyPortField.text != settings.proxyPort.toString()) return true
         if (autoSaveCheckBox.isSelected != settings.autoSaveConversation) return true
         if (maxHistorySizeField.text != settings.maxHistorySize.toString()) return true
+        if (
+            chatOutputFontSizeField.text !=
+            SpecCodingSettingsState.normalizeChatOutputFontSize(settings.chatOutputFontSize).toString()
+        ) {
+            return true
+        }
         if (codexCliPathField.text != settings.codexCliPath) return true
         if (claudeCodeCliPathField.text != settings.claudeCodeCliPath) return true
         if (normalizeOperationMode(defaultModeField.text) != settings.defaultOperationMode.uppercase(Locale.ROOT)) return true
@@ -178,6 +189,9 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         settings.autoSaveConversation = autoSaveCheckBox.isSelected
         settings.maxHistorySize = maxHistorySizeField.text.toIntOrNull() ?: 100
+        settings.chatOutputFontSize = SpecCodingSettingsState.normalizeChatOutputFontSize(
+            chatOutputFontSizeField.text.toIntOrNull() ?: settings.chatOutputFontSize,
+        )
 
         settings.codexCliPath = codexCliPathField.text
         settings.claudeCodeCliPath = claudeCodeCliPathField.text
@@ -203,6 +217,9 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         autoSaveCheckBox.isSelected = settings.autoSaveConversation
         maxHistorySizeField.text = settings.maxHistorySize.toString()
+        chatOutputFontSizeField.text = SpecCodingSettingsState.normalizeChatOutputFontSize(
+            settings.chatOutputFontSize,
+        ).toString()
 
         codexCliPathField.text = settings.codexCliPath
         claudeCodeCliPathField.text = settings.claudeCodeCliPath

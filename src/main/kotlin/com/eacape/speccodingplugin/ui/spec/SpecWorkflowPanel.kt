@@ -740,6 +740,7 @@ class SpecWorkflowPanel(
         val dialog = NewWorktreeDialog(
             specTaskId = workflow.id,
             specTitle = workflow.title.ifBlank { workflow.id },
+            baseBranch = worktreeManager.suggestBaseBranch(),
         )
         if (!dialog.showAndGet()) {
             return

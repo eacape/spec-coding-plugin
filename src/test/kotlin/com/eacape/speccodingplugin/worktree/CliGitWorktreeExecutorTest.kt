@@ -55,16 +55,29 @@ class CliGitWorktreeExecutorTest {
     @Test
     fun `mergeBranch should run checkout then merge and detect conflicts`() {
         val commands = mutableListOf<List<String>>()
-        val outcomes = ArrayDeque(
-            listOf(
-                CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "Switched to branch 'main'"),
-                CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "CONFLICT (content): Merge conflict"),
-            )
-        )
-
         val executor = CliGitWorktreeExecutor { _, command ->
             commands += command
-            outcomes.removeFirst()
+            when (command) {
+                listOf("git", "worktree", "list", "--porcelain") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "")
+                }
+
+                listOf("git", "branch", "--show-current") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "spec/spec-3\n")
+                }
+
+                listOf("git", "checkout", "main") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "Switched to branch 'main'")
+                }
+
+                listOf("git", "merge", "--no-ff", "spec/spec-3") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "CONFLICT (content): Merge conflict")
+                }
+
+                else -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 1, output = "")
+                }
+            }
         }
 
         val result = executor.mergeBranch(
@@ -77,20 +90,33 @@ class CliGitWorktreeExecutorTest {
         val mergeOutcome = result.getOrThrow()
         assertTrue(mergeOutcome.hasConflicts)
         assertTrue(mergeOutcome.statusDescription.contains("CONFLICT"))
-        assertEquals(listOf("git", "checkout", "main"), commands[0])
-        assertEquals(listOf("git", "merge", "--no-ff", "spec/spec-3"), commands[1])
+        assertTrue(commands.contains(listOf("git", "checkout", "main")))
+        assertTrue(commands.contains(listOf("git", "merge", "--no-ff", "spec/spec-3")))
     }
 
     @Test
     fun `mergeBranch should use MERGED description when merge output blank`() {
-        val outcomes = ArrayDeque(
-            listOf(
-                CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "checked out"),
-                CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "   "),
-            )
-        )
+        val commands = mutableListOf<List<String>>()
+        val executor = CliGitWorktreeExecutor { _, command ->
+            commands += command
+            when (command) {
+                listOf("git", "worktree", "list", "--porcelain") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "")
+                }
 
-        val executor = CliGitWorktreeExecutor { _, _ -> outcomes.removeFirst() }
+                listOf("git", "branch", "--show-current") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "main\n")
+                }
+
+                listOf("git", "merge", "--no-ff", "spec/spec-4") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "   ")
+                }
+
+                else -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 1, output = "")
+                }
+            }
+        }
 
         val result = executor.mergeBranch(
             repoPath = "D:/repo",
@@ -102,6 +128,59 @@ class CliGitWorktreeExecutorTest {
         val mergeOutcome = result.getOrThrow()
         assertFalse(mergeOutcome.hasConflicts)
         assertEquals("MERGED", mergeOutcome.statusDescription)
+        assertFalse(commands.contains(listOf("git", "checkout", "main")))
+    }
+
+    @Test
+    fun `mergeBranch should prefer target branch worktree when available`() {
+        val calls = mutableListOf<Pair<String, List<String>>>()
+        val executor = CliGitWorktreeExecutor { repoPath, command ->
+            calls += repoPath to command
+            when {
+                repoPath == "D:/repo-worktrees/spec-3" &&
+                    command == listOf("git", "worktree", "list", "--porcelain") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(
+                        exitCode = 0,
+                        output = """
+                            worktree D:/repo-main
+                            HEAD abcdef1
+                            branch refs/heads/main
+
+                            worktree D:/repo-worktrees/spec-3
+                            HEAD abcdef2
+                            branch refs/heads/spec/spec-3
+                        """.trimIndent(),
+                    )
+                }
+
+                repoPath == "D:/repo-main" &&
+                    command == listOf("git", "branch", "--show-current") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "main\n")
+                }
+
+                repoPath == "D:/repo-main" &&
+                    command == listOf("git", "merge", "--no-ff", "spec/spec-3") -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 0, output = "MERGED")
+                }
+
+                else -> {
+                    CliGitWorktreeExecutor.ProcessExecutionResult(exitCode = 1, output = "")
+                }
+            }
+        }
+
+        val result = executor.mergeBranch(
+            repoPath = "D:/repo-worktrees/spec-3",
+            sourceBranch = "spec/spec-3",
+            targetBranch = "main",
+        )
+
+        assertTrue(result.isSuccess)
+        assertTrue(
+            calls.any { (path, command) ->
+                path == "D:/repo-main" && command == listOf("git", "merge", "--no-ff", "spec/spec-3")
+            }
+        )
     }
 
     @Test

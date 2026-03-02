@@ -208,6 +208,30 @@ class WorktreeManagerTest {
         assertEquals("a-b-c", manager.normalizeSegment("A@@B@@C"))
     }
 
+    @Test
+    fun `suggestBaseBranch should prefer current branch`() {
+        gitExecutor.currentBranchOutcome = Result.success("feature/xyz")
+        gitExecutor.resolveOutcome = Result.success("main")
+
+        val suggested = manager.suggestBaseBranch()
+
+        assertEquals("feature/xyz", suggested)
+        assertEquals(1, gitExecutor.currentBranchCalls.size)
+        assertEquals(0, gitExecutor.resolveCalls.size)
+    }
+
+    @Test
+    fun `suggestBaseBranch should fallback to resolved base branch when current branch unavailable`() {
+        gitExecutor.currentBranchOutcome = Result.failure(IllegalStateException("detached head"))
+        gitExecutor.resolveOutcome = Result.success("develop")
+
+        val suggested = manager.suggestBaseBranch()
+
+        assertEquals("develop", suggested)
+        assertEquals(1, gitExecutor.currentBranchCalls.size)
+        assertEquals(1, gitExecutor.resolveCalls.size)
+    }
+
     private class FakeWorktreeStore : WorktreeStateStore {
         private var state = WorktreeState()
 
@@ -219,6 +243,10 @@ class WorktreeManagerTest {
     }
 
     private class FakeGitWorktreeExecutor : GitWorktreeExecutor {
+        data class CurrentBranchCall(
+            val repoPath: String,
+        )
+
         data class ResolveCall(
             val repoPath: String,
             val requestedBaseBranch: String,
@@ -237,16 +265,23 @@ class WorktreeManagerTest {
             val force: Boolean,
         )
 
+        val currentBranchCalls = mutableListOf<CurrentBranchCall>()
         val resolveCalls = mutableListOf<ResolveCall>()
         val addCalls = mutableListOf<AddCall>()
         val removeCalls = mutableListOf<RemoveCall>()
 
+        var currentBranchOutcome: Result<String> = Result.failure(IllegalStateException("not configured"))
         var resolveOutcome: Result<String> = Result.success("main")
         var addOutcome: Result<Unit> = Result.success(Unit)
         var removeOutcome: Result<Unit> = Result.success(Unit)
         var mergeOutcome: Result<GitMergeOutcome> = Result.success(
             GitMergeOutcome(hasConflicts = false, statusDescription = "MERGED")
         )
+
+        override fun resolveCurrentBranch(repoPath: String): Result<String> {
+            currentBranchCalls += CurrentBranchCall(repoPath = repoPath)
+            return currentBranchOutcome
+        }
 
         override fun resolveBaseBranch(repoPath: String, requestedBaseBranch: String): Result<String> {
             resolveCalls += ResolveCall(repoPath = repoPath, requestedBaseBranch = requestedBaseBranch)

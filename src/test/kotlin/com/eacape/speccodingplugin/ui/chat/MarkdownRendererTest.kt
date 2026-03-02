@@ -60,6 +60,49 @@ class MarkdownRendererTest {
         assertFalse(text.contains("```"))
     }
 
+    @Test
+    fun `render should convert markdown table into grid text`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                | 层 | 选型 |
+                | --- | --- |
+                | 前端 | React |
+                | 后端 | Kotlin |
+                """.trimIndent(),
+            )
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("┌"))
+        assertTrue(text.contains("┬"))
+        assertTrue(text.contains("前端"))
+        assertTrue(text.contains("Kotlin"))
+        assertFalse(text.contains("| --- | --- |"))
+    }
+
+    @Test
+    fun `render should keep plain pipe text when separator row is missing`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                A | B
+                plain
+                """.trimIndent(),
+            )
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("A | B"))
+        assertFalse(text.contains("┌"))
+    }
+
     private fun runOnEdt(block: () -> Unit) {
         if (SwingUtilities.isEventDispatchThread()) {
             block()

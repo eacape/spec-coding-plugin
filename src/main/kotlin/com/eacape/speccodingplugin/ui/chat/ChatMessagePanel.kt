@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.ui.JBColor
@@ -13,6 +14,7 @@ import java.awt.Component
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.Insets
@@ -174,6 +176,8 @@ open class ChatMessagePanel(
     private fun renderContent(structured: Boolean = false) {
         val useStructured = (structured || messageFinished) && workflowSectionsEnabled
         val content = contentBuilder.toString()
+        val outputFontSize = configuredOutputFontSize()
+        applyConfiguredOutputFont(contentPane, outputFontSize)
         if (role == MessageRole.ASSISTANT) {
             val traceSnapshot = resolveTraceSnapshot(content)
             if (traceSnapshot.hasTrace) {
@@ -185,19 +189,19 @@ open class ChatMessagePanel(
             } else {
                 contentHost.removeAll()
                 contentHost.add(contentPane, BorderLayout.CENTER)
-                MarkdownRenderer.render(contentPane, content)
+                MarkdownRenderer.render(contentPane, formatAssistantAcknowledgementLead(content))
             }
         } else {
             contentHost.removeAll()
             contentHost.add(contentPane, BorderLayout.CENTER)
             val doc = contentPane.styledDocument
             if (role == MessageRole.USER) {
-                renderUserPromptAwareContent(doc, content)
+                renderUserPromptAwareContent(doc, content, outputFontSize)
             } else {
                 doc.remove(0, doc.length)
                 val attrs = SimpleAttributeSet()
                 StyleConstants.setFontFamily(attrs, "Monospaced")
-                StyleConstants.setFontSize(attrs, 13)
+                StyleConstants.setFontSize(attrs, outputFontSize)
                 doc.insertString(0, content, attrs)
             }
         }
@@ -242,18 +246,18 @@ open class ChatMessagePanel(
         return snapshot
     }
 
-    private fun renderUserPromptAwareContent(doc: StyledDocument, content: String) {
+    private fun renderUserPromptAwareContent(doc: StyledDocument, content: String, fontSize: Int) {
         doc.remove(0, doc.length)
 
         val baseAttrs = SimpleAttributeSet().apply {
             StyleConstants.setFontFamily(this, "Monospaced")
-            StyleConstants.setFontSize(this, 13)
+            StyleConstants.setFontSize(this, fontSize)
         }
         doc.insertString(0, content, baseAttrs)
 
         val promptAttrs = SimpleAttributeSet().apply {
             StyleConstants.setFontFamily(this, "Monospaced")
-            StyleConstants.setFontSize(this, 13)
+            StyleConstants.setFontSize(this, fontSize)
             StyleConstants.setBold(this, true)
             StyleConstants.setForeground(this, PROMPT_REFERENCE_FG)
             StyleConstants.setBackground(this, PROMPT_REFERENCE_BG)
@@ -297,16 +301,17 @@ open class ChatMessagePanel(
     }
 
     private fun createAssistantAnswerComponent(content: String, structured: Boolean): JPanel {
+        val formattedContent = formatAssistantAcknowledgementLead(content)
         if (!workflowSectionsEnabled) {
-            return createMarkdownContainer(stripWorkflowSectionHeadings(content))
+            return createMarkdownContainer(stripWorkflowSectionHeadings(formattedContent))
         }
         if (!structured) {
-            return createMarkdownContainer(content)
+            return createMarkdownContainer(formattedContent)
         }
 
-        val parseResult = WorkflowSectionParser.parse(content)
+        val parseResult = WorkflowSectionParser.parse(formattedContent)
         if (parseResult.sections.isEmpty()) {
-            return createMarkdownContainer(content)
+            return createMarkdownContainer(formattedContent)
         }
 
         val container = JPanel()
@@ -353,6 +358,63 @@ open class ChatMessagePanel(
             }
         }
         return container
+    }
+
+    private fun formatAssistantAcknowledgementLead(content: String): String {
+        if (content.isBlank()) return content
+        val normalized = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        if (normalized.isBlank()) return content
+        if (normalized.startsWith("**")) return content
+        if (!hasAssistantAcknowledgementPrefix(normalized)) return content
+
+        val boundary = findAssistantAcknowledgementLeadBoundary(normalized) ?: return content
+        val lead = normalized.substring(0, boundary).trim()
+        val body = normalized.substring(boundary).trimStart()
+        if (lead.isBlank() || body.isBlank()) return content
+        if (lead.length > ASSISTANT_ACK_LEAD_MAX_LENGTH) return content
+
+        return "**$lead**\n\n$body"
+    }
+
+    private fun hasAssistantAcknowledgementPrefix(content: String): Boolean {
+        val trimmed = content.trimStart()
+        if (ASSISTANT_ACK_PREFIXES_ZH.any { trimmed.startsWith(it) }) {
+            return true
+        }
+
+        val normalized = trimmed.lowercase(Locale.ROOT)
+        return ASSISTANT_ACK_PREFIXES_EN.any { prefix ->
+            normalized.startsWith(prefix) &&
+                (normalized.length == prefix.length || isAssistantAcknowledgementBoundary(normalized[prefix.length]))
+        }
+    }
+
+    private fun findAssistantAcknowledgementLeadBoundary(content: String): Int? {
+        val sentenceEnd = ASSISTANT_ACK_SENTENCE_END_REGEX.find(content)
+            ?.range
+            ?.last
+            ?.plus(1)
+        val lineBreak = content.indexOf('\n').takeIf { it > 0 }
+        val primaryBoundary = listOfNotNull(sentenceEnd, lineBreak)
+            .filter { it in 1 until content.length }
+            .minOrNull()
+        if (primaryBoundary != null) {
+            return primaryBoundary
+        }
+
+        val shortComma = ASSISTANT_ACK_COMMA_REGEX.find(content)
+            ?.range
+            ?.last
+            ?.plus(1)
+            ?.takeIf { it <= ASSISTANT_ACK_COMMA_MAX_INDEX }
+        return shortComma
+    }
+
+    private fun isAssistantAcknowledgementBoundary(ch: Char): Boolean {
+        return ch.isWhitespace() || ch in ASSISTANT_ACK_BOUNDARY_CHARS
     }
 
     private fun stripWorkflowSectionHeadings(content: String): String {
@@ -839,7 +901,7 @@ open class ChatMessagePanel(
             wrapStyleWord = false
             tabSize = 4
             border = JBUI.Borders.empty(4, 2, 4, 2)
-            font = java.awt.Font("JetBrains Mono", java.awt.Font.PLAIN, JBUI.scale(12))
+            font = Font("JetBrains Mono", Font.PLAIN, JBUI.scale(configuredOutputFontSize()))
             background = CODE_CARD_CODE_BG
             foreground = CODE_CARD_CODE_FG
             caretColor = foreground
@@ -1031,6 +1093,23 @@ open class ChatMessagePanel(
         pane.isOpaque = false
         pane.isFocusable = true
         pane.cursor = Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR)
+        applyConfiguredOutputFont(pane, configuredOutputFontSize())
+    }
+
+    private fun configuredOutputFontSize(): Int {
+        val configured = runCatching {
+            SpecCodingSettingsState.getInstance().chatOutputFontSize
+        }.getOrElse {
+            SpecCodingSettingsState.DEFAULT_CHAT_OUTPUT_FONT_SIZE
+        }
+        return SpecCodingSettingsState.normalizeChatOutputFontSize(configured)
+    }
+
+    private fun applyConfiguredOutputFont(pane: JTextPane, size: Int) {
+        val current = pane.font ?: Font(Font.SANS_SERIF, Font.PLAIN, size)
+        if (current.size != size) {
+            pane.font = current.deriveFont(size.toFloat())
+        }
     }
 
     private fun renderTraceDetail(pane: JTextPane, content: String) {
@@ -1042,7 +1121,7 @@ open class ChatMessagePanel(
         doc.remove(0, doc.length)
         val attrs = SimpleAttributeSet()
         StyleConstants.setFontFamily(attrs, "Monospaced")
-        StyleConstants.setFontSize(attrs, 12)
+        StyleConstants.setFontSize(attrs, configuredOutputFontSize())
         doc.insertString(0, content, attrs)
     }
 
@@ -1917,6 +1996,8 @@ open class ChatMessagePanel(
         private const val COPY_FEEDBACK_ICON_FAILURE = "!"
         private const val SPINNER_TICK_MS = 70
         private const val SPINNER_STEP_DEGREES = 20
+        private const val ASSISTANT_ACK_LEAD_MAX_LENGTH = 48
+        private const val ASSISTANT_ACK_COMMA_MAX_INDEX = 18
         private val CODE_CARD_BG = JBColor(java.awt.Color(245, 248, 253), java.awt.Color(47, 53, 63))
         private val CODE_CARD_BORDER = JBColor(java.awt.Color(214, 224, 241), java.awt.Color(78, 88, 104))
         private val CODE_CARD_META_FG = JBColor(java.awt.Color(101, 118, 146), java.awt.Color(156, 178, 210))
@@ -1933,6 +2014,29 @@ open class ChatMessagePanel(
         private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s+.*$""")
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+\.\s+.*""")
         private val PROMPT_REFERENCE_TOKEN_REGEX = Regex("""(?<!\S)#([\p{L}\p{N}_.-]+)""")
+        private val ASSISTANT_ACK_SENTENCE_END_REGEX = Regex("[。！？!?]")
+        private val ASSISTANT_ACK_COMMA_REGEX = Regex("[，,]")
+        private val ASSISTANT_ACK_PREFIXES_ZH = listOf(
+            "好的",
+            "收到",
+            "明白了",
+            "明白",
+            "了解了",
+            "了解",
+            "没问题",
+            "当然可以",
+            "可以的",
+        )
+        private val ASSISTANT_ACK_PREFIXES_EN = listOf(
+            "ok",
+            "okay",
+            "sure",
+            "got it",
+            "sounds good",
+        )
+        private val ASSISTANT_ACK_BOUNDARY_CHARS = setOf(
+            ',', '，', '.', '。', '!', '！', '?', '？', ':', '：',
+        )
         private val WORKFLOW_HEADING_TITLES = setOf(
             "plan", "planning", "计划", "规划",
             "execute", "execution", "implement", "执行", "实施",

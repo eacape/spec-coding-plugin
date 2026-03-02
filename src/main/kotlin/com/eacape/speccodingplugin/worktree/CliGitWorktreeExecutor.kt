@@ -12,6 +12,21 @@ class CliGitWorktreeExecutor(
 ) : GitWorktreeExecutor {
     private val logger = thisLogger()
 
+    override fun resolveCurrentBranch(repoPath: String): Result<String> {
+        return runBlocking {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    ensureRepositoryAccessible(repoPath)
+                    queryGitOutput(repoPath, listOf("branch", "--show-current"))
+                        ?: queryGitOutput(repoPath, listOf("symbolic-ref", "--short", "HEAD"))?.removePrefix("refs/heads/")
+                        ?: throw IllegalStateException("Unable to resolve current git branch")
+                }.onFailure { error ->
+                    logger.warn("Failed to resolve current git branch", error)
+                }
+            }
+        }
+    }
+
     override fun resolveBaseBranch(repoPath: String, requestedBaseBranch: String): Result<String> {
         return runBlocking {
             withContext(Dispatchers.IO) {
@@ -76,14 +91,71 @@ class CliGitWorktreeExecutor(
 
     override fun mergeBranch(repoPath: String, sourceBranch: String, targetBranch: String): Result<GitMergeOutcome> {
         return runCatching {
-            runCommand(repoPath, listOf("checkout", targetBranch)).getOrThrow()
-            val mergeOutput = runCommand(repoPath, listOf("merge", "--no-ff", sourceBranch)).getOrThrow()
+            val mergeRepoPath = resolveMergeExecutionPath(repoPath, targetBranch)
+            val currentBranch = queryGitOutput(mergeRepoPath, listOf("branch", "--show-current"))
+            if (!branchNamesMatch(currentBranch, targetBranch)) {
+                runCommand(mergeRepoPath, listOf("checkout", targetBranch)).getOrThrow()
+            }
+            val mergeOutput = runCommand(mergeRepoPath, listOf("merge", "--no-ff", sourceBranch)).getOrThrow()
             val hasConflicts = mergeOutput.contains("CONFLICT", ignoreCase = true)
             GitMergeOutcome(
                 hasConflicts = hasConflicts,
                 statusDescription = mergeOutput.ifBlank { "MERGED" },
             )
         }
+    }
+
+    private fun resolveMergeExecutionPath(repoPath: String, targetBranch: String): String {
+        val worktrees = queryGitWorktrees(repoPath)
+        val matched = worktrees.firstOrNull { info -> branchNamesMatch(info.branch, targetBranch) }
+        return matched?.path ?: repoPath
+    }
+
+    private fun queryGitWorktrees(repoPath: String): List<GitWorktreeInfo> {
+        val output = queryGitOutput(repoPath, listOf("worktree", "list", "--porcelain")) ?: return emptyList()
+        if (output.isBlank()) return emptyList()
+
+        val result = mutableListOf<GitWorktreeInfo>()
+        var currentPath: String? = null
+        var currentBranch: String? = null
+
+        output.lineSequence().forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.isBlank()) {
+                if (!currentPath.isNullOrBlank()) {
+                    result += GitWorktreeInfo(path = currentPath.orEmpty(), branch = currentBranch)
+                }
+                currentPath = null
+                currentBranch = null
+                return@forEach
+            }
+            when {
+                trimmed.startsWith("worktree ") -> {
+                    currentPath = trimmed.removePrefix("worktree ").trim()
+                }
+
+                trimmed.startsWith("branch ") -> {
+                    currentBranch = trimmed
+                        .removePrefix("branch ")
+                        .trim()
+                        .removePrefix("refs/heads/")
+                }
+            }
+        }
+
+        if (!currentPath.isNullOrBlank()) {
+            result += GitWorktreeInfo(path = currentPath.orEmpty(), branch = currentBranch)
+        }
+        return result
+    }
+
+    private fun branchNamesMatch(left: String?, right: String): Boolean {
+        val normalizedLeft = left?.trim()?.ifBlank { null } ?: return false
+        val normalizedRight = right.trim()
+        if (normalizedRight.isBlank()) return false
+        val leftVariants = referenceVariants(normalizedLeft).toSet()
+        val rightVariants = referenceVariants(normalizedRight).toSet()
+        return leftVariants.any { variant -> variant in rightVariants }
     }
 
     private fun runCommand(repoPath: String, args: List<String>): Result<String> {
@@ -275,6 +347,11 @@ class CliGitWorktreeExecutor(
     data class ProcessExecutionResult(
         val exitCode: Int,
         val output: String,
+    )
+
+    private data class GitWorktreeInfo(
+        val path: String,
+        val branch: String?,
     )
 
     companion object {

@@ -9,6 +9,7 @@ import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.worktree.WorktreeManager
 import com.eacape.speccodingplugin.worktree.WorktreeBinding
 import com.eacape.speccodingplugin.worktree.WorktreeMergeResult
+import com.eacape.speccodingplugin.worktree.WorktreeStatus
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.thisLogger
@@ -51,6 +52,9 @@ class WorktreePanel(
     private val cleanupWorktreeAction: (worktreeId: String, force: Boolean) -> Result<Unit> = { worktreeId, force ->
         WorktreeManager.getInstance(project).cleanupWorktree(worktreeId, force)
     },
+    private val suggestBaseBranch: () -> String = {
+        WorktreeManager.getInstance(project).suggestBaseBranch()
+    },
     private val createAndOpenWorktreeAction: (
         specTaskId: String,
         shortName: String,
@@ -58,7 +62,9 @@ class WorktreePanel(
     ) -> Result<WorktreeBinding> = { specTaskId, shortName, baseBranch ->
         WorktreeManager.getInstance(project).createAndOpenWorktree(specTaskId, shortName, baseBranch)
     },
-    private val newWorktreeDialogFactory: () -> NewWorktreeDialog = { NewWorktreeDialog() },
+    private val newWorktreeDialogFactory: (defaultBaseBranch: String) -> NewWorktreeDialog = { defaultBaseBranch ->
+        NewWorktreeDialog(baseBranch = defaultBaseBranch)
+    },
     private val runSynchronously: Boolean = false,
 ) : JPanel(BorderLayout()), Disposable {
 
@@ -218,19 +224,24 @@ class WorktreePanel(
     }
 
     private fun onCreateWorktree() {
-        val dialog = newWorktreeDialogFactory()
-        if (!dialog.showAndGet()) {
-            return
-        }
-
-        val specTaskId = dialog.resultSpecTaskId ?: return
-        val shortName = dialog.resultShortName ?: return
-        val baseBranch = dialog.resultBaseBranch ?: return
-
         runBackground {
-            createAndOpenWorktreeAction(specTaskId, shortName, baseBranch)
-                .onFailure { error -> logger.warn("Failed to create worktree", error) }
-            invokeLaterSafe { refreshWorktrees() }
+            val defaultBaseBranch = suggestBaseBranch().trim().ifBlank { NewWorktreeDialog.DEFAULT_BASE_BRANCH }
+            invokeLaterSafe {
+                val dialog = newWorktreeDialogFactory(defaultBaseBranch)
+                if (!dialog.showAndGet()) {
+                    return@invokeLaterSafe
+                }
+
+                val specTaskId = dialog.resultSpecTaskId ?: return@invokeLaterSafe
+                val shortName = dialog.resultShortName ?: return@invokeLaterSafe
+                val baseBranch = dialog.resultBaseBranch ?: return@invokeLaterSafe
+
+                runBackground {
+                    createAndOpenWorktreeAction(specTaskId, shortName, baseBranch)
+                        .onFailure { error -> logger.warn("Failed to create worktree", error) }
+                    invokeLaterSafe { refreshWorktrees() }
+                }
+            }
         }
     }
 
@@ -245,9 +256,19 @@ class WorktreePanel(
     private fun onMergeWorktree(worktreeId: String) {
         val targetBranch = currentItems.firstOrNull { it.id == worktreeId }?.baseBranch ?: NewWorktreeDialog.DEFAULT_BASE_BRANCH
         runBackground {
-            mergeWorktreeAction(worktreeId, targetBranch)
-                .onFailure { error -> logger.warn("Failed to merge worktree: $worktreeId", error) }
-            invokeLaterSafe { refreshWorktrees() }
+            val mergeResult = mergeWorktreeAction(worktreeId, targetBranch)
+            mergeResult.onFailure { error ->
+                logger.warn("Failed to merge worktree: $worktreeId", error)
+            }
+            invokeLaterSafe {
+                if (mergeResult.isSuccess) {
+                    refreshWorktrees()
+                } else {
+                    val errorText = mergeResult.exceptionOrNull()?.message
+                        ?: SpecCodingBundle.message("toolwindow.error.unknown")
+                    applyTransientWorktreeError(worktreeId, errorText)
+                }
+            }
         }
     }
 
@@ -283,6 +304,22 @@ class WorktreePanel(
         scope.launch(Dispatchers.IO) { task() }
     }
 
+    private fun applyTransientWorktreeError(worktreeId: String, errorText: String) {
+        val normalized = errorText.trim().ifBlank { SpecCodingBundle.message("toolwindow.error.unknown") }
+        val updated = currentItems.firstOrNull { item -> item.id == worktreeId }?.copy(
+            status = WorktreeStatus.ERROR,
+            updatedAt = System.currentTimeMillis(),
+            lastError = normalized,
+        ) ?: return
+        currentItems = currentItems.map { item ->
+            if (item.id == worktreeId) updated else item
+        }
+        listPanel.updateWorktrees(currentItems)
+        selectedWorktreeId = worktreeId
+        listPanel.setSelectedWorktree(worktreeId)
+        detailPanel.updateWorktree(updated)
+    }
+
     private fun subscribeToLocaleEvents() {
         project.messageBus.connect(this).subscribe(
             LocaleChangedListener.TOPIC,
@@ -312,6 +349,8 @@ class WorktreePanel(
     internal fun detailStatusTextForTest(): String = detailPanel.displayedStatusForTest()
 
     internal fun detailSpecTaskIdTextForTest(): String = detailPanel.displayedSpecTaskIdForTest()
+
+    internal fun detailLastErrorTextForTest(): String = detailPanel.displayedLastErrorForTest()
 
     internal fun isDetailEmptyForTest(): Boolean = detailPanel.isShowingEmptyForTest()
 

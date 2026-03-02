@@ -7,12 +7,7 @@ import org.junit.jupiter.api.Test
 class NewWorktreeDialogTest {
 
     @Test
-    fun `validateInput should return expected errors for blank fields`() {
-        val missingSpec = NewWorktreeDialog.validateInput(
-            NewWorktreeInput(specTaskId = "   ", shortName = "feat-x", baseBranch = "main")
-        )
-        assertEquals(NewWorktreeValidationError.SPEC_TASK_ID_REQUIRED, missingSpec)
-
+    fun `validateInput should return expected errors for blank editable fields`() {
         val missingShortName = NewWorktreeDialog.validateInput(
             NewWorktreeInput(specTaskId = "SPEC-1", shortName = " ", baseBranch = "main")
         )
@@ -42,5 +37,14 @@ class NewWorktreeDialogTest {
         assertNull(validation)
         assertEquals("main", NewWorktreeDialog.DEFAULT_BASE_BRANCH)
     }
-}
 
+    @Test
+    fun `resolveSpecTaskId should use provided value or generate uuid`() {
+        val provided = NewWorktreeDialog.resolveSpecTaskId("  SPEC-555  ")
+        assertEquals("SPEC-555", provided)
+
+        val generated = NewWorktreeDialog.resolveSpecTaskId("   ")
+        val uuidPattern = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+        assertEquals(true, uuidPattern.matches(generated))
+    }
+}
