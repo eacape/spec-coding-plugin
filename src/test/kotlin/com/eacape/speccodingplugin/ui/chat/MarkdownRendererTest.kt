@@ -61,7 +61,7 @@ class MarkdownRendererTest {
     }
 
     @Test
-    fun `render should convert markdown table into normalized pipe table`() {
+    fun `render should convert markdown table with markdown engine`() {
         val pane = JTextPane()
 
         runOnEdt {
@@ -77,12 +77,9 @@ class MarkdownRendererTest {
         }
 
         val text = pane.text
-        assertTrue(text.contains("| 层"))
-        assertTrue(text.contains("| 前端"))
-        assertTrue(text.contains("前端"))
-        assertTrue(text.contains("Kotlin"))
-        assertTrue(text.contains("---"))
-        assertFalse(text.contains("┌"))
+        assertTrue(pane.contentType.contains("html"))
+        assertTrue(pane.document.length > 0)
+        assertFalse(text.contains("| ---"))
     }
 
     @Test
@@ -102,6 +99,48 @@ class MarkdownRendererTest {
         val text = pane.text
         assertTrue(text.contains("A | B"))
         assertFalse(text.contains("| ---"))
+    }
+
+    @Test
+    fun `render should convert wide multi-column table with markdown engine`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                | 任务 | 说明 | 状态 |
+                | --- | --- | --- |
+                | 渲染优化 | 解决长文本表格在窄区域内换行错乱导致阅读困难的问题 | 进行中 |
+                | 交互优化 | 保持布局轻量并提升可读性与信息密度的一致性 | 待验证 |
+                """.trimIndent(),
+            )
+        }
+
+        val text = pane.text
+        assertTrue(pane.contentType.contains("html"))
+        assertTrue(pane.document.length > 0)
+        assertFalse(text.contains("| ---"))
+    }
+
+    @Test
+    fun `render should switch back to plain mode after html table rendering`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                | A | B |
+                | --- | --- |
+                | 1 | 2 |
+                """.trimIndent(),
+            )
+            MarkdownRenderer.render(pane, "plain text")
+        }
+
+        assertTrue(pane.contentType.contains("plain"))
+        assertTrue(pane.text.contains("plain text"))
     }
 
     private fun runOnEdt(block: () -> Unit) {

@@ -23,6 +23,7 @@ import java.awt.Component
 import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.GraphicsEnvironment
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.event.MouseAdapter
@@ -1446,8 +1447,6 @@ class SpecDetailPanel(
                     index = index,
                     question = question,
                     decision = decision,
-                    detail = questionDetails[index].orEmpty(),
-                    detailExpanded = decision == ClarificationQuestionDecision.CONFIRMED && resolvedActiveIndex == index,
                     editable = checklistEditable,
                 ),
             )
@@ -1471,8 +1470,6 @@ class SpecDetailPanel(
         index: Int,
         question: String,
         decision: ClarificationQuestionDecision,
-        detail: String,
-        detailExpanded: Boolean,
         editable: Boolean,
     ): JPanel {
         val indicator = JBLabel(
@@ -1515,14 +1512,7 @@ class SpecDetailPanel(
             normalForeground = TREE_FILE_TEXT,
             enabled = editable,
         ) {
-            onChecklistQuestionDecisionChanged(
-                index = index,
-                decision = if (decision == ClarificationQuestionDecision.CONFIRMED) {
-                    ClarificationQuestionDecision.UNDECIDED
-                } else {
-                    ClarificationQuestionDecision.CONFIRMED
-                },
-            )
+            onChecklistQuestionConfirmRequested(index)
         }
         val notApplicableButton = createChecklistChoiceButton(
             text = SpecCodingBundle.message("spec.detail.clarify.checklist.choice.na"),
@@ -1546,50 +1536,6 @@ class SpecDetailPanel(
             isOpaque = false
             add(confirmButton)
             add(notApplicableButton)
-        }
-        val detailArea = JBTextArea(detail).apply {
-            isEditable = editable
-            isEnabled = editable
-            isOpaque = false
-            lineWrap = true
-            wrapStyleWord = true
-            rows = 2
-            border = JBUI.Borders.empty(1, 2, 0, 2)
-            font = JBUI.Fonts.smallFont()
-            foreground = TREE_TEXT
-            emptyText.setText(SpecCodingBundle.message("spec.detail.clarify.checklist.detail.placeholder"))
-            document.addDocumentListener(
-                object : DocumentListener {
-                    override fun insertUpdate(e: DocumentEvent?) = onChecklistQuestionDetailChanged(index, text)
-                    override fun removeUpdate(e: DocumentEvent?) = onChecklistQuestionDetailChanged(index, text)
-                    override fun changedUpdate(e: DocumentEvent?) = onChecklistQuestionDetailChanged(index, text)
-                },
-            )
-        }
-        val detailPanel = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty(2, 14, 0, 2)
-            isVisible = detailExpanded
-            add(
-                JBLabel(SpecCodingBundle.message("spec.detail.clarify.checklist.detail.label")).apply {
-                    font = JBUI.Fonts.smallFont()
-                    foreground = TREE_FILE_TEXT
-                },
-                BorderLayout.NORTH,
-            )
-            add(
-                createSectionContainer(
-                    JBScrollPane(detailArea).apply {
-                        border = JBUI.Borders.empty()
-                        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-                        verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                        preferredSize = JBUI.size(0, JBUI.scale(44))
-                    },
-                    backgroundColor = CHECKLIST_DETAIL_BG,
-                    borderColor = CHECKLIST_DETAIL_BORDER,
-                ),
-                BorderLayout.CENTER,
-            )
         }
         val questionHeader = JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
             isOpaque = false
@@ -1615,8 +1561,7 @@ class SpecDetailPanel(
                 bottom = 4,
                 right = 8,
             )
-            add(questionHeader, BorderLayout.NORTH)
-            add(detailPanel, BorderLayout.SOUTH)
+            add(questionHeader, BorderLayout.CENTER)
         }
         val toggleListener = object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent?) {
@@ -1687,20 +1632,14 @@ class SpecDetailPanel(
             return
         }
         val currentDecision = state.questionDecisions[index] ?: fallbackDecision
-        if (currentDecision == ClarificationQuestionDecision.CONFIRMED && activeChecklistDetailIndex != index) {
-            activeChecklistDetailIndex = index
-            renderClarificationQuestions(
-                markdown = state.questionsMarkdown,
-                structuredQuestions = state.structuredQuestions,
-                questionDecisions = state.questionDecisions,
-                questionDetails = state.questionDetails,
-            )
-            return
-        }
         val nextDecision = when (currentDecision) {
             ClarificationQuestionDecision.UNDECIDED -> ClarificationQuestionDecision.CONFIRMED
             ClarificationQuestionDecision.CONFIRMED -> ClarificationQuestionDecision.UNDECIDED
             ClarificationQuestionDecision.NOT_APPLICABLE -> ClarificationQuestionDecision.CONFIRMED
+        }
+        if (nextDecision == ClarificationQuestionDecision.CONFIRMED) {
+            onChecklistQuestionConfirmRequested(index)
+            return
         }
         onChecklistQuestionDecisionChanged(index, nextDecision)
     }
@@ -1845,6 +1784,50 @@ class SpecDetailPanel(
         validationLabel.text = SpecCodingBundle.message("spec.workflow.clarify.hint")
         validationLabel.foreground = TREE_TEXT
         currentWorkflow?.let { updateButtonStates(it) }
+    }
+
+    private fun onChecklistQuestionConfirmRequested(index: Int) {
+        if (isClarificationChecklistReadOnly) {
+            return
+        }
+        val state = clarificationState ?: return
+        if (state.structuredQuestions.isEmpty() || index !in state.structuredQuestions.indices) {
+            return
+        }
+        val currentDecision = state.questionDecisions[index] ?: ClarificationQuestionDecision.UNDECIDED
+        if (currentDecision == ClarificationQuestionDecision.CONFIRMED) {
+            val updatedDetail = requestClarificationConfirmDetail(
+                question = state.structuredQuestions[index],
+                initialDetail = state.questionDetails[index].orEmpty(),
+            ) ?: return
+            onChecklistQuestionDetailChanged(index, updatedDetail)
+            return
+        }
+
+        val question = state.structuredQuestions[index]
+        val existingDetail = state.questionDetails[index].orEmpty()
+        val confirmedDetail = requestClarificationConfirmDetail(
+            question = question,
+            initialDetail = existingDetail,
+        ) ?: return
+
+        onChecklistQuestionDecisionChanged(index, ClarificationQuestionDecision.CONFIRMED)
+        onChecklistQuestionDetailChanged(index, confirmedDetail)
+    }
+
+    private fun requestClarificationConfirmDetail(question: String, initialDetail: String): String? {
+        if (GraphicsEnvironment.isHeadless()) {
+            return initialDetail
+        }
+        val dialog = ClarificationQuestionConfirmDialog(
+            question = question,
+            initialDetail = initialDetail,
+        )
+        return if (dialog.showAndGet()) {
+            dialog.confirmedDetail
+        } else {
+            null
+        }
     }
 
     private fun onChecklistQuestionDetailChanged(index: Int, detail: String) {
@@ -2173,7 +2156,9 @@ class SpecDetailPanel(
     }
 
     private fun updateClarificationPreview() {
-        if (clarificationState == null) {
+        val state = clarificationState ?: return
+        if (state.structuredQuestions.isNotEmpty()) {
+            renderChecklistPreview(state)
             return
         }
         val content = inputArea.text.trim().ifBlank {
@@ -2186,6 +2171,248 @@ class SpecDetailPanel(
             clarificationPreviewPane.text = content
             clarificationPreviewPane.caretPosition = 0
         }
+    }
+
+    private fun renderChecklistPreview(state: ClarificationState) {
+        val doc = clarificationPreviewPane.styledDocument
+        val confirmedQuestionDetails = state.questionDecisions.entries
+            .filter { it.value == ClarificationQuestionDecision.CONFIRMED }
+            .sortedBy { it.key }
+            .mapNotNull { entry ->
+                val question = state.structuredQuestions.getOrNull(entry.key)?.trim().orEmpty()
+                if (question.isBlank()) {
+                    null
+                } else {
+                    val detail = state.questionDetails[entry.key]
+                        ?.replace("\r\n", "\n")
+                        ?.replace('\r', '\n')
+                        ?.lineSequence()
+                        ?.map { it.trim() }
+                        ?.filter { it.isNotBlank() }
+                        ?.joinToString(" ")
+                        ?.replace(Regex("\\s+"), " ")
+                        ?.trim()
+                        .orEmpty()
+                    question to detail
+                }
+            }
+        val notApplicableQuestions = state.questionDecisions.entries
+            .filter { it.value == ClarificationQuestionDecision.NOT_APPLICABLE }
+            .sortedBy { it.key }
+            .mapNotNull { entry -> state.structuredQuestions.getOrNull(entry.key) }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+        runCatching {
+            doc.remove(0, doc.length)
+            fun appendNewline() {
+                doc.insertString(doc.length, "\n", SimpleAttributeSet())
+            }
+            val baseFont = JBUI.Fonts.smallFont()
+            val bodyAttrs = SimpleAttributeSet().apply {
+                StyleConstants.setFontFamily(this, baseFont.family)
+                StyleConstants.setFontSize(this, baseFont.size)
+                StyleConstants.setForeground(this, TREE_TEXT)
+            }
+            val titleAttrs = SimpleAttributeSet(bodyAttrs).apply {
+                StyleConstants.setBold(this, true)
+                StyleConstants.setForeground(this, SECTION_TITLE_FG)
+            }
+            val questionBoldAttrs = SimpleAttributeSet(bodyAttrs).apply {
+                StyleConstants.setBold(this, true)
+            }
+            val questionCodeAttrs = SimpleAttributeSet(bodyAttrs).apply {
+                StyleConstants.setFontFamily(this, "JetBrains Mono")
+                StyleConstants.setBackground(this, CLARIFY_PREVIEW_QUESTION_CODE_BG)
+                StyleConstants.setForeground(this, CLARIFY_PREVIEW_QUESTION_CODE_FG)
+            }
+            val detailChipAttrs = SimpleAttributeSet(bodyAttrs).apply {
+                StyleConstants.setBold(this, true)
+                StyleConstants.setBackground(this, CLARIFY_PREVIEW_DETAIL_BG)
+                StyleConstants.setForeground(this, CLARIFY_PREVIEW_DETAIL_FG)
+            }
+            val mutedAttrs = SimpleAttributeSet(bodyAttrs).apply {
+                StyleConstants.setForeground(this, TREE_FILE_TEXT)
+            }
+
+            if (confirmedQuestionDetails.isEmpty() && notApplicableQuestions.isEmpty()) {
+                doc.insertString(doc.length, SpecCodingBundle.message("spec.detail.clarify.preview.empty"), mutedAttrs)
+                clarificationPreviewPane.caretPosition = 0
+                return
+            }
+
+            if (confirmedQuestionDetails.isNotEmpty()) {
+                doc.insertString(doc.length, SpecCodingBundle.message("spec.detail.clarify.confirmed.title"), titleAttrs)
+                appendNewline()
+                val detailPrefix = SpecCodingBundle.message("spec.detail.clarify.checklist.detail.exportPrefix")
+                confirmedQuestionDetails.forEachIndexed { idx, (question, detail) ->
+                    if (idx > 0) {
+                        appendNewline()
+                    }
+                    doc.insertString(doc.length, "• ", bodyAttrs)
+                    appendInlineMarkdownStyled(
+                        doc = doc,
+                        text = question,
+                        plainAttrs = bodyAttrs,
+                        boldAttrs = questionBoldAttrs,
+                        codeAttrs = questionCodeAttrs,
+                    )
+                    if (detail.isNotBlank()) {
+                        doc.insertString(doc.length, "  ", bodyAttrs)
+                        doc.insertString(doc.length, " $detailPrefix: $detail ", detailChipAttrs)
+                    }
+                }
+            }
+
+            if (notApplicableQuestions.isNotEmpty()) {
+                if (confirmedQuestionDetails.isNotEmpty()) {
+                    appendNewline()
+                    appendNewline()
+                }
+                doc.insertString(doc.length, SpecCodingBundle.message("spec.detail.clarify.notApplicable.title"), titleAttrs)
+                appendNewline()
+                notApplicableQuestions.forEachIndexed { idx, question ->
+                    if (idx > 0) {
+                        appendNewline()
+                    }
+                    doc.insertString(doc.length, "• ", bodyAttrs)
+                    appendInlineMarkdownStyled(
+                        doc = doc,
+                        text = question,
+                        plainAttrs = bodyAttrs,
+                        boldAttrs = questionBoldAttrs,
+                        codeAttrs = questionCodeAttrs,
+                    )
+                }
+            }
+            clarificationPreviewPane.caretPosition = 0
+        }.onFailure {
+            val fallbackContent = buildChecklistPreviewMarkdown(state).ifBlank {
+                SpecCodingBundle.message("spec.detail.clarify.preview.empty")
+            }
+            clarificationPreviewPane.text = fallbackContent
+            clarificationPreviewPane.caretPosition = 0
+        }
+    }
+
+    private fun appendInlineMarkdownStyled(
+        doc: javax.swing.text.StyledDocument,
+        text: String,
+        plainAttrs: SimpleAttributeSet,
+        boldAttrs: SimpleAttributeSet,
+        codeAttrs: SimpleAttributeSet,
+    ) {
+        val tokens = tokenizeInlineMarkdown(text)
+        tokens.forEach { token ->
+            val attrs = when (token) {
+                is InlineMarkdownToken.Plain -> plainAttrs
+                is InlineMarkdownToken.Bold -> boldAttrs
+                is InlineMarkdownToken.Code -> codeAttrs
+            }
+            if (token.text.isNotEmpty()) {
+                doc.insertString(doc.length, token.text, attrs)
+            }
+        }
+    }
+
+    private fun tokenizeInlineMarkdown(text: String): List<InlineMarkdownToken> {
+        val tokens = mutableListOf<InlineMarkdownToken>()
+        var pos = 0
+        while (pos < text.length) {
+            if (text[pos] == '`') {
+                val end = text.indexOf('`', pos + 1)
+                if (end > pos) {
+                    tokens += InlineMarkdownToken.Code(text.substring(pos + 1, end))
+                    pos = end + 1
+                    continue
+                }
+            }
+
+            if (pos + 1 < text.length && text[pos] == '*' && text[pos + 1] == '*') {
+                val end = text.indexOf("**", pos + 2)
+                if (end > pos) {
+                    tokens += InlineMarkdownToken.Bold(text.substring(pos + 2, end))
+                    pos = end + 2
+                    continue
+                }
+            }
+
+            val nextSpecial = findNextInlineMarkdownSpecial(text, pos + 1)
+            tokens += InlineMarkdownToken.Plain(text.substring(pos, nextSpecial))
+            pos = nextSpecial
+        }
+        return tokens
+    }
+
+    private fun findNextInlineMarkdownSpecial(text: String, from: Int): Int {
+        for (i in from until text.length) {
+            if (text[i] == '`' || text[i] == '*') {
+                return i
+            }
+        }
+        return text.length
+    }
+
+    private sealed class InlineMarkdownToken(open val text: String) {
+        data class Plain(override val text: String) : InlineMarkdownToken(text)
+        data class Bold(override val text: String) : InlineMarkdownToken(text)
+        data class Code(override val text: String) : InlineMarkdownToken(text)
+    }
+
+    private fun buildChecklistPreviewMarkdown(state: ClarificationState): String {
+        val confirmedQuestionDetails = state.questionDecisions.entries
+            .filter { it.value == ClarificationQuestionDecision.CONFIRMED }
+            .sortedBy { it.key }
+            .mapNotNull { entry ->
+                val question = state.structuredQuestions.getOrNull(entry.key)?.trim().orEmpty()
+                if (question.isBlank()) {
+                    null
+                } else {
+                    val detail = state.questionDetails[entry.key]
+                        ?.replace("\r\n", "\n")
+                        ?.replace('\r', '\n')
+                        ?.lineSequence()
+                        ?.map { it.trim() }
+                        ?.filter { it.isNotBlank() }
+                        ?.joinToString(" ")
+                        ?.replace(Regex("\\s+"), " ")
+                        ?.trim()
+                        .orEmpty()
+                    question to detail
+                }
+            }
+        val notApplicableQuestions = state.questionDecisions.entries
+            .filter { it.value == ClarificationQuestionDecision.NOT_APPLICABLE }
+            .sortedBy { it.key }
+            .mapNotNull { entry -> state.structuredQuestions.getOrNull(entry.key) }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (confirmedQuestionDetails.isEmpty() && notApplicableQuestions.isEmpty()) {
+            return ""
+        }
+        val detailPrefix = SpecCodingBundle.message("spec.detail.clarify.checklist.detail.exportPrefix")
+        return buildString {
+            if (confirmedQuestionDetails.isNotEmpty()) {
+                appendLine("**${SpecCodingBundle.message("spec.detail.clarify.confirmed.title")}**")
+                confirmedQuestionDetails.forEach { (question, detail) ->
+                    if (detail.isNotBlank()) {
+                        val escaped = detail.replace('`', '\'')
+                        appendLine("- $question  `$detailPrefix: $escaped`")
+                    } else {
+                        appendLine("- $question")
+                    }
+                }
+            }
+            if (notApplicableQuestions.isNotEmpty()) {
+                if (confirmedQuestionDetails.isNotEmpty()) {
+                    appendLine()
+                }
+                appendLine("**${SpecCodingBundle.message("spec.detail.clarify.notApplicable.title")}**")
+                notApplicableQuestions.forEach { question ->
+                    appendLine("- $question")
+                }
+            }
+        }.trimEnd()
     }
 
     private fun persistClarificationDraftSnapshot(state: ClarificationState? = clarificationState) {
@@ -3010,6 +3237,10 @@ class SpecDetailPanel(
         private val CHECKLIST_DETAIL_BORDER = JBColor(Color(198, 211, 230), Color(98, 110, 127))
         private val CLARIFICATION_PREVIEW_BG = JBColor(Color(242, 248, 255), Color(60, 67, 78))
         private val CLARIFICATION_PREVIEW_BORDER = JBColor(Color(194, 210, 233), Color(92, 104, 121))
+        private val CLARIFY_PREVIEW_QUESTION_CODE_BG = JBColor(Color(230, 239, 252), Color(73, 84, 101))
+        private val CLARIFY_PREVIEW_QUESTION_CODE_FG = JBColor(Color(45, 74, 118), Color(206, 220, 240))
+        private val CLARIFY_PREVIEW_DETAIL_BG = JBColor(Color(220, 236, 255), Color(84, 100, 123))
+        private val CLARIFY_PREVIEW_DETAIL_FG = JBColor(Color(42, 70, 113), Color(222, 232, 246))
         private val STATUS_BG = JBColor(Color(235, 244, 255), Color(62, 68, 80))
         private val STATUS_BORDER = JBColor(Color(183, 199, 224), Color(98, 109, 125))
         private val GENERATING_FG = JBColor(Color(46, 90, 162), Color(171, 201, 248))

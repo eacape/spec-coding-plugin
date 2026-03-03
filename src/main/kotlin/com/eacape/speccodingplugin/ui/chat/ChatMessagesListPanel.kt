@@ -46,6 +46,7 @@ class ChatMessagesListPanel(
         messages.add(panel)
         add(panel)
         trimIfNeeded()
+        applyMessageCompaction()
         revalidate()
         scrollToBottom()
         return panel
@@ -77,6 +78,7 @@ class ChatMessagesListPanel(
     fun removeMessage(panel: ChatMessagePanel) {
         messages.remove(panel)
         remove(panel)
+        applyMessageCompaction()
         revalidate()
         repaint()
     }
@@ -113,6 +115,13 @@ class ChatMessagesListPanel(
         }
     }
 
+    private fun applyMessageCompaction() {
+        val keepFullStart = (messages.size - DEFAULT_MAX_FULL_RENDER_MESSAGES).coerceAtLeast(0)
+        messages.forEachIndexed { index, panel ->
+            panel.setLightweightMode(index < keepFullStart)
+        }
+    }
+
     override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
 
     override fun getScrollableUnitIncrement(visibleRect: Rectangle, orientation: Int, direction: Int): Int {
@@ -129,6 +138,7 @@ class ChatMessagesListPanel(
 
     companion object {
         private const val DEFAULT_MAX_VISIBLE_MESSAGES = 240
+        private const val DEFAULT_MAX_FULL_RENDER_MESSAGES = 60
         private const val DEFAULT_NEAR_BOTTOM_THRESHOLD_PX = 80
         private const val DEFAULT_SCROLL_UNIT_INCREMENT = 28
         private const val DEFAULT_SCROLL_BLOCK_INCREMENT = 112

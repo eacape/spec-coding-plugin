@@ -244,6 +244,7 @@ class SpecWorkflowListPanel(
         private val phaseLabel = JLabel()
         private val statusLabel = JLabel()
         private val metaRow = JPanel(BorderLayout())
+        private val rightPanel = JPanel(BorderLayout(0, RIGHT_PANEL_VERTICAL_GAP))
         private val actionPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, ACTION_ICON_GAP, 0))
         private val editActionLabel = JLabel(AllIcons.Actions.Edit)
         private val deleteActionLabel = JLabel(AllIcons.Actions.GC)
@@ -262,6 +263,7 @@ class SpecWorkflowListPanel(
             statusLabel.font = statusLabel.font.deriveFont(Font.BOLD, 10.5f)
             statusLabel.horizontalAlignment = SwingConstants.RIGHT
             statusLabel.horizontalTextPosition = SwingConstants.RIGHT
+            statusLabel.border = JBUI.Borders.empty(0, 0, 0, ACTION_PANEL_RIGHT_PAD)
 
             textPanel.isOpaque = false
             textPanel.layout = javax.swing.BoxLayout(textPanel, javax.swing.BoxLayout.Y_AXIS)
@@ -270,7 +272,6 @@ class SpecWorkflowListPanel(
 
             metaRow.isOpaque = false
             metaRow.add(phaseLabel, BorderLayout.WEST)
-            metaRow.add(statusLabel, BorderLayout.EAST)
 
             actionPanel.isOpaque = false
             actionPanel.border = JBUI.Borders.empty(0, ACTION_PANEL_LEFT_PAD, 0, ACTION_PANEL_RIGHT_PAD)
@@ -281,12 +282,16 @@ class SpecWorkflowListPanel(
             actionPanel.add(editActionLabel)
             actionPanel.add(deleteActionLabel)
 
+            rightPanel.isOpaque = false
+            rightPanel.add(actionPanel, BorderLayout.NORTH)
+            rightPanel.add(statusLabel, BorderLayout.SOUTH)
+
             contentPanel.isOpaque = false
             contentPanel.add(textPanel, BorderLayout.CENTER)
             contentPanel.add(metaRow, BorderLayout.SOUTH)
 
             cardPanel.add(contentPanel, BorderLayout.CENTER)
-            cardPanel.add(actionPanel, BorderLayout.EAST)
+            cardPanel.add(rightPanel, BorderLayout.EAST)
             rowPanel.add(cardPanel, BorderLayout.CENTER)
         }
 
@@ -299,7 +304,15 @@ class SpecWorkflowListPanel(
         ): Component {
             if (value == null) return rowPanel
 
-            val textAreaWidth = estimateTextAreaWidth(list)
+            val statusText = localizeStatus(value.status).lowercase()
+            statusLabel.text = statusText
+            val statusMetrics = statusLabel.getFontMetrics(statusLabel.font)
+            val statusColumnWidth = statusColumnWidth(statusMetrics)
+            statusLabel.preferredSize = JBUI.size(statusColumnWidth, statusMetrics.height)
+            statusLabel.minimumSize = statusLabel.preferredSize
+            statusLabel.maximumSize = JBUI.size(statusColumnWidth, Int.MAX_VALUE)
+
+            val textAreaWidth = estimateTextAreaWidth(list, statusColumnWidth)
             val titleColor = if (isSelected) {
                 JBColor(Color(28, 45, 70), Color(230, 236, 244))
             } else {
@@ -331,14 +344,6 @@ class SpecWorkflowListPanel(
             titleLabel.foreground = titleColor
             titleLabel.toolTipText = if (titleText != fullTitleText) value.title else null
 
-            val statusText = localizeStatus(value.status).lowercase()
-            statusLabel.text = statusText
-            val statusMetrics = statusLabel.getFontMetrics(statusLabel.font)
-            val statusColumnWidth = statusColumnWidth(statusMetrics)
-            statusLabel.preferredSize = JBUI.size(statusColumnWidth, statusMetrics.height)
-            statusLabel.minimumSize = statusLabel.preferredSize
-            statusLabel.maximumSize = JBUI.size(statusColumnWidth, Int.MAX_VALUE)
-
             val description = value.description.trim()
             descriptionLabel.isVisible = description.isNotBlank()
             if (descriptionLabel.isVisible) {
@@ -359,11 +364,10 @@ class SpecWorkflowListPanel(
                 SpecChangeIntent.INCREMENTAL -> SpecCodingBundle.message("spec.workflow.intent.incremental.short")
             }
             val fullPhaseText = "${value.currentPhase.displayName.lowercase()} · $intentLabelText"
-            val phaseWidth = (textAreaWidth - statusColumnWidth - META_STATUS_GAP).coerceAtLeast(MIN_PHASE_TEXT_WIDTH)
             val phaseText = truncateByPixel(
                 value = fullPhaseText,
                 fontMetrics = phaseLabel.getFontMetrics(phaseLabel.font),
-                maxWidthPx = phaseWidth,
+                maxWidthPx = textAreaWidth.coerceAtLeast(MIN_PHASE_TEXT_WIDTH),
             )
             phaseLabel.text = phaseText
             phaseLabel.foreground = phaseColor
@@ -389,18 +393,21 @@ class SpecWorkflowListPanel(
             return rowPanel
         }
 
-        private fun estimateTextAreaWidth(list: JList<*>): Int {
+        private fun estimateTextAreaWidth(list: JList<*>, statusColumnWidth: Int): Int {
             val listWidth = when {
                 list.width > 0 -> list.width
                 list.visibleRect.width > 0 -> list.visibleRect.width
                 else -> JBUI.scale(188)
             }
-            val reservedWidth = CARD_LEFT_PAD +
-                CARD_RIGHT_PAD +
-                ACTION_PANEL_LEFT_PAD +
+            val actionColumnWidth = ACTION_PANEL_LEFT_PAD +
                 ACTION_PANEL_RIGHT_PAD +
                 ACTION_ICON_SIZE * 2 +
-                ACTION_ICON_GAP +
+                ACTION_ICON_GAP
+            val statusColumnReservedWidth = statusColumnWidth + ACTION_PANEL_RIGHT_PAD
+            val rightColumnWidth = maxOf(actionColumnWidth, statusColumnReservedWidth)
+            val reservedWidth = CARD_LEFT_PAD +
+                CARD_RIGHT_PAD +
+                rightColumnWidth +
                 ACTION_SAFE_GAP
             return (listWidth - reservedWidth).coerceAtLeast(MIN_TEXT_WIDTH)
         }
@@ -545,10 +552,10 @@ class SpecWorkflowListPanel(
             private val ACTION_SAFE_GAP = JBUI.scale(10)
             private val ACTION_HIT_SLOP = JBUI.scale(3)
             private val MIN_TEXT_WIDTH = JBUI.scale(76)
-            private val META_STATUS_GAP = JBUI.scale(10)
             private val MIN_PHASE_TEXT_WIDTH = JBUI.scale(36)
             private val STATUS_COLUMN_SIDE_PADDING = JBUI.scale(6)
             private val MIN_STATUS_COLUMN_WIDTH = JBUI.scale(52)
+            private val RIGHT_PANEL_VERTICAL_GAP = JBUI.scale(4)
         }
     }
 

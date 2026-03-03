@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.chat
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.awt.Rectangle
@@ -52,5 +53,52 @@ class ChatMessagesListPanelTest {
         assertTrue(unit >= 20)
         assertEquals(JViewport.BLIT_SCROLL_MODE, scrollPane.viewport.scrollMode)
         assertEquals(true, scrollPane.verticalScrollBar.getClientProperty("JScrollBar.fastWheelScrolling"))
+    }
+
+    @Test
+    fun `older messages should switch to lightweight mode`() {
+        val panel = ChatMessagesListPanel(maxVisibleMessages = 90)
+
+        repeat(70) { idx ->
+            val message = ChatMessagePanel(
+                role = ChatMessagePanel.MessageRole.ASSISTANT,
+                initialContent = "[Task] build part-$idx\nResult line $idx",
+            )
+            message.finishMessage()
+            panel.addMessage(message)
+        }
+
+        val all = panel.getAllMessages()
+        assertTrue(all.size == 70)
+        val compactCount = all.count { isLightweight(it) }
+        assertTrue(compactCount >= 10)
+        assertFalse(isLightweight(all.last()))
+    }
+
+    @Test
+    fun `lightweight mode should be released when history shrinks`() {
+        val panel = ChatMessagesListPanel(maxVisibleMessages = 90)
+
+        repeat(70) { idx ->
+            val message = ChatMessagePanel(
+                role = ChatMessagePanel.MessageRole.USER,
+                initialContent = "msg-$idx",
+            )
+            message.finishMessage()
+            panel.addMessage(message)
+        }
+
+        val toRemove = panel.getAllMessages().take(15)
+        toRemove.forEach(panel::removeMessage)
+
+        panel.getAllMessages().forEach { message ->
+            assertFalse(isLightweight(message))
+        }
+    }
+
+    private fun isLightweight(panel: ChatMessagePanel): Boolean {
+        val field = ChatMessagePanel::class.java.getDeclaredField("lightweightMode")
+        field.isAccessible = true
+        return field.getBoolean(panel)
     }
 }

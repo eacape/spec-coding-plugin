@@ -47,6 +47,55 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
+    fun `thinking only trace should not render process timeline card`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent("[Thinking] analyze quietly")
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val hasTimelineExpand = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .any { it.text == expandText }
+
+        assertFalse(hasTimelineExpand)
+    }
+
+    @Test
+    fun `collapsed output card should hide detail preview until expanded`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                [Output] model: gpt-5.3-codex
+                [Output] workdir: D:/eacape/spec-coding-plugin
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val collapsedText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+        assertFalse(collapsedText.contains("model: gpt-5.3-codex"))
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected output expand button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val expandedText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+        assertTrue(expandedText.contains("model: gpt-5.3-codex"))
+    }
+
+    @Test
     fun `edit trace row should expose open file action`() {
         var opened: WorkflowQuickActionParser.FileAction? = null
         val panel = ChatMessagePanel(

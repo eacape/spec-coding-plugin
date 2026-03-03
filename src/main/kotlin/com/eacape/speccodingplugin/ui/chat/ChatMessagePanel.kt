@@ -65,6 +65,7 @@ open class ChatMessagePanel(
     private var outputExpanded = false
     private var outputFilterLevel = OutputFilterLevel.KEY
     private var messageFinished = false
+    private var lightweightMode = false
     private var contentVersion = 0
     private var traceVersion = 0
     private var cachedAssistantAnswerVersion = -1
@@ -80,11 +81,11 @@ open class ChatMessagePanel(
 
     init {
         isOpaque = false
-        border = JBUI.Borders.empty(2, 0, 10, 0)
+        border = JBUI.Borders.empty(2, 0, 8, 0)
 
         // 内容区域
         configureReadableTextPane(contentPane)
-        contentPane.border = JBUI.Borders.empty(8, 10)
+        contentPane.border = JBUI.Borders.empty(7, 10)
         contentPane.background = getBackgroundColor()
 
         contentHost.isOpaque = false
@@ -96,7 +97,7 @@ open class ChatMessagePanel(
         wrapper.border = buildRoundedContainerBorder(
             lineColor = messageCardBorderColor(),
             arc = 12,
-            padding = JBUI.insets(8, 10, 7, 10),
+            padding = JBUI.insets(7, 10, 6, 10),
         )
         wrapper.add(contentHost, BorderLayout.CENTER)
 
@@ -161,6 +162,26 @@ open class ChatMessagePanel(
         renderContent(structured = messageFinished)
     }
 
+    fun setLightweightMode(enabled: Boolean) {
+        if (lightweightMode == enabled) return
+        lightweightMode = enabled
+
+        if (enabled) {
+            traceExpanded = false
+            outputExpanded = false
+            expandedVerboseEntries.clear()
+            workflowSectionExpanded.clear()
+            buttonPanel?.let {
+                remove(it)
+                buttonPanel = null
+            }
+        } else if (messageFinished) {
+            addActionButtons()
+        }
+
+        renderContent(structured = messageFinished)
+    }
+
     /**
      * 完成消息（流式结束后调用）
      */
@@ -179,6 +200,12 @@ open class ChatMessagePanel(
         val content = if (role == MessageRole.ASSISTANT) sanitizeAssistantDisplayContent(rawContent) else rawContent
         val outputFontSize = configuredOutputFontSize()
         applyConfiguredOutputFont(contentPane, outputFontSize)
+        if (lightweightMode && messageFinished) {
+            renderLightweightContent(content, outputFontSize)
+            revalidate()
+            repaint()
+            return
+        }
         if (role == MessageRole.ASSISTANT) {
             val traceSnapshot = resolveTraceSnapshot(content)
             if (traceSnapshot.hasTrace) {
@@ -273,6 +300,36 @@ open class ChatMessagePanel(
         }
     }
 
+    private fun renderLightweightContent(content: String, fontSize: Int) {
+        contentHost.removeAll()
+        contentHost.add(contentPane, BorderLayout.CENTER)
+
+        val summarized = buildLightweightSummary(content)
+        val doc = contentPane.styledDocument
+        doc.remove(0, doc.length)
+        val attrs = SimpleAttributeSet()
+        StyleConstants.setFontFamily(attrs, "Monospaced")
+        StyleConstants.setFontSize(attrs, fontSize)
+        doc.insertString(0, summarized, attrs)
+    }
+
+    private fun buildLightweightSummary(content: String): String {
+        val normalized = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        if (normalized.isBlank()) return normalized
+
+        val base = when (role) {
+            MessageRole.ASSISTANT -> {
+                val answerOnly = extractAssistantAnswerContent(normalized).ifBlank { normalized }
+                stripWorkflowSectionHeadings(answerOnly).ifBlank { answerOnly }
+            }
+            else -> normalized
+        }
+        return toMarkdownPreview(base, LIGHTWEIGHT_CONTENT_MAX_CHARS)
+    }
+
     private fun renderAssistantTraceContent(
         answerContent: String,
         traceSnapshot: StreamingTraceAssembler.TraceSnapshot,
@@ -281,9 +338,11 @@ open class ChatMessagePanel(
         val container = JPanel()
         container.layout = BoxLayout(container, BoxLayout.Y_AXIS)
         container.isOpaque = false
-        container.border = JBUI.Borders.empty(6, 6, 2, 6)
+        container.border = JBUI.Borders.empty(4, 4, 1, 4)
 
-        val processItems = traceSnapshot.items.filter { it.kind != ExecutionTimelineParser.Kind.OUTPUT }
+        val processItems = traceSnapshot.items.filter { item ->
+            item.kind != ExecutionTimelineParser.Kind.OUTPUT && shouldRenderProcessItem(item)
+        }
         if (processItems.isNotEmpty()) {
             container.add(createTracePanel(processItems))
         }
@@ -299,6 +358,12 @@ open class ChatMessagePanel(
 
         contentHost.removeAll()
         contentHost.add(container, BorderLayout.CENTER)
+    }
+
+    private fun shouldRenderProcessItem(item: StreamingTraceAssembler.TraceItem): Boolean {
+        // Keep process area lightweight: ignore pure thinking traces in the visual timeline.
+        if (item.kind == ExecutionTimelineParser.Kind.THINK) return false
+        return item.detail.isNotBlank() || item.status != ExecutionTimelineParser.Status.INFO
     }
 
     private fun createAssistantAnswerComponent(content: String, structured: Boolean): JPanel {
@@ -318,7 +383,7 @@ open class ChatMessagePanel(
         val container = JPanel()
         container.layout = BoxLayout(container, BoxLayout.Y_AXIS)
         container.isOpaque = false
-        container.border = JBUI.Borders.empty(8)
+        container.border = JBUI.Borders.empty(6, 2, 2, 2)
 
         if (parseResult.remainingText.isNotBlank()) {
             container.add(createMarkdownContainer(parseResult.remainingText))
@@ -503,7 +568,7 @@ open class ChatMessagePanel(
         wrapper.border = buildRoundedContainerBorder(
             lineColor = traceCardBorderColor(),
             arc = 12,
-            padding = JBUI.insets(8, 10, 8, 10),
+            padding = JBUI.insets(7, 9, 6, 9),
         )
 
         val summaryBar = JPanel(BorderLayout())
@@ -560,7 +625,7 @@ open class ChatMessagePanel(
             listPanel.isOpaque = false
             listPanel.border = JBUI.Borders.compound(
                 JBUI.Borders.customLine(traceSectionDividerColor(), 1, 0, 0, 0),
-                JBUI.Borders.emptyTop(8),
+                JBUI.Borders.emptyTop(6),
             )
 
             displayItems.forEach { item ->
@@ -571,7 +636,7 @@ open class ChatMessagePanel(
 
         val container = JPanel(BorderLayout())
         container.isOpaque = false
-        container.border = JBUI.Borders.emptyBottom(6)
+        container.border = JBUI.Borders.emptyBottom(4)
         container.add(wrapper, BorderLayout.CENTER)
         return container
     }
@@ -588,7 +653,7 @@ open class ChatMessagePanel(
         wrapper.border = buildRoundedContainerBorder(
             lineColor = outputCardBorderColor(),
             arc = 12,
-            padding = JBUI.insets(8, 10, 8, 10),
+            padding = JBUI.insets(7, 9, 6, 9),
         )
 
         val header = JPanel(BorderLayout())
@@ -656,7 +721,7 @@ open class ChatMessagePanel(
             detailHost.isOpaque = false
             detailHost.border = JBUI.Borders.compound(
                 JBUI.Borders.customLine(outputSectionDividerColor(), 1, 0, 0, 0),
-                JBUI.Borders.emptyTop(8),
+                JBUI.Borders.emptyTop(6),
             )
             detailHost.add(
                 createTraceDetailBlock(
@@ -674,33 +739,11 @@ open class ChatMessagePanel(
                 BorderLayout.CENTER
             )
             wrapper.add(detailHost, BorderLayout.CENTER)
-        } else {
-            val previewHost = JPanel(BorderLayout())
-            previewHost.isOpaque = false
-            previewHost.border = JBUI.Borders.compound(
-                JBUI.Borders.customLine(outputSectionDividerColor(), 1, 0, 0, 0),
-                JBUI.Borders.emptyTop(6),
-            )
-            previewHost.add(
-                createTraceDetailBlock(
-                    StreamingTraceAssembler.TraceItem(
-                        kind = ExecutionTimelineParser.Kind.OUTPUT,
-                        status = mergedOutput.status,
-                        detail = mergedOutput.detail,
-                        fileAction = null,
-                        isVerbose = true,
-                    ),
-                    forceVerbose = true,
-                    showVerboseToggle = false,
-                ),
-                BorderLayout.CENTER
-            )
-            wrapper.add(previewHost, BorderLayout.CENTER)
         }
 
         val container = JPanel(BorderLayout())
         container.isOpaque = false
-        container.border = JBUI.Borders.emptyBottom(6)
+        container.border = JBUI.Borders.emptyBottom(4)
         container.add(wrapper, BorderLayout.CENTER)
         return container
     }
@@ -709,11 +752,7 @@ open class ChatMessagePanel(
         val row = JPanel(BorderLayout())
         row.isOpaque = true
         row.background = traceRowBackgroundColor()
-        row.border = buildRoundedContainerBorder(
-            lineColor = traceRowBorderColor(),
-            arc = 10,
-            padding = JBUI.insets(6, 8, 6, 8),
-        )
+        row.border = JBUI.Borders.empty(4, 2, 3, 2)
 
         val header = JPanel(BorderLayout())
         header.isOpaque = false
@@ -729,7 +768,7 @@ open class ChatMessagePanel(
         val kindLabel = JBLabel(
             "${kindLabel(item.kind)} · ${statusLabel(item.status)}"
         )
-        kindLabel.font = kindLabel.font.deriveFont(java.awt.Font.BOLD, 11f)
+        kindLabel.font = kindLabel.font.deriveFont(java.awt.Font.PLAIN, 11f)
         kindLabel.foreground = statusColor(item.status)
         headerLeft.add(kindLabel)
 
@@ -785,7 +824,7 @@ open class ChatMessagePanel(
         )
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(6)
+            border = JBUI.Borders.emptyBottom(4)
             add(row, BorderLayout.CENTER)
         }
     }
@@ -798,7 +837,7 @@ open class ChatMessagePanel(
     ): JPanel {
         val block = JPanel(BorderLayout())
         block.isOpaque = false
-        block.border = JBUI.Borders.empty(4, 2, 2, 0)
+        block.border = JBUI.Borders.empty(3, 0, 1, 0)
 
         val key = entryKey(item)
         val verbose = forceVerbose || item.isVerbose
@@ -829,10 +868,9 @@ open class ChatMessagePanel(
         val detailHost = JPanel(BorderLayout())
         detailHost.isOpaque = true
         detailHost.background = traceDetailBackgroundColor()
-        detailHost.border = buildRoundedContainerBorder(
-            lineColor = traceDetailBorderColor(),
-            arc = 8,
-            padding = JBUI.insets(4, 8, 4, 8),
+        detailHost.border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(traceDetailBorderColor(), 0, 2, 0, 0),
+            JBUI.Borders.empty(2, 8, 2, 0),
         )
         detailHost.add(detailPane, BorderLayout.CENTER)
         block.add(detailHost, BorderLayout.CENTER)
@@ -853,7 +891,7 @@ open class ChatMessagePanel(
                 }
                 renderContent()
             }
-            val controls = JPanel(FlowLayout(FlowLayout.LEFT, 0, 4))
+            val controls = JPanel(FlowLayout(FlowLayout.LEFT, 0, 3))
             controls.isOpaque = false
             controls.add(toggleBtn)
             block.add(controls, BorderLayout.SOUTH)
@@ -1448,6 +1486,7 @@ open class ChatMessagePanel(
     private fun addActionButtons() {
         // 系统消息不需要操作按钮
         if (role == MessageRole.SYSTEM) return
+        if (lightweightMode) return
 
         buttonPanel?.let { remove(it) }
 
@@ -1767,20 +1806,20 @@ open class ChatMessagePanel(
 
     private fun messageCardBorderColor(): java.awt.Color = when (role) {
         MessageRole.USER -> JBColor(
-            java.awt.Color(208, 220, 238),
-            java.awt.Color(92, 102, 115),
+            java.awt.Color(221, 230, 241),
+            java.awt.Color(76, 84, 96),
         )
         MessageRole.ASSISTANT -> JBColor(
-            java.awt.Color(211, 220, 232),
-            java.awt.Color(90, 100, 112),
+            java.awt.Color(223, 230, 240),
+            java.awt.Color(74, 82, 94),
         )
         MessageRole.SYSTEM -> JBColor(
-            java.awt.Color(212, 219, 228),
-            java.awt.Color(93, 98, 105),
+            java.awt.Color(223, 228, 236),
+            java.awt.Color(76, 82, 90),
         )
         MessageRole.ERROR -> JBColor(
             java.awt.Color(232, 200, 200),
-            java.awt.Color(126, 82, 82),
+            java.awt.Color(110, 76, 76),
         )
     }
 
@@ -1790,8 +1829,8 @@ open class ChatMessagePanel(
     )
 
     private fun traceCardBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(197, 208, 222),
-        java.awt.Color(91, 101, 112),
+        java.awt.Color(214, 223, 234),
+        java.awt.Color(78, 88, 99),
     )
 
     private fun outputCardBackgroundColor(): java.awt.Color = JBColor(
@@ -1800,8 +1839,8 @@ open class ChatMessagePanel(
     )
 
     private fun outputCardBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(196, 207, 221),
-        java.awt.Color(89, 99, 111),
+        java.awt.Color(214, 223, 234),
+        java.awt.Color(78, 88, 99),
     )
 
     private fun traceRowBackgroundColor(): java.awt.Color = JBColor(
@@ -1809,51 +1848,39 @@ open class ChatMessagePanel(
         java.awt.Color(46, 52, 60),
     )
 
-    private fun traceRowBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(210, 219, 230),
-        java.awt.Color(92, 102, 114),
-    )
-
     private fun traceDetailBackgroundColor(): java.awt.Color = JBColor(
-        java.awt.Color(247, 250, 255),
-        java.awt.Color(43, 49, 58),
+        java.awt.Color(250, 252, 255),
+        java.awt.Color(44, 50, 58),
     )
 
     private fun traceDetailBorderColor(): java.awt.Color = JBColor(
-        java.awt.Color(214, 223, 233),
-        java.awt.Color(92, 102, 114),
+        java.awt.Color(205, 216, 230),
+        java.awt.Color(79, 89, 101),
     )
 
     private fun traceSectionDividerColor(): java.awt.Color = JBColor(
-        java.awt.Color(218, 225, 234),
-        java.awt.Color(96, 106, 119),
+        java.awt.Color(222, 228, 236),
+        java.awt.Color(86, 96, 108),
     )
 
     private fun outputSectionDividerColor(): java.awt.Color = JBColor(
-        java.awt.Color(216, 224, 234),
-        java.awt.Color(96, 106, 119),
+        java.awt.Color(222, 228, 236),
+        java.awt.Color(86, 96, 108),
     )
 
     private fun createSummaryBadge(text: String): JBLabel {
         val badge = JBLabel(text)
         badge.isOpaque = true
         badge.background = JBColor(
-            java.awt.Color(242, 246, 252),
-            java.awt.Color(56, 63, 74),
+            java.awt.Color(246, 249, 253),
+            java.awt.Color(58, 65, 76),
         )
         badge.foreground = JBColor(
-            java.awt.Color(86, 102, 122),
-            java.awt.Color(174, 190, 212),
+            java.awt.Color(92, 108, 127),
+            java.awt.Color(166, 184, 208),
         )
-        badge.font = badge.font.deriveFont(10.5f)
-        badge.border = buildRoundedContainerBorder(
-            lineColor = JBColor(
-                java.awt.Color(219, 227, 236),
-                java.awt.Color(83, 94, 107),
-            ),
-            arc = 9,
-            padding = JBUI.insets(1, 6, 1, 6),
-        )
+        badge.font = badge.font.deriveFont(10f)
+        badge.border = JBUI.Borders.empty(1, 6, 1, 6)
         return badge
     }
 
@@ -2017,6 +2044,7 @@ open class ChatMessagePanel(
         private const val ENTRY_KEY_TAIL_CHARS = 80
         private const val PREVIEW_EXTRA_SCAN_CHARS = 120
         private const val MARKDOWN_PREVIEW_EXTRA_SCAN_CHARS = 240
+        private const val LIGHTWEIGHT_CONTENT_MAX_CHARS = 900
         private const val OUTPUT_FILTER_MIN_LINES = 2
         private const val OUTPUT_FILTER_MAX_LINES = 24
         private const val OUTPUT_FILTER_FALLBACK_LINES = 6

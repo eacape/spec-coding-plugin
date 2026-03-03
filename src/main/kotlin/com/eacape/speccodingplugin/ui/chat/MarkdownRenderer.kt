@@ -2,6 +2,9 @@ package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.intellij.ui.JBColor
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.html.HtmlGenerator
+import org.intellij.markdown.parser.MarkdownParser
 import java.awt.Color
 import java.awt.Font
 import javax.swing.JTextPane
@@ -39,10 +42,15 @@ object MarkdownRenderer {
     private val CODE_LANG_FG_DARK = Color(148, 164, 187)
 
     fun render(textPane: JTextPane, markdown: String) {
-        val doc = textPane.styledDocument
-        doc.remove(0, doc.length)
         val proseFontFamily = textPane.font?.family ?: Font.SANS_SERIF
         val baseFontSize = resolveBaseFontSize(textPane)
+        if (containsMarkdownTable(markdown) && renderWithMarkdownEngine(textPane, markdown, proseFontFamily, baseFontSize)) {
+            return
+        }
+
+        ensurePlainTextMode(textPane)
+        val doc = textPane.styledDocument
+        doc.remove(0, doc.length)
 
         val lines = markdown.lines()
         var i = 0
@@ -65,7 +73,7 @@ object MarkdownRenderer {
             if (tableBlock != null) {
                 if (!firstBlock) insertNewline(doc)
                 firstBlock = false
-                renderTable(doc, tableBlock, baseFontSize)
+                renderTable(doc, tableBlock, proseFontFamily, baseFontSize)
                 i = tableBlock.nextIndex
                 continue
             }
@@ -222,157 +230,157 @@ object MarkdownRenderer {
         }
     }
 
-    private fun renderTable(doc: StyledDocument, tableBlock: TableBlock, baseFontSize: Int) {
+    private fun containsMarkdownTable(markdown: String): Boolean {
+        val lines = markdown.lines()
+        if (lines.size < 2) return false
+        for (index in 0 until lines.lastIndex) {
+            val headerCells = splitTableCells(lines[index])
+            if (headerCells.size < MIN_TABLE_COLUMNS) continue
+            val separatorCells = splitTableCells(lines[index + 1])
+            if (isTableSeparatorRow(separatorCells)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun renderWithMarkdownEngine(
+        textPane: JTextPane,
+        markdown: String,
+        proseFontFamily: String,
+        baseFontSize: Int,
+    ): Boolean {
+        return runCatching {
+            val flavour = GFMFlavourDescriptor(useSafeLinks = true)
+            val parsedTree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
+            val bodyHtml = HtmlGenerator(markdown, parsedTree, flavour).generateHtml()
+            val html = wrapMarkdownHtml(bodyHtml, proseFontFamily, baseFontSize)
+            textPane.contentType = HTML_CONTENT_TYPE
+            textPane.text = html
+            textPane.caretPosition = 0
+        }.isSuccess
+    }
+
+    private fun wrapMarkdownHtml(bodyHtml: String, proseFontFamily: String, baseFontSize: Int): String {
+        val fontFamily = escapeCssFontFamily(proseFontFamily)
+        val codeFontFamily = escapeCssFontFamily(CODE_FONT_FAMILY)
+        val bodyFg = toCssColor(JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
+        val tableBorder = toCssColor(JBColor(Color(208, 216, 228), Color(91, 101, 112)))
+        val tableHeaderBg = toCssColor(JBColor(Color(244, 247, 252), Color(50, 56, 64)))
+        val inlineCodeBg = toCssColor(JBColor(CODE_BG_LIGHT, CODE_BG_DARK))
+        val inlineCodeFg = toCssColor(JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
+        val blockCodeBg = toCssColor(JBColor(BLOCK_CODE_BG_LIGHT, BLOCK_CODE_BG_DARK))
+        val blockCodeFg = toCssColor(JBColor(BLOCK_CODE_FG_LIGHT, BLOCK_CODE_FG_DARK))
+        val css = """
+            html, body { margin: 0; padding: 0; background: transparent; }
+            body {
+                font-family: '$fontFamily';
+                font-size: ${baseFontSize}px;
+                line-height: 1.58;
+                color: $bodyFg;
+            }
+            p, ul, ol, table, pre, blockquote { margin: 0 0 8px 0; }
+            ul, ol { padding-left: 20px; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td {
+                border: 1px solid $tableBorder;
+                padding: 6px 8px;
+                text-align: left;
+                vertical-align: top;
+            }
+            th { background: $tableHeaderBg; font-weight: 600; }
+            code {
+                font-family: '$codeFontFamily';
+                background: $inlineCodeBg;
+                color: $inlineCodeFg;
+                border-radius: 4px;
+                padding: 1px 4px;
+            }
+            pre {
+                font-family: '$codeFontFamily';
+                background: $blockCodeBg;
+                color: $blockCodeFg;
+                border-radius: 8px;
+                padding: 8px 10px;
+                overflow-x: auto;
+            }
+            pre code {
+                background: transparent;
+                color: inherit;
+                padding: 0;
+            }
+        """.trimIndent()
+        return "<html><head><style>$css</style></head><body>$bodyHtml</body></html>"
+    }
+
+    private fun escapeCssFontFamily(fontFamily: String): String {
+        return fontFamily.replace("\\", "\\\\").replace("'", "\\'")
+    }
+
+    private fun toCssColor(color: Color): String {
+        return "#%02x%02x%02x".format(color.red, color.green, color.blue)
+    }
+
+    private fun ensurePlainTextMode(textPane: JTextPane) {
+        if (!textPane.contentType.equals(PLAIN_TEXT_CONTENT_TYPE, ignoreCase = true)) {
+            textPane.contentType = PLAIN_TEXT_CONTENT_TYPE
+        }
+    }
+
+    private fun renderTable(
+        doc: StyledDocument,
+        tableBlock: TableBlock,
+        proseFontFamily: String,
+        baseFontSize: Int,
+    ) {
         val rows = tableBlock.rows
         if (rows.isEmpty()) return
-        val columnWidths = computeTableColumnWidths(rows)
+        val header = rows.first().map(::normalizeTableCellForPipe)
+        val body = rows.drop(1).map { row -> row.map(::normalizeTableCellForPipe) }
 
-        val tableAttrs = SimpleAttributeSet()
-        StyleConstants.setFontFamily(tableAttrs, CODE_FONT_FAMILY)
-        StyleConstants.setFontSize(tableAttrs, baseFontSize)
-        StyleConstants.setForeground(tableAttrs, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
-        StyleConstants.setLeftIndent(tableAttrs, 4f)
-        StyleConstants.setSpaceAbove(tableAttrs, 1f)
-        StyleConstants.setSpaceBelow(tableAttrs, 1f)
-
-        val wrappedRows = rows.map { wrapTableRow(it, columnWidths) }
-        wrappedRows.firstOrNull()?.forEachIndexed { index, lineCells ->
-            if (index > 0) insertNewline(doc)
-            doc.insertString(doc.length, buildPipeTableLine(lineCells, columnWidths), tableAttrs)
+        val baseAttrs = SimpleAttributeSet().apply {
+            StyleConstants.setFontFamily(this, proseFontFamily)
+            StyleConstants.setFontSize(this, baseFontSize)
+            StyleConstants.setForeground(this, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
+            StyleConstants.setLeftIndent(this, 4f)
+            StyleConstants.setSpaceAbove(this, 1f)
+            StyleConstants.setSpaceBelow(this, 1f)
+        }
+        val headerAttrs = SimpleAttributeSet(baseAttrs).apply {
+            StyleConstants.setBold(this, true)
+        }
+        val separatorAttrs = SimpleAttributeSet(baseAttrs).apply {
+            StyleConstants.setForeground(this, JBColor(CODE_LANG_FG_LIGHT, CODE_LANG_FG_DARK))
         }
 
+        doc.insertString(doc.length, buildPipeRow(header), headerAttrs)
         insertNewline(doc)
-        doc.insertString(doc.length, buildPipeSeparatorLine(columnWidths), tableAttrs)
-
-        wrappedRows.drop(1).forEach { rowLines ->
-            rowLines.forEach { lineCells ->
-                insertNewline(doc)
-                doc.insertString(doc.length, buildPipeTableLine(lineCells, columnWidths), tableAttrs)
-            }
+        doc.insertString(
+            doc.length,
+            buildPipeRow(List(header.size) { "---" }),
+            separatorAttrs,
+        )
+        body.forEach { row ->
+            insertNewline(doc)
+            doc.insertString(doc.length, buildPipeRow(row), baseAttrs)
         }
     }
 
-    private fun computeTableColumnWidths(rows: List<List<String>>): List<Int> {
-        if (rows.isEmpty()) return emptyList()
-        val columnCount = rows.maxOf { it.size }
-        return List(columnCount) { column ->
-            rows.maxOf { row ->
-                displayWidth(row.getOrNull(column).orEmpty().trim())
-            }
-                .coerceAtLeast(TABLE_MIN_COLUMN_DISPLAY_WIDTH)
-                .coerceAtMost(TABLE_MAX_COLUMN_DISPLAY_WIDTH)
-        }
+    private fun buildPipeRow(cells: List<String>): String {
+        return cells.joinToString(
+            separator = " | ",
+            prefix = "| ",
+            postfix = " |",
+        )
     }
 
-    private fun wrapTableRow(row: List<String>, widths: List<Int>): List<List<String>> {
-        val wrappedByColumn = widths.indices.map { index ->
-            wrapCellText(
-                text = row.getOrNull(index).orEmpty(),
-                maxWidth = widths[index],
-            )
-        }
-        val lineCount = wrappedByColumn.maxOfOrNull { it.size } ?: 1
-        return List(lineCount) { lineIndex ->
-            widths.indices.map { column ->
-                wrappedByColumn[column].getOrElse(lineIndex) { "" }
-            }
-        }
-    }
-
-    private fun wrapCellText(text: String, maxWidth: Int): List<String> {
-        val normalized = text
-            .replace('\t', ' ')
+    private fun normalizeTableCellForPipe(cell: String): String {
+        return cell
+            .replace("\r\n", " ")
+            .replace('\r', ' ')
+            .replace('\n', ' ')
+            .replace("|", "\\|")
             .trim()
-        if (normalized.isEmpty()) return listOf("")
-
-        val lines = mutableListOf<String>()
-        val current = StringBuilder()
-        var currentWidth = 0
-
-        fun flush() {
-            lines += current.toString().trimEnd()
-            current.setLength(0)
-            currentWidth = 0
-        }
-
-        for (ch in normalized) {
-            if (ch == '\n' || ch == '\r') {
-                if (current.isNotEmpty()) {
-                    flush()
-                } else if (lines.isEmpty()) {
-                    lines += ""
-                }
-                continue
-            }
-            if (ch == ' ' && current.isEmpty()) continue
-
-            val width = charDisplayWidth(ch)
-            if (currentWidth + width > maxWidth && current.isNotEmpty()) {
-                flush()
-            }
-            current.append(ch)
-            currentWidth += width
-        }
-        if (current.isNotEmpty()) {
-            flush()
-        }
-        return if (lines.isEmpty()) listOf("") else lines
-    }
-
-    private fun buildPipeSeparatorLine(widths: List<Int>): String {
-        return buildString {
-            append('|')
-            widths.forEach { width ->
-                append(' ')
-                append("-".repeat(width.coerceAtLeast(TABLE_MIN_SEPARATOR_WIDTH)))
-                append(' ')
-                append('|')
-            }
-        }
-    }
-
-    private fun buildPipeTableLine(cells: List<String>, widths: List<Int>): String {
-        return buildString {
-            append('|')
-            widths.forEachIndexed { index, width ->
-                val cell = cells.getOrNull(index).orEmpty().trim()
-                append(' ')
-                append(padToDisplayWidth(cell, width))
-                append(' ')
-                append('|')
-            }
-        }
-    }
-
-    private fun padToDisplayWidth(text: String, width: Int): String {
-        val delta = width - displayWidth(text)
-        if (delta <= 0) return text
-        return text + " ".repeat(delta)
-    }
-
-    private fun displayWidth(text: String): Int {
-        if (text.isEmpty()) return 0
-        var width = 0
-        for (ch in text) {
-            width += charDisplayWidth(ch)
-        }
-        return width
-    }
-
-    private fun charDisplayWidth(ch: Char): Int {
-        if (ch == '\t') return 4
-        if (ch.isHighSurrogate()) return 2
-        if (ch.isLowSurrogate()) return 0
-        if (ch.code in 0..31 || ch.code == 127) return 0
-
-        val block = Character.UnicodeBlock.of(ch)
-        if (block != null && block in WIDE_UNICODE_BLOCKS) {
-            return 2
-        }
-        if (ch.code in 0xFF01..0xFF60 || ch.code in 0xFFE0..0xFFE6) {
-            return 2
-        }
-        return 1
     }
 
     private fun normalizeCodeBlockContent(raw: String): String {
@@ -557,23 +565,8 @@ object MarkdownRenderer {
     private val ORDERED_LIST_REGEX = Regex("""^\d+\.\s.*$""")
     private val TABLE_SEPARATOR_CELL_REGEX = Regex("""^:?-{3,}:?$""")
     private const val MIN_TABLE_COLUMNS = 2
-    private const val TABLE_MIN_COLUMN_DISPLAY_WIDTH = 3
-    private const val TABLE_MAX_COLUMN_DISPLAY_WIDTH = 28
-    private const val TABLE_MIN_SEPARATOR_WIDTH = 3
-    private val WIDE_UNICODE_BLOCKS = setOf(
-        Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
-        Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A,
-        Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B,
-        Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS,
-        Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION,
-        Character.UnicodeBlock.HIRAGANA,
-        Character.UnicodeBlock.KATAKANA,
-        Character.UnicodeBlock.KATAKANA_PHONETIC_EXTENSIONS,
-        Character.UnicodeBlock.HANGUL_JAMO,
-        Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO,
-        Character.UnicodeBlock.HANGUL_SYLLABLES,
-        Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS,
-    )
+    private const val PLAIN_TEXT_CONTENT_TYPE = "text/plain"
+    private const val HTML_CONTENT_TYPE = "text/html"
     private const val MIN_INLINE_FONT_SIZE = 9
     private const val DEFAULT_BASE_FONT_SIZE = 11
     private const val MIN_BASE_FONT_SIZE = 9
