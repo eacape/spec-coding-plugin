@@ -2,9 +2,6 @@ package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.intellij.ui.JBColor
-import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
-import org.intellij.markdown.html.HtmlGenerator
-import org.intellij.markdown.parser.MarkdownParser
 import java.awt.Color
 import java.awt.Font
 import javax.swing.JTextPane
@@ -44,15 +41,19 @@ object MarkdownRenderer {
     fun render(textPane: JTextPane, markdown: String) {
         val proseFontFamily = textPane.font?.family ?: Font.SANS_SERIF
         val baseFontSize = resolveBaseFontSize(textPane)
-        if (containsMarkdownTable(markdown) && renderWithMarkdownEngine(textPane, markdown, proseFontFamily, baseFontSize)) {
-            return
+        val normalizedMarkdown = normalizeEscapedTableMarkdown(markdown)
+        if (containsMarkdownTable(normalizedMarkdown)) {
+            val markdownForHtml = convertMarkdownTablesToHtmlBlocks(normalizedMarkdown)
+            if (renderWithHtmlFallback(textPane, markdownForHtml, proseFontFamily, baseFontSize)) {
+                return
+            }
         }
 
         ensurePlainTextMode(textPane)
         val doc = textPane.styledDocument
         doc.remove(0, doc.length)
 
-        val lines = markdown.lines()
+        val lines = normalizedMarkdown.lines()
         var i = 0
         var firstBlock = true
 
@@ -175,7 +176,7 @@ object MarkdownRenderer {
     }
 
     private fun splitTableCells(line: String): List<String> {
-        val trimmed = line.trim()
+        val trimmed = normalizeTableDelimiterTokens(line).trim()
         if (!trimmed.contains('|')) return emptyList()
 
         var content = trimmed
@@ -230,6 +231,147 @@ object MarkdownRenderer {
         }
     }
 
+    private fun normalizeEscapedTableMarkdown(markdown: String): String {
+        if (!markdown.contains(ESCAPED_PIPE_TOKEN)) return markdown
+        val lines = markdown.lines().toMutableList()
+        var index = 0
+        var inCodeFence = false
+
+        while (index < lines.size) {
+            val trimmed = lines[index].trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                index += 1
+                continue
+            }
+            if (inCodeFence) {
+                index += 1
+                continue
+            }
+
+            val normalizedHeader = normalizeEscapedTableDataLine(lines[index])
+            if (normalizedHeader == null) {
+                index += 1
+                continue
+            }
+            val separatorIndex = index + 1
+            if (separatorIndex >= lines.size) {
+                index += 1
+                continue
+            }
+            val normalizedSeparator = normalizeEscapedTableSeparatorLine(lines[separatorIndex])
+            if (normalizedSeparator == null) {
+                index += 1
+                continue
+            }
+
+            lines[index] = normalizedHeader
+            lines[separatorIndex] = normalizedSeparator
+            index = separatorIndex + 1
+            while (index < lines.size) {
+                val normalizedRow = normalizeEscapedTableDataLine(lines[index]) ?: break
+                lines[index] = normalizedRow
+                index += 1
+            }
+        }
+
+        return lines.joinToString("\n")
+    }
+
+    private fun normalizeEscapedTableDataLine(line: String): String? {
+        val normalized = normalizeTableDelimiterTokens(line)
+        if (!normalized.contains('|')) return null
+        val cells = splitTableCells(normalized)
+        return if (cells.size >= MIN_TABLE_COLUMNS) normalized else null
+    }
+
+    private fun normalizeEscapedTableSeparatorLine(line: String): String? {
+        val normalized = normalizeTableDelimiterTokens(line)
+        val cells = splitTableCells(normalized)
+        return if (isTableSeparatorRow(cells)) normalized else null
+    }
+
+    private fun normalizeTableDelimiterTokens(line: String): String {
+        return line
+            .replace(ESCAPED_PIPE_TOKEN, "|")
+            .replace(FULLWIDTH_PIPE_CHAR, '|')
+    }
+
+    private fun convertMarkdownTablesToHtmlBlocks(markdown: String): String {
+        val lines = markdown.lines()
+        if (lines.isEmpty()) return markdown
+
+        val output = mutableListOf<String>()
+        var index = 0
+        var inCodeFence = false
+        while (index < lines.size) {
+            val trimmed = lines[index].trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                output += lines[index]
+                index += 1
+                continue
+            }
+            if (!inCodeFence) {
+                val tableBlock = parseTableBlock(lines, index)
+                if (tableBlock != null) {
+                    output += renderTableHtmlBlock(tableBlock)
+                    index = tableBlock.nextIndex
+                    continue
+                }
+            }
+            output += lines[index]
+            index += 1
+        }
+        return output.joinToString("\n")
+    }
+
+    private fun renderTableHtmlBlock(tableBlock: TableBlock): String {
+        val rows = tableBlock.rows
+        if (rows.isEmpty()) return ""
+        val header = rows.first()
+        val body = rows.drop(1)
+        return buildString {
+            append("<table>")
+            append("<thead><tr>")
+            header.forEach { cell ->
+                append("<th>")
+                append(escapeHtml(cell))
+                append("</th>")
+            }
+            append("</tr></thead>")
+            if (body.isNotEmpty()) {
+                append("<tbody>")
+                body.forEach { row ->
+                    append("<tr>")
+                    row.forEach { cell ->
+                        append("<td>")
+                        append(escapeHtml(cell))
+                        append("</td>")
+                    }
+                    append("</tr>")
+                }
+                append("</tbody>")
+            }
+            append("</table>")
+        }
+    }
+
+    private fun escapeHtml(text: String): String {
+        return buildString(text.length) {
+            text.forEach { ch ->
+                when (ch) {
+                    '&' -> append("&amp;")
+                    '<' -> append("&lt;")
+                    '>' -> append("&gt;")
+                    '"' -> append("&quot;")
+                    '\'' -> append("&#39;")
+                    else -> append(ch)
+                }
+            }
+        }
+    }
+
     private fun containsMarkdownTable(markdown: String): Boolean {
         val lines = markdown.lines()
         if (lines.size < 2) return false
@@ -244,21 +386,184 @@ object MarkdownRenderer {
         return false
     }
 
-    private fun renderWithMarkdownEngine(
+    private fun renderWithHtmlFallback(
         textPane: JTextPane,
         markdown: String,
         proseFontFamily: String,
         baseFontSize: Int,
     ): Boolean {
         return runCatching {
-            val flavour = GFMFlavourDescriptor(useSafeLinks = true)
-            val parsedTree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
-            val bodyHtml = HtmlGenerator(markdown, parsedTree, flavour).generateHtml()
+            val bodyHtml = convertBasicMarkdownToHtml(markdown)
             val html = wrapMarkdownHtml(bodyHtml, proseFontFamily, baseFontSize)
             textPane.contentType = HTML_CONTENT_TYPE
             textPane.text = html
             textPane.caretPosition = 0
         }.isSuccess
+    }
+
+    private fun convertBasicMarkdownToHtml(markdown: String): String {
+        val lines = markdown
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lines()
+        val html = StringBuilder()
+        val codeBuffer = StringBuilder()
+        var inCodeFence = false
+        var inUnorderedList = false
+        var inOrderedList = false
+        var inParagraph = false
+
+        fun closeParagraph() {
+            if (inParagraph) {
+                html.append("</p>")
+                inParagraph = false
+            }
+        }
+
+        fun closeLists() {
+            if (inUnorderedList) {
+                html.append("</ul>")
+                inUnorderedList = false
+            }
+            if (inOrderedList) {
+                html.append("</ol>")
+                inOrderedList = false
+            }
+        }
+
+        fun closeTextScopes() {
+            closeParagraph()
+            closeLists()
+        }
+
+        lines.forEach { rawLine ->
+            val line = rawLine.trimEnd()
+            val trimmed = line.trim()
+
+            if (trimmed.startsWith("```")) {
+                closeTextScopes()
+                if (inCodeFence) {
+                    html.append("<pre><code>")
+                    html.append(escapeHtml(codeBuffer.toString()).trimEnd('\n'))
+                    html.append("</code></pre>")
+                    codeBuffer.setLength(0)
+                    inCodeFence = false
+                } else {
+                    inCodeFence = true
+                }
+                return@forEach
+            }
+
+            if (inCodeFence) {
+                codeBuffer.append(line).append('\n')
+                return@forEach
+            }
+
+            if (TABLE_HTML_BLOCK_REGEX.matches(trimmed)) {
+                closeTextScopes()
+                html.append(trimmed)
+                return@forEach
+            }
+
+            if (trimmed == "---" || trimmed == "***" || trimmed == "___") {
+                closeTextScopes()
+                html.append("<hr/>")
+                return@forEach
+            }
+
+            val headingMatch = HEADING_REGEX.matchEntire(line)
+            if (headingMatch != null) {
+                closeTextScopes()
+                val level = headingMatch.groupValues[1].length.coerceIn(1, 6)
+                html.append("<h").append(level).append(">")
+                html.append(renderInlineHtml(headingMatch.groupValues[2]))
+                html.append("</h").append(level).append(">")
+                return@forEach
+            }
+
+            val unorderedMatch = UNORDERED_LIST_HTML_REGEX.matchEntire(trimmed)
+            if (unorderedMatch != null) {
+                closeParagraph()
+                if (inOrderedList) {
+                    html.append("</ol>")
+                    inOrderedList = false
+                }
+                if (!inUnorderedList) {
+                    html.append("<ul>")
+                    inUnorderedList = true
+                }
+                html.append("<li>")
+                html.append(renderInlineHtml(unorderedMatch.groupValues[1]))
+                html.append("</li>")
+                return@forEach
+            }
+
+            val orderedMatch = ORDERED_LIST_HTML_REGEX.matchEntire(trimmed)
+            if (orderedMatch != null) {
+                closeParagraph()
+                if (inUnorderedList) {
+                    html.append("</ul>")
+                    inUnorderedList = false
+                }
+                if (!inOrderedList) {
+                    html.append("<ol>")
+                    inOrderedList = true
+                }
+                html.append("<li>")
+                html.append(renderInlineHtml(orderedMatch.groupValues[1]))
+                html.append("</li>")
+                return@forEach
+            }
+
+            if (trimmed.isBlank()) {
+                closeTextScopes()
+                return@forEach
+            }
+
+            closeLists()
+            if (!inParagraph) {
+                html.append("<p>")
+                inParagraph = true
+            } else {
+                html.append("<br/>")
+            }
+            html.append(renderInlineHtml(trimmed))
+        }
+
+        if (inCodeFence) {
+            html.append("<pre><code>")
+            html.append(escapeHtml(codeBuffer.toString()).trimEnd('\n'))
+            html.append("</code></pre>")
+        }
+        if (inParagraph) html.append("</p>")
+        if (inUnorderedList) html.append("</ul>")
+        if (inOrderedList) html.append("</ol>")
+        return html.toString()
+    }
+
+    private fun renderInlineHtml(text: String): String {
+        return buildString {
+            tokenizeInline(text).forEach { token ->
+                when (token) {
+                    is InlineToken.Bold -> {
+                        append("<strong>")
+                        append(escapeHtml(token.text))
+                        append("</strong>")
+                    }
+                    is InlineToken.Italic -> {
+                        append("<em>")
+                        append(escapeHtml(token.text))
+                        append("</em>")
+                    }
+                    is InlineToken.InlineCode -> {
+                        append("<code>")
+                        append(escapeHtml(token.text))
+                        append("</code>")
+                    }
+                    is InlineToken.Plain -> append(escapeHtml(token.text))
+                }
+            }
+        }
     }
 
     private fun wrapMarkdownHtml(bodyHtml: String, proseFontFamily: String, baseFontSize: Int): String {
@@ -276,11 +581,13 @@ object MarkdownRenderer {
             body {
                 font-family: '$fontFamily';
                 font-size: ${baseFontSize}px;
-                line-height: 1.58;
+                line-height: 1.78;
                 color: $bodyFg;
             }
-            p, ul, ol, table, pre, blockquote { margin: 0 0 8px 0; }
+            p, ul, ol, table, pre, blockquote { margin: 0 0 12px 0; }
             ul, ol { padding-left: 20px; }
+            li { margin: 0 0 6px 0; }
+            li:last-child { margin-bottom: 0; }
             table { border-collapse: collapse; width: 100%; }
             th, td {
                 border: 1px solid $tableBorder;
@@ -341,6 +648,7 @@ object MarkdownRenderer {
         val baseAttrs = SimpleAttributeSet().apply {
             StyleConstants.setFontFamily(this, proseFontFamily)
             StyleConstants.setFontSize(this, baseFontSize)
+            StyleConstants.setLineSpacing(this, PROSE_LINE_SPACING)
             StyleConstants.setForeground(this, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
             StyleConstants.setLeftIndent(this, 4f)
             StyleConstants.setSpaceAbove(this, 1f)
@@ -408,8 +716,7 @@ object MarkdownRenderer {
             4 -> baseFontSize + 1
             else -> baseFontSize
         }
-        StyleConstants.setFontSize(attrs, fontSize)
-        StyleConstants.setFontFamily(attrs, proseFontFamily)
+        applyProseTextAttrs(attrs, proseFontFamily, fontSize)
         doc.insertString(doc.length, text, attrs)
     }
 
@@ -427,8 +734,7 @@ object MarkdownRenderer {
         val prefix = "  ".repeat(indent / 2)
 
         val bulletAttrs = SimpleAttributeSet()
-        StyleConstants.setFontFamily(bulletAttrs, proseFontFamily)
-        StyleConstants.setFontSize(bulletAttrs, baseFontSize)
+        applyProseTextAttrs(bulletAttrs, proseFontFamily, baseFontSize)
 
         val trimmed = line.trimStart()
         val bullet = if (ordered) {
@@ -469,33 +775,37 @@ object MarkdownRenderer {
                 is InlineToken.Bold -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setBold(attrs, true)
-                    StyleConstants.setFontFamily(attrs, proseFontFamily)
-                    StyleConstants.setFontSize(attrs, baseFontSize)
+                    applyProseTextAttrs(attrs, proseFontFamily, baseFontSize)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.Italic -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setItalic(attrs, true)
-                    StyleConstants.setFontFamily(attrs, proseFontFamily)
-                    StyleConstants.setFontSize(attrs, baseFontSize)
+                    applyProseTextAttrs(attrs, proseFontFamily, baseFontSize)
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.InlineCode -> {
                     val attrs = SimpleAttributeSet()
                     StyleConstants.setFontFamily(attrs, CODE_FONT_FAMILY)
                     StyleConstants.setFontSize(attrs, (baseFontSize - 1).coerceAtLeast(MIN_INLINE_FONT_SIZE))
+                    StyleConstants.setLineSpacing(attrs, PROSE_LINE_SPACING)
                     StyleConstants.setBackground(attrs, JBColor(CODE_BG_LIGHT, CODE_BG_DARK))
                     StyleConstants.setForeground(attrs, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
                     doc.insertString(doc.length, token.text, attrs)
                 }
                 is InlineToken.Plain -> {
                     val attrs = SimpleAttributeSet()
-                    StyleConstants.setFontFamily(attrs, proseFontFamily)
-                    StyleConstants.setFontSize(attrs, baseFontSize)
+                    applyProseTextAttrs(attrs, proseFontFamily, baseFontSize)
                     doc.insertString(doc.length, token.text, attrs)
                 }
             }
         }
+    }
+
+    private fun applyProseTextAttrs(attrs: SimpleAttributeSet, proseFontFamily: String, fontSize: Int) {
+        StyleConstants.setFontFamily(attrs, proseFontFamily)
+        StyleConstants.setFontSize(attrs, fontSize)
+        StyleConstants.setLineSpacing(attrs, PROSE_LINE_SPACING)
     }
 
     private fun resolveBaseFontSize(textPane: JTextPane): Int {
@@ -564,13 +874,19 @@ object MarkdownRenderer {
     private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+(.*)$""")
     private val ORDERED_LIST_REGEX = Regex("""^\d+\.\s.*$""")
     private val TABLE_SEPARATOR_CELL_REGEX = Regex("""^:?-{3,}:?$""")
+    private val TABLE_HTML_BLOCK_REGEX = Regex("""^<table>.*</table>$""", RegexOption.IGNORE_CASE)
+    private val UNORDERED_LIST_HTML_REGEX = Regex("""^[-*]\s+(.+)$""")
+    private val ORDERED_LIST_HTML_REGEX = Regex("""^\d+[.)]\s+(.+)$""")
     private const val MIN_TABLE_COLUMNS = 2
+    private const val ESCAPED_PIPE_TOKEN = "\\|"
+    private const val FULLWIDTH_PIPE_CHAR = '｜'
     private const val PLAIN_TEXT_CONTENT_TYPE = "text/plain"
     private const val HTML_CONTENT_TYPE = "text/html"
     private const val MIN_INLINE_FONT_SIZE = 9
     private const val DEFAULT_BASE_FONT_SIZE = 11
     private const val MIN_BASE_FONT_SIZE = 9
     private const val MAX_BASE_FONT_SIZE = 36
+    private const val PROSE_LINE_SPACING = 0.30f
 
     private data class TableBlock(
         val rows: List<List<String>>,

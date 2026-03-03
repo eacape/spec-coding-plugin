@@ -38,6 +38,7 @@ import javax.swing.JSplitPane
 import javax.swing.JTextPane
 import javax.swing.JTree
 import javax.swing.ScrollPaneConstants
+import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.event.DocumentEvent
@@ -68,6 +69,9 @@ class SpecDetailPanel(
     private val treeRoot = DefaultMutableTreeNode(SpecCodingBundle.message("spec.detail.documents"))
     private val treeModel = DefaultTreeModel(treeRoot)
     private val documentTree = JTree(treeModel)
+    private val phaseStepperRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0))
+    private val phaseStepWidgets = linkedMapOf<SpecPhase, PhaseStepWidgets>()
+    private val phaseArrowLabels = linkedMapOf<SpecPhase, JBLabel>()
 
     private val previewPane = JTextPane()
     private val clarificationQuestionsPane = JTextPane()
@@ -100,6 +104,7 @@ class SpecDetailPanel(
     private lateinit var inputSectionContainer: JPanel
     private lateinit var bottomPanelContainer: JPanel
     private lateinit var mainSplitPane: JSplitPane
+    private var isPhaseStepperEnabled: Boolean = true
 
     private val generateButton = JButton()
     private val nextPhaseButton = JButton()
@@ -138,6 +143,7 @@ class SpecDetailPanel(
     private var isClarificationPreviewContentVisible: Boolean = true
     private var hasAppliedInitialBottomHeight: Boolean = false
     private val processTimelineEntries = mutableListOf<ProcessTimelineEntry>()
+    private var hoveredStepperPhase: SpecPhase? = null
 
     init {
         setupUI()
@@ -170,44 +176,14 @@ class SpecDetailPanel(
         val state: ProcessTimelineState = ProcessTimelineState.INFO,
     )
 
+    private data class PhaseStepWidgets(
+        val container: JPanel,
+        val badgeLabel: JBLabel,
+        val titleLabel: JBLabel,
+    )
+
     private fun setupUI() {
         border = JBUI.Borders.empty(2)
-
-        val topSplit = JSplitPane(JSplitPane.HORIZONTAL_SPLIT).apply {
-            dividerLocation = JBUI.scale(252)
-            isContinuousLayout = true
-            border = JBUI.Borders.empty()
-            background = PANEL_BG
-            SpecUiStyle.applyChatLikeSpecDivider(
-                splitPane = this,
-                dividerSize = JBUI.scale(4),
-            )
-        }
-
-        documentTree.isRootVisible = false
-        documentTree.showsRootHandles = false
-        documentTree.rowHeight = JBUI.scale(48)
-        documentTree.border = JBUI.Borders.empty(8, 6, 8, 6)
-        documentTree.cellRenderer = PhaseTreeCellRenderer()
-        documentTree.putClientProperty("JTree.lineStyle", "None")
-        documentTree.isOpaque = false
-        documentTree.addTreeSelectionListener {
-            val node = documentTree.lastSelectedPathComponent as? DefaultMutableTreeNode
-            val phase = node?.userObject as? PhaseNode
-            if (phase != null) {
-                selectedPhase = phase.phase
-                showDocumentPreview(phase.phase)
-            }
-        }
-        topSplit.leftComponent = createSectionContainer(
-            JBScrollPane(documentTree).apply {
-                border = JBUI.Borders.empty()
-                viewport.isOpaque = false
-                isOpaque = false
-            },
-            backgroundColor = TREE_SECTION_BG,
-            borderColor = TREE_SECTION_BORDER,
-        )
 
         val previewPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = true
@@ -245,9 +221,17 @@ class SpecDetailPanel(
         previewCardPanel.add(createClarificationCard(), CARD_CLARIFY)
         switchPreviewCard(CARD_PREVIEW)
         configurePreviewModePanel()
+        val phaseStepperSection = createPhaseStepperSection()
         processTimelineSection = createProcessTimelineSection()
         setProcessTimelineVisible(false)
-        previewPanel.add(processTimelineSection, BorderLayout.NORTH)
+        previewPanel.add(
+            JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+                isOpaque = false
+                add(phaseStepperSection, BorderLayout.NORTH)
+                add(processTimelineSection, BorderLayout.CENTER)
+            },
+            BorderLayout.NORTH,
+        )
         previewPanel.add(
             previewCardPanel,
             BorderLayout.CENTER,
@@ -270,8 +254,6 @@ class SpecDetailPanel(
             },
             BorderLayout.SOUTH,
         )
-        topSplit.rightComponent = previewPanel
-
         bottomPanelContainer = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
             isOpaque = true
             background = INPUT_COLUMN_BG
@@ -290,7 +272,8 @@ class SpecDetailPanel(
         updateInputPlaceholder(null)
         val inputScroll = JBScrollPane(inputArea)
         inputScroll.border = JBUI.Borders.empty()
-        inputScroll.preferredSize = java.awt.Dimension(0, JBUI.scale(20))
+        inputScroll.preferredSize = java.awt.Dimension(0, JBUI.scale(56))
+        inputScroll.minimumSize = java.awt.Dimension(0, JBUI.scale(56))
         inputSectionContainer = createSectionContainer(
             inputScroll,
             backgroundColor = INPUT_SECTION_BG,
@@ -320,7 +303,7 @@ class SpecDetailPanel(
         )
 
         mainSplitPane = JSplitPane(JSplitPane.VERTICAL_SPLIT).apply {
-            topComponent = topSplit
+            topComponent = previewPanel
             bottomComponent = bottomPanelContainer
             resizeWeight = 0.67
             border = JBUI.Borders.empty()
@@ -586,6 +569,196 @@ class SpecDetailPanel(
         previewModePanel.add(previewModeButton)
         previewModePanel.add(clarificationModeButton)
         updatePreviewModeButtons()
+    }
+
+    private fun createPhaseStepperSection(): JPanel {
+        phaseStepperRow.isOpaque = false
+        phaseStepperRow.border = JBUI.Borders.empty()
+        phaseStepperRow.removeAll()
+        phaseStepWidgets.clear()
+        phaseArrowLabels.clear()
+        hoveredStepperPhase = null
+        val phases = SpecPhase.entries
+        phases.forEachIndexed { index, phase ->
+            val widgets = createPhaseStepWidgets(phase = phase, index = index)
+            phaseStepWidgets[phase] = widgets
+            phaseStepperRow.add(widgets.container)
+            if (index < phases.lastIndex) {
+                val arrowLabel = JBLabel("›").apply {
+                    font = JBUI.Fonts.label().deriveFont(Font.BOLD, 13f)
+                    border = JBUI.Borders.empty(0, 1, 0, 1)
+                }
+                phaseArrowLabels[phase] = arrowLabel
+                phaseStepperRow.add(arrowLabel)
+            }
+        }
+        updatePhaseStepperVisuals()
+        return JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = STEPPER_SECTION_BG
+            border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(STEPPER_SECTION_BORDER, JBUI.scale(10)),
+                JBUI.Borders.empty(2, 4, 2, 4),
+            )
+            add(phaseStepperRow, BorderLayout.WEST)
+        }
+    }
+
+    private fun createPhaseStepWidgets(phase: SpecPhase, index: Int): PhaseStepWidgets {
+        val badgeLabel = JBLabel((index + 1).toString(), SwingConstants.CENTER).apply {
+            isOpaque = true
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD, 11f)
+            preferredSize = JBUI.size(JBUI.scale(18), JBUI.scale(18))
+            minimumSize = preferredSize
+        }
+        val titleLabel = JBLabel(phaseStepperTitle(phase)).apply {
+            font = JBUI.Fonts.label().deriveFont(Font.BOLD, 12f)
+            border = JBUI.Borders.empty(0, 0, 0, 0)
+        }
+        val container = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(5), JBUI.scale(1))).apply {
+            isOpaque = true
+            add(badgeLabel)
+            add(titleLabel)
+        }
+        val clickListener = object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (!isPhaseStepperEnabled) return
+                val workflow = currentWorkflow ?: return
+                if (selectedPhase == phase) return
+                selectedPhase = phase
+                updateTreeSelection(phase)
+                showDocumentPreview(phase)
+                updateButtonStates(workflow)
+            }
+
+            override fun mouseEntered(e: MouseEvent) {
+                if (!isPhaseStepperEnabled || currentWorkflow == null) return
+                hoveredStepperPhase = phase
+                updatePhaseStepperVisuals()
+            }
+
+            override fun mouseExited(e: MouseEvent) {
+                if (hoveredStepperPhase != phase) return
+                hoveredStepperPhase = null
+                updatePhaseStepperVisuals()
+            }
+        }
+        container.addMouseListener(clickListener)
+        badgeLabel.addMouseListener(clickListener)
+        titleLabel.addMouseListener(clickListener)
+        return PhaseStepWidgets(
+            container = container,
+            badgeLabel = badgeLabel,
+            titleLabel = titleLabel,
+        )
+    }
+
+    private fun phaseStepperTitle(phase: SpecPhase): String {
+        return when (phase) {
+            SpecPhase.SPECIFY -> SpecCodingBundle.message("spec.detail.step.requirements")
+            SpecPhase.DESIGN -> SpecCodingBundle.message("spec.detail.step.design")
+            SpecPhase.IMPLEMENT -> SpecCodingBundle.message("spec.detail.step.taskList")
+        }
+    }
+
+    private fun setPhaseStepperEnabled(enabled: Boolean) {
+        isPhaseStepperEnabled = enabled
+        if (!enabled) {
+            hoveredStepperPhase = null
+        }
+        updatePhaseStepperVisuals()
+    }
+
+    private fun updatePhaseStepperVisuals() {
+        val workflow = currentWorkflow
+        val selected = selectedPhase
+        val currentPhase = workflow?.currentPhase
+        val workflowAvailable = workflow != null
+        phaseStepWidgets.forEach { (phase, widgets) ->
+            val hasDocument = workflow?.documents?.containsKey(phase) == true
+            val phaseState = when {
+                phase == selected -> PhaseStepperVisualState.SELECTED
+                phase == currentPhase -> PhaseStepperVisualState.CURRENT
+                hasDocument -> PhaseStepperVisualState.DONE
+                else -> PhaseStepperVisualState.PENDING
+            }
+            val clickable = isPhaseStepperEnabled && workflowAvailable
+            val hovered = clickable && hoveredStepperPhase == phase
+            val cursor = if (clickable) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else Cursor.getDefaultCursor()
+            widgets.container.cursor = cursor
+            widgets.badgeLabel.cursor = cursor
+            widgets.titleLabel.cursor = cursor
+            widgets.container.isEnabled = clickable
+            widgets.badgeLabel.isEnabled = clickable
+            widgets.titleLabel.isEnabled = clickable
+            widgets.badgeLabel.text = if (phaseState == PhaseStepperVisualState.DONE) "✓" else "${phase.ordinal + 1}"
+            widgets.titleLabel.text = phaseStepperTitle(phase)
+
+            val itemBackground = when (phaseState) {
+                PhaseStepperVisualState.SELECTED -> STEPPER_ITEM_BG_SELECTED
+                PhaseStepperVisualState.CURRENT -> STEPPER_ITEM_BG_CURRENT
+                PhaseStepperVisualState.DONE -> STEPPER_ITEM_BG_DONE
+                PhaseStepperVisualState.PENDING -> STEPPER_ITEM_BG
+            }
+            val itemBorder = when (phaseState) {
+                PhaseStepperVisualState.SELECTED -> STEPPER_ITEM_BORDER_SELECTED
+                PhaseStepperVisualState.CURRENT -> STEPPER_ITEM_BORDER_CURRENT
+                PhaseStepperVisualState.DONE -> STEPPER_ITEM_BORDER_DONE
+                PhaseStepperVisualState.PENDING -> STEPPER_ITEM_BORDER
+            }
+            val itemBorderFinal = if (hovered && phaseState != PhaseStepperVisualState.SELECTED) {
+                STEPPER_ITEM_BORDER_HOVER
+            } else {
+                itemBorder
+            }
+            val badgeBackground = when (phaseState) {
+                PhaseStepperVisualState.SELECTED -> STEPPER_BADGE_BG_SELECTED
+                PhaseStepperVisualState.CURRENT -> STEPPER_BADGE_BG_CURRENT
+                PhaseStepperVisualState.DONE -> STEPPER_BADGE_BG_DONE
+                PhaseStepperVisualState.PENDING -> STEPPER_BADGE_BG
+            }
+            val badgeBorder = when (phaseState) {
+                PhaseStepperVisualState.SELECTED -> STEPPER_BADGE_BORDER_SELECTED
+                PhaseStepperVisualState.CURRENT -> STEPPER_BADGE_BORDER_CURRENT
+                PhaseStepperVisualState.DONE -> STEPPER_BADGE_BORDER_DONE
+                PhaseStepperVisualState.PENDING -> STEPPER_BADGE_BORDER
+            }
+            val badgeForeground = when (phaseState) {
+                PhaseStepperVisualState.SELECTED -> STEPPER_BADGE_TEXT_SELECTED
+                PhaseStepperVisualState.CURRENT -> STEPPER_BADGE_TEXT_CURRENT
+                PhaseStepperVisualState.DONE -> STEPPER_BADGE_TEXT_DONE
+                PhaseStepperVisualState.PENDING -> STEPPER_BADGE_TEXT
+            }
+            val titleForeground = when (phaseState) {
+                PhaseStepperVisualState.SELECTED -> STEPPER_ITEM_TEXT_SELECTED
+                PhaseStepperVisualState.CURRENT -> STEPPER_ITEM_TEXT_CURRENT
+                PhaseStepperVisualState.DONE -> STEPPER_ITEM_TEXT_DONE
+                PhaseStepperVisualState.PENDING -> STEPPER_ITEM_TEXT
+            }
+            val titleForegroundFinal = if (hovered && phaseState == PhaseStepperVisualState.PENDING) {
+                STEPPER_ITEM_TEXT_HOVER
+            } else {
+                titleForeground
+            }
+            widgets.container.background = itemBackground
+            widgets.container.border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(itemBorderFinal, JBUI.scale(10)),
+                JBUI.Borders.empty(2, 6, 2, 7),
+            )
+            widgets.badgeLabel.background = badgeBackground
+            widgets.badgeLabel.foreground = badgeForeground
+            widgets.badgeLabel.border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(badgeBorder, JBUI.scale(7)),
+                JBUI.Borders.empty(0, 3, 0, 3),
+            )
+            widgets.titleLabel.foreground = titleForegroundFinal
+        }
+        phaseArrowLabels.forEach { (phase, label) ->
+            val hasDocument = workflow?.documents?.containsKey(phase) == true
+            label.foreground = if (hasDocument) STEPPER_ARROW_DONE else STEPPER_ARROW
+        }
+        phaseStepperRow.revalidate()
+        phaseStepperRow.repaint()
     }
 
     private fun createClarificationCard(): JPanel {
@@ -999,6 +1172,7 @@ class SpecDetailPanel(
         styleActionButton(regenerateClarificationButton)
         styleActionButton(skipClarificationButton)
         styleActionButton(cancelClarificationButton)
+        updatePhaseStepperVisuals()
         updatePreviewModeButtons()
         refreshCollapsibleToggleTexts()
         renderProcessTimeline()
@@ -1058,6 +1232,7 @@ class SpecDetailPanel(
         updateInputPlaceholder(workflow.currentPhase)
         val preservedPhase = selectedPhase?.takeIf { !followCurrentPhase && previousWorkflowId == workflow.id }
         selectedPhase = preservedPhase ?: workflow.currentPhase
+        setPhaseStepperEnabled(!isEditing)
         updateTreeSelection(selectedPhase)
         updateButtonStates(workflow)
         refreshInputAreaMode()
@@ -1085,6 +1260,8 @@ class SpecDetailPanel(
         clearProcessTimeline()
         treeRoot.removeAllChildren()
         treeModel.reload()
+        setPhaseStepperEnabled(false)
+        updateTreeSelection(null)
         setClarificationPreviewVisible(true)
         switchPreviewCard(CARD_PREVIEW)
         documentTree.isEnabled = true
@@ -1129,7 +1306,11 @@ class SpecDetailPanel(
     }
 
     private fun updateTreeSelection(phase: SpecPhase?) {
-        val targetPhase = phase ?: return
+        val targetPhase = phase ?: run {
+            documentTree.clearSelection()
+            updatePhaseStepperVisuals()
+            return
+        }
         for (row in 0 until documentTree.rowCount) {
             val path = documentTree.getPathForRow(row) ?: continue
             val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
@@ -1139,6 +1320,7 @@ class SpecDetailPanel(
                 break
             }
         }
+        updatePhaseStepperVisuals()
     }
 
     private fun startEditing() {
@@ -1152,6 +1334,7 @@ class SpecDetailPanel(
         editorArea.caretPosition = 0
         switchPreviewCard(CARD_EDIT)
         documentTree.isEnabled = false
+        setPhaseStepperEnabled(false)
         refreshInputAreaMode()
         updateButtonStates(workflow)
     }
@@ -1165,6 +1348,7 @@ class SpecDetailPanel(
         editingPhase = null
         switchPreviewCard(CARD_PREVIEW)
         documentTree.isEnabled = true
+        setPhaseStepperEnabled(true)
         refreshInputAreaMode()
         updateButtonStates(workflow)
         selectedPhase?.let { showDocumentPreview(it, keepGeneratingIndicator = false) }
@@ -1450,7 +1634,9 @@ class SpecDetailPanel(
                     editable = checklistEditable,
                 ),
             )
-            clarificationChecklistPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
+            if (index < structuredQuestions.lastIndex) {
+                clarificationChecklistPanel.add(Box.createVerticalStrut(JBUI.scale(1)))
+            }
         }
         val confirmedCount = questionDecisions.values.count { it == ClarificationQuestionDecision.CONFIRMED }
         val notApplicableCount = questionDecisions.values.count { it == ClarificationQuestionDecision.NOT_APPLICABLE }
@@ -1556,9 +1742,9 @@ class SpecDetailPanel(
             border = SpecUiStyle.roundedCardBorder(
                 lineColor = rowColors.border,
                 arc = JBUI.scale(10),
-                top = 4,
+                top = 1,
                 left = 8,
-                bottom = 4,
+                bottom = 1,
                 right = 8,
             )
             add(questionHeader, BorderLayout.CENTER)
@@ -1658,8 +1844,17 @@ class SpecDetailPanel(
             val boldAttrs = SimpleAttributeSet(normalAttrs).apply {
                 StyleConstants.setBold(this, true)
             }
+            val codeAttrs = SimpleAttributeSet(normalAttrs).apply {
+                StyleConstants.setFontFamily(this, "JetBrains Mono")
+                StyleConstants.setBackground(this, CLARIFY_PREVIEW_QUESTION_CODE_BG)
+                StyleConstants.setForeground(this, CLARIFY_PREVIEW_QUESTION_CODE_FG)
+            }
             parseChecklistQuestionSegments(question).forEach { segment ->
-                val attrs = if (segment.bold) boldAttrs else normalAttrs
+                val attrs = when {
+                    segment.inlineCode -> codeAttrs
+                    segment.bold -> boldAttrs
+                    else -> normalAttrs
+                }
                 doc.insertString(doc.length, segment.text, attrs)
             }
             target.caretPosition = 0
@@ -1670,45 +1865,103 @@ class SpecDetailPanel(
     }
 
     private fun parseChecklistQuestionSegments(question: String): List<ChecklistQuestionSegment> {
-        val normalized = question
-            .replace("\r\n", "\n")
-            .replace('\r', '\n')
-            .trim()
+        val normalized = normalizeChecklistQuestionText(question)
         if (normalized.isBlank()) {
             return emptyList()
         }
         val segments = mutableListOf<ChecklistQuestionSegment>()
         var cursor = 0
-        BOLD_MARKDOWN_REGEX.findAll(normalized).forEach { match ->
-            val start = match.range.first
-            val endExclusive = match.range.last + 1
-            if (start > cursor) {
-                segments += ChecklistQuestionSegment(
-                    text = normalized.substring(cursor, start),
-                    bold = false,
-                )
+        while (cursor < normalized.length) {
+            if (
+                cursor + 1 < normalized.length &&
+                normalized[cursor] == '*' &&
+                normalized[cursor + 1] == '*'
+            ) {
+                val end = normalized.indexOf("**", cursor + 2)
+                if (end > cursor + 1) {
+                    val boldText = normalized.substring(cursor + 2, end)
+                    if (boldText.isNotEmpty()) {
+                        segments += ChecklistQuestionSegment(
+                            text = boldText,
+                            bold = true,
+                        )
+                    }
+                    cursor = end + 2
+                    continue
+                }
             }
-            val boldText = match.groupValues.getOrNull(1).orEmpty()
-            if (boldText.isNotBlank()) {
-                segments += ChecklistQuestionSegment(
-                    text = boldText,
-                    bold = true,
-                )
-            } else {
-                segments += ChecklistQuestionSegment(
-                    text = match.value,
-                    bold = false,
-                )
+
+            if (normalized[cursor] == '`') {
+                val delimiterLength = countChecklistBacktickDelimiterLength(normalized, cursor)
+                val delimiter = "`".repeat(delimiterLength)
+                val end = normalized.indexOf(delimiter, cursor + delimiterLength)
+                if (end >= cursor + delimiterLength) {
+                    val codeText = normalized.substring(cursor + delimiterLength, end)
+                    if (codeText.isNotEmpty()) {
+                        segments += ChecklistQuestionSegment(
+                            text = codeText,
+                            bold = false,
+                            inlineCode = true,
+                        )
+                    }
+                    cursor = end + delimiterLength
+                    continue
+                }
             }
-            cursor = endExclusive
-        }
-        if (cursor < normalized.length) {
+
+            val nextSpecial = findNextChecklistMarkdownSpecial(normalized, cursor + 1)
             segments += ChecklistQuestionSegment(
-                text = normalized.substring(cursor),
+                text = normalized.substring(cursor, nextSpecial),
                 bold = false,
             )
+            cursor = nextSpecial
         }
-        return segments.filter { it.text.isNotEmpty() }
+        return segments
+            .filter { it.text.isNotEmpty() }
+            .mergeAdjacentChecklistSegments()
+    }
+
+    private fun normalizeChecklistQuestionText(question: String): String {
+        return question
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+            .replace(Regex("\\s{2,}"), " ")
+            .trim()
+    }
+
+    private fun findNextChecklistMarkdownSpecial(text: String, from: Int): Int {
+        for (index in from until text.length) {
+            if (text[index] == '*' || text[index] == '`') {
+                return index
+            }
+        }
+        return text.length
+    }
+
+    private fun countChecklistBacktickDelimiterLength(text: String, start: Int): Int {
+        var cursor = start
+        while (cursor < text.length && text[cursor] == '`') {
+            cursor++
+        }
+        return (cursor - start).coerceAtLeast(1)
+    }
+
+    private fun List<ChecklistQuestionSegment>.mergeAdjacentChecklistSegments(): List<ChecklistQuestionSegment> {
+        if (isEmpty()) return this
+        val merged = mutableListOf<ChecklistQuestionSegment>()
+        forEach { segment ->
+            val last = merged.lastOrNull()
+            if (last != null && last.bold == segment.bold && last.inlineCode == segment.inlineCode) {
+                merged[merged.lastIndex] = last.copy(text = last.text + segment.text)
+            } else {
+                merged += segment
+            }
+        }
+        return merged
     }
 
     private fun checklistRowColors(decision: ClarificationQuestionDecision): ChecklistRowColors {
@@ -2148,6 +2401,7 @@ class SpecDetailPanel(
     private data class ChecklistQuestionSegment(
         val text: String,
         val bold: Boolean,
+        val inlineCode: Boolean = false,
     )
 
     private fun onClarificationInputEdited() {
@@ -2965,6 +3219,14 @@ class SpecDetailPanel(
         return parseChecklistQuestionSegments(question).map { it.text to it.bold }
     }
 
+    internal fun parseChecklistQuestionSegmentsWithStyleForTest(
+        question: String,
+    ): List<Triple<String, Boolean, Boolean>> {
+        return parseChecklistQuestionSegments(question).map { segment ->
+            Triple(segment.text, segment.bold, segment.inlineCode)
+        }
+    }
+
     internal fun isInputEditableForTest(): Boolean {
         return inputArea.isEditable
     }
@@ -3168,6 +3430,13 @@ class SpecDetailPanel(
             get() = SpecCodingBundle.message(badgeTextKey)
     }
 
+    private enum class PhaseStepperVisualState {
+        SELECTED,
+        CURRENT,
+        DONE,
+        PENDING,
+    }
+
     private fun phaseBadgeColor(phase: SpecPhase, selected: Boolean): Color {
         return when (phase) {
             SpecPhase.SPECIFY -> if (selected) TREE_PHASE_SPECIFY_SELECTED else TREE_PHASE_SPECIFY
@@ -3208,6 +3477,36 @@ class SpecDetailPanel(
         private val PANEL_BORDER = JBColor(Color(205, 216, 234), Color(84, 92, 106))
         private val TREE_SECTION_BG = JBColor(Color(246, 249, 253), Color(60, 67, 78))
         private val TREE_SECTION_BORDER = JBColor(Color(214, 223, 236), Color(92, 103, 121))
+        private val STEPPER_SECTION_BG = JBColor(Color(244, 248, 253), Color(60, 67, 78))
+        private val STEPPER_SECTION_BORDER = JBColor(Color(203, 214, 232), Color(92, 105, 124))
+        private val STEPPER_ITEM_BG = JBColor(Color(248, 251, 255), Color(71, 79, 90))
+        private val STEPPER_ITEM_BG_CURRENT = JBColor(Color(239, 246, 255), Color(84, 97, 116))
+        private val STEPPER_ITEM_BG_SELECTED = JBColor(Color(231, 241, 255), Color(92, 106, 127))
+        private val STEPPER_ITEM_BG_DONE = JBColor(Color(247, 250, 254), Color(71, 80, 90))
+        private val STEPPER_ITEM_BORDER = JBColor(Color(194, 205, 223), Color(102, 114, 133))
+        private val STEPPER_ITEM_BORDER_CURRENT = JBColor(Color(153, 183, 223), Color(125, 151, 186))
+        private val STEPPER_ITEM_BORDER_SELECTED = JBColor(Color(124, 166, 224), Color(141, 170, 208))
+        private val STEPPER_ITEM_BORDER_DONE = JBColor(Color(184, 199, 218), Color(106, 120, 138))
+        private val STEPPER_ITEM_BORDER_HOVER = JBColor(Color(148, 179, 220), Color(133, 157, 189))
+        private val STEPPER_ITEM_TEXT = JBColor(Color(60, 71, 90), Color(208, 217, 231))
+        private val STEPPER_ITEM_TEXT_CURRENT = JBColor(Color(43, 73, 116), Color(206, 222, 246))
+        private val STEPPER_ITEM_TEXT_SELECTED = JBColor(Color(37, 68, 112), Color(214, 227, 246))
+        private val STEPPER_ITEM_TEXT_DONE = JBColor(Color(56, 73, 96), Color(206, 217, 230))
+        private val STEPPER_ITEM_TEXT_HOVER = JBColor(Color(45, 77, 122), Color(210, 224, 244))
+        private val STEPPER_BADGE_BG = JBColor(Color(232, 238, 248), Color(89, 99, 115))
+        private val STEPPER_BADGE_BG_CURRENT = JBColor(Color(213, 228, 249), Color(93, 110, 135))
+        private val STEPPER_BADGE_BG_SELECTED = JBColor(Color(199, 220, 250), Color(100, 117, 143))
+        private val STEPPER_BADGE_BG_DONE = JBColor(Color(222, 240, 227), Color(89, 114, 97))
+        private val STEPPER_BADGE_BORDER = JBColor(Color(188, 201, 221), Color(113, 125, 145))
+        private val STEPPER_BADGE_BORDER_CURRENT = JBColor(Color(141, 174, 219), Color(129, 154, 186))
+        private val STEPPER_BADGE_BORDER_SELECTED = JBColor(Color(113, 155, 214), Color(143, 169, 202))
+        private val STEPPER_BADGE_BORDER_DONE = JBColor(Color(137, 182, 149), Color(118, 150, 130))
+        private val STEPPER_BADGE_TEXT = JBColor(Color(74, 90, 113), Color(211, 220, 234))
+        private val STEPPER_BADGE_TEXT_CURRENT = JBColor(Color(47, 81, 130), Color(209, 225, 246))
+        private val STEPPER_BADGE_TEXT_SELECTED = JBColor(Color(36, 69, 120), Color(216, 228, 247))
+        private val STEPPER_BADGE_TEXT_DONE = JBColor(Color(44, 99, 67), Color(211, 236, 217))
+        private val STEPPER_ARROW = JBColor(Color(149, 162, 181), Color(139, 152, 170))
+        private val STEPPER_ARROW_DONE = JBColor(Color(128, 152, 165), Color(157, 183, 195))
         private val PREVIEW_COLUMN_BG = JBColor(Color(244, 249, 255), Color(55, 61, 71))
         private val PREVIEW_SECTION_BG = JBColor(Color(250, 253, 255), Color(49, 55, 64))
         private val PREVIEW_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(83, 93, 109))
@@ -3292,7 +3591,6 @@ class SpecDetailPanel(
         private const val CARD_CLARIFY = "clarify"
         private const val CLARIFY_QUESTIONS_CARD_MARKDOWN = "clarify.questions.markdown"
         private const val CLARIFY_QUESTIONS_CARD_CHECKLIST = "clarify.questions.checklist"
-        private val BOLD_MARKDOWN_REGEX = Regex("\\*\\*(.+?)\\*\\*")
         private val DETAIL_LINE_REGEX = Regex("^-\\s*(detail|details|补充|说明)\\s*[:：]\\s*(.+)$", RegexOption.IGNORE_CASE)
         private val CODE_FENCE_MARKER_REGEX = Regex("```")
         private val HEADING_LINE_REGEX = Regex("""^\s{0,3}#{1,6}\s+\S+""")
