@@ -4,19 +4,28 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.stream.ChatTraceKind
 import com.eacape.speccodingplugin.stream.ChatTraceStatus
+import com.intellij.util.ui.JBUI
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.awt.Color
 import java.awt.Component
 import java.awt.Container
+import java.awt.image.BufferedImage
+import java.nio.file.Path
+import javax.imageio.ImageIO
 import javax.swing.JButton
+import javax.swing.JLabel
 import javax.swing.JTextArea
 import javax.swing.JTextPane
 import javax.swing.SwingUtilities
 
 class ChatMessagePanelTraceStreamingTest {
+    @TempDir
+    lateinit var tempDir: Path
 
     @Test
     fun `assistant trace should support collapse and expand during streaming`() {
@@ -204,6 +213,228 @@ class ChatMessagePanelTraceStreamingTest {
         assertFalse(allText.contains("<thinking>"))
         assertFalse(allText.contains("</thinking>"))
         assertTrue(allText.contains("给你一个可执行方案。"))
+    }
+
+    @Test
+    fun `assistant answer should render user reported comparison markdown table as html table`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val markdown = """
+            按你说的两个工具，我这里默认是对比 **GitHub 的 Spec Kit（常被叫 speckit）** 和 **Fission-AI 的 OpenSpec**。
+            | 对比项 | speckit（`github/spec-kit`） | OpenSpec（`Fission-AI/OpenSpec`） |
+            |---|---|---|
+            | 核心定位 | Spec-Driven Development 工具包，强调从规格到实现的完整流水线 | 轻量 spec 框架，强调“先对齐需求再写代码”，并把 spec 长期留在仓库里 |
+            | 安装方式 | `uv tool install specify-cli --from git+https://github.com/github/spec-kit.git` | `npm install -g @fission-ai/openspec@latest` |
+            | 运行前置 | `uv` + Python 3.11+ + Git + 支持的 AI agent | Node.js 20.19.0+ |
+            | 主要命令流 | `/speckit.constitution` → `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement` | `/opsx:propose` → `/opsx:apply` → `/opsx:archive`（也有扩展命令） |
+            | 工件目录风格 | 主要在 `.specify/` 下组织（memory/specs/templates/scripts） | 主要在 `openspec/` 下组织，强调 `openspec/specs`（真相源）+ `openspec/changes`（变更提案） |
+            | 适配场景 | 官方同时覆盖 0→1（greenfield）和迭代增强 | 明确强调 brownfield（存量项目改造）优势，支持跨会话/跨人协作 |
+            | Agent/工具支持 | 有明确“Supported AI Agents”列表（Codex/Cursor/Copilot 等） | 官网强调通用、原生支持多工具（20+） |
+            | API Key / MCP 立场 | 框架本身不主打该点，更多依赖你使用的 AI 工具能力 | 官网明确写了 “No API Keys / No MCP” |
+            | 遥测 | README 未突出遥测策略 | README 明确有匿名 telemetry，可通过环境变量关闭 |
+            | 开源与社区热度（截至 2026-03-03） | MIT；约 73.5k stars | MIT；约 27k stars |
+            如果你是要快速选型：
+            1. 新项目、想要一条更“流程化”的从需求到实现链路：偏 `speckit`。
+            2. 旧项目迭代、多工具协作、希望 specs 长期沉淀并随变更演进：偏 `OpenSpec`。
+            来源：
+            - https://github.com/github/spec-kit
+            - https://github.com/Fission-AI/OpenSpec
+            - https://openspec.dev/
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(markdown)
+            panel.finishMessage()
+        }
+
+        val textPanes = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .toList()
+        assertTrue(textPanes.isNotEmpty(), "Expected rendered text panes in assistant panel")
+
+        val htmlPane = textPanes.firstOrNull { it.contentType.contains("html", ignoreCase = true) }
+        assertNotNull(htmlPane, "Expected at least one html-mode text pane for markdown table content")
+        assertFalse(htmlPane!!.text.contains("| 对比项 |"))
+        assertFalse(htmlPane.text.contains("|---|---|---|"))
+    }
+
+    @Test
+    fun `assistant answer should render latest user reported tool comparison table as html table`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val markdown = """
+            技能使用说明：未启用 `IntelliJ 中文实现协作` 技能，因为这次是外部工具对比，不是仓库实现/改码任务。
+            下面先按你最可能指的 **OpenSpec（Fission-AI / openspec.dev）** 来对比：
+            | 维度 | SpecKit（github/spec-kit） | OpenSpec（Fission-AI/OpenSpec） |
+            |---|---|---|
+            | 定位 | 规格驱动开发（SDD）工具包，强调“spec 生成实现” | 轻量 SDD 框架，强调“fluid/iterative” |
+            | 安装方式 | `uv tool install specify-cli --from git+https://github.com/github/spec-kit.git` | `npm install -g @fission-ai/openspec@latest` |
+            | 运行前置 | Python 3.11+、`uv`、Git、AI coding agent | Node.js 20.19+ |
+            | 主要命令风格 | `specify init` + `/speckit.constitution` `/speckit.specify` `/speckit.plan` `/speckit.tasks` `/speckit.implement`（可选 clarify/analyze/checklist） | `openspec init` + `/opsx:propose` `/opsx:explore` `/opsx:apply` `/opsx:archive`（可切换 expanded workflow） |
+            | 流程特性 | 结构化更强，步骤和模板约束更明显 | 默认更轻量，支持随时迭代工件 |
+            | 产物组织 | 围绕 spec/plan/tasks 的 SDD 工件体系 | 每个变更一个目录：`proposal/specs/design/tasks` |
+            | 工具兼容 | 支持多种 AI agent（README列出 Claude/Cursor/Codex/Copilot 等） | 官方宣称支持 20+ assistants |
+            | API/MCP 依赖 | 依赖你选用的 AI 助手生态 | 官方主页强调 “No API Keys / No MCP”（针对框架本身） |
+            | 适合场景 | 需要流程纪律、可追踪性、规范化团队协作 | 想快速落地、降低流程负担、保持高迭代速度 |
+            | 许可证 | MIT | MIT |
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(markdown)
+            panel.finishMessage()
+        }
+
+        val htmlPane = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .firstOrNull { it.contentType.contains("html", ignoreCase = true) }
+        assertNotNull(htmlPane, "Expected html-mode text pane for latest reported table content")
+        assertFalse(htmlPane!!.text.contains("| 维度 | SpecKit"))
+        assertFalse(htmlPane.text.contains("|---|---|---|"))
+    }
+
+    @Test
+    fun `assistant answer should render screenshot reported speckit openspec table as html table`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val markdown = """
+            按常见语境，我这里把 **Speckit** 视为 [`github/spec-kit`](https://github.com/github/spec-kit)（命令前缀 `/speckit.*`），把 **OpenSpec** 视为 [`Fission-AI/OpenSpec`](https://github.com/Fission-AI/OpenSpec)（`openspec` CLI）。
+            | 维度 | Speckit（Spec Kit） | OpenSpec（Fission-AI） |
+            |---|---|---|
+            | 定位 | Spec-Driven Development 工具包，偏“规范→计划→任务→实现”的流程化模板 | 轻量 SDD 框架，强调可迭代、可回退、跨助手协作 |
+            | 最新版本（截至 2026-03-03） | `v0.1.12`（2026-03-02） | `v1.2.0`（2026-02-23） |
+            | 安装方式 | `uv tool install specify-cli --from git+https://github.com/github/spec-kit.git` | `npm install -g @fission-ai/openspec@latest` |
+            | 主要依赖 | `uv`、Python 3.11+、Git | Node.js >= 20.19.0 |
+            | 初始化命令 | `specify init` | `openspec init` |
+            | 核心命令体系 | `/speckit.constitution`、`/speckit.specify`、`/speckit.plan`、`/speckit.tasks`、`/speckit.implement` | `/opsx:propose`（主入口），可扩展 `new/continue/ff/apply/verify/sync/archive` |
+            | 产物组织 | 常见是 feature 目录下组织 spec/plan/tasks | 明确分离 `openspec/specs`（当前真相）与 `openspec/changes`（变更提案与 delta） |
+            | 适用场景倾向 | 想要“阶段清晰、模板完整”的规范驱动流程 | 想要“迭代快、改动追踪清晰、跨多助手统一”的流程 |
+            | 工具生态 | 多 AI 代理 + generic 模式 | 20+ 工具集成，`init` 会按工具生成 skills/commands |
+            | 更新方式 | 重新 `uv tool install ... --force` | 全局升级后再在项目里跑 `openspec update` |
+            | 遥测 | README 未强调统一遥测机制 | 默认匿名命令级遥测，可用环境变量关闭 |
+            | License | MIT | MIT |
+            如果你要我再补一版“**团队协作视角**（评审/审计/变更追踪）”或“**个人效率视角**（上手成本/学习曲线）”的对比表，我可以直接给你第二张。
+            参考来源：
+            - https://github.com/github/spec-kit
+            - https://github.com/github/spec-kit/releases
+            - https://github.com/Fission-AI/OpenSpec
+            - https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/README.md
+            - https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/supported-tools.md
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(markdown)
+            panel.finishMessage()
+        }
+
+        val htmlPane = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .firstOrNull { it.contentType.contains("html", ignoreCase = true) }
+        assertNotNull(htmlPane, "Expected html-mode text pane for screenshot reported table content")
+        assertFalse(htmlPane!!.text.contains("| 维度 | Speckit（Spec Kit）"))
+        assertFalse(htmlPane.text.contains("|---|---|---|"))
+    }
+
+    @Test
+    fun `assistant answer should render latest malformed compared table sample as html table`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val markdown = """
+            下表默认指：Speckit = GitHub 的 Spec Kit（`specify` CLI + `/speckit.*`），OpenSpec = Fission-AI 的 OpenSpec（`openspec` CLI + `/opsx:*`）。([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md))
+            | 维度 | Speckit（GitHub Spec Kit） | OpenSpec（Fission-AI OpenSpec） |
+            |---|---|---|
+            | 核心定位 | SDD 工具包，强调从产品场景到可预测结果，用 `specify` + `/speckit.*` 串起流程 ([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md)) | 轻量 SDD/OPSX，强调 fluid/iterative/brownfield-first，用 actions + 依赖关系驱动产物/实现 ([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/concepts.md)) |
+            | 安装/依赖 | 需 `uv`、`Python 3.11+`、`Git`；`uv tool install specify-cli --from git+https://github.com/github/spec-kit.git` ([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md)) | 需 Node.js `>=20.19.0`；`npm install -g @fission-ai/openspec@latest` ([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/README.md)) || CLI 入口 | `specify init ...` 初始化并选择/配置 agent ([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md)) | `openspec init` 初始化；并有 `openspec list/show/validate/archive/update` 等管理命令 ([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/cli.md)) |
+            | AI 助手主命令 | `/speckit.constitution` → `/speckit.specify` → `/speckit.plan` → `/speckit.tasks` → `/speckit.implement` ([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md)) | core 快路径：`/opsx:propose` → `/opsx:apply` → `/opsx:archive`；可启用扩展：`/opsx:new`/`continue`/`ff`/`verify`/`sync`… ([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/commands.md)) |
+            | 产物/目录 | `.specify/`（含 `memory/constitution.md`、`specs/`、`templates/`、脚本等）([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md)) | `openspec/` 下分 `specs/`（source of truth）与 `changes/`（每变更一文件夹：proposal/design/tasks + delta specs） ([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/concepts.md)) |
+            | Brownfield 侧重点 | 明确包含 “Brownfield modernization” 阶段/流程 ([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md)) | 核心是 delta specs（描述“改动什么”），天然面向存量改造与并行变更 ([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/concepts.md)) |
+            | 质量/校验 | `/speckit.clarify`、`/speckit.analyze`、`/speckit.checklist` 做澄清/一致性/覆盖检查 ([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md)) | `/opsx:verify` 做实现一致性检查；`openspec validate --strict` 做结构校验 ([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/commands.md)) |
+            | API Key | 工具本身是本地流程/模板；模型或 API key 取决于所用 AI 平台 ([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md)) | 官方主张框架本身 “No API keys”；模型或 API key 同样取决于所用 AI 平台 ([openspec.dev](https://openspec.dev/?utm_source=openai)) |
+            | 遥测 | 文档未突出遥测（以流程/模板为主） ([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md)) | 声明收集匿名 usage stats（仅命令名与版本；CI 自动禁用；可 opt-out） ([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/README.md)) |
+            | 许可证 | MIT ([github.com](https://github.com/github/spec-kit)) | MIT ([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/README.md)) |
+            选型一句话：
+            - 想要更“阶段化、从原则→规格→计划→任务→实现”的闭环：Speckit。([raw.githubusercontent.com](https://raw.githubusercontent.com/github/spec-kit/main/README.md))
+            - 想要更“轻量、变更文件夹化、specs/changes 分离、delta specs 驱动”的存量迭代：OpenSpec。([raw.githubusercontent.com](https://raw.githubusercontent.com/Fission-AI/OpenSpec/main/docs/concepts.md))
+            补充：网上还有 `openspec.app`（网页端“生成技术规格”，需要 OpenRouter API key），它和上面这个开源 OpenSpec CLI/框架不是同一个东西。([openspec.app](https://www.openspec.app/?utm_source=openai))
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(markdown)
+            panel.finishMessage()
+        }
+
+        val htmlPane = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .firstOrNull { it.contentType.contains("html", ignoreCase = true) }
+        assertNotNull(htmlPane, "Expected html-mode text pane for malformed table content")
+        assertFalse(htmlPane!!.text.contains("| 维度 | Speckit（GitHub Spec Kit）"))
+        assertFalse(htmlPane.text.contains("|---|---|---|"))
+    }
+
+    @Test
+    fun `output key filter should keep markdown table block renderable as html`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                [Output] 按你说的两个工具，我这里默认是对比 **GitHub 的 Spec Kit（常被叫 speckit）** 和 **Fission-AI 的 OpenSpec**。
+                [Output] | 对比项 | speckit（`github/spec-kit`） | OpenSpec（`Fission-AI/OpenSpec`） |
+                [Output] |---|---|---|
+                [Output] | 核心定位 | Spec-Driven Development 工具包，强调从规格到实现的完整流水线 | 轻量 spec 框架，强调“先对齐需求再写代码”，并把 spec 长期留在仓库里 |
+                [Output] | 安装方式 | `uv tool install specify-cli --from git+https://github.com/github/spec-kit.git` | `npm install -g @fission-ai/openspec@latest` |
+                [Output] | 运行前置 | `uv` + Python 3.11+ + Git + 支持的 AI agent | Node.js 20.19.0+ |
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected output expand button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val keyFilterText = SpecCodingBundle.message(
+            "chat.timeline.output.filter.toggle",
+            SpecCodingBundle.message("chat.timeline.output.filter.key"),
+        )
+        val filterButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == keyFilterText }
+        assertNotNull(filterButton, "Expected output filter button in key mode")
+
+        val htmlPane = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .firstOrNull { it.contentType.contains("html", ignoreCase = true) }
+        assertNotNull(htmlPane, "Expected html-mode output pane for markdown table in key filter mode")
+        assertFalse(htmlPane!!.text.contains("| 对比项 |"))
+        assertFalse(htmlPane.text.contains("|---|---|---|"))
+    }
+
+    @Test
+    fun `assistant markdown table should not produce workflow command action buttons`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                | 对比项 | 钢笔 | 铅笔 |
+                | --- | --- | --- |
+                | 书写方式 | 墨水出墨书写 | 石墨笔芯摩擦书写 |
+                | 是否可擦 | 基本不可擦（需修正液） | 可用橡皮擦除 |
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val commandsLabelText = "${SpecCodingBundle.message("chat.workflow.action.commandsLabel")}:"
+        val commandLabels = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .mapNotNull { it.text }
+            .filter { it == commandsLabelText }
+        assertTrue(commandLabels.none(), "Markdown table content should not generate command action rows")
+
+        val htmlPane = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .firstOrNull { it.contentType.contains("html", ignoreCase = true) }
+        assertNotNull(htmlPane, "Expected markdown table to render with html mode")
     }
 
     @Test
@@ -556,6 +787,57 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
+    fun `user message should render attached image preview with image aliases`() {
+        val imageFile1 = tempDir.resolve("message-preview-1.png").toFile()
+        val imageFile2 = tempDir.resolve("message-preview-2.png").toFile()
+        val image = BufferedImage(48, 30, BufferedImage.TYPE_INT_ARGB)
+        val graphics = image.createGraphics()
+        try {
+            graphics.color = Color(36, 122, 214)
+            graphics.fillRect(0, 0, image.width, image.height)
+        } finally {
+            graphics.dispose()
+        }
+        ImageIO.write(image, "png", imageFile1)
+        ImageIO.write(image, "png", imageFile2)
+
+        lateinit var panel: ChatMessagePanel
+        runOnEdt {
+            panel = ChatMessagePanel(
+                role = ChatMessagePanel.MessageRole.USER,
+                initialContent = "请查看这两张图\n[图片] image#1, image#2",
+                attachedImagePaths = listOf(imageFile1.absolutePath, imageFile2.absolutePath),
+            )
+            panel.finishMessage()
+        }
+
+        val textContent = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+        assertTrue(textContent.contains("请查看这两张图"))
+        assertFalse(textContent.contains("[图片]"))
+
+        val imageLabels = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .filter { it.icon != null }
+            .toList()
+        assertTrue(imageLabels.size >= 2, "Expected image preview labels in user message")
+
+        val maxThumb = JBUI.scale(80)
+        imageLabels.forEach { label ->
+            assertTrue(label.icon.iconWidth <= maxThumb)
+            assertTrue(label.icon.iconHeight <= maxThumb)
+        }
+
+        val aliasLabels = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .mapNotNull { it.text }
+            .toSet()
+        assertTrue(aliasLabels.contains("image#1"))
+        assertTrue(aliasLabels.contains("image#2"))
+    }
+
+    @Test
     fun `copy all action should be clickable`() {
         val panel = ChatMessagePanel(
             role = ChatMessagePanel.MessageRole.ASSISTANT,
@@ -577,6 +859,36 @@ class ChatMessagePanelTraceStreamingTest {
         val failed = SpecCodingBundle.message("chat.message.copy.failed")
         assertTrue(button.toolTipText == copied || button.toolTipText == failed)
         assertTrue(button.text == "OK" || button.text == "!")
+    }
+
+    @Test
+    fun `markdown fenced table should render as markdown table instead of code card`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val content = """
+            ```markdown
+            | 层 | 选型 |
+            | --- | --- |
+            | 前端 | React |
+            | 后端 | Kotlin |
+            ```
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(content)
+            panel.finishMessage()
+        }
+
+        val copyCodeTooltip = SpecCodingBundle.message("chat.message.copy.code")
+        val copyCodeButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.toolTipText == copyCodeTooltip }
+        assertTrue(copyCodeButton == null, "Markdown fenced table should not render as code card")
+
+        val htmlPane = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .firstOrNull { it.contentType.contains("html", ignoreCase = true) }
+        assertNotNull(htmlPane, "Expected html markdown pane for fenced markdown table")
+        assertFalse(htmlPane!!.text.contains("| 层 | 选型 |"))
     }
 
     @Test

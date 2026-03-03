@@ -2,8 +2,13 @@ package com.eacape.speccodingplugin.ui.chat
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.intellij.ui.JBColor
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.html.HtmlGenerator
+import org.intellij.markdown.parser.MarkdownParser
 import java.awt.Color
 import java.awt.Font
+import java.text.Normalizer
+import javax.swing.JEditorPane
 import javax.swing.JTextPane
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
@@ -43,7 +48,22 @@ object MarkdownRenderer {
         val baseFontSize = resolveBaseFontSize(textPane)
         val normalizedMarkdown = normalizeEscapedTableMarkdown(markdown)
         if (containsMarkdownTable(normalizedMarkdown)) {
+            if (renderWithMarkdownEngine(textPane, normalizedMarkdown, proseFontFamily, baseFontSize)) {
+                return
+            }
             val markdownForHtml = convertMarkdownTablesToHtmlBlocks(normalizedMarkdown)
+            if (renderWithHtmlFallback(textPane, markdownForHtml, proseFontFamily, baseFontSize)) {
+                return
+            }
+        }
+        if (containsFramedPipeTableBlock(normalizedMarkdown)) {
+            val markdownForHtml = convertLooseFramedPipeTablesToHtmlBlocks(normalizedMarkdown)
+            if (renderWithHtmlFallback(textPane, markdownForHtml, proseFontFamily, baseFontSize)) {
+                return
+            }
+        }
+        if (containsAnyLoosePipeTableBlock(normalizedMarkdown)) {
+            val markdownForHtml = convertAnyLoosePipeTablesToHtmlBlocks(normalizedMarkdown)
             if (renderWithHtmlFallback(textPane, markdownForHtml, proseFontFamily, baseFontSize)) {
                 return
             }
@@ -158,7 +178,9 @@ object MarkdownRenderer {
         if (headerCells.size < MIN_TABLE_COLUMNS) return null
 
         val separatorCells = splitTableCells(lines[startIndex + 1])
-        if (!isTableSeparatorRow(separatorCells)) return null
+        if (!isTableSeparatorRow(separatorCells)) {
+            return parseRelaxedTableBlock(lines, startIndex, headerCells)
+        }
 
         val rows = mutableListOf(headerCells)
         var index = startIndex + 2
@@ -168,6 +190,32 @@ object MarkdownRenderer {
             rows.add(rowCells)
             index += 1
         }
+
+        return TableBlock(
+            rows = normalizeTableRows(rows),
+            nextIndex = index,
+        )
+    }
+
+    private fun parseRelaxedTableBlock(
+        lines: List<String>,
+        startIndex: Int,
+        headerCells: List<String>,
+    ): TableBlock? {
+        val rows = mutableListOf(headerCells)
+        var index = startIndex + 1
+        while (index < lines.size) {
+            val rowCells = splitTableCells(lines[index])
+            if (rowCells.size < MIN_TABLE_COLUMNS) break
+            rows.add(rowCells)
+            index += 1
+        }
+
+        if (rows.size < RELAXED_TABLE_MIN_ROWS) return null
+
+        val expectedColumns = headerCells.size
+        val columnAlignedRows = rows.count { row -> row.size == expectedColumns }
+        if (columnAlignedRows < RELAXED_TABLE_MIN_ROWS) return null
 
         return TableBlock(
             rows = normalizeTableRows(rows),
@@ -211,7 +259,16 @@ object MarkdownRenderer {
             cellBuilder.append('\\')
         }
         cells.add(cellBuilder.toString().trim())
-        return cells
+        return trimTrailingEmptyTableCells(cells)
+    }
+
+    private fun trimTrailingEmptyTableCells(cells: List<String>): List<String> {
+        if (cells.isEmpty()) return cells
+        val normalized = cells.toMutableList()
+        while (normalized.size > MIN_TABLE_COLUMNS && normalized.last().isBlank()) {
+            normalized.removeAt(normalized.lastIndex)
+        }
+        return normalized
     }
 
     private fun isTableSeparatorRow(cells: List<String>): Boolean {
@@ -292,9 +349,203 @@ object MarkdownRenderer {
     }
 
     private fun normalizeTableDelimiterTokens(line: String): String {
-        return line
+        if (line.isEmpty()) return line
+        var normalized = Normalizer.normalize(line, Normalizer.Form.NFKC)
             .replace(ESCAPED_PIPE_TOKEN, "|")
             .replace(FULLWIDTH_PIPE_CHAR, '|')
+            .replace(INVISIBLE_TABLE_CHAR_REGEX, "")
+
+        VERTICAL_BAR_ALIASES.forEach { alias ->
+            normalized = normalized.replace(alias, '|')
+        }
+        HORIZONTAL_DASH_ALIASES.forEach { alias ->
+            normalized = normalized.replace(alias, '-')
+        }
+        return normalized
+    }
+
+    private fun containsFramedPipeTableBlock(markdown: String): Boolean {
+        val lines = markdown.lines()
+        if (lines.size < RELAXED_TABLE_MIN_ROWS) return false
+        var inCodeFence = false
+        var framedCount = 0
+        lines.forEach { rawLine ->
+            val trimmed = rawLine.trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                framedCount = 0
+                return@forEach
+            }
+            if (inCodeFence) return@forEach
+            if (isFramedPipeRow(rawLine)) {
+                framedCount += 1
+                if (framedCount >= RELAXED_TABLE_MIN_ROWS) return true
+            } else {
+                framedCount = 0
+            }
+        }
+        return false
+    }
+
+    private fun convertLooseFramedPipeTablesToHtmlBlocks(markdown: String): String {
+        val lines = markdown.lines()
+        if (lines.isEmpty()) return markdown
+        val output = mutableListOf<String>()
+        var index = 0
+        var inCodeFence = false
+        while (index < lines.size) {
+            val trimmed = lines[index].trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                output += lines[index]
+                index += 1
+                continue
+            }
+            if (!inCodeFence) {
+                val tableBlock = parseLooseFramedPipeTableBlock(lines, index)
+                if (tableBlock != null) {
+                    output += renderTableHtmlBlock(tableBlock)
+                    index = tableBlock.nextIndex
+                    continue
+                }
+            }
+            output += lines[index]
+            index += 1
+        }
+        return output.joinToString("\n")
+    }
+
+    private fun parseLooseFramedPipeTableBlock(lines: List<String>, startIndex: Int): TableBlock? {
+        if (!isFramedPipeRow(lines[startIndex])) return null
+        val rawRows = mutableListOf<List<String>>()
+        var index = startIndex
+        while (index < lines.size && isFramedPipeRow(lines[index])) {
+            val cells = splitTableCells(lines[index])
+            if (cells.size < MIN_TABLE_COLUMNS) break
+            rawRows += cells
+            index += 1
+        }
+        if (rawRows.size < RELAXED_TABLE_MIN_ROWS) return null
+
+        val targetColumns = rawRows
+            .groupingBy { it.size.coerceAtLeast(MIN_TABLE_COLUMNS) }
+            .eachCount()
+            .maxByOrNull { it.value }
+            ?.key
+            ?.coerceAtLeast(MIN_TABLE_COLUMNS)
+            ?: MIN_TABLE_COLUMNS
+
+        val normalizedRows = rawRows.map { row ->
+            normalizeLooseRow(row, targetColumns)
+        }
+        return TableBlock(
+            rows = normalizedRows,
+            nextIndex = index,
+        )
+    }
+
+    private fun normalizeLooseRow(row: List<String>, targetColumns: Int): List<String> {
+        if (row.size == targetColumns) return row
+        if (row.size > targetColumns) {
+            val head = row.take(targetColumns - 1)
+            val tail = row.drop(targetColumns - 1).joinToString(" | ").trim()
+            return head + tail
+        }
+        return row + List(targetColumns - row.size) { "" }
+    }
+
+    private fun isFramedPipeRow(line: String): Boolean {
+        val normalized = normalizeTableDelimiterTokens(line).trim()
+        if (normalized.length < 3) return false
+        if (!normalized.startsWith('|') || !normalized.endsWith('|')) return false
+        return normalized.count { it == '|' } >= MIN_TABLE_COLUMNS + 1
+    }
+
+    private fun containsAnyLoosePipeTableBlock(markdown: String): Boolean {
+        val lines = markdown.lines()
+        if (lines.size < RELAXED_TABLE_MIN_ROWS) return false
+        var inCodeFence = false
+        var looseCount = 0
+        lines.forEach { rawLine ->
+            val trimmed = rawLine.trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                looseCount = 0
+                return@forEach
+            }
+            if (inCodeFence) return@forEach
+            if (isLoosePipeRow(rawLine)) {
+                looseCount += 1
+                if (looseCount >= RELAXED_TABLE_MIN_ROWS) return true
+            } else {
+                looseCount = 0
+            }
+        }
+        return false
+    }
+
+    private fun convertAnyLoosePipeTablesToHtmlBlocks(markdown: String): String {
+        val lines = markdown.lines()
+        if (lines.isEmpty()) return markdown
+        val output = mutableListOf<String>()
+        var index = 0
+        var inCodeFence = false
+        while (index < lines.size) {
+            val trimmed = lines[index].trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                output += lines[index]
+                index += 1
+                continue
+            }
+            if (!inCodeFence) {
+                val tableBlock = parseAnyLoosePipeTableBlock(lines, index)
+                if (tableBlock != null) {
+                    output += renderTableHtmlBlock(tableBlock)
+                    index = tableBlock.nextIndex
+                    continue
+                }
+            }
+            output += lines[index]
+            index += 1
+        }
+        return output.joinToString("\n")
+    }
+
+    private fun parseAnyLoosePipeTableBlock(lines: List<String>, startIndex: Int): TableBlock? {
+        if (!isLoosePipeRow(lines[startIndex])) return null
+        val rawRows = mutableListOf<List<String>>()
+        var index = startIndex
+        while (index < lines.size && isLoosePipeRow(lines[index])) {
+            val cells = splitTableCells(lines[index])
+            if (cells.size < MIN_TABLE_COLUMNS) break
+            rawRows += cells
+            index += 1
+        }
+        if (rawRows.size < RELAXED_TABLE_MIN_ROWS) return null
+
+        val targetColumns = rawRows
+            .groupingBy { it.size.coerceAtLeast(MIN_TABLE_COLUMNS) }
+            .eachCount()
+            .maxByOrNull { it.value }
+            ?.key
+            ?.coerceAtLeast(MIN_TABLE_COLUMNS)
+            ?: MIN_TABLE_COLUMNS
+        if (targetColumns < MIN_TABLE_COLUMNS) return null
+
+        val normalizedRows = rawRows.map { row -> normalizeLooseRow(row, targetColumns) }
+        return TableBlock(
+            rows = normalizedRows,
+            nextIndex = index,
+        )
+    }
+
+    private fun isLoosePipeRow(line: String): Boolean {
+        val normalized = normalizeTableDelimiterTokens(line).trim()
+        if (normalized.length < 3) return false
+        if (normalized.count { it == '|' } < MIN_TABLE_COLUMNS) return false
+        val cells = splitTableCells(normalized)
+        return cells.size >= MIN_TABLE_COLUMNS
     }
 
     private fun convertMarkdownTablesToHtmlBlocks(markdown: String): String {
@@ -376,10 +627,7 @@ object MarkdownRenderer {
         val lines = markdown.lines()
         if (lines.size < 2) return false
         for (index in 0 until lines.lastIndex) {
-            val headerCells = splitTableCells(lines[index])
-            if (headerCells.size < MIN_TABLE_COLUMNS) continue
-            val separatorCells = splitTableCells(lines[index + 1])
-            if (isTableSeparatorRow(separatorCells)) {
+            if (parseTableBlock(lines, index) != null) {
                 return true
             }
         }
@@ -392,13 +640,66 @@ object MarkdownRenderer {
         proseFontFamily: String,
         baseFontSize: Int,
     ): Boolean {
-        return runCatching {
-            val bodyHtml = convertBasicMarkdownToHtml(markdown)
-            val html = wrapMarkdownHtml(bodyHtml, proseFontFamily, baseFontSize)
-            textPane.contentType = HTML_CONTENT_TYPE
-            textPane.text = html
-            textPane.caretPosition = 0
-        }.isSuccess
+        val bodyHtml = runCatching { convertBasicMarkdownToHtml(markdown) }
+            .getOrNull()
+            ?.trim()
+            .orEmpty()
+        if (bodyHtml.isBlank()) return false
+        return renderHtmlBody(
+            textPane = textPane,
+            bodyHtml = bodyHtml,
+            proseFontFamily = proseFontFamily,
+            baseFontSize = baseFontSize,
+        )
+    }
+
+    private fun renderWithMarkdownEngine(
+        textPane: JTextPane,
+        markdown: String,
+        proseFontFamily: String,
+        baseFontSize: Int,
+    ): Boolean {
+        val bodyHtml = runCatching {
+            val flavour = GFMFlavourDescriptor()
+            val markdownTree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
+            HtmlGenerator(markdown, markdownTree, flavour).generateHtml()
+        }.getOrNull()
+            ?.trim()
+            .orEmpty()
+        if (bodyHtml.isBlank()) return false
+        if (!bodyHtml.contains("<table", ignoreCase = true)) return false
+
+        return renderHtmlBody(
+            textPane = textPane,
+            bodyHtml = bodyHtml,
+            proseFontFamily = proseFontFamily,
+            baseFontSize = baseFontSize,
+        )
+    }
+
+    private fun renderHtmlBody(
+        textPane: JTextPane,
+        bodyHtml: String,
+        proseFontFamily: String,
+        baseFontSize: Int,
+    ): Boolean {
+        val htmlCandidates = listOf(
+            wrapMarkdownHtml(bodyHtml, proseFontFamily, baseFontSize),
+            wrapBasicHtml(bodyHtml, proseFontFamily, baseFontSize),
+            "<html><body>$bodyHtml</body></html>",
+        )
+        htmlCandidates.forEach { html ->
+            val success = runCatching {
+                textPane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, true)
+                if (!textPane.contentType.equals(HTML_CONTENT_TYPE, ignoreCase = true)) {
+                    textPane.contentType = HTML_CONTENT_TYPE
+                }
+                textPane.text = html
+                textPane.caretPosition = 0
+            }.isSuccess
+            if (success) return true
+        }
+        return false
     }
 
     private fun convertBasicMarkdownToHtml(markdown: String): String {
@@ -588,14 +889,27 @@ object MarkdownRenderer {
             ul, ol { padding-left: 20px; }
             li { margin: 0 0 6px 0; }
             li:last-child { margin-bottom: 0; }
-            table { border-collapse: collapse; width: 100%; }
-            th, td {
+            table {
+                border-collapse: separate;
+                border-spacing: 0;
+                width: 100%;
+                table-layout: fixed;
                 border: 1px solid $tableBorder;
-                padding: 6px 8px;
+                border-radius: 8px;
+            }
+            th, td {
+                border-right: 1px solid $tableBorder;
+                border-bottom: 1px solid $tableBorder;
+                padding: 7px 9px;
                 text-align: left;
                 vertical-align: top;
+                line-height: 1.55;
+                word-break: break-word;
+                overflow-wrap: anywhere;
             }
             th { background: $tableHeaderBg; font-weight: 600; }
+            th:last-child, td:last-child { border-right: none; }
+            tbody tr:last-child td { border-bottom: none; }
             code {
                 font-family: '$codeFontFamily';
                 background: $inlineCodeBg;
@@ -618,6 +932,12 @@ object MarkdownRenderer {
             }
         """.trimIndent()
         return "<html><head><style>$css</style></head><body>$bodyHtml</body></html>"
+    }
+
+    private fun wrapBasicHtml(bodyHtml: String, proseFontFamily: String, baseFontSize: Int): String {
+        val fontFamily = escapeCssFontFamily(proseFontFamily)
+        val bodyFg = toCssColor(JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
+        return "<html><body style=\"font-family:'$fontFamily';font-size:${baseFontSize}px;color:$bodyFg;\">$bodyHtml</body></html>"
     }
 
     private fun escapeCssFontFamily(fontFamily: String): String {
@@ -878,8 +1198,17 @@ object MarkdownRenderer {
     private val UNORDERED_LIST_HTML_REGEX = Regex("""^[-*]\s+(.+)$""")
     private val ORDERED_LIST_HTML_REGEX = Regex("""^\d+[.)]\s+(.+)$""")
     private const val MIN_TABLE_COLUMNS = 2
+    private const val RELAXED_TABLE_MIN_ROWS = 3
     private const val ESCAPED_PIPE_TOKEN = "\\|"
     private const val FULLWIDTH_PIPE_CHAR = '｜'
+    private val VERTICAL_BAR_ALIASES = charArrayOf(
+        '│', '┃', '¦', '∣', '┆', '┇', '╎', '╏', '┊', '┋',
+        '❘', '❙', '❚', 'ǀ', '⎪', '⏐', '￨', '︱', '︲', '丨',
+    )
+    private val HORIZONTAL_DASH_ALIASES = charArrayOf(
+        '—', '–', '―', '−', '─', '━', '﹣', '－', '‑', '‒', '﹘',
+    )
+    private val INVISIBLE_TABLE_CHAR_REGEX = Regex("[\\u200B\\u200C\\u200D\\uFEFF\\u2060]")
     private const val PLAIN_TEXT_CONTENT_TYPE = "text/plain"
     private const val HTML_CONTENT_TYPE = "text/html"
     private const val MIN_INLINE_FONT_SIZE = 9

@@ -4,6 +4,10 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import javax.swing.JButton
+import javax.swing.JLabel
+import java.awt.Component
+import java.awt.Container
 import javax.swing.SwingUtilities
 
 class ImageAttachmentPreviewPanelTest {
@@ -43,6 +47,43 @@ class ImageAttachmentPreviewPanelTest {
 
         assertTrue(panel.getImagePaths().isEmpty())
         assertFalse(panel.isVisible)
+    }
+
+    @Test
+    fun `preview chips should use image aliases and keep horizontal chip list`() {
+        val panel = ImageAttachmentPreviewPanel()
+
+        runOnEdt {
+            panel.addImagePaths(
+                listOf(
+                    "C:/tmp/first.png",
+                    "D:/tmp/second.jpg",
+                    "E:/tmp/third.webp",
+                )
+            )
+        }
+
+        val aliases = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .mapNotNull { it.text }
+            .filter { it.startsWith("image#") }
+            .toList()
+
+        assertEquals(listOf("image#1", "image#2", "image#3"), aliases)
+
+        val removeButtons = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .filter { it.toolTipText?.isNotBlank() == true }
+            .toList()
+        assertEquals(3, removeButtons.size)
+    }
+
+    private fun collectDescendants(component: Component): Sequence<Component> = sequence {
+        yield(component)
+        val container = component as? Container ?: return@sequence
+        container.components.forEach { child ->
+            yieldAll(collectDescendants(child))
+        }
     }
 
     private fun runOnEdt(block: () -> Unit) {

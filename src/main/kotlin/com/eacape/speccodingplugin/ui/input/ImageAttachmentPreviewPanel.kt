@@ -5,8 +5,8 @@ import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
+import java.awt.Dimension
 import java.awt.FlowLayout
-import java.io.File
 import javax.swing.JButton
 import javax.swing.JPanel
 
@@ -15,13 +15,13 @@ import javax.swing.JPanel
  */
 class ImageAttachmentPreviewPanel(
     private val onRemove: (String) -> Unit = {},
-) : JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)) {
+) : JPanel(FlowLayout(FlowLayout.LEFT, 3, 1)) {
 
     private val imagePaths = mutableListOf<String>()
 
     init {
         isOpaque = false
-        border = JBUI.Borders.empty(2, 0)
+        border = JBUI.Borders.empty(1, 0)
         isVisible = false
     }
 
@@ -64,29 +64,38 @@ class ImageAttachmentPreviewPanel(
         }
 
         isVisible = true
-        imagePaths.forEach { path ->
-            add(createChip(path))
+        imagePaths.forEachIndexed { index, path ->
+            add(createChip(path, index))
         }
         revalidate()
         repaint()
     }
 
-    private fun createChip(path: String): JPanel {
-        val chip = JPanel(FlowLayout(FlowLayout.LEFT, 2, 0))
+    private fun createChip(path: String, index: Int): JPanel {
+        val chip = JPanel(FlowLayout(FlowLayout.LEFT, 1, 0))
         chip.isOpaque = true
         chip.background = JBColor(0xEAF2FF, 0x3A4350)
-        chip.border = JBUI.Borders.empty(2, 6)
+        chip.border = JBUI.Borders.empty(1, 4)
 
-        val label = JBLabel(File(path).name.ifBlank { path }, AllIcons.FileTypes.Image, JBLabel.LEADING)
-        label.font = JBUI.Fonts.smallFont()
+        val alias = "image#${index + 1}"
+        val label = JBLabel(alias, AllIcons.FileTypes.Image, JBLabel.LEADING)
+        label.font = JBUI.Fonts.miniFont()
+        label.iconTextGap = JBUI.scale(2)
         label.toolTipText = path
         chip.add(label)
 
-        val removeButton = JButton("x")
-        removeButton.font = JBUI.Fonts.smallFont()
+        val removeButton = JButton("✕")
+        removeButton.font = removeButton.font.deriveFont(10f)
+        removeButton.foreground = JBColor(0x6D778A, 0xA8B1C4)
         removeButton.isBorderPainted = false
         removeButton.isContentAreaFilled = false
+        removeButton.isFocusPainted = false
         removeButton.margin = JBUI.emptyInsets()
+        val removeSize = JBUI.scale(14)
+        val removeDimension = Dimension(removeSize, removeSize)
+        removeButton.preferredSize = removeDimension
+        removeButton.minimumSize = removeDimension
+        removeButton.maximumSize = removeDimension
         removeButton.toolTipText = SpecCodingBundle.message("toolwindow.image.attach.remove.tooltip")
         removeButton.addActionListener { removeImagePath(path) }
         chip.add(removeButton)

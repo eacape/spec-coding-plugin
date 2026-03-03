@@ -12,25 +12,34 @@ import java.awt.BasicStroke
 import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Cursor
+import java.awt.Dialog
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.GraphicsEnvironment
 import java.awt.Insets
 import java.awt.RenderingHints
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.awt.geom.RoundRectangle2D
+import java.awt.image.BufferedImage
+import java.io.File
 import java.util.Locale
+import javax.imageio.ImageIO
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.ImageIcon
 import javax.swing.Icon
+import javax.swing.JDialog
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
 import javax.swing.JTextPane
+import javax.swing.SwingConstants
+import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.border.AbstractBorder
 import javax.swing.border.Border
@@ -38,6 +47,9 @@ import javax.swing.border.CompoundBorder
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 import javax.swing.text.StyledDocument
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import kotlin.math.min
 
 /**
  * 单条聊天消息的 UI 组件
@@ -51,6 +63,7 @@ open class ChatMessagePanel(
     private val onWorkflowFileOpen: ((WorkflowQuickActionParser.FileAction) -> Unit)? = null,
     private val onWorkflowCommandExecute: ((String) -> Unit)? = null,
     private var workflowSectionsEnabled: Boolean = true,
+    private val attachedImagePaths: List<String> = emptyList(),
 ) : JPanel(BorderLayout()) {
 
     private val contentPane = JTextPane()
@@ -74,6 +87,13 @@ open class ChatMessagePanel(
     private var cachedTraceSnapshotTraceVersion = -1
     private var cachedTraceSnapshotIncludeRawContent = true
     private var cachedTraceSnapshot: StreamingTraceAssembler.TraceSnapshot? = null
+    private val userImageAttachments: List<UserImageAttachment> by lazy(LazyThreadSafetyMode.NONE) {
+        if (role == MessageRole.USER) {
+            loadUserImageAttachments(attachedImagePaths)
+        } else {
+            emptyList()
+        }
+    }
 
     enum class MessageRole {
         USER, ASSISTANT, SYSTEM, ERROR
@@ -221,11 +241,16 @@ open class ChatMessagePanel(
             }
         } else {
             contentHost.removeAll()
-            contentHost.add(contentPane, BorderLayout.CENTER)
-            val doc = contentPane.styledDocument
             if (role == MessageRole.USER) {
-                renderUserPromptAwareContent(doc, content, outputFontSize)
+                if (userImageAttachments.isEmpty()) {
+                    contentHost.add(contentPane, BorderLayout.CENTER)
+                    renderUserPromptAwareContent(contentPane.styledDocument, content, outputFontSize)
+                } else {
+                    contentHost.add(createUserPromptWithImages(content, outputFontSize), BorderLayout.CENTER)
+                }
             } else {
+                contentHost.add(contentPane, BorderLayout.CENTER)
+                val doc = contentPane.styledDocument
                 doc.remove(0, doc.length)
                 val attrs = SimpleAttributeSet()
                 StyleConstants.setFontFamily(attrs, "Monospaced")
@@ -298,6 +323,177 @@ open class ChatMessagePanel(
                 true,
             )
         }
+    }
+
+    private fun createUserPromptWithImages(content: String, fontSize: Int): JPanel {
+        val container = JPanel()
+        container.layout = BoxLayout(container, BoxLayout.Y_AXIS)
+        container.isOpaque = false
+
+        val textContent = stripUserAttachmentMarkerLines(content)
+        if (textContent.isNotBlank()) {
+            renderUserPromptAwareContent(contentPane.styledDocument, textContent, fontSize)
+            container.add(contentPane)
+            container.add(createVerticalSpacer(USER_IMAGE_TEXT_GAP))
+        }
+
+        if (userImageAttachments.isNotEmpty()) {
+            val imagesFlow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(USER_IMAGE_CARD_GAP), JBUI.scale(USER_IMAGE_ROW_VGAP)))
+            imagesFlow.isOpaque = false
+            userImageAttachments.forEach { attachment ->
+                imagesFlow.add(createUserImageCard(attachment))
+            }
+            container.add(imagesFlow)
+        }
+
+        return container
+    }
+
+    private fun createUserImageCard(attachment: UserImageAttachment): JPanel {
+        val card = JPanel()
+        card.layout = BoxLayout(card, BoxLayout.Y_AXIS)
+        card.isOpaque = true
+        card.background = USER_IMAGE_CARD_BG
+        card.border = buildRoundedContainerBorder(
+            lineColor = USER_IMAGE_CARD_BORDER,
+            arc = 10,
+            padding = JBUI.insets(4, 4, 4, 4),
+        )
+        val cardWidth = JBUI.scale(USER_IMAGE_CARD_WIDTH)
+        val cardHeight = JBUI.scale(USER_IMAGE_CARD_HEIGHT)
+        card.preferredSize = Dimension(cardWidth, cardHeight)
+        card.minimumSize = card.preferredSize
+        card.maximumSize = card.preferredSize
+
+        val thumbnailHolder = JPanel(BorderLayout())
+        thumbnailHolder.isOpaque = false
+        val thumbSize = JBUI.scale(USER_IMAGE_THUMB_SIZE)
+        thumbnailHolder.preferredSize = Dimension(thumbSize, thumbSize)
+        thumbnailHolder.minimumSize = thumbnailHolder.preferredSize
+        thumbnailHolder.maximumSize = thumbnailHolder.preferredSize
+        thumbnailHolder.alignmentX = Component.CENTER_ALIGNMENT
+
+        val imageLabel = JBLabel(ImageIcon(scaleImageToFit(attachment.image, thumbSize, thumbSize)))
+        imageLabel.isOpaque = false
+        imageLabel.border = JBUI.Borders.empty()
+        imageLabel.horizontalAlignment = SwingConstants.CENTER
+        imageLabel.verticalAlignment = SwingConstants.CENTER
+        imageLabel.toolTipText = "${attachment.displayName} (${attachment.originalFileName}, ${attachment.image.width}×${attachment.image.height})"
+        installImagePreviewOpenAction(imageLabel, attachment)
+        thumbnailHolder.add(imageLabel, BorderLayout.CENTER)
+        card.add(thumbnailHolder)
+
+        val nameLabel = JBLabel(attachment.displayName)
+        nameLabel.font = JBUI.Fonts.smallFont()
+        nameLabel.foreground = USER_IMAGE_META_FG
+        nameLabel.alignmentX = Component.CENTER_ALIGNMENT
+        nameLabel.horizontalAlignment = SwingConstants.CENTER
+        nameLabel.border = JBUI.Borders.emptyTop(4)
+        card.add(nameLabel)
+        return card
+    }
+
+    private fun createVerticalSpacer(height: Int): JPanel {
+        val spacer = JPanel()
+        spacer.isOpaque = false
+        val scaledHeight = JBUI.scale(height)
+        spacer.preferredSize = Dimension(0, scaledHeight)
+        spacer.minimumSize = spacer.preferredSize
+        spacer.maximumSize = Dimension(Int.MAX_VALUE, scaledHeight)
+        return spacer
+    }
+
+    private fun stripUserAttachmentMarkerLines(content: String): String {
+        val normalized = content.replace("\r\n", "\n").replace('\r', '\n')
+        val lines = normalized.lines()
+        val filtered = lines.filterNot { line ->
+            USER_IMAGE_ATTACHMENT_LINE_REGEX.matches(line.trim())
+        }
+        return filtered.joinToString("\n").trimEnd()
+    }
+
+    private fun loadUserImageAttachments(imagePaths: List<String>): List<UserImageAttachment> {
+        if (imagePaths.isEmpty()) return emptyList()
+        return imagePaths.mapIndexedNotNull { index, rawPath ->
+            val path = rawPath.trim()
+            if (path.isBlank()) return@mapIndexedNotNull null
+            val file = File(path)
+            if (!file.isFile) return@mapIndexedNotNull null
+            val image = runCatching { ImageIO.read(file) }.getOrNull() ?: return@mapIndexedNotNull null
+            val originalName = file.name.ifBlank { path.substringAfterLast(File.separatorChar) }
+            UserImageAttachment(
+                displayName = "image#${index + 1}",
+                originalFileName = originalName,
+                image = image,
+            )
+        }
+    }
+
+    private fun installImagePreviewOpenAction(component: JComponent, attachment: UserImageAttachment) {
+        component.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        component.addMouseListener(
+            object : MouseAdapter() {
+                override fun mouseClicked(event: MouseEvent) {
+                    if (event.clickCount >= 2 && SwingUtilities.isLeftMouseButton(event)) {
+                        openImagePreviewDialog(attachment)
+                    }
+                }
+            }
+        )
+    }
+
+    private fun openImagePreviewDialog(attachment: UserImageAttachment) {
+        if (GraphicsEnvironment.isHeadless()) return
+        val owner = SwingUtilities.getWindowAncestor(this)
+        val dialog = JDialog(owner, attachment.displayName, Dialog.ModalityType.APPLICATION_MODAL)
+        dialog.defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
+
+        val screenSize = Toolkit.getDefaultToolkit().screenSize
+        val maxWidth = (screenSize.width * USER_IMAGE_PREVIEW_MAX_SCREEN_RATIO).toInt().coerceAtLeast(320)
+        val maxHeight = (screenSize.height * USER_IMAGE_PREVIEW_MAX_SCREEN_RATIO).toInt().coerceAtLeast(240)
+        val preview = scaleImageToFit(attachment.image, maxWidth, maxHeight)
+        val imageLabel = JBLabel(ImageIcon(preview)).apply {
+            horizontalAlignment = SwingConstants.CENTER
+            verticalAlignment = SwingConstants.CENTER
+            border = JBUI.Borders.empty(8)
+        }
+        val scroller = JScrollPane(imageLabel).apply {
+            border = JBUI.Borders.empty()
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            viewport.isOpaque = false
+            isOpaque = false
+        }
+        dialog.contentPane.layout = BorderLayout()
+        dialog.contentPane.add(scroller, BorderLayout.CENTER)
+        dialog.pack()
+        dialog.minimumSize = Dimension(320, 240)
+        dialog.setLocationRelativeTo(owner ?: this)
+        dialog.isVisible = true
+    }
+
+    private fun scaleImageToFit(image: BufferedImage, maxWidth: Int, maxHeight: Int): BufferedImage {
+        if (image.width <= maxWidth && image.height <= maxHeight) {
+            return image
+        }
+
+        val scaleFactor = min(
+            maxWidth.toDouble() / image.width.toDouble(),
+            maxHeight.toDouble() / image.height.toDouble(),
+        )
+        val targetWidth = (image.width * scaleFactor).toInt().coerceAtLeast(1)
+        val targetHeight = (image.height * scaleFactor).toInt().coerceAtLeast(1)
+        val scaled = BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB)
+        val graphics = scaled.createGraphics()
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+            graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+            graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            graphics.drawImage(image, 0, 0, targetWidth, targetHeight, null)
+        } finally {
+            graphics.dispose()
+        }
+        return scaled
     }
 
     private fun renderLightweightContent(content: String, fontSize: Int) {
@@ -924,9 +1120,18 @@ open class ChatMessagePanel(
             }
         }
 
-        val commands = WorkflowQuickActionParser.parse(content)
-            .commands
-            .take(MAX_COMMAND_ACTIONS)
+        val commands = if (
+            containsLoosePipeTableRows(
+                content = content,
+                minConsecutiveRows = COMMAND_ACTION_TABLE_BLOCK_MIN_ROWS,
+            )
+        ) {
+            emptyList()
+        } else {
+            WorkflowQuickActionParser.parse(content)
+                .commands
+                .take(MAX_COMMAND_ACTIONS)
+        }
         if (commands.isNotEmpty()) {
             panel.add(createInlineCommandActions(commands))
         }
@@ -1098,12 +1303,40 @@ open class ChatMessagePanel(
             }
 
             flushText()
-            segments += MarkdownSegment.Code(language = language, code = codeLines.joinToString("\n"))
+            val codeContent = codeLines.joinToString("\n")
+            if (shouldRenderFenceAsMarkdown(language, codeContent)) {
+                segments += MarkdownSegment.Markdown(codeContent.trim('\n', '\r'))
+            } else {
+                segments += MarkdownSegment.Code(language = language, code = codeContent)
+            }
             index = cursor + 1
         }
 
         flushText()
         return if (segments.any { it is MarkdownSegment.Code }) segments else emptyList()
+    }
+
+    private fun shouldRenderFenceAsMarkdown(language: String, code: String): Boolean {
+        val normalizedLanguage = language.trim().lowercase(Locale.ROOT)
+        if (normalizedLanguage.isNotEmpty() && normalizedLanguage !in MARKDOWN_FENCE_LANGUAGES) {
+            return false
+        }
+        val normalized = code
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .replace("｜", "|")
+            .replace("\\|", "|")
+        val lines = normalized.lines()
+        if (lines.size < 2) return false
+
+        for (index in 0 until lines.lastIndex) {
+            val header = lines[index].trim()
+            val separator = lines[index + 1].trim()
+            if (PIPE_TABLE_ROW_REGEX.matches(header) && PIPE_TABLE_SEPARATOR_REGEX.matches(separator)) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun parseFenceLanguage(line: String): String? {
@@ -1185,10 +1418,11 @@ open class ChatMessagePanel(
         } else {
             content.take(scanLimit.coerceAtLeast(0))
         }
-        if (markerSample.contains("**") || markerSample.contains('`')) return true
+        val normalizedSample = normalizePipeTableLine(markerSample)
+        if (normalizedSample.contains("**") || normalizedSample.contains('`')) return true
         var scannedChars = 0
         var previousPipeLikeLine = false
-        for (line in content.lineSequence()) {
+        for (line in normalizedSample.lineSequence()) {
             val trimmed = line.trimStart()
             scannedChars += line.length + 1
             val matched = MARKDOWN_HEADING_REGEX.matches(trimmed) ||
@@ -1207,7 +1441,58 @@ open class ChatMessagePanel(
                 break
             }
         }
+        if (containsLoosePipeTableRows(normalizedSample, minConsecutiveRows = LOOSE_PIPE_TABLE_DETECTION_MIN_ROWS)) {
+            return true
+        }
         return false
+    }
+
+    private fun containsLoosePipeTableRows(content: String, minConsecutiveRows: Int): Boolean {
+        if (content.isBlank()) return false
+        val targetRows = minConsecutiveRows.coerceAtLeast(2)
+        var inCodeFence = false
+        var consecutiveRows = 0
+
+        content.lineSequence().forEach { rawLine ->
+            val trimmed = rawLine.trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                consecutiveRows = 0
+                return@forEach
+            }
+            if (inCodeFence) return@forEach
+
+            if (isLoosePipeTableRow(rawLine)) {
+                consecutiveRows += 1
+                if (consecutiveRows >= targetRows) {
+                    return true
+                }
+            } else {
+                consecutiveRows = 0
+            }
+        }
+
+        return false
+    }
+
+    private fun isLoosePipeTableRow(line: String): Boolean {
+        val normalized = normalizePipeTableLine(line).trim()
+        if (normalized.length < 3) return false
+        if (normalized.count { it == '|' } < 2) return false
+        val nonBlankCells = normalized
+            .trim('|')
+            .split('|')
+            .count { it.trim().isNotBlank() }
+        return nonBlankCells >= 2
+    }
+
+    private fun normalizePipeTableLine(text: String): String {
+        return text
+            .replace("\\|", "|")
+            .replace('｜', '|')
+            .replace('│', '|')
+            .replace('┃', '|')
+            .replace('丨', '|')
     }
 
     private fun kindLabel(kind: ExecutionTimelineParser.Kind): String = when (kind) {
@@ -1385,6 +1670,7 @@ open class ChatMessagePanel(
     private fun applyOutputFilter(rawDetail: String, level: OutputFilterLevel): String {
         if (level == OutputFilterLevel.ALL) return rawDetail
         if (rawDetail.isBlank()) return rawDetail
+        if (shouldBypassOutputFilter(rawDetail)) return rawDetail
 
         val nonBlankLines = rawDetail
             .lines()
@@ -1408,6 +1694,11 @@ open class ChatMessagePanel(
             append("\n\n")
             append(SpecCodingBundle.message("chat.timeline.output.filtered.more", filteredCount))
         }
+    }
+
+    private fun shouldBypassOutputFilter(rawDetail: String): Boolean {
+        return looksLikeMarkdown(rawDetail, scanLimit = Int.MAX_VALUE) ||
+            containsLoosePipeTableRows(rawDetail, minConsecutiveRows = OUTPUT_FILTER_TABLE_BYPASS_MIN_ROWS)
     }
 
     private fun selectKeyOutputLines(lines: List<String>): List<String> {
@@ -2045,6 +2336,9 @@ open class ChatMessagePanel(
         private const val PREVIEW_EXTRA_SCAN_CHARS = 120
         private const val MARKDOWN_PREVIEW_EXTRA_SCAN_CHARS = 240
         private const val LIGHTWEIGHT_CONTENT_MAX_CHARS = 900
+        private const val LOOSE_PIPE_TABLE_DETECTION_MIN_ROWS = 2
+        private const val OUTPUT_FILTER_TABLE_BYPASS_MIN_ROWS = 2
+        private const val COMMAND_ACTION_TABLE_BLOCK_MIN_ROWS = 2
         private const val OUTPUT_FILTER_MIN_LINES = 2
         private const val OUTPUT_FILTER_MAX_LINES = 24
         private const val OUTPUT_FILTER_FALLBACK_LINES = 6
@@ -2057,11 +2351,21 @@ open class ChatMessagePanel(
         private const val SPINNER_STEP_DEGREES = 20
         private const val ASSISTANT_ACK_LEAD_MAX_LENGTH = 48
         private const val ASSISTANT_ACK_COMMA_MAX_INDEX = 18
+        private const val USER_IMAGE_THUMB_SIZE = 80
+        private const val USER_IMAGE_CARD_WIDTH = 92
+        private const val USER_IMAGE_CARD_HEIGHT = 112
+        private const val USER_IMAGE_TEXT_GAP = 8
+        private const val USER_IMAGE_CARD_GAP = 8
+        private const val USER_IMAGE_ROW_VGAP = 8
+        private const val USER_IMAGE_PREVIEW_MAX_SCREEN_RATIO = 0.75
         private val CODE_CARD_BG = JBColor(java.awt.Color(245, 248, 253), java.awt.Color(47, 53, 63))
         private val CODE_CARD_BORDER = JBColor(java.awt.Color(214, 224, 241), java.awt.Color(78, 88, 104))
         private val CODE_CARD_META_FG = JBColor(java.awt.Color(101, 118, 146), java.awt.Color(156, 178, 210))
         private val CODE_CARD_CODE_BG = JBColor(java.awt.Color(239, 244, 250), java.awt.Color(39, 45, 53))
         private val CODE_CARD_CODE_FG = JBColor(java.awt.Color(49, 59, 72), java.awt.Color(214, 223, 236))
+        private val USER_IMAGE_CARD_BG = JBColor(java.awt.Color(245, 248, 253), java.awt.Color(47, 53, 63))
+        private val USER_IMAGE_CARD_BORDER = JBColor(java.awt.Color(214, 224, 241), java.awt.Color(78, 88, 104))
+        private val USER_IMAGE_META_FG = JBColor(java.awt.Color(101, 118, 146), java.awt.Color(156, 178, 210))
         private val PROMPT_REFERENCE_FG = JBColor(
             java.awt.Color(23, 96, 186),
             java.awt.Color(136, 188, 255),
@@ -2074,6 +2378,7 @@ open class ChatMessagePanel(
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+\.\s+.*""")
         private val PIPE_TABLE_ROW_REGEX = Regex("""^\s*\|?(?:[^|\n]+\|){1,}[^|\n]*\|?\s*$""")
         private val PIPE_TABLE_SEPARATOR_REGEX = Regex("""^\s*\|?(?:\s*:?-{3,}:?\s*\|){1,}\s*$""")
+        private val USER_IMAGE_ATTACHMENT_LINE_REGEX = Regex("""^\[(?:图片|images?|image)\]\s+.+$""", RegexOption.IGNORE_CASE)
         private val PROMPT_REFERENCE_TOKEN_REGEX = Regex("""(?<!\S)#([\p{L}\p{N}_.-]+)""")
         private val THINKING_TAG_REGEX = Regex("""</?thinking>""", RegexOption.IGNORE_CASE)
         private val EXCESSIVE_EMPTY_LINES_REGEX = Regex("""\n{3,}""")
@@ -2116,6 +2421,13 @@ open class ChatMessagePanel(
             "成本", "任务", "验证", "读取", "编辑", "规格", "输出",
         )
         private val OUTPUT_KEY_VALUE_REGEX = Regex("""^[^\\s].{0,40}[:：]\\s*.+$""")
+        private val MARKDOWN_FENCE_LANGUAGES = setOf(
+            "markdown",
+            "md",
+            "mdx",
+            "mkdn",
+            "mdown",
+        )
     }
 
     private data class TraceDisplayItem(
@@ -2130,6 +2442,12 @@ open class ChatMessagePanel(
     private data class OutputDisplay(
         val status: ExecutionTimelineParser.Status,
         val detail: String,
+    )
+
+    private data class UserImageAttachment(
+        val displayName: String,
+        val originalFileName: String,
+        val image: BufferedImage,
     )
 
     private sealed class MarkdownSegment {

@@ -947,7 +947,11 @@ class ImprovedChatPanel(
             persistMessage(sessionId, ConversationRole.USER, visibleInput)
         }
 
-        appendUserMessage(content = visibleInput, rawContent = chatInput)
+        appendUserMessage(
+            content = visibleInput,
+            rawContent = chatInput,
+            imagePaths = selectedImagePaths,
+        )
         clearComposerInput()
 
         val beforeSnapshot = captureWorkspaceSnapshot()
@@ -1832,9 +1836,7 @@ class ImprovedChatPanel(
         if (imagePaths.isEmpty()) {
             return rawInput.ifBlank { SpecCodingBundle.message("toolwindow.image.default.prompt") }
         }
-        val names = imagePaths.joinToString(", ") { path ->
-            File(path).name.ifBlank { path }
-        }
+        val names = imagePaths.indices.joinToString(", ") { index -> "image#${index + 1}" }
         val attachmentLine = SpecCodingBundle.message("toolwindow.image.visible.entry", names)
         if (rawInput.isBlank()) {
             return attachmentLine
@@ -3342,10 +3344,15 @@ class ImprovedChatPanel(
             ContextTrimmer.trim(explicitItems, CHAT_CONTEXT_CONFIG.tokenBudget)
         }
 
-    private fun appendUserMessage(content: String, rawContent: String? = null): ChatMessagePanel {
+    private fun appendUserMessage(
+        content: String,
+        rawContent: String? = null,
+        imagePaths: List<String> = emptyList(),
+    ): ChatMessagePanel {
         val panel = ChatMessagePanel(
             ChatMessagePanel.MessageRole.USER, content,
             onDelete = ::handleDeleteMessage,
+            attachedImagePaths = imagePaths,
         )
         panel.finishMessage()
         messagesPanel.addMessage(panel)
