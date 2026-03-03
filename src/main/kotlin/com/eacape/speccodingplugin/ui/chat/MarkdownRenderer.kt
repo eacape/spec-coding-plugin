@@ -583,10 +583,10 @@ object MarkdownRenderer {
         val header = rows.first()
         val body = rows.drop(1)
         return buildString {
-            append("<table>")
+            append("<table border=\"1\" cellspacing=\"0\" cellpadding=\"4\" style=\"border-collapse:collapse;width:100%;\">")
             append("<thead><tr>")
             header.forEach { cell ->
-                append("<th>")
+                append("<th align=\"left\" valign=\"top\">")
                 append(escapeHtml(cell))
                 append("</th>")
             }
@@ -596,7 +596,7 @@ object MarkdownRenderer {
                 body.forEach { row ->
                     append("<tr>")
                     row.forEach { cell ->
-                        append("<td>")
+                        append("<td align=\"left\" valign=\"top\">")
                         append(escapeHtml(cell))
                         append("</td>")
                     }
@@ -642,6 +642,7 @@ object MarkdownRenderer {
     ): Boolean {
         val bodyHtml = runCatching { convertBasicMarkdownToHtml(markdown) }
             .getOrNull()
+            ?.let(::ensureLegacyTableMarkup)
             ?.trim()
             .orEmpty()
         if (bodyHtml.isBlank()) return false
@@ -664,6 +665,7 @@ object MarkdownRenderer {
             val markdownTree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
             HtmlGenerator(markdown, markdownTree, flavour).generateHtml()
         }.getOrNull()
+            ?.let(::ensureLegacyTableMarkup)
             ?.trim()
             .orEmpty()
         if (bodyHtml.isBlank()) return false
@@ -871,8 +873,8 @@ object MarkdownRenderer {
         val fontFamily = escapeCssFontFamily(proseFontFamily)
         val codeFontFamily = escapeCssFontFamily(CODE_FONT_FAMILY)
         val bodyFg = toCssColor(JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
-        val tableBorder = toCssColor(JBColor(Color(208, 216, 228), Color(91, 101, 112)))
-        val tableHeaderBg = toCssColor(JBColor(Color(244, 247, 252), Color(50, 56, 64)))
+        val tableBorder = toCssColor(JBColor(Color(183, 196, 214), Color(96, 108, 122)))
+        val tableHeaderBg = toCssColor(JBColor(Color(242, 246, 252), Color(53, 60, 70)))
         val inlineCodeBg = toCssColor(JBColor(CODE_BG_LIGHT, CODE_BG_DARK))
         val inlineCodeFg = toCssColor(JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
         val blockCodeBg = toCssColor(JBColor(BLOCK_CODE_BG_LIGHT, BLOCK_CODE_BG_DARK))
@@ -881,35 +883,30 @@ object MarkdownRenderer {
             html, body { margin: 0; padding: 0; background: transparent; }
             body {
                 font-family: '$fontFamily';
-                font-size: ${baseFontSize}px;
-                line-height: 1.78;
+                line-height: 1.45;
                 color: $bodyFg;
             }
-            p, ul, ol, table, pre, blockquote { margin: 0 0 12px 0; }
+            p, ul, ol, table, pre, blockquote { margin: 0 0 10px 0; }
             ul, ol { padding-left: 20px; }
-            li { margin: 0 0 6px 0; }
+            li { margin: 0 0 5px 0; }
             li:last-child { margin-bottom: 0; }
             table {
-                border-collapse: separate;
+                border-collapse: collapse;
                 border-spacing: 0;
                 width: 100%;
                 table-layout: fixed;
                 border: 1px solid $tableBorder;
-                border-radius: 8px;
             }
             th, td {
-                border-right: 1px solid $tableBorder;
-                border-bottom: 1px solid $tableBorder;
-                padding: 7px 9px;
+                border: 1px solid $tableBorder;
+                padding: 4px 7px;
                 text-align: left;
                 vertical-align: top;
-                line-height: 1.55;
+                line-height: 1.35;
                 word-break: break-word;
                 overflow-wrap: anywhere;
             }
-            th { background: $tableHeaderBg; font-weight: 600; }
-            th:last-child, td:last-child { border-right: none; }
-            tbody tr:last-child td { border-bottom: none; }
+            th { background: $tableHeaderBg; font-weight: 700; }
             code {
                 font-family: '$codeFontFamily';
                 background: $inlineCodeBg;
@@ -937,7 +934,29 @@ object MarkdownRenderer {
     private fun wrapBasicHtml(bodyHtml: String, proseFontFamily: String, baseFontSize: Int): String {
         val fontFamily = escapeCssFontFamily(proseFontFamily)
         val bodyFg = toCssColor(JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
-        return "<html><body style=\"font-family:'$fontFamily';font-size:${baseFontSize}px;color:$bodyFg;\">$bodyHtml</body></html>"
+        return "<html><body style=\"font-family:'$fontFamily';line-height:1.45;color:$bodyFg;\">$bodyHtml</body></html>"
+    }
+
+    private fun ensureLegacyTableMarkup(bodyHtml: String): String {
+        if (!bodyHtml.contains("<table", ignoreCase = true)) return bodyHtml
+        return TABLE_OPEN_TAG_REGEX.replace(bodyHtml) { match ->
+            val rawAttrs = match.groupValues.getOrNull(1).orEmpty()
+            val attrs = rawAttrs.trim()
+            val attrPrefix = if (attrs.isBlank()) "" else " $attrs"
+            val hasBorder = TABLE_BORDER_ATTR_REGEX.containsMatchIn(rawAttrs)
+            val hasCellSpacing = TABLE_CELL_SPACING_ATTR_REGEX.containsMatchIn(rawAttrs)
+            val hasCellPadding = TABLE_CELL_PADDING_ATTR_REGEX.containsMatchIn(rawAttrs)
+            val hasStyle = TABLE_STYLE_ATTR_REGEX.containsMatchIn(rawAttrs)
+            buildString {
+                append("<table")
+                append(attrPrefix)
+                if (!hasBorder) append(" border=\"1\"")
+                if (!hasCellSpacing) append(" cellspacing=\"0\"")
+                if (!hasCellPadding) append(" cellpadding=\"4\"")
+                if (!hasStyle) append(" style=\"border-collapse:collapse;width:100%;\"")
+                append(">")
+            }
+        }
     }
 
     private fun escapeCssFontFamily(fontFamily: String): String {
@@ -1193,6 +1212,11 @@ object MarkdownRenderer {
 
     private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+(.*)$""")
     private val ORDERED_LIST_REGEX = Regex("""^\d+\.\s.*$""")
+    private val TABLE_OPEN_TAG_REGEX = Regex("""<table\b([^>]*)>""", RegexOption.IGNORE_CASE)
+    private val TABLE_BORDER_ATTR_REGEX = Regex("""\bborder\s*=""", RegexOption.IGNORE_CASE)
+    private val TABLE_CELL_SPACING_ATTR_REGEX = Regex("""\bcellspacing\s*=""", RegexOption.IGNORE_CASE)
+    private val TABLE_CELL_PADDING_ATTR_REGEX = Regex("""\bcellpadding\s*=""", RegexOption.IGNORE_CASE)
+    private val TABLE_STYLE_ATTR_REGEX = Regex("""\bstyle\s*=""", RegexOption.IGNORE_CASE)
     private val TABLE_SEPARATOR_CELL_REGEX = Regex("""^:?-{3,}:?$""")
     private val TABLE_HTML_BLOCK_REGEX = Regex("""^<table>.*</table>$""", RegexOption.IGNORE_CASE)
     private val UNORDERED_LIST_HTML_REGEX = Regex("""^[-*]\s+(.+)$""")
