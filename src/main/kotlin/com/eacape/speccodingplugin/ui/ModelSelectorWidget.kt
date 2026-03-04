@@ -35,7 +35,7 @@ class ModelSelectorWidget(project: Project) : EditorBasedWidget(project), Status
     private val globalConfigSyncService = GlobalConfigSyncService.getInstance()
 
     init {
-        val connection = project.messageBus.connect(this)
+        val connection = ApplicationManager.getApplication().messageBus.connect(this)
         connection.subscribe(
             GlobalConfigSyncListener.TOPIC,
             object : GlobalConfigSyncListener {

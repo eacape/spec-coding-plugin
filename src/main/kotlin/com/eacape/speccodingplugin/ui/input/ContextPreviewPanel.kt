@@ -5,6 +5,7 @@ import com.eacape.speccodingplugin.context.ContextItem
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
@@ -32,7 +33,7 @@ class ContextPreviewPanel(
         tokenLabel.foreground = JBColor.GRAY
         tokenLabel.font = JBUI.Fonts.smallFont()
 
-        project.messageBus.connect(this).subscribe(
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             LocaleChangedListener.TOPIC,
             object : LocaleChangedListener {
                 override fun onLocaleChanged(event: LocaleChangedEvent) {

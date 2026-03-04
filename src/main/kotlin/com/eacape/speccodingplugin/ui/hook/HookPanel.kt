@@ -21,6 +21,7 @@ import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.util.IconLoader
@@ -373,7 +374,7 @@ class HookPanel(
     }
 
     private fun subscribeToEvents() {
-        project.messageBus.connect(this).subscribe(
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             LocaleChangedListener.TOPIC,
             object : LocaleChangedListener {
                 override fun onLocaleChanged(event: LocaleChangedEvent) {

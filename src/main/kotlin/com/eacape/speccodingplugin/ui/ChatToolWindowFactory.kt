@@ -12,6 +12,7 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.DumbAwareAction
@@ -154,7 +155,7 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
             }
         })
 
-        project.messageBus.connect(toolWindow.disposable).subscribe(
+        ApplicationManager.getApplication().messageBus.connect(toolWindow.disposable).subscribe(
             LocaleChangedListener.TOPIC,
             object : LocaleChangedListener {
                 override fun onLocaleChanged(event: com.eacape.speccodingplugin.i18n.LocaleChangedEvent) {

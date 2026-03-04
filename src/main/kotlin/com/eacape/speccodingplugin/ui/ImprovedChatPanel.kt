@@ -23,6 +23,7 @@ import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
 import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
 import com.eacape.speccodingplugin.llm.LlmMessage
+import com.eacape.speccodingplugin.llm.LlmRequest
 import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.llm.LlmRole
 import com.eacape.speccodingplugin.llm.MockLlmProvider
@@ -223,6 +224,7 @@ class ImprovedChatPanel(
         Color(0xC6CBD3),
     )
     private lateinit var inputField: SmartInputField
+    private val compactButton = JButton()
     private val sendButton = JButton()
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var statusAutoHideTimer: Timer? = null
@@ -239,6 +241,8 @@ class ImprovedChatPanel(
 
     // Session state
     private val conversationHistory = mutableListOf<LlmMessage>()
+    private var compactedConversationSummary: String? = null
+    private var compactedConversationCutoff: Int = 0
     private var currentSessionId: String? = null
     private var isGenerating = false
     private var isRestoringSession = false
@@ -318,6 +322,7 @@ class ImprovedChatPanel(
         subscribeToToolWindowControlEvents()
         subscribeToSpecWorkflowEvents()
         subscribeToLocaleEvents()
+        refreshLocalizedTexts()
         restoreWindowStateIfNeeded()
     }
 
@@ -442,7 +447,7 @@ class ImprovedChatPanel(
     }
 
     private fun subscribeToLocaleEvents() {
-        project.messageBus.connect(this).subscribe(
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             LocaleChangedListener.TOPIC,
             object : LocaleChangedListener {
                 override fun onLocaleChanged(event: LocaleChangedEvent) {
@@ -459,6 +464,8 @@ class ImprovedChatPanel(
         providerLabel.text = SpecCodingBundle.message("toolwindow.provider.label")
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
         composerHintLabel.text = SpecCodingBundle.message("toolwindow.composer.hint")
+        inputField.setPlaceholderText(SpecCodingBundle.message("toolwindow.input.placeholder"))
+        operationModeSelector.refreshLocalizedTexts()
         refreshActionButtonTexts()
         updateSpecSidebarToggleButtonTexts()
         specSidebarPanel.refreshLocalizedTexts()
@@ -578,6 +585,7 @@ class ImprovedChatPanel(
         statusLabel.font = JBUI.Fonts.smallFont()
         statusLabel.isVisible = false
         configureActionButtons()
+        configureCompactButton()
         configureClipboardImagePaste()
         installGlobalPasteKeyDispatcher()
         installComposerAutoCollapseListener()
@@ -585,6 +593,7 @@ class ImprovedChatPanel(
         updateComboTooltips()
 
         sendButton.addActionListener { handleSendOrStop() }
+        compactButton.addActionListener { handleCompactContextAction() }
 
         // Conversation area fills the top
         conversationHostPanel.isOpaque = true
@@ -648,6 +657,7 @@ class ImprovedChatPanel(
         controlsRightPanel.isOpaque = false
         controlsRightPanel.add(statusLabel)
         controlsRightPanel.add(specSidebarToggleButton)
+        controlsRightPanel.add(compactButton)
         controlsRightPanel.add(sendButton)
 
         val controlsRow = JPanel(BorderLayout())
@@ -781,6 +791,113 @@ class ImprovedChatPanel(
             return
         }
         sendCurrentInput()
+    }
+
+    private fun handleCompactContextAction() {
+        if (project.isDisposed || _isDisposed) {
+            return
+        }
+        if (isRestoringSession) {
+            showStatus(
+                text = SpecCodingBundle.message("toolwindow.status.session.restoring"),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return
+        }
+        if (isGenerating) {
+            showStatus(
+                text = SpecCodingBundle.message("toolwindow.status.generating"),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return
+        }
+        if (conversationHistory.isEmpty() && compactedConversationSummary.isNullOrBlank()) {
+            showStatus(
+                text = SpecCodingBundle.message("toolwindow.compact.status.empty"),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return
+        }
+        if (!compactedConversationSummary.isNullOrBlank() && conversationHistory.size <= compactedConversationCutoff) {
+            showStatus(
+                text = SpecCodingBundle.message("toolwindow.compact.status.upToDate"),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return
+        }
+        runModelConversationCompaction()
+    }
+
+    private fun runModelConversationCompaction() {
+        val sourceMessages = buildCompactionSourceMessages()
+        if (sourceMessages.isEmpty()) {
+            showStatus(
+                text = SpecCodingBundle.message("toolwindow.compact.status.empty"),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return
+        }
+        val selectedProviderId = providerComboBox.selectedItem as? String
+        val resolvedProviderId = resolveProviderIdForRequest(selectedProviderId)
+        val selectedModelId = (modelComboBox.selectedItem as? ModelInfo)?.id
+        val requestId = UUID.randomUUID().toString()
+        stopRequested.set(false)
+        activeLlmRequest = ActiveLlmRequest(
+            providerId = resolvedProviderId,
+            requestId = requestId,
+        )
+        setSendingState(true)
+        showStatus(SpecCodingBundle.message("toolwindow.compact.status.compacting"))
+        activeOperationJob = scope.launch {
+            val result = runCatching {
+                buildSemanticCompactedConversationSummary(
+                    sourceMessages = sourceMessages,
+                    providerId = resolvedProviderId,
+                    modelId = selectedModelId,
+                    requestId = requestId,
+                )
+            }
+            val cancelled = stopRequested.get() || result.exceptionOrNull() is CancellationException
+            if (result.isFailure && !cancelled) {
+                logger.warn("Failed to compact conversation context via model", result.exceptionOrNull())
+            }
+            activeOperationJob = null
+            activeLlmRequest = null
+            stopRequested.set(false)
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed || _isDisposed) {
+                    return@invokeLater
+                }
+                setSendingState(false)
+                if (cancelled) {
+                    showStatus(
+                        text = SpecCodingBundle.message("toolwindow.compact.status.cancelled"),
+                        autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                    )
+                    return@invokeLater
+                }
+                result.onSuccess { summary ->
+                    val applied = applyCompactedConversationSummary(summary)
+                    val statusKey = if (applied) {
+                        "toolwindow.compact.status.applied"
+                    } else {
+                        "toolwindow.compact.status.empty"
+                    }
+                    showStatus(
+                        text = SpecCodingBundle.message(statusKey),
+                        autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                    )
+                }.onFailure { error ->
+                    showStatus(
+                        text = SpecCodingBundle.message(
+                            "toolwindow.compact.status.failed",
+                            error.message ?: SpecCodingBundle.message("common.unknown"),
+                        ),
+                        autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                    )
+                }
+            }
+        }
     }
 
     private fun requestStopActiveOperation() {
@@ -1025,7 +1142,7 @@ class ImprovedChatPanel(
                     userInput = chatInput,
                     modelId = modelId,
                     contextSnapshot = contextSnapshot,
-                    conversationHistory = conversationHistory.toList(),
+                    conversationHistory = buildConversationHistoryForRequest(),
                     operationMode = operationMode,
                     planExecuteVerifySections = workflowSectionRenderingEnabledFor(interactionMode),
                     imagePaths = selectedImagePaths,
@@ -3038,6 +3155,7 @@ class ImprovedChatPanel(
             return
         }
         conversationHistory.clear()
+        clearCompactedConversationState()
         userMessageRawContent.clear()
         currentSessionId = null
         activeSpecWorkflowId = null
@@ -3114,6 +3232,7 @@ class ImprovedChatPanel(
 
     private fun restoreSessionMessages(messages: List<com.eacape.speccodingplugin.session.ConversationMessage>) {
         conversationHistory.clear()
+        clearCompactedConversationState()
         userMessageRawContent.clear()
         messagesPanel.clearAll()
         contextPreviewPanel.clear()
@@ -4047,6 +4166,7 @@ class ImprovedChatPanel(
 
     private fun refreshSendButtonState() {
         sendButton.isEnabled = !isRestoringSession
+        compactButton.isEnabled = !isGenerating && !isRestoringSession
         refreshActionButtonTexts()
     }
 
@@ -4096,6 +4216,9 @@ class ImprovedChatPanel(
         } else {
             CHAT_SEND_ICON
         }
+        val compactTooltip = SpecCodingBundle.message("toolwindow.compact.tooltip")
+        compactButton.toolTipText = compactTooltip
+        compactButton.accessibleContext.accessibleName = compactTooltip
     }
 
     private fun configureActionButtons() {
@@ -4114,10 +4237,30 @@ class ImprovedChatPanel(
         refreshActionButtonTexts()
     }
 
+    private fun configureCompactButton() {
+        compactButton.icon = CHAT_COMPACT_ICON
+        compactButton.text = ""
+        compactButton.isFocusable = false
+        compactButton.isFocusPainted = false
+        compactButton.isBorderPainted = false
+        compactButton.isOpaque = false
+        compactButton.isRolloverEnabled = true
+        compactButton.margin = JBUI.emptyInsets()
+        compactButton.preferredSize = ACTION_ICON_BUTTON_SIZE
+        compactButton.minimumSize = ACTION_ICON_BUTTON_SIZE
+        compactButton.maximumSize = ACTION_ICON_BUTTON_SIZE
+        compactButton.putClientProperty("JButton.buttonType", "toolbar")
+        refreshActionButtonTexts()
+    }
+
     private fun configureSpecSidebarToggleButton() {
-        specSidebarToggleButton.icon = AllIcons.FileTypes.Text
+        specSidebarToggleButton.icon = SPEC_SIDEBAR_TOGGLE_OPEN_ICON
         specSidebarToggleButton.isFocusable = false
         specSidebarToggleButton.isFocusPainted = false
+        specSidebarToggleButton.isBorderPainted = false
+        specSidebarToggleButton.isContentAreaFilled = false
+        specSidebarToggleButton.isOpaque = false
+        specSidebarToggleButton.isRolloverEnabled = true
         specSidebarToggleButton.margin = JBUI.emptyInsets()
         specSidebarToggleButton.preferredSize = ACTION_ICON_BUTTON_SIZE
         specSidebarToggleButton.minimumSize = ACTION_ICON_BUTTON_SIZE
@@ -4138,7 +4281,7 @@ class ImprovedChatPanel(
         specSidebarToggleButton.icon = if (specSidebarVisible) {
             AllIcons.Actions.Close
         } else {
-            AllIcons.FileTypes.Text
+            SPEC_SIDEBAR_TOGGLE_OPEN_ICON
         }
         specSidebarToggleButton.toolTipText = tooltip
         specSidebarToggleButton.accessibleContext.accessibleName = tooltip
@@ -5205,7 +5348,7 @@ class ImprovedChatPanel(
                     providerId = resolvedProviderId,
                     userInput = userInput,
                     modelId = modelId,
-                    conversationHistory = conversationHistory.toList(),
+                    conversationHistory = buildConversationHistoryForRequest(),
                     operationMode = operationMode,
                     planExecuteVerifySections = workflowSectionRenderingEnabledFor(currentInteractionMode()),
                     requestId = requestId,
@@ -5329,6 +5472,159 @@ class ImprovedChatPanel(
         }
     }
 
+    private fun buildConversationHistoryForRequest(): List<LlmMessage> {
+        val summary = compactedConversationSummary?.trim().orEmpty()
+        if (summary.isBlank()) {
+            return conversationHistory.toList()
+        }
+        val cutoff = compactedConversationCutoff.coerceIn(0, conversationHistory.size)
+        val incrementalMessages = conversationHistory.drop(cutoff)
+        val tailMessages = if (incrementalMessages.size > COMPACT_REQUEST_TAIL_MAX_MESSAGES) {
+            incrementalMessages.takeLast(COMPACT_REQUEST_TAIL_MAX_MESSAGES)
+        } else {
+            incrementalMessages
+        }
+        return buildList(1 + tailMessages.size) {
+            add(LlmMessage(LlmRole.SYSTEM, summary))
+            addAll(tailMessages)
+        }
+    }
+
+    private fun buildCompactionSourceMessages(): List<LlmMessage> {
+        val summary = compactedConversationSummary?.trim().orEmpty()
+        val cutoff = compactedConversationCutoff.coerceIn(0, conversationHistory.size)
+        val incrementalMessages = conversationHistory.drop(cutoff)
+            .filter { it.content.isNotBlank() }
+        if (summary.isBlank()) {
+            return if (conversationHistory.isEmpty()) {
+                emptyList()
+            } else {
+                conversationHistory.toList()
+            }
+        }
+        if (incrementalMessages.isEmpty()) {
+            return emptyList()
+        }
+        return buildList(1 + incrementalMessages.size) {
+            add(LlmMessage(LlmRole.SYSTEM, summary))
+            addAll(incrementalMessages)
+        }
+    }
+
+    private suspend fun buildSemanticCompactedConversationSummary(
+        sourceMessages: List<LlmMessage>,
+        providerId: String,
+        modelId: String?,
+        requestId: String,
+    ): String {
+        val transcript = buildCompactionTranscript(sourceMessages)
+        if (transcript.isBlank()) {
+            return ""
+        }
+        val workingDirectory = project.basePath?.trim()?.ifBlank { null }
+        val request = LlmRequest(
+            messages = listOf(
+                LlmMessage(
+                    role = LlmRole.SYSTEM,
+                    content = COMPACT_MODEL_SYSTEM_PROMPT,
+                ),
+                LlmMessage(
+                    role = LlmRole.USER,
+                    content = buildCompactionModelUserPrompt(transcript),
+                ),
+            ),
+            model = modelId,
+            metadata = linkedMapOf<String, String>().apply {
+                put("requestId", requestId)
+                put("operation_mode", OperationMode.PLAN.name)
+            },
+            workingDirectory = workingDirectory,
+        )
+        val response = llmRouter.generate(providerId = providerId, request = request)
+        val normalized = sanitizeDisplayText(response.content, dropGarbledLines = true)
+        return compactConversationContent(normalized, COMPACT_SUMMARY_MAX_CHARS)
+    }
+
+    private fun buildCompactionModelUserPrompt(transcript: String): String {
+        return buildString {
+            appendLine("Please compact this conversation transcript for future follow-up turns.")
+            appendLine("Return only plain text summary; no markdown headers, no code fences.")
+            appendLine("Focus on: user goals, constraints, decisions, files/paths, commands, unresolved items.")
+            appendLine("Transcript:")
+            append(transcript)
+        }
+    }
+
+    private fun buildCompactionTranscript(messages: List<LlmMessage>): String {
+        if (messages.isEmpty()) {
+            return ""
+        }
+        val normalizedMessages = if (messages.size <= COMPACT_MODEL_SOURCE_MAX_MESSAGES) {
+            messages
+        } else {
+            val headCount = COMPACT_MODEL_SOURCE_HEAD_MESSAGES.coerceAtMost(COMPACT_MODEL_SOURCE_MAX_MESSAGES - 1)
+            val tailCount = (COMPACT_MODEL_SOURCE_MAX_MESSAGES - headCount - 1).coerceAtLeast(0)
+            buildList {
+                addAll(messages.take(headCount))
+                add(LlmMessage(LlmRole.SYSTEM, "... ${messages.size - headCount - tailCount} earlier messages omitted ..."))
+                if (tailCount > 0) {
+                    addAll(messages.takeLast(tailCount))
+                }
+            }
+        }
+        return normalizedMessages.mapNotNull { message ->
+            val roleLabel = when (message.role) {
+                LlmRole.USER -> "User"
+                LlmRole.ASSISTANT -> "Assistant"
+                LlmRole.SYSTEM -> "System"
+            }
+            val compactedContent = compactConversationContent(
+                content = message.content,
+                maxLength = COMPACT_MODEL_SOURCE_ENTRY_MAX_CHARS,
+            )
+            if (compactedContent.isBlank()) {
+                null
+            } else {
+                "$roleLabel: $compactedContent"
+            }
+        }.joinToString(separator = "\n")
+    }
+
+    private fun applyCompactedConversationSummary(summary: String): Boolean {
+        val normalized = summary.trim()
+        if (normalized.isBlank()) {
+            return false
+        }
+        compactedConversationSummary = normalized
+        compactedConversationCutoff = conversationHistory.size
+        return true
+    }
+
+    private fun compactConversationContent(content: String, maxLength: Int): String {
+        if (content.isBlank()) {
+            return ""
+        }
+        val normalized = COMPACT_CODE_BLOCK_REGEX
+            .replace(content, " [code omitted] ")
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .replace(COMPACT_WHITESPACE_REGEX, " ")
+            .trim()
+        if (normalized.length <= maxLength) {
+            return normalized
+        }
+        return normalized.take(maxLength).trimEnd()
+    }
+
+    private fun clearCompactedConversationState() {
+        compactedConversationSummary = null
+        compactedConversationCutoff = 0
+    }
+
     private fun rebuildConversationHistory() {
         conversationHistory.clear()
         for (panel in messagesPanel.getAllMessages()) {
@@ -5345,6 +5641,7 @@ class ImprovedChatPanel(
             }
             appendToConversationHistory(LlmMessage(role, content))
         }
+        clearCompactedConversationState()
     }
 
     private fun appendToConversationHistory(message: LlmMessage) {
@@ -5359,6 +5656,9 @@ class ImprovedChatPanel(
         val overflow = conversationHistory.size - MAX_CONVERSATION_HISTORY
         repeat(overflow) {
             conversationHistory.removeAt(0)
+            if (compactedConversationCutoff > 0) {
+                compactedConversationCutoff -= 1
+            }
         }
     }
 
@@ -5520,8 +5820,10 @@ class ImprovedChatPanel(
 
         private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"
         private val HISTORY_CONTENT_DATA_KEY = Key.create<String>(HISTORY_CONTENT_KEY)
+        private val CHAT_COMPACT_ICON = IconLoader.getIcon("/icons/chat-compact.svg", ImprovedChatPanel::class.java)
         private val CHAT_SEND_ICON = IconLoader.getIcon("/icons/chat-send.svg", ImprovedChatPanel::class.java)
         private val CHAT_STOP_ICON = IconLoader.getIcon("/icons/chat-stop.svg", ImprovedChatPanel::class.java)
+        private val SPEC_SIDEBAR_TOGGLE_OPEN_ICON = IconLoader.getIcon("/icons/spec-sidebar-split-vertically.svg", ImprovedChatPanel::class.java)
         private val ACTION_ICON_BUTTON_SIZE = JBDimension(28, 24)
         private const val SPEC_WORKFLOW_COMBO_MIN_WIDTH = 120
         private const val SPEC_WORKFLOW_COMBO_MAX_WIDTH = 220
@@ -5555,10 +5857,30 @@ class ImprovedChatPanel(
         private const val SPEC_SIDEBAR_DIVIDER_PERSIST_DEBOUNCE_MILLIS = 140
         private const val STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS = 2200
         private const val STATUS_SHORT_HINT_AUTO_HIDE_MILLIS = 1800
+        private const val COMPACT_REQUEST_TAIL_MAX_MESSAGES = 20
+        private const val COMPACT_MODEL_SOURCE_MAX_MESSAGES = 36
+        private const val COMPACT_MODEL_SOURCE_HEAD_MESSAGES = 6
+        private const val COMPACT_MODEL_SOURCE_ENTRY_MAX_CHARS = 680
+        private const val COMPACT_SUMMARY_MAX_CHARS = 2600
+        private val COMPACT_MODEL_SYSTEM_PROMPT = """
+            You are a context-compaction assistant for an IDE chat session.
+            Produce a semantic summary that will be used as context for future turns.
+            Preserve:
+            - user goals and acceptance criteria
+            - technical decisions and constraints
+            - key files/paths/classes/functions
+            - commands/actions already attempted and outcomes
+            - unresolved questions, blockers, and next steps
+            Remove redundant chatter and repeated details.
+            Output plain text only (no markdown headings, no code fences).
+            Keep the summary concise and factual.
+        """.trimIndent()
         private const val CONTINUE_FOCUS_MAX_LENGTH = 84
         private val CONTINUE_STAGE_PREFIX_REGEX = Regex("""^\[[^\]]+]\s*""")
         private val CONTINUE_ORDERED_PREFIX_REGEX = Regex("""^\d+\.\s*""")
         private val CONTINUE_ORDERED_LINE_REGEX = Regex("""^\d+\.\s+.+""")
+        private val COMPACT_CODE_BLOCK_REGEX = Regex("""```[\s\S]*?```""")
+        private val COMPACT_WHITESPACE_REGEX = Regex("""\s+""")
         private val UI_CONTROL_CHAR_REGEX = Regex("""[\u0000-\u0008\u000B\u000C\u000E-\u001F]""")
         private val UI_BOX_DRAWING_REGEX = Regex("""[\u2500-\u259F]""")
         private val UI_CJK_REGEX = Regex("""\p{IsHan}""")

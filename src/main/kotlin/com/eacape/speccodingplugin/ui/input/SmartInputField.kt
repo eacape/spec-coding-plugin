@@ -28,7 +28,7 @@ import javax.swing.text.DefaultHighlighter
  * 基于 JTextArea，支持触发字符检测、补全弹窗、Enter 发送 / Shift+Enter 换行
  */
 class SmartInputField(
-    private val placeholder: String = "",
+    private var placeholder: String = "",
     private val onSend: (String) -> Unit = {},
     private val onTrigger: (TriggerParseResult) -> Unit = {},
     private val onTriggerDismiss: () -> Unit = {},
@@ -257,6 +257,14 @@ class SmartInputField(
             return
         }
         completionPopup.show(items, this)
+    }
+
+    fun setPlaceholderText(value: String) {
+        if (placeholder == value) {
+            return
+        }
+        placeholder = value
+        repaint()
     }
 
     override fun paintComponent(g: Graphics) {

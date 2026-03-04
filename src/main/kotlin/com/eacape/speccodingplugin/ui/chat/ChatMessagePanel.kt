@@ -1663,8 +1663,7 @@ open class ChatMessagePanel(
                 return true
             }
             val matched = MARKDOWN_HEADING_REGEX.matches(trimmed) ||
-                trimmed.startsWith("- ") ||
-                trimmed.startsWith("* ") ||
+                UNORDERED_LIST_ITEM_REGEX.matches(trimmed) ||
                 ORDERED_LIST_ITEM_REGEX.matches(trimmed)
             if (matched) {
                 return true
@@ -2359,7 +2358,7 @@ open class ChatMessagePanel(
 
     private fun isLikelyWorkflowHeading(line: String): Boolean {
         val trimmed = line.trim()
-        if (trimmed.startsWith("## ")) return true
+        if (WORKFLOW_MARKDOWN_HEADING_REGEX.matches(trimmed)) return true
         val normalized = trimmed
             .removePrefix("**")
             .removeSuffix("**")
@@ -2675,9 +2674,11 @@ open class ChatMessagePanel(
             java.awt.Color(226, 239, 255),
             java.awt.Color(55, 75, 101),
         )
-        private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s+.*$""")
+        private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}(?:\s+|(?=[^\s#])).+$""")
         private val MARKDOWN_HORIZONTAL_RULE_REGEX = Regex("""^(?:-{3,}|\*{3,}|_{3,})\s*$""")
-        private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+[.)]\s+.*""")
+        private val UNORDERED_LIST_ITEM_REGEX = Regex("""^(?:[-*]|[•●·・▪◦‣])\s*.+$""")
+        private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+[.)、）．](?:\s+|(?=[^\s\d])).+$""")
+        private val WORKFLOW_MARKDOWN_HEADING_REGEX = Regex("""^##+(?:\s+|(?=\S)).+$""")
         private val PIPE_TABLE_ROW_REGEX = Regex("""^\s*\|?(?:[^|\n]+\|){1,}[^|\n]*\|?\s*$""")
         private val PIPE_TABLE_SEPARATOR_REGEX = Regex("""^\s*\|?(?:\s*:?-{3,}:?\s*\|){1,}\s*$""")
         private val MARKDOWN_ASTERISK_ALIASES = charArrayOf(

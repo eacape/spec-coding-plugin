@@ -46,8 +46,10 @@ object MarkdownRenderer {
     fun render(textPane: JTextPane, markdown: String) {
         val proseFontFamily = textPane.font?.family ?: Font.SANS_SERIF
         val baseFontSize = resolveBaseFontSize(textPane)
-        val normalizedMarkdown = normalizeInlineMarkdownOutsideCodeFences(
-            normalizeEscapedTableMarkdown(markdown),
+        val normalizedMarkdown = normalizeLooseBlockMarkdownOutsideCodeFences(
+            normalizeInlineMarkdownOutsideCodeFences(
+                normalizeEscapedTableMarkdown(markdown),
+            ),
         )
         if (containsMarkdownTable(normalizedMarkdown)) {
             if (renderWithMarkdownEngine(textPane, normalizedMarkdown, proseFontFamily, baseFontSize)) {
@@ -370,6 +372,55 @@ object MarkdownRenderer {
             }
         }
         return if (changed) lines.joinToString("\n") else markdown
+    }
+
+    private fun normalizeLooseBlockMarkdownOutsideCodeFences(markdown: String): String {
+        if (markdown.isEmpty()) return markdown
+        val lines = markdown.lines().toMutableList()
+        var inCodeFence = false
+        var changed = false
+        for (index in lines.indices) {
+            val line = lines[index]
+            val trimmed = line.trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                continue
+            }
+            if (inCodeFence) continue
+            val normalized = normalizeLooseBlockMarkdownLine(line)
+            if (normalized != line) {
+                lines[index] = normalized
+                changed = true
+            }
+        }
+        return if (changed) lines.joinToString("\n") else markdown
+    }
+
+    private fun normalizeLooseBlockMarkdownLine(line: String): String {
+        val headingNormalized = LOOSE_HEADING_REGEX.matchEntire(line)?.let { match ->
+            "${match.groupValues[1]}${match.groupValues[2]} ${match.groupValues[3]}"
+        } ?: line
+        val orderedNormalized = normalizeLooseOrderedListLine(headingNormalized)
+        return normalizeLooseUnorderedListLine(orderedNormalized)
+    }
+
+    private fun normalizeLooseOrderedListLine(line: String): String {
+        val match = LOOSE_ORDERED_LIST_REGEX.matchEntire(line) ?: return line
+        val content = match.groupValues[4]
+        if (content.firstOrNull()?.isDigit() == true) {
+            // Keep versions like 1.2.3 untouched.
+            return line
+        }
+        val normalizedDelimiter = when (match.groupValues[3]) {
+            "、", "）", "．" -> "."
+            else -> match.groupValues[3]
+        }
+        return "${match.groupValues[1]}${match.groupValues[2]}$normalizedDelimiter $content"
+    }
+
+    private fun normalizeLooseUnorderedListLine(line: String): String {
+        val match = LOOSE_UNORDERED_LIST_REGEX.matchEntire(line) ?: return line
+        return "${match.groupValues[1]}- ${match.groupValues[2]}"
     }
 
     private fun normalizeTableDelimiterTokens(line: String): String {
@@ -1272,6 +1323,9 @@ object MarkdownRenderer {
     }
 
     private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+(.*)$""")
+    private val LOOSE_HEADING_REGEX = Regex("""^(\s{0,3})(#{2,6})([^\s#].*)$""")
+    private val LOOSE_ORDERED_LIST_REGEX = Regex("""^(\s*)(\d+)([.)、）．])([^\s].*)$""")
+    private val LOOSE_UNORDERED_LIST_REGEX = Regex("""^(\s*)[•●·・▪◦‣]\s*(\S.*)$""")
     private val ORDERED_LIST_REGEX = Regex("""^(\d+)[.)]\s+(.*)$""")
     private val TABLE_OPEN_TAG_REGEX = Regex("""<table\b([^>]*)>""", RegexOption.IGNORE_CASE)
     private val TABLE_BORDER_ATTR_REGEX = Regex("""\bborder\s*=""", RegexOption.IGNORE_CASE)

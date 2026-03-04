@@ -1474,7 +1474,7 @@ class SpecWorkflowPanel(
     }
 
     private fun subscribeToLocaleEvents() {
-        project.messageBus.connect(this).subscribe(
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             LocaleChangedListener.TOPIC,
             object : LocaleChangedListener {
                 override fun onLocaleChanged(event: LocaleChangedEvent) {

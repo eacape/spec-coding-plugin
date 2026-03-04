@@ -120,7 +120,7 @@ internal object WorkflowSectionParser {
         }
     }
 
-    private val HEADING_REGEX = Regex("""^##+\s+(.+)$""")
+    private val HEADING_REGEX = Regex("""^##+(?:\s+|(?=\S))(.+)$""")
     private val LIST_PREFIX_REGEX = Regex("""^\d+[.)]\s+""")
     private val PLAIN_HEADING_REGEX = Regex("""^[A-Za-z\u4e00-\u9fa5][A-Za-z\u4e00-\u9fa5\s]{0,20}$""")
     private val PLAN_TITLES = setOf("plan", "planning", "计划", "规划")

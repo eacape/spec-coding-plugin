@@ -104,6 +104,9 @@ class SpecCodingSettingsConfigurable : Configurable {
         codexCliPathField.emptyText.text = SpecCodingBundle.message("settings.cli.codexPath.placeholder")
 
         interfaceLanguageCombo.renderer = InterfaceLanguageCellRenderer.create()
+        interfaceLanguageCombo.addActionListener {
+            applyLanguageImmediately(reason = "settings-configurable-language-immediate")
+        }
         detectCliButton.text = SpecCodingBundle.message("settings.cli.detectButton")
         detectCliButton.addActionListener { detectCliTools() }
 
@@ -201,6 +204,18 @@ class SpecCodingSettingsConfigurable : Configurable {
         globalConfigSyncService.notifyGlobalConfigChanged(
             sourceProject = null,
             reason = if (localeChanged != null) "settings-configurable-apply-with-locale" else "settings-configurable-apply",
+        )
+    }
+
+    private fun applyLanguageImmediately(reason: String) {
+        val selectedLanguage = (interfaceLanguageCombo.selectedItem as? InterfaceLanguage) ?: InterfaceLanguage.AUTO
+        val localeChanged = localeManager.setLanguage(selectedLanguage, reason = reason)
+        if (localeChanged == null) {
+            return
+        }
+        globalConfigSyncService.notifyGlobalConfigChanged(
+            sourceProject = null,
+            reason = "$reason-with-locale",
         )
     }
 

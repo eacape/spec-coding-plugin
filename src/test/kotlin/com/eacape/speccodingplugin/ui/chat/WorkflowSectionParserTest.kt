@@ -51,6 +51,25 @@ class WorkflowSectionParserTest {
     }
 
     @Test
+    fun `parse should extract chinese section headings without hash spacing`() {
+        val content = """
+            ##计划
+            - 明确边界
+            ##执行
+            - 修改代码
+            ##验证
+            - 运行测试
+        """.trimIndent()
+
+        val result = WorkflowSectionParser.parse(content)
+
+        assertEquals(3, result.sections.size)
+        assertEquals(WorkflowSectionParser.SectionKind.PLAN, result.sections[0].kind)
+        assertEquals(WorkflowSectionParser.SectionKind.EXECUTE, result.sections[1].kind)
+        assertEquals(WorkflowSectionParser.SectionKind.VERIFY, result.sections[2].kind)
+    }
+
+    @Test
     fun `parse should return empty sections for plain text`() {
         val content = "Just a normal response without section headings."
         val result = WorkflowSectionParser.parse(content)

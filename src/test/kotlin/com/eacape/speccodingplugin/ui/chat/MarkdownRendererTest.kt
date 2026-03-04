@@ -33,6 +33,18 @@ class MarkdownRendererTest {
     }
 
     @Test
+    fun `render should normalize heading without whitespace after hash marker`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, "##🧭 两种方式运行项目：")
+        }
+
+        assertTrue(pane.text.contains("🧭 两种方式运行项目："))
+        assertFalse(pane.text.contains("##🧭"))
+    }
+
+    @Test
     fun `render should normalize fullwidth bold markers in chinese content`() {
         val pane = JTextPane()
 
@@ -140,6 +152,54 @@ class MarkdownRendererTest {
         assertTrue(text.contains("1. 第一项"))
         assertTrue(text.contains("2. 第二项"))
         assertFalse(text.contains("**"))
+    }
+
+    @Test
+    fun `render should normalize ordered list when marker is not followed by whitespace`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                1.检查 Flutter 环境
+                2)查看可用设备
+                3、运行项目
+                """.trimIndent(),
+            )
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("1. 检查 Flutter 环境"))
+        assertTrue(text.contains("2. 查看可用设备"))
+        assertTrue(text.contains("3. 运行项目"))
+        assertFalse(text.contains("1.检查 Flutter 环境"))
+        assertFalse(text.contains("2)查看可用设备"))
+        assertFalse(text.contains("3、运行项目"))
+    }
+
+    @Test
+    fun `render should normalize cjk bullet marker list lines`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                ・检查环境配置
+                •列出可用设备
+                ●启动应用
+                """.trimIndent(),
+            )
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("• 检查环境配置"))
+        assertTrue(text.contains("• 列出可用设备"))
+        assertTrue(text.contains("• 启动应用"))
+        assertFalse(text.contains("・检查环境配置"))
+        assertFalse(text.contains("•列出可用设备"))
+        assertFalse(text.contains("●启动应用"))
     }
 
     @Test

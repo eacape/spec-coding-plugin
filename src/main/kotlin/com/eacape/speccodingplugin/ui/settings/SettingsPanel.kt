@@ -201,7 +201,9 @@ class SettingsPanel(
             if (autoSaveTimer.isRunning) {
                 autoSaveTimer.stop()
             }
+            applyLanguageImmediately(reason = "settings-panel-language-immediate")
             persistSettings(reason = "settings-panel-language-immediate")
+            refreshLocalizedTexts()
         }
         skillDraftProviderCombo.addActionListener {
             refreshSkillDraftModelCombo()
@@ -876,7 +878,7 @@ class SettingsPanel(
     }
 
     private fun subscribeToLocaleEvents() {
-        project.messageBus.connect(this).subscribe(
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             LocaleChangedListener.TOPIC,
             object : LocaleChangedListener {
                 override fun onLocaleChanged(event: LocaleChangedEvent) {
@@ -1028,6 +1030,18 @@ class SettingsPanel(
         codexCliPathField.text = settings.codexCliPath
         claudeCodeCliPathField.text = settings.claudeCodeCliPath
         defaultModeField.text = settings.defaultOperationMode.lowercase(Locale.ROOT)
+    }
+
+    private fun applyLanguageImmediately(reason: String) {
+        val selectedLanguage = (interfaceLanguageCombo.selectedItem as? InterfaceLanguage) ?: InterfaceLanguage.AUTO
+        val localeChanged = LocaleManager.getInstance().setLanguage(selectedLanguage, reason = reason)
+        if (localeChanged == null) {
+            return
+        }
+        GlobalConfigSyncService.getInstance().notifyGlobalConfigChanged(
+            sourceProject = null,
+            reason = "$reason-with-locale",
+        )
     }
 
     private fun persistSettings(reason: String) {

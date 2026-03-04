@@ -11,6 +11,7 @@ import com.eacape.speccodingplugin.worktree.WorktreeBinding
 import com.eacape.speccodingplugin.worktree.WorktreeMergeResult
 import com.eacape.speccodingplugin.worktree.WorktreeStatus
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.invokeLater
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
@@ -321,7 +322,7 @@ class WorktreePanel(
     }
 
     private fun subscribeToLocaleEvents() {
-        project.messageBus.connect(this).subscribe(
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             LocaleChangedListener.TOPIC,
             object : LocaleChangedListener {
                 override fun onLocaleChanged(event: LocaleChangedEvent) {
