@@ -1753,7 +1753,15 @@ open class ChatMessagePanel(
                 }
             }
         }
-        return if (changed) normalized else text
+        var compacted = normalized
+        if (compacted.contains('*')) {
+            val collapsed = MARKDOWN_STAR_PAIR_WITH_SPACES_REGEX.replace(compacted, "**")
+            if (collapsed != compacted) {
+                compacted = collapsed
+                changed = true
+            }
+        }
+        return if (changed) compacted else text
     }
 
     private fun kindLabel(kind: ExecutionTimelineParser.Kind): String = when (kind) {
@@ -2672,9 +2680,15 @@ open class ChatMessagePanel(
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+[.)]\s+.*""")
         private val PIPE_TABLE_ROW_REGEX = Regex("""^\s*\|?(?:[^|\n]+\|){1,}[^|\n]*\|?\s*$""")
         private val PIPE_TABLE_SEPARATOR_REGEX = Regex("""^\s*\|?(?:\s*:?-{3,}:?\s*\|){1,}\s*$""")
-        private val MARKDOWN_ASTERISK_ALIASES = charArrayOf('*', '＊', '﹡', '∗')
-        private val MARKDOWN_IGNORED_CHARS = charArrayOf('\u200B', '\u200C', '\u200D', '\uFEFF', '\u2060')
+        private val MARKDOWN_ASTERISK_ALIASES = charArrayOf(
+            '*', '＊', '﹡', '∗', '⁎', '✱', '✲', '✳', '✻', '❇', '٭',
+        )
+        private val MARKDOWN_IGNORED_CHARS = charArrayOf(
+            '\u200B', '\u200C', '\u200D', '\uFEFF', '\u2060',
+            '\uFE0E', '\uFE0F',
+        )
         private const val MARKDOWN_NBSP_CHAR = '\u00A0'
+        private val MARKDOWN_STAR_PAIR_WITH_SPACES_REGEX = Regex("""\*\s+\*""")
         private val USER_IMAGE_ATTACHMENT_LINE_REGEX = Regex("""^\[(?:图片|images?|image)\]\s+.+$""", RegexOption.IGNORE_CASE)
         private val PROMPT_REFERENCE_TOKEN_REGEX = Regex("""(?<!\S)#([\p{L}\p{N}_.-]+)""")
         private val THINKING_TAG_REGEX = Regex("""</?thinking>""", RegexOption.IGNORE_CASE)

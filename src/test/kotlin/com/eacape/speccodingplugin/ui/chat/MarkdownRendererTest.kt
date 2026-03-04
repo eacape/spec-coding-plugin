@@ -60,6 +60,49 @@ class MarkdownRendererTest {
     }
 
     @Test
+    fun `render should parse bold when variation selectors split delimiter stars`() {
+        val pane = JTextPane()
+        val markdown = "1⃣*\uFE0F*\uFE0F命名构造函数*\uFE0F*\uFE0F"
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, markdown)
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("命名构造函数"))
+        assertFalse(text.contains("*\uFE0F*"))
+        assertFalse(text.contains("**"))
+    }
+
+    @Test
+    fun `render should parse bold when star pairs are split by spaces`() {
+        val pane = JTextPane()
+        val markdown = "1 * *命名构造函数* *"
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, markdown)
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("命名构造函数"))
+        assertFalse(text.contains("* *命名构造函数* *"))
+    }
+
+    @Test
+    fun `render should parse bold when star like glyph is used as delimiter`() {
+        val pane = JTextPane()
+        val markdown = "1 ✱✱命名构造函数✱✱"
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, markdown)
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("命名构造函数"))
+        assertFalse(text.contains("✱✱命名构造函数✱✱"))
+    }
+
+    @Test
     fun `render should normalize fullwidth bold markers when markdown table triggers html engine`() {
         val pane = JTextPane()
         val markdown = """

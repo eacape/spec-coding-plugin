@@ -1206,7 +1206,15 @@ object MarkdownRenderer {
                 }
             }
         }
-        return if (changed) normalized else text
+        var compacted = normalized
+        if (compacted.contains('*')) {
+            val collapsed = STAR_PAIR_WITH_SPACES_REGEX.replace(compacted, "**")
+            if (collapsed != compacted) {
+                compacted = collapsed
+                changed = true
+            }
+        }
+        return if (changed) compacted else text
     }
 
     /**
@@ -1286,9 +1294,15 @@ object MarkdownRenderer {
         '—', '–', '―', '−', '─', '━', '﹣', '－', '‑', '‒', '﹘',
     )
     private val INVISIBLE_TABLE_CHAR_REGEX = Regex("[\\u200B\\u200C\\u200D\\uFEFF\\u2060]")
-    private val INLINE_MARKDOWN_ASTERISK_ALIASES = charArrayOf('*', '＊', '﹡', '∗')
-    private val INLINE_MARKDOWN_IGNORED_CHARS = charArrayOf('\u200B', '\u200C', '\u200D', '\uFEFF', '\u2060')
+    private val INLINE_MARKDOWN_ASTERISK_ALIASES = charArrayOf(
+        '*', '＊', '﹡', '∗', '⁎', '✱', '✲', '✳', '✻', '❇', '٭',
+    )
+    private val INLINE_MARKDOWN_IGNORED_CHARS = charArrayOf(
+        '\u200B', '\u200C', '\u200D', '\uFEFF', '\u2060',
+        '\uFE0E', '\uFE0F',
+    )
     private const val INLINE_MARKDOWN_NBSP = '\u00A0'
+    private val STAR_PAIR_WITH_SPACES_REGEX = Regex("""\*\s+\*""")
     private const val PLAIN_TEXT_CONTENT_TYPE = "text/plain"
     private const val HTML_CONTENT_TYPE = "text/html"
     private const val MIN_INLINE_FONT_SIZE = 9

@@ -363,8 +363,8 @@ class ChatMessagePanelTraceStreamingTest {
             [Output] 🚀 接下来做什么？
             [Output] 1⃣＊＊继续实战练习＊＊
             [Output] 2⃣＊＊进入 Flutter 基础＊＊
-            [Output] 3⃣＊＊深入某个 Dart 特性＊＊
-            [Output] 4⃣＊＊做一个综合项目＊＊
+            [Output] 3⃣*\uFE0F*\uFE0F深入某个 Dart 特性*\uFE0F*\uFE0F
+            [Output] 4⃣* *做一个综合项目* *
         """.trimIndent()
 
         runOnEdt {
@@ -396,7 +396,8 @@ class ChatMessagePanelTraceStreamingTest {
         assertFalse(allText.contains("＊＊继续实战练习＊＊"))
         assertFalse(allText.contains("＊＊进入 Flutter 基础＊＊"))
         assertFalse(allText.contains("＊＊深入某个 Dart 特性＊＊"))
-        assertFalse(allText.contains("＊＊做一个综合项目＊＊"))
+        assertFalse(allText.contains("*\uFE0F*\uFE0F深入某个 Dart 特性*\uFE0F*\uFE0F"))
+        assertFalse(allText.contains("* *做一个综合项目* *"))
     }
 
     @Test
