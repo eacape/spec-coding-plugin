@@ -960,7 +960,8 @@ class ImprovedChatPanel(
         stopRequested.set(false)
         activeLlmRequest = ActiveLlmRequest(providerId = resolvedProviderId, requestId = requestId)
         setSendingState(true)
-        currentAssistantPanel = addAssistantMessage()
+        val assistantStartedAtMillis = System.currentTimeMillis()
+        currentAssistantPanel = addAssistantMessage(startedAtMillis = assistantStartedAtMillis)
 
         activeOperationJob = scope.launch {
             val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
@@ -968,6 +969,7 @@ class ImprovedChatPanel(
             val pendingDelta = StringBuilder()
             val pendingEvents = mutableListOf<ChatStreamEvent>()
             val autoStopIssued = AtomicBoolean(false)
+            var assistantFinishedAtMillis: Long? = null
             var pendingChunks = 0
             var lastFlushAtNanos = System.nanoTime()
 
@@ -1033,6 +1035,7 @@ class ImprovedChatPanel(
                     pendingChunks += 1
 
                     if (chunk.isLast) {
+                        assistantFinishedAtMillis = System.currentTimeMillis()
                         flushPending(force = true)
                         ApplicationManager.getApplication().invokeLater {
                             if (project.isDisposed || _isDisposed) {
@@ -1054,7 +1057,11 @@ class ImprovedChatPanel(
                         sessionId = sessionId,
                         role = ConversationRole.ASSISTANT,
                         content = assistantMessage.content,
-                        metadataJson = TraceEventMetadataCodec.encode(streamedTraceEvents),
+                        metadataJson = TraceEventMetadataCodec.encode(
+                            events = streamedTraceEvents,
+                            startedAtMillis = assistantStartedAtMillis,
+                            finishedAtMillis = assistantFinishedAtMillis ?: System.currentTimeMillis(),
+                        ),
                     )
                 }
 
@@ -1079,7 +1086,11 @@ class ImprovedChatPanel(
                                 sessionId = sessionId,
                                 role = ConversationRole.ASSISTANT,
                                 content = assistantMessage.content,
-                                metadataJson = TraceEventMetadataCodec.encode(streamedTraceEvents),
+                                metadataJson = TraceEventMetadataCodec.encode(
+                                    events = streamedTraceEvents,
+                                    startedAtMillis = assistantStartedAtMillis,
+                                    finishedAtMillis = assistantFinishedAtMillis ?: System.currentTimeMillis(),
+                                ),
                             )
                         }
                     }
@@ -3103,7 +3114,8 @@ class ImprovedChatPanel(
                     } else {
                         message.content
                     }
-                    val restoredTraceEvents = TraceEventMetadataCodec.decode(message.metadataJson)
+                    val restoredTraceMetadata = TraceEventMetadataCodec.decodePayload(message.metadataJson)
+                    val restoredTraceEvents = restoredTraceMetadata.events
                         .mapNotNull(::sanitizeStreamEvent)
                     if (restoredSpecMetadata != null && restoredTraceEvents.isEmpty()) {
                         addSpecCardMessage(
@@ -3120,7 +3132,10 @@ class ImprovedChatPanel(
                              onWorkflowFileOpen = ::handleWorkflowFileOpen,
                              onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
                              workflowSectionsEnabled = workflowSectionsEnabled,
-                         )
+                             startedAtMillis = restoredTraceMetadata.startedAtMillis,
+                             finishedAtMillis = restoredTraceMetadata.finishedAtMillis,
+                             captureElapsedAutomatically = false,
+                          )
                         if (restoredTraceEvents.isNotEmpty()) {
                             panel.appendStreamContent(text = "", events = restoredTraceEvents)
                         }
@@ -3364,7 +3379,11 @@ class ImprovedChatPanel(
         return panel
     }
 
-    private fun addAssistantMessage(): ChatMessagePanel {
+    private fun addAssistantMessage(
+        startedAtMillis: Long? = null,
+        finishedAtMillis: Long? = null,
+        captureElapsedAutomatically: Boolean = true,
+    ): ChatMessagePanel {
         val mode = currentInteractionMode()
         val panel = ChatMessagePanel(
             ChatMessagePanel.MessageRole.ASSISTANT,
@@ -3374,6 +3393,9 @@ class ImprovedChatPanel(
             onWorkflowFileOpen = ::handleWorkflowFileOpen,
             onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
             workflowSectionsEnabled = workflowSectionRenderingEnabledFor(mode),
+            startedAtMillis = startedAtMillis,
+            finishedAtMillis = finishedAtMillis,
+            captureElapsedAutomatically = captureElapsedAutomatically,
         )
         messagesPanel.addMessage(panel)
         return panel
@@ -5103,7 +5125,8 @@ class ImprovedChatPanel(
         stopRequested.set(false)
         activeLlmRequest = ActiveLlmRequest(providerId = resolvedProviderId, requestId = requestId)
         setSendingState(true)
-        currentAssistantPanel = addAssistantMessage()
+        val assistantStartedAtMillis = System.currentTimeMillis()
+        currentAssistantPanel = addAssistantMessage(startedAtMillis = assistantStartedAtMillis)
 
         activeOperationJob = scope.launch {
             val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
@@ -5111,6 +5134,7 @@ class ImprovedChatPanel(
             val pendingDelta = StringBuilder()
             val pendingEvents = mutableListOf<ChatStreamEvent>()
             val autoStopIssued = AtomicBoolean(false)
+            var assistantFinishedAtMillis: Long? = null
             var pendingChunks = 0
             var lastFlushAtNanos = System.nanoTime()
 
@@ -5174,6 +5198,7 @@ class ImprovedChatPanel(
                     pendingChunks += 1
 
                     if (chunk.isLast) {
+                        assistantFinishedAtMillis = System.currentTimeMillis()
                         flushPending(force = true)
                         ApplicationManager.getApplication().invokeLater {
                             if (project.isDisposed || _isDisposed) {
@@ -5193,7 +5218,11 @@ class ImprovedChatPanel(
                         sessionId = sessionId,
                         role = ConversationRole.ASSISTANT,
                         content = assistantMessage.content,
-                        metadataJson = TraceEventMetadataCodec.encode(streamedTraceEvents),
+                        metadataJson = TraceEventMetadataCodec.encode(
+                            events = streamedTraceEvents,
+                            startedAtMillis = assistantStartedAtMillis,
+                            finishedAtMillis = assistantFinishedAtMillis ?: System.currentTimeMillis(),
+                        ),
                     )
                 }
             } catch (error: Throwable) {
@@ -5215,7 +5244,11 @@ class ImprovedChatPanel(
                                 sessionId = sessionId,
                                 role = ConversationRole.ASSISTANT,
                                 content = assistantMessage.content,
-                                metadataJson = TraceEventMetadataCodec.encode(streamedTraceEvents),
+                                metadataJson = TraceEventMetadataCodec.encode(
+                                    events = streamedTraceEvents,
+                                    startedAtMillis = assistantStartedAtMillis,
+                                    finishedAtMillis = assistantFinishedAtMillis ?: System.currentTimeMillis(),
+                                ),
                             )
                         }
                     }

@@ -49,6 +49,7 @@ import javax.swing.text.StyleConstants
 import javax.swing.text.StyledDocument
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.event.MouseWheelEvent
 import kotlin.math.min
 
 /**
@@ -64,6 +65,9 @@ open class ChatMessagePanel(
     private val onWorkflowCommandExecute: ((String) -> Unit)? = null,
     private var workflowSectionsEnabled: Boolean = true,
     private val attachedImagePaths: List<String> = emptyList(),
+    startedAtMillis: Long? = null,
+    finishedAtMillis: Long? = null,
+    private val captureElapsedAutomatically: Boolean = true,
 ) : JPanel(BorderLayout()) {
 
     private val contentPane = JTextPane()
@@ -78,6 +82,8 @@ open class ChatMessagePanel(
     private var outputExpanded = false
     private var outputFilterLevel = OutputFilterLevel.KEY
     private var messageFinished = false
+    private var messageStartedAtMillis: Long? = startedAtMillis?.takeIf { it >= 0L }
+    private var messageFinishedAtMillis: Long? = finishedAtMillis?.takeIf { it >= 0L }
     private var lightweightMode = false
     private var contentVersion = 0
     private var traceVersion = 0
@@ -144,6 +150,14 @@ open class ChatMessagePanel(
     }
 
     fun appendStreamContent(text: String, events: List<ChatStreamEvent>) {
+        if (
+            captureElapsedAutomatically &&
+            role == MessageRole.ASSISTANT &&
+            messageStartedAtMillis == null &&
+            (events.isNotEmpty() || text.isNotEmpty())
+        ) {
+            messageStartedAtMillis = System.currentTimeMillis()
+        }
         if (role == MessageRole.ASSISTANT && events.isNotEmpty()) {
             events.forEach { event ->
                 traceAssembler.onStructuredEvent(event)
@@ -206,6 +220,9 @@ open class ChatMessagePanel(
      * 完成消息（流式结束后调用）
      */
     fun finishMessage() {
+        if (captureElapsedAutomatically && role == MessageRole.ASSISTANT && messageFinishedAtMillis == null) {
+            messageFinishedAtMillis = System.currentTimeMillis()
+        }
         messageFinished = true
         traceAssembler.markRunningItemsDone()
         traceVersion += 1
@@ -796,9 +813,14 @@ open class ChatMessagePanel(
         val readCount = items.count { it.kind == ExecutionTimelineParser.Kind.READ }
         val editCount = items.count { it.kind == ExecutionTimelineParser.Kind.EDIT }
         val verifyCount = items.count { it.kind == ExecutionTimelineParser.Kind.VERIFY }
+        val stepCount = items.size
         summaryLeft.add(createSummaryBadge("${kindLabel(ExecutionTimelineParser.Kind.READ)} $readCount"))
         summaryLeft.add(createSummaryBadge("${kindLabel(ExecutionTimelineParser.Kind.EDIT)} $editCount"))
         summaryLeft.add(createSummaryBadge("${kindLabel(ExecutionTimelineParser.Kind.VERIFY)} $verifyCount"))
+        summaryLeft.add(createSummaryBadge(SpecCodingBundle.message("chat.timeline.summary.steps", stepCount)))
+        elapsedSummaryText()?.let { elapsed ->
+            summaryLeft.add(createSummaryBadge(SpecCodingBundle.message("chat.timeline.summary.elapsed", elapsed)))
+        }
         summaryBar.add(summaryLeft, BorderLayout.CENTER)
 
         val toggleButton = JButton(
@@ -1170,10 +1192,41 @@ open class ChatMessagePanel(
             border = JBUI.Borders.empty()
             viewportBorder = JBUI.Borders.empty()
             horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
-            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_NEVER
+            isWheelScrollingEnabled = false
             viewport.background = CODE_CARD_CODE_BG
             isOpaque = false
         }
+
+        // Forward wheel gestures to the outer chat scroller so code cards never block list scrolling.
+        val forwardWheelToParentScroller: (MouseWheelEvent) -> Unit = wheelForwarder@{ event ->
+            if (event.isConsumed) return@wheelForwarder
+            val sourceComponent = event.component ?: return@wheelForwarder
+            val parentScrollPane =
+                SwingUtilities.getAncestorOfClass(JScrollPane::class.java, scrollPane) as? JScrollPane
+                    ?: return@wheelForwarder
+            val pointInParent = SwingUtilities.convertPoint(sourceComponent, event.point, parentScrollPane)
+            val forwarded = MouseWheelEvent(
+                parentScrollPane,
+                event.id,
+                event.`when`,
+                event.modifiersEx,
+                pointInParent.x,
+                pointInParent.y,
+                event.xOnScreen,
+                event.yOnScreen,
+                event.clickCount,
+                event.isPopupTrigger,
+                event.scrollType,
+                event.scrollAmount,
+                event.wheelRotation,
+                event.preciseWheelRotation,
+            )
+            parentScrollPane.dispatchEvent(forwarded)
+            event.consume()
+        }
+        codeArea.addMouseWheelListener(forwardWheelToParentScroller)
+        scrollPane.addMouseWheelListener(forwardWheelToParentScroller)
 
         val lineCount = normalizedCode.lineSequence().count().coerceAtLeast(1)
         val lineHeight = codeArea.getFontMetrics(codeArea.font).height
@@ -1215,8 +1268,8 @@ open class ChatMessagePanel(
 
         fun applyExpandState() {
             val visibleLines = when {
-                !hasCollapseToggle -> lineCount.coerceIn(1, CODE_CARD_MAX_VISIBLE_LINES)
-                expanded -> lineCount.coerceIn(CODE_CARD_MIN_VISIBLE_LINES, CODE_CARD_MAX_VISIBLE_LINES)
+                !hasCollapseToggle -> lineCount
+                expanded -> lineCount
                 else -> lineCount.coerceIn(1, CODE_CARD_COLLAPSED_VISIBLE_LINES)
             }
             val preferredHeight = lineHeight * visibleLines + JBUI.scale(12)
@@ -1734,6 +1787,30 @@ open class ChatMessagePanel(
         return when (level) {
             OutputFilterLevel.KEY -> SpecCodingBundle.message("chat.timeline.output.filter.key")
             OutputFilterLevel.ALL -> SpecCodingBundle.message("chat.timeline.output.filter.all")
+        }
+    }
+
+    private fun elapsedSummaryText(): String? {
+        if (!messageFinished) return null
+        val start = messageStartedAtMillis ?: return null
+        val finish = messageFinishedAtMillis ?: return null
+        val durationMillis = (finish - start).coerceAtLeast(0L)
+        return formatElapsedDuration(durationMillis)
+    }
+
+    private fun formatElapsedDuration(durationMillis: Long): String {
+        if (durationMillis < 60_000L) {
+            val seconds = durationMillis / 1000.0
+            return String.format(Locale.US, "%.1fs", seconds)
+        }
+        val totalSeconds = durationMillis / 1000L
+        val hours = totalSeconds / 3600L
+        val minutes = (totalSeconds % 3600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) {
+            "${hours}h ${minutes}m ${seconds}s"
+        } else {
+            "${minutes}m ${seconds}s"
         }
     }
 
@@ -2319,8 +2396,6 @@ open class ChatMessagePanel(
         private const val MAX_COMMAND_DISPLAY_LENGTH = 26
         private const val MAX_ACTION_FILE_DISPLAY_LENGTH = 30
         private const val MARKDOWN_SEGMENT_GAP = 6
-        private const val CODE_CARD_MIN_VISIBLE_LINES = 3
-        private const val CODE_CARD_MAX_VISIBLE_LINES = 14
         private const val CODE_CARD_COLLAPSE_THRESHOLD_LINES = 8
         private const val CODE_CARD_COLLAPSED_VISIBLE_LINES = 4
         private const val TRACE_DETAIL_PREVIEW_LENGTH = 220

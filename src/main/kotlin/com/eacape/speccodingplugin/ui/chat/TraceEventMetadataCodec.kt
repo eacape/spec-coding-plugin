@@ -16,48 +16,84 @@ import kotlinx.serialization.json.longOrNull
  */
 internal object TraceEventMetadataCodec {
 
+    data class DecodedMetadata(
+        val events: List<ChatStreamEvent>,
+        val startedAtMillis: Long?,
+        val finishedAtMillis: Long?,
+    )
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
         explicitNulls = false
     }
 
-    fun encode(events: List<ChatStreamEvent>): String? {
+    fun encode(
+        events: List<ChatStreamEvent>,
+        startedAtMillis: Long? = null,
+        finishedAtMillis: Long? = null,
+    ): String? {
         val normalized = events
             .filter { it.detail.isNotBlank() }
             .takeLast(MAX_TRACE_EVENTS)
-        if (normalized.isEmpty()) return null
+        val normalizedStartedAt = startedAtMillis?.takeIf { it >= 0L }
+        val normalizedFinishedAt = finishedAtMillis?.takeIf { it >= 0L }
+        if (normalized.isEmpty() && normalizedStartedAt == null && normalizedFinishedAt == null) return null
 
         val root = buildJsonObject {
             put(FORMAT_KEY, FORMAT_VALUE)
-            put(
-                TRACE_EVENTS_KEY,
-                buildJsonArray {
-                    normalized.forEach { event ->
-                        add(event.toJson())
+            normalizedStartedAt?.let { put(STARTED_AT_KEY, it) }
+            normalizedFinishedAt?.let { put(FINISHED_AT_KEY, it) }
+            if (normalized.isNotEmpty()) {
+                put(
+                    TRACE_EVENTS_KEY,
+                    buildJsonArray {
+                        normalized.forEach { event ->
+                            add(event.toJson())
+                        }
                     }
-                }
-            )
+                )
+            }
         }
         return root.toString()
     }
 
     fun decode(metadataJson: String?): List<ChatStreamEvent> {
-        if (metadataJson.isNullOrBlank()) return emptyList()
+        return decodePayload(metadataJson).events
+    }
+
+    fun decodePayload(metadataJson: String?): DecodedMetadata {
+        if (metadataJson.isNullOrBlank()) {
+            return DecodedMetadata(
+                events = emptyList(),
+                startedAtMillis = null,
+                finishedAtMillis = null,
+            )
+        }
         val root = runCatching { json.parseToJsonElement(metadataJson).asObject() }
             .getOrNull()
-            ?: return emptyList()
+            ?: return DecodedMetadata(
+                events = emptyList(),
+                startedAtMillis = null,
+                finishedAtMillis = null,
+            )
 
         val array = when (val node = root[TRACE_EVENTS_KEY]) {
             is JsonArray -> node
             else -> null
-        } ?: return emptyList()
+        }
+        val events = array
+            ?.asSequence()
+            ?.mapNotNull { it.asObject()?.toTraceEvent() }
+            ?.take(MAX_TRACE_EVENTS)
+            ?.toList()
+            .orEmpty()
 
-        return array
-            .asSequence()
-            .mapNotNull { it.asObject()?.toTraceEvent() }
-            .take(MAX_TRACE_EVENTS)
-            .toList()
+        return DecodedMetadata(
+            events = events,
+            startedAtMillis = root.long(STARTED_AT_KEY)?.takeIf { it >= 0L },
+            finishedAtMillis = root.long(FINISHED_AT_KEY)?.takeIf { it >= 0L },
+        )
     }
 
     private fun ChatStreamEvent.toJson(): JsonObject {
@@ -147,5 +183,7 @@ internal object TraceEventMetadataCodec {
     private const val FORMAT_KEY = "format"
     private const val FORMAT_VALUE = "chat_trace_v1"
     private const val TRACE_EVENTS_KEY = "trace_events"
+    private const val STARTED_AT_KEY = "started_at_ms"
+    private const val FINISHED_AT_KEY = "finished_at_ms"
     private const val MAX_TRACE_EVENTS = 600
 }

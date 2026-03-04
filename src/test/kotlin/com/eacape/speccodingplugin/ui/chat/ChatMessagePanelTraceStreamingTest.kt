@@ -19,6 +19,7 @@ import java.nio.file.Path
 import javax.imageio.ImageIO
 import javax.swing.JButton
 import javax.swing.JLabel
+import javax.swing.JScrollPane
 import javax.swing.JTextArea
 import javax.swing.JTextPane
 import javax.swing.SwingUtilities
@@ -468,6 +469,65 @@ class ChatMessagePanelTraceStreamingTest {
 
         assertTrue(labels.any { it.contains(doneText) })
         assertFalse(labels.any { it.contains(runningText) })
+    }
+
+    @Test
+    fun `finished trace should show elapsed summary badge`() {
+        val panel = ChatMessagePanel(
+            role = ChatMessagePanel.MessageRole.ASSISTANT,
+            startedAtMillis = System.currentTimeMillis() - 13_700L,
+        )
+
+        runOnEdt {
+            panel.appendStreamEvent(
+                ChatStreamEvent(
+                    kind = ChatTraceKind.TASK,
+                    detail = "implement elapsed indicator",
+                    status = ChatTraceStatus.DONE,
+                )
+            )
+            panel.finishMessage()
+        }
+
+        val elapsedPrefix = SpecCodingBundle.message("chat.timeline.summary.elapsed", "").trim()
+        val labels = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .mapNotNull { it.text }
+            .toList()
+
+        assertTrue(
+            labels.any { text ->
+                text.startsWith(elapsedPrefix) &&
+                    text.length > elapsedPrefix.length &&
+                    text.contains("s")
+            }
+        )
+    }
+
+    @Test
+    fun `restored trace without elapsed metadata should not show elapsed summary badge`() {
+        val panel = ChatMessagePanel(
+            role = ChatMessagePanel.MessageRole.ASSISTANT,
+            captureElapsedAutomatically = false,
+        )
+
+        runOnEdt {
+            panel.appendStreamEvent(
+                ChatStreamEvent(
+                    kind = ChatTraceKind.TASK,
+                    detail = "restored task",
+                    status = ChatTraceStatus.DONE,
+                )
+            )
+            panel.finishMessage()
+        }
+
+        val elapsedPrefix = SpecCodingBundle.message("chat.timeline.summary.elapsed", "").trim()
+        val labels = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .mapNotNull { it.text }
+            .toList()
+        assertFalse(labels.any { it.startsWith(elapsedPrefix) })
     }
 
     @Test
@@ -923,6 +983,63 @@ class ChatMessagePanelTraceStreamingTest {
             .filterIsInstance<JTextArea>()
             .joinToString("\n") { it.text.orEmpty() }
         assertTrue(codeText.contains("println(\"hello\")"))
+    }
+
+    @Test
+    fun `code card should hide vertical scrollbar when collapsed and expand to full content height`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val content = buildString {
+            appendLine("```kotlin")
+            (1..10).forEach { index -> appendLine("println($index)") }
+            appendLine("```")
+        }.trimEnd()
+
+        runOnEdt {
+            panel.appendContent(content)
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.message.code.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected expand-code action for collapsed code card")
+
+        val codeScrollPane = collectDescendants(panel)
+            .filterIsInstance<JScrollPane>()
+            .firstOrNull { it.viewport.view is JTextArea }
+        assertNotNull(codeScrollPane, "Expected scroll pane for code card")
+        assertEquals(
+            JScrollPane.VERTICAL_SCROLLBAR_NEVER,
+            codeScrollPane!!.verticalScrollBarPolicy,
+            "Code card should not show a right-side scrollbar when collapsed",
+        )
+        assertFalse(
+            codeScrollPane.isWheelScrollingEnabled,
+            "Code card should delegate mouse wheel gestures to the parent chat scroller",
+        )
+
+        val collapsedHeight = codeScrollPane.preferredSize.height
+
+        runOnEdt { expandButton!!.doClick() }
+
+        val expandedHeight = codeScrollPane.preferredSize.height
+        assertTrue(expandedHeight > collapsedHeight, "Expanded code card should grow to show full content")
+
+        val codeArea = codeScrollPane.viewport.view as JTextArea
+        val lineCount = codeArea.text
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .count()
+            .coerceAtLeast(1)
+        val lineHeight = codeArea.getFontMetrics(codeArea.font).height
+        val expectedExpandedHeight = lineHeight * lineCount + JBUI.scale(12)
+        assertEquals(
+            expectedExpandedHeight,
+            expandedHeight,
+            "Expanded code card should reserve full height for every code line",
+        )
     }
 
     @Test

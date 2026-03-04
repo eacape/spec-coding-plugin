@@ -60,3 +60,7 @@ logs/
 /.gradle-user/
 /.github/
 /.openspec/
+/.gradle-test-home-3/
+/.gradle-test-home/
+/.gradle-local/
+/.gradle-user/

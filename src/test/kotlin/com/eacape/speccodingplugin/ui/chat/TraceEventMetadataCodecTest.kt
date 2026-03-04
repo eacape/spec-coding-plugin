@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.stream.ChatTraceKind
 import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -46,5 +47,45 @@ class TraceEventMetadataCodecTest {
     fun `decode should tolerate invalid metadata json`() {
         val restored = TraceEventMetadataCodec.decode("{invalid-json")
         assertTrue(restored.isEmpty())
+    }
+
+    @Test
+    fun `encode and decode payload should round trip elapsed timestamps`() {
+        val startedAtMillis = 1_700_000_000_000L
+        val finishedAtMillis = startedAtMillis + 13_700L
+        val encoded = TraceEventMetadataCodec.encode(
+            events = listOf(
+                ChatStreamEvent(
+                    kind = ChatTraceKind.TASK,
+                    detail = "stream task",
+                    status = ChatTraceStatus.DONE,
+                )
+            ),
+            startedAtMillis = startedAtMillis,
+            finishedAtMillis = finishedAtMillis,
+        )
+
+        val restored = TraceEventMetadataCodec.decodePayload(encoded)
+        assertEquals(1, restored.events.size)
+        assertEquals(startedAtMillis, restored.startedAtMillis)
+        assertEquals(finishedAtMillis, restored.finishedAtMillis)
+    }
+
+    @Test
+    fun `decode payload should keep compatibility for metadata without elapsed timestamps`() {
+        val encoded = TraceEventMetadataCodec.encode(
+            events = listOf(
+                ChatStreamEvent(
+                    kind = ChatTraceKind.TOOL,
+                    detail = "tool:read",
+                    status = ChatTraceStatus.INFO,
+                )
+            ),
+        )
+
+        val restored = TraceEventMetadataCodec.decodePayload(encoded)
+        assertEquals(1, restored.events.size)
+        assertNull(restored.startedAtMillis)
+        assertNull(restored.finishedAtMillis)
     }
 }
