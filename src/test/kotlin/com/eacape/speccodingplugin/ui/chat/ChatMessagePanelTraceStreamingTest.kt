@@ -20,9 +20,9 @@ import javax.imageio.ImageIO
 import javax.swing.JButton
 import javax.swing.JLabel
 import javax.swing.JScrollPane
-import javax.swing.JTextArea
 import javax.swing.JTextPane
 import javax.swing.SwingUtilities
+import javax.swing.text.StyleConstants
 
 class ChatMessagePanelTraceStreamingTest {
     @TempDir
@@ -330,6 +330,73 @@ class ChatMessagePanelTraceStreamingTest {
         assertNotNull(htmlPane, "Expected html-mode text pane for screenshot reported table content")
         assertFalse(htmlPane!!.text.contains("| 维度 | Speckit（Spec Kit）"))
         assertFalse(htmlPane.text.contains("|---|---|---|"))
+    }
+
+    @Test
+    fun `assistant answer should not leak raw bold markers when table content uses html renderer`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val markdown = """
+            这是原文 **不是！** `fromJson` 完全不是固定的，也不是 Dart 内置的构造函数。
+            | 场景 | 常用命名 | 示例 |
+            |---|---|---|
+            | 从 JSON 创建 | `fromJson` | `User.fromJson(json)` |
+            | 转换为 JSON | `toJson` | `user.toJson()` |
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(markdown)
+            panel.finishMessage()
+        }
+
+        val allText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertFalse(allText.contains("**不是！**"))
+    }
+
+    @Test
+    fun `output detail should parse markdown when bold markers use fullwidth stars`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val markdownLikeOutput = """
+            [Output] ---
+            [Output] 🚀 接下来做什么？
+            [Output] 1⃣＊＊继续实战练习＊＊
+            [Output] 2⃣＊＊进入 Flutter 基础＊＊
+            [Output] 3⃣＊＊深入某个 Dart 特性＊＊
+            [Output] 4⃣＊＊做一个综合项目＊＊
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(markdownLikeOutput)
+            panel.finishMessage()
+        }
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == expandText }
+        assertNotNull(expandButton, "Expected output expand button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val keyFilterText = SpecCodingBundle.message(
+            "chat.timeline.output.filter.toggle",
+            SpecCodingBundle.message("chat.timeline.output.filter.key"),
+        )
+        val filterButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == keyFilterText }
+        assertNotNull(filterButton, "Expected output filter button in key mode")
+        runOnEdt { filterButton!!.doClick() }
+
+        val allText = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .joinToString("\n") { it.text.orEmpty() }
+
+        assertFalse(allText.contains("＊＊继续实战练习＊＊"))
+        assertFalse(allText.contains("＊＊进入 Flutter 基础＊＊"))
+        assertFalse(allText.contains("＊＊深入某个 Dart 特性＊＊"))
+        assertFalse(allText.contains("＊＊做一个综合项目＊＊"))
     }
 
     @Test
@@ -980,9 +1047,47 @@ class ChatMessagePanelTraceStreamingTest {
         assertTrue(markdownText.contains("after"))
 
         val codeText = collectDescendants(panel)
-            .filterIsInstance<JTextArea>()
+            .filterIsInstance<JTextPane>()
             .joinToString("\n") { it.text.orEmpty() }
         assertTrue(codeText.contains("println(\"hello\")"))
+    }
+
+    @Test
+    fun `java fenced code block should style keyword differently from identifier`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+        val content = """
+            ```java
+            public class Singleton {
+                private Singleton() {}
+            }
+            ```
+        """.trimIndent()
+
+        runOnEdt {
+            panel.appendContent(content)
+            panel.finishMessage()
+        }
+
+        val codePane = collectDescendants(panel)
+            .filterIsInstance<JTextPane>()
+            .firstOrNull { it.text.contains("public class Singleton") }
+        assertNotNull(codePane, "Expected code text pane for Java fenced block")
+
+        val text = codePane!!.text
+        val keywordIndex = text.indexOf("public")
+        val identifierIndex = text.indexOf("Singleton")
+        assertTrue(keywordIndex >= 0 && identifierIndex >= 0)
+
+        val keywordAttrs = codePane.styledDocument.getCharacterElement(keywordIndex).attributes
+        val identifierAttrs = codePane.styledDocument.getCharacterElement(identifierIndex).attributes
+        val keywordFg = StyleConstants.getForeground(keywordAttrs)
+        val identifierFg = StyleConstants.getForeground(identifierAttrs)
+        val keywordBold = StyleConstants.isBold(keywordAttrs)
+        val identifierBold = StyleConstants.isBold(identifierAttrs)
+        assertTrue(
+            keywordFg != identifierFg || keywordBold != identifierBold,
+            "Expected Java keyword to be styled differently from identifier",
+        )
     }
 
     @Test
@@ -1007,7 +1112,7 @@ class ChatMessagePanelTraceStreamingTest {
 
         val codeScrollPane = collectDescendants(panel)
             .filterIsInstance<JScrollPane>()
-            .firstOrNull { it.viewport.view is JTextArea }
+            .firstOrNull { it.viewport.view is JTextPane }
         assertNotNull(codeScrollPane, "Expected scroll pane for code card")
         assertEquals(
             JScrollPane.VERTICAL_SCROLLBAR_NEVER,
@@ -1026,7 +1131,7 @@ class ChatMessagePanelTraceStreamingTest {
         val expandedHeight = codeScrollPane.preferredSize.height
         assertTrue(expandedHeight > collapsedHeight, "Expanded code card should grow to show full content")
 
-        val codeArea = codeScrollPane.viewport.view as JTextArea
+        val codeArea = codeScrollPane.viewport.view as JTextPane
         val lineCount = codeArea.text
             .replace("\r\n", "\n")
             .replace('\r', '\n')

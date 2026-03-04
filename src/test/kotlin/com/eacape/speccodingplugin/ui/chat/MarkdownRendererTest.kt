@@ -33,6 +33,73 @@ class MarkdownRendererTest {
     }
 
     @Test
+    fun `render should normalize fullwidth bold markers in chinese content`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, "1 ＊＊命名构造函数 (Named Constructor)＊＊")
+        }
+
+        assertTrue(pane.text.contains("命名构造函数 (Named Constructor)"))
+        assertFalse(pane.text.contains("＊＊"))
+    }
+
+    @Test
+    fun `render should parse bold when invisible chars split delimiter stars`() {
+        val pane = JTextPane()
+        val markdown = "1 *\u200B*命名构造函数*\u200B*"
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, markdown)
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("命名构造函数"))
+        assertFalse(text.contains("*\u200B*"))
+        assertFalse(text.contains("**"))
+    }
+
+    @Test
+    fun `render should normalize fullwidth bold markers when markdown table triggers html engine`() {
+        val pane = JTextPane()
+        val markdown = """
+            ＊＊命名构造函数＊＊
+            | 字段 | 说明 |
+            | --- | --- |
+            | fromJson | 约定命名 |
+        """.trimIndent()
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, markdown)
+        }
+
+        val text = pane.text
+        assertTrue(pane.contentType.contains("html"))
+        assertFalse(text.contains("＊＊"))
+        assertFalse(text.contains("**命名构造函数**"))
+    }
+
+    @Test
+    fun `render should support ordered list with right parenthesis marker`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                1) **第一项**
+                2) 第二项
+                """.trimIndent(),
+            )
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("1. 第一项"))
+        assertTrue(text.contains("2. 第二项"))
+        assertFalse(text.contains("**"))
+    }
+
+    @Test
     fun `render should remove code fences and keep code body`() {
         val pane = JTextPane()
 

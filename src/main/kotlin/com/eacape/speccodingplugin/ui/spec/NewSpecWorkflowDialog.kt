@@ -158,5 +158,20 @@ class NewSpecWorkflowDialog(
         return listOf(noneOption) + candidates
     }
 
+    override fun getInitialSize(): Dimension {
+        val base = super.getInitialSize()
+        val minWidth = JBUI.scale(INITIAL_DIALOG_WIDTH)
+        val minHeight = JBUI.scale(INITIAL_DIALOG_HEIGHT)
+        return Dimension(
+            (base?.width ?: 0).coerceAtLeast(minWidth),
+            (base?.height ?: 0).coerceAtLeast(minHeight),
+        )
+    }
+
     override fun getPreferredFocusedComponent() = titleField
+
+    companion object {
+        private const val INITIAL_DIALOG_WIDTH = 560
+        private const val INITIAL_DIALOG_HEIGHT = 430
+    }
 }

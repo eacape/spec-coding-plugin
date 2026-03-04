@@ -4,6 +4,8 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.i18n.InterfaceLanguage
+import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
+import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.i18n.LocaleManager
 import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
 import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
@@ -28,6 +30,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBCheckBox
@@ -154,6 +157,8 @@ class SettingsPanel(
     private val sectionList = JBList(sectionListModel)
     private val sectionCardLayout = CardLayout()
     private val sectionCardPanel = JPanel(sectionCardLayout)
+    private var basicSectionPanel: JPanel? = null
+    private var skillsSectionPanel: JPanel? = null
     private val sidebarToggleButton = JButton()
     private lateinit var sidebarCardPanel: JPanel
     private var sidebarExpanded = false
@@ -178,6 +183,7 @@ class SettingsPanel(
             loadFromSettings()
         }
         installAutoSaveBindings()
+        subscribeToLocaleEvents()
         sectionList.selectedIndex = 0
     }
 
@@ -189,6 +195,13 @@ class SettingsPanel(
         defaultProviderCombo.addActionListener {
             refreshModelCombo()
             scheduleAutoSave()
+        }
+        interfaceLanguageCombo.addActionListener {
+            if (syncingUi || isDisposed || project.isDisposed) return@addActionListener
+            if (autoSaveTimer.isRunning) {
+                autoSaveTimer.stop()
+            }
+            persistSettings(reason = "settings-panel-language-immediate")
         }
         skillDraftProviderCombo.addActionListener {
             refreshSkillDraftModelCombo()
@@ -289,10 +302,12 @@ class SettingsPanel(
         }
 
         sectionCardPanel.isOpaque = false
-        sectionCardPanel.add(createBasicSection(), SidebarSection.BASIC.cardId)
+        basicSectionPanel = createBasicSection()
+        sectionCardPanel.add(basicSectionPanel, SidebarSection.BASIC.cardId)
         sectionCardPanel.add(createEmbeddedSection(promptPanel), SidebarSection.PROMPTS.cardId)
         sectionCardPanel.add(createEmbeddedSection(mcpPanel), SidebarSection.MCP.cardId)
-        sectionCardPanel.add(createSkillsSection(), SidebarSection.SKILLS.cardId)
+        skillsSectionPanel = createSkillsSection()
+        sectionCardPanel.add(skillsSectionPanel, SidebarSection.SKILLS.cardId)
         sectionCardPanel.add(createEmbeddedSection(hookPanel), SidebarSection.HOOKS.cardId)
     }
 
@@ -470,21 +485,24 @@ class SettingsPanel(
         skillsList.selectionBackground = JBColor(Color(216, 231, 252), Color(79, 96, 121))
         skillsList.selectionForeground = SIDEBAR_ITEM_SELECTED_FG
         skillsList.cellRenderer = SkillItemRenderer()
-        skillsList.addListSelectionListener {
-            if (!it.valueIsAdjusting) {
-                loadSelectedSkillForEditing(skillsList.selectedValue)
+        if (skillsList.getClientProperty("settings.skills.listenersInstalled") != true) {
+            skillsList.putClientProperty("settings.skills.listenersInstalled", true)
+            skillsList.addListSelectionListener {
+                if (!it.valueIsAdjusting) {
+                    loadSelectedSkillForEditing(skillsList.selectedValue)
+                }
             }
+            skillsList.addMouseMotionListener(object : MouseMotionAdapter() {
+                override fun mouseMoved(event: java.awt.event.MouseEvent) {
+                    updateHoveredSkillIndex(event.point)
+                }
+            })
+            skillsList.addMouseListener(object : MouseAdapter() {
+                override fun mouseExited(event: java.awt.event.MouseEvent) {
+                    updateHoveredSkillIndex(null)
+                }
+            })
         }
-        skillsList.addMouseMotionListener(object : MouseMotionAdapter() {
-            override fun mouseMoved(event: java.awt.event.MouseEvent) {
-                updateHoveredSkillIndex(event.point)
-            }
-        })
-        skillsList.addMouseListener(object : MouseAdapter() {
-            override fun mouseExited(event: java.awt.event.MouseEvent) {
-                updateHoveredSkillIndex(null)
-            }
-        })
 
         skillMarkdownArea.lineWrap = false
         skillMarkdownArea.wrapStyleWord = false
@@ -830,7 +848,6 @@ class SettingsPanel(
 
     private fun installAutoSaveBindings() {
         defaultModelCombo.addActionListener { scheduleAutoSave() }
-        interfaceLanguageCombo.addActionListener { scheduleAutoSave() }
         skillTargetScopeCombo.addActionListener { scheduleAutoSave() }
         skillTargetChannelCombo.addActionListener { scheduleAutoSave() }
         skillDraftModelCombo.addActionListener { scheduleAutoSave() }
@@ -856,6 +873,84 @@ class SettingsPanel(
                 },
             )
         }
+    }
+
+    private fun subscribeToLocaleEvents() {
+        project.messageBus.connect(this).subscribe(
+            LocaleChangedListener.TOPIC,
+            object : LocaleChangedListener {
+                override fun onLocaleChanged(event: LocaleChangedEvent) {
+                    SwingUtilities.invokeLater {
+                        if (isDisposed || project.isDisposed) return@invokeLater
+                        refreshLocalizedTexts()
+                    }
+                }
+            },
+        )
+    }
+
+    private fun refreshLocalizedTexts() {
+        withUiSync {
+            claudeCodeCliPathField.emptyText.text = SpecCodingBundle.message("settings.cli.claudePath.placeholder")
+            codexCliPathField.emptyText.text = SpecCodingBundle.message("settings.cli.codexPath.placeholder")
+            skillRequirementField.emptyText.text = SpecCodingBundle.message("settings.skills.generate.placeholder")
+            skillMarkdownArea.toolTipText = SpecCodingBundle.message("settings.skills.editor.markdown.placeholder")
+            useProxyCheckBox.text = SpecCodingBundle.message("settings.proxy.use")
+            autoSaveCheckBox.text = SpecCodingBundle.message("settings.other.autoSave")
+
+            detectCliButton.text = if (detectCliButton.isEnabled) {
+                SpecCodingBundle.message("settings.cli.detectButton")
+            } else {
+                SpecCodingBundle.message("settings.cli.detecting")
+            }
+            styleActionButton(detectCliButton)
+
+            skillRefreshButton.text = SpecCodingBundle.message("settings.skills.discover.refresh")
+            skillNewDraftButton.text = SpecCodingBundle.message("settings.skills.editor.new")
+            skillAiDraftButton.text = SpecCodingBundle.message("settings.skills.generate.action")
+            skillDeleteButton.text = SpecCodingBundle.message("settings.skills.editor.delete")
+            skillSaveButton.text = SpecCodingBundle.message("settings.skills.editor.save")
+            skillSaveCurrentButton.text = SpecCodingBundle.message("settings.skills.editor.saveCurrent")
+
+            styleSkillActionIconButton(skillRefreshButton, SKILL_ACTION_REFRESH_ICON)
+            styleSkillActionIconButton(skillNewDraftButton, SKILL_ACTION_NEW_ICON)
+            styleSkillActionIconButton(skillAiDraftButton, SKILL_ACTION_AI_GENERATE_ICON)
+            styleSkillActionIconButton(skillDeleteButton, SKILL_ACTION_DELETE_ICON)
+            styleSkillActionIconButton(skillSaveButton, SKILL_ACTION_SAVE_TARGET_ICON)
+            styleSkillActionIconButton(skillSaveCurrentButton, SKILL_ACTION_SAVE_CURRENT_ICON)
+
+            rebuildLocalizedSectionCards()
+            setSidebarExpanded(sidebarExpanded)
+            sectionList.revalidate()
+            sectionList.repaint()
+            updateCliStatusLabels()
+            updateSettingsContentTitle()
+            revalidate()
+            repaint()
+        }
+    }
+
+    private fun rebuildLocalizedSectionCards() {
+        val selectedSection = sectionList.selectedValue ?: SidebarSection.BASIC
+
+        basicSectionPanel?.let(sectionCardPanel::remove)
+        skillsSectionPanel?.let(sectionCardPanel::remove)
+
+        basicSectionPanel = createBasicSection()
+        skillsSectionPanel = createSkillsSection()
+        sectionCardPanel.add(basicSectionPanel, SidebarSection.BASIC.cardId)
+        sectionCardPanel.add(skillsSectionPanel, SidebarSection.SKILLS.cardId)
+        sectionCardLayout.show(sectionCardPanel, selectedSection.cardId)
+        sectionCardPanel.revalidate()
+        sectionCardPanel.repaint()
+    }
+
+    private fun updateSettingsContentTitle() {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Spec Code") ?: return
+        val localizedTitle = SpecCodingBundle.message("settings.tab.title")
+        toolWindow.contentManager.contents
+            .firstOrNull { it.component === this }
+            ?.displayName = localizedTitle
     }
 
     private fun scheduleAutoSave() {

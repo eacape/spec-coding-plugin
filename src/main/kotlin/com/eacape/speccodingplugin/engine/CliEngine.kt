@@ -2,6 +2,8 @@ package com.eacape.speccodingplugin.engine
 
 import com.intellij.openapi.diagnostic.thisLogger
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -173,6 +175,7 @@ abstract class CliEngine(
             )
 
             while (true) {
+                currentCoroutineContext().ensureActive()
                 val frame = frames.poll(STREAM_POLL_MILLIS, TimeUnit.MILLISECONDS)
                 if (frame != null) {
                     val parsed = when (frame.source) {
@@ -199,6 +202,7 @@ abstract class CliEngine(
             stdoutPump.join(STREAM_PUMP_JOIN_MILLIS)
             stderrPump.join(STREAM_PUMP_JOIN_MILLIS)
 
+            currentCoroutineContext().ensureActive()
             val exitCode = process.waitFor()
             val stderr = sanitizeProcessError(stderrText.toString())
             val stdout = sanitizeProcessError(stdoutText.toString())
@@ -231,6 +235,9 @@ abstract class CliEngine(
             emit(EngineChunk(delta = "", isLast = true))
         } finally {
             watchdogFuture?.cancel(true)
+            if (process.isAlive) {
+                process.destroyForcibly()
+            }
             activeProcesses.remove(requestId)
         }
     }.flowOn(Dispatchers.IO)

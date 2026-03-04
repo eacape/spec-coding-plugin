@@ -46,7 +46,9 @@ object MarkdownRenderer {
     fun render(textPane: JTextPane, markdown: String) {
         val proseFontFamily = textPane.font?.family ?: Font.SANS_SERIF
         val baseFontSize = resolveBaseFontSize(textPane)
-        val normalizedMarkdown = normalizeEscapedTableMarkdown(markdown)
+        val normalizedMarkdown = normalizeInlineMarkdownOutsideCodeFences(
+            normalizeEscapedTableMarkdown(markdown),
+        )
         if (containsMarkdownTable(normalizedMarkdown)) {
             if (renderWithMarkdownEngine(textPane, normalizedMarkdown, proseFontFamily, baseFontSize)) {
                 return
@@ -346,6 +348,28 @@ object MarkdownRenderer {
         val normalized = normalizeTableDelimiterTokens(line)
         val cells = splitTableCells(normalized)
         return if (isTableSeparatorRow(cells)) normalized else null
+    }
+
+    private fun normalizeInlineMarkdownOutsideCodeFences(markdown: String): String {
+        if (markdown.isEmpty()) return markdown
+        val lines = markdown.lines().toMutableList()
+        var inCodeFence = false
+        var changed = false
+        for (index in lines.indices) {
+            val line = lines[index]
+            val trimmed = line.trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                continue
+            }
+            if (inCodeFence) continue
+            val normalized = normalizeInlineMarkdownDelimiters(line)
+            if (normalized != line) {
+                lines[index] = normalized
+                changed = true
+            }
+        }
+        return if (changed) lines.joinToString("\n") else markdown
     }
 
     private fun normalizeTableDelimiterTokens(line: String): String {
@@ -845,8 +869,9 @@ object MarkdownRenderer {
     }
 
     private fun renderInlineHtml(text: String): String {
+        val normalized = normalizeInlineMarkdownDelimiters(text)
         return buildString {
-            tokenizeInline(text).forEach { token ->
+            tokenizeInline(normalized).forEach { token ->
                 when (token) {
                     is InlineToken.Bold -> {
                         append("<strong>")
@@ -883,7 +908,7 @@ object MarkdownRenderer {
             html, body { margin: 0; padding: 0; background: transparent; }
             body {
                 font-family: '$fontFamily';
-                line-height: 1.45;
+                line-height: 1.72;
                 color: $bodyFg;
             }
             p, ul, ol, table, pre, blockquote { margin: 0 0 10px 0; }
@@ -902,7 +927,7 @@ object MarkdownRenderer {
                 padding: 4px 7px;
                 text-align: left;
                 vertical-align: top;
-                line-height: 1.35;
+                line-height: 1.58;
                 word-break: break-word;
                 overflow-wrap: anywhere;
             }
@@ -934,7 +959,7 @@ object MarkdownRenderer {
     private fun wrapBasicHtml(bodyHtml: String, proseFontFamily: String, baseFontSize: Int): String {
         val fontFamily = escapeCssFontFamily(proseFontFamily)
         val bodyFg = toCssColor(JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
-        return "<html><body style=\"font-family:'$fontFamily';line-height:1.45;color:$bodyFg;\">$bodyHtml</body></html>"
+        return "<html><body style=\"font-family:'$fontFamily';line-height:1.72;color:$bodyFg;\">$bodyHtml</body></html>"
     }
 
     private fun ensureLegacyTableMarkup(bodyHtml: String): String {
@@ -1076,8 +1101,9 @@ object MarkdownRenderer {
         applyProseTextAttrs(bulletAttrs, proseFontFamily, baseFontSize)
 
         val trimmed = line.trimStart()
+        val orderedMatch = if (ordered) ORDERED_LIST_REGEX.matchEntire(trimmed) else null
         val bullet = if (ordered) {
-            val num = trimmed.substringBefore(".")
+            val num = orderedMatch?.groupValues?.get(1)?.ifBlank { "1" } ?: trimmed.substringBefore(".")
             "$prefix$num. "
         } else {
             "$prefix  \u2022 "
@@ -1087,7 +1113,7 @@ object MarkdownRenderer {
 
         // 列表项内容（支持行内 Markdown）
         val content = if (ordered) {
-            trimmed.substringAfter(". ", "")
+            orderedMatch?.groupValues?.get(2) ?: trimmed.substringAfter(". ", "")
         } else {
             trimmed.removePrefix("- ").removePrefix("* ")
         }
@@ -1108,7 +1134,7 @@ object MarkdownRenderer {
      * 渲染行内 Markdown（粗体、斜体、行内代码）
      */
     private fun renderInlineMarkdown(doc: StyledDocument, text: String, proseFontFamily: String, baseFontSize: Int) {
-        val tokens = tokenizeInline(text)
+        val tokens = tokenizeInline(normalizeInlineMarkdownDelimiters(text))
         for (token in tokens) {
             when (token) {
                 is InlineToken.Bold -> {
@@ -1154,6 +1180,33 @@ object MarkdownRenderer {
 
     private fun insertNewline(doc: StyledDocument) {
         doc.insertString(doc.length, "\n", SimpleAttributeSet())
+    }
+
+    /**
+     * 规范化常见的行内强调分隔符变体，避免全角星号或零宽字符导致 `**...**` 无法解析。
+     */
+    private fun normalizeInlineMarkdownDelimiters(text: String): String {
+        if (text.isEmpty()) return text
+        var changed = false
+        val normalized = buildString(text.length) {
+            text.forEach { ch ->
+                when {
+                    INLINE_MARKDOWN_IGNORED_CHARS.contains(ch) -> {
+                        changed = true
+                    }
+                    INLINE_MARKDOWN_ASTERISK_ALIASES.contains(ch) -> {
+                        if (ch != '*') changed = true
+                        append('*')
+                    }
+                    ch == INLINE_MARKDOWN_NBSP -> {
+                        changed = true
+                        append(' ')
+                    }
+                    else -> append(ch)
+                }
+            }
+        }
+        return if (changed) normalized else text
     }
 
     /**
@@ -1211,7 +1264,7 @@ object MarkdownRenderer {
     }
 
     private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+(.*)$""")
-    private val ORDERED_LIST_REGEX = Regex("""^\d+\.\s.*$""")
+    private val ORDERED_LIST_REGEX = Regex("""^(\d+)[.)]\s+(.*)$""")
     private val TABLE_OPEN_TAG_REGEX = Regex("""<table\b([^>]*)>""", RegexOption.IGNORE_CASE)
     private val TABLE_BORDER_ATTR_REGEX = Regex("""\bborder\s*=""", RegexOption.IGNORE_CASE)
     private val TABLE_CELL_SPACING_ATTR_REGEX = Regex("""\bcellspacing\s*=""", RegexOption.IGNORE_CASE)
@@ -1233,13 +1286,16 @@ object MarkdownRenderer {
         '—', '–', '―', '−', '─', '━', '﹣', '－', '‑', '‒', '﹘',
     )
     private val INVISIBLE_TABLE_CHAR_REGEX = Regex("[\\u200B\\u200C\\u200D\\uFEFF\\u2060]")
+    private val INLINE_MARKDOWN_ASTERISK_ALIASES = charArrayOf('*', '＊', '﹡', '∗')
+    private val INLINE_MARKDOWN_IGNORED_CHARS = charArrayOf('\u200B', '\u200C', '\u200D', '\uFEFF', '\u2060')
+    private const val INLINE_MARKDOWN_NBSP = '\u00A0'
     private const val PLAIN_TEXT_CONTENT_TYPE = "text/plain"
     private const val HTML_CONTENT_TYPE = "text/html"
     private const val MIN_INLINE_FONT_SIZE = 9
     private const val DEFAULT_BASE_FONT_SIZE = 11
     private const val MIN_BASE_FONT_SIZE = 9
     private const val MAX_BASE_FONT_SIZE = 36
-    private const val PROSE_LINE_SPACING = 0.30f
+    private const val PROSE_LINE_SPACING = 0.52f
 
     private data class TableBlock(
         val rows: List<List<String>>,

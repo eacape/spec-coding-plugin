@@ -792,10 +792,23 @@ class ImprovedChatPanel(
         }
         stopRequested.set(true)
         showStatus(SpecCodingBundle.message("toolwindow.status.stopping"))
-        activeLlmRequest?.let { request ->
-            llmRouter.cancel(providerId = request.providerId, requestId = request.requestId)
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || _isDisposed) {
+                return@invokeLater
+            }
+            currentAssistantPanel?.finishMessage()
         }
+        activeLlmRequest?.let { request -> cancelRequestAcrossProviders(request) }
         activeOperationJob?.cancel(CancellationException("Stopped by user"))
+    }
+
+    private fun cancelRequestAcrossProviders(request: ActiveLlmRequest) {
+        val requestId = request.requestId
+        val selectedProviderId = providerComboBox.selectedItem as? String
+        llmRouter.cancel(providerId = request.providerId, requestId = requestId)
+        llmRouter.cancel(providerId = selectedProviderId, requestId = requestId)
+        llmRouter.cancel(providerId = ClaudeCliLlmProvider.ID, requestId = requestId)
+        llmRouter.cancel(providerId = CodexCliLlmProvider.ID, requestId = requestId)
     }
 
     private fun requestAutoStopAfterMcpVerification(
@@ -999,6 +1012,9 @@ class ImprovedChatPanel(
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
+                    if (stopRequested.get()) {
+                        return@invokeLater
+                    }
                     val panel = currentAssistantPanel ?: return@invokeLater
                     panel.appendStreamContent(delta, events)
                 }
@@ -1015,6 +1031,9 @@ class ImprovedChatPanel(
                     imagePaths = selectedImagePaths,
                     requestId = requestId,
                 ) { chunk ->
+                    if (stopRequested.get()) {
+                        throw CancellationException("Stopped by user")
+                    }
                     if (chunk.delta.isNotEmpty()) {
                         assistantContent.append(chunk.delta)
                         pendingDelta.append(chunk.delta)
@@ -1039,6 +1058,9 @@ class ImprovedChatPanel(
                         flushPending(force = true)
                         ApplicationManager.getApplication().invokeLater {
                             if (project.isDisposed || _isDisposed) {
+                                return@invokeLater
+                            }
+                            if (stopRequested.get()) {
                                 return@invokeLater
                             }
                             currentAssistantPanel?.finishMessage()
@@ -1101,9 +1123,16 @@ class ImprovedChatPanel(
             } finally {
                 activeOperationJob = null
                 activeLlmRequest = null
+                val wasStopped = stopRequested.get()
+                if (wasStopped) {
+                    pendingDelta.setLength(0)
+                    pendingEvents.clear()
+                    pendingChunks = 0
+                } else {
+                    flushPending(force = true)
+                }
                 stopRequested.set(false)
 
-                flushPending(force = true)
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
@@ -5164,6 +5193,9 @@ class ImprovedChatPanel(
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
+                    if (stopRequested.get()) {
+                        return@invokeLater
+                    }
                     val panelForUpdate = currentAssistantPanel ?: return@invokeLater
                     panelForUpdate.appendStreamContent(delta, events)
                 }
@@ -5178,6 +5210,9 @@ class ImprovedChatPanel(
                     planExecuteVerifySections = workflowSectionRenderingEnabledFor(currentInteractionMode()),
                     requestId = requestId,
                 ) { chunk ->
+                    if (stopRequested.get()) {
+                        throw CancellationException("Stopped by user")
+                    }
                     if (chunk.delta.isNotEmpty()) {
                         assistantContent.append(chunk.delta)
                         pendingDelta.append(chunk.delta)
@@ -5202,6 +5237,9 @@ class ImprovedChatPanel(
                         flushPending(force = true)
                         ApplicationManager.getApplication().invokeLater {
                             if (project.isDisposed || _isDisposed) {
+                                return@invokeLater
+                            }
+                            if (stopRequested.get()) {
                                 return@invokeLater
                             }
                             currentAssistantPanel?.finishMessage()
@@ -5259,9 +5297,16 @@ class ImprovedChatPanel(
             } finally {
                 activeOperationJob = null
                 activeLlmRequest = null
+                val wasStopped = stopRequested.get()
+                if (wasStopped) {
+                    pendingDelta.setLength(0)
+                    pendingEvents.clear()
+                    pendingChunks = 0
+                } else {
+                    flushPending(force = true)
+                }
                 stopRequested.set(false)
 
-                flushPending(force = true)
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater

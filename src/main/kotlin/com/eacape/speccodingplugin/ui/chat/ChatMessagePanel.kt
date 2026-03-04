@@ -4,6 +4,13 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.editor.colors.EditorColorsScheme
+import com.intellij.openapi.editor.colors.TextAttributesKey
+import com.intellij.openapi.fileTypes.FileType
+import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.openapi.fileTypes.PlainTextFileType
+import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -36,7 +43,6 @@ import javax.swing.Icon
 import javax.swing.JDialog
 import javax.swing.JPanel
 import javax.swing.JScrollPane
-import javax.swing.JTextArea
 import javax.swing.JTextPane
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
@@ -44,6 +50,7 @@ import javax.swing.Timer
 import javax.swing.border.AbstractBorder
 import javax.swing.border.Border
 import javax.swing.border.CompoundBorder
+import javax.swing.text.PlainDocument
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 import javax.swing.text.StyledDocument
@@ -272,6 +279,7 @@ open class ChatMessagePanel(
                 val attrs = SimpleAttributeSet()
                 StyleConstants.setFontFamily(attrs, "Monospaced")
                 StyleConstants.setFontSize(attrs, outputFontSize)
+                StyleConstants.setLineSpacing(attrs, PLAIN_TEXT_LINE_SPACING)
                 doc.insertString(0, content, attrs)
             }
         }
@@ -322,12 +330,14 @@ open class ChatMessagePanel(
         val baseAttrs = SimpleAttributeSet().apply {
             StyleConstants.setFontFamily(this, "Monospaced")
             StyleConstants.setFontSize(this, fontSize)
+            StyleConstants.setLineSpacing(this, PLAIN_TEXT_LINE_SPACING)
         }
         doc.insertString(0, content, baseAttrs)
 
         val promptAttrs = SimpleAttributeSet().apply {
             StyleConstants.setFontFamily(this, "Monospaced")
             StyleConstants.setFontSize(this, fontSize)
+            StyleConstants.setLineSpacing(this, PLAIN_TEXT_LINE_SPACING)
             StyleConstants.setBold(this, true)
             StyleConstants.setForeground(this, PROMPT_REFERENCE_FG)
             StyleConstants.setBackground(this, PROMPT_REFERENCE_BG)
@@ -523,6 +533,7 @@ open class ChatMessagePanel(
         val attrs = SimpleAttributeSet()
         StyleConstants.setFontFamily(attrs, "Monospaced")
         StyleConstants.setFontSize(attrs, fontSize)
+        StyleConstants.setLineSpacing(attrs, PLAIN_TEXT_LINE_SPACING)
         doc.insertString(0, summarized, attrs)
     }
 
@@ -1010,23 +1021,6 @@ open class ChatMessagePanel(
         }
         header.add(headerLeft, BorderLayout.CENTER)
 
-        if (item.status == ExecutionTimelineParser.Status.RUNNING) {
-            header.add(
-                createRunningIndicator(
-                    color = statusColor(item.status),
-                    size = 10,
-                    tooltip = statusLabel(item.status),
-                ),
-                BorderLayout.EAST
-            )
-        } else {
-            val statusDot = JBLabel("●")
-            statusDot.foreground = statusColor(item.status)
-            statusDot.font = statusDot.font.deriveFont(10f)
-            statusDot.toolTipText = statusLabel(item.status)
-            header.add(statusDot, BorderLayout.EAST)
-        }
-
         row.add(header, BorderLayout.NORTH)
         row.add(
             createTraceDetailBlock(
@@ -1175,18 +1169,17 @@ open class ChatMessagePanel(
             padding = JBUI.insets(6, 8, 6, 8),
         )
 
-        val codeArea = JTextArea(displayCode).apply {
+        val codeArea = NoWrapCodeTextPane().apply {
             isEditable = false
             isFocusable = true
-            lineWrap = false
-            wrapStyleWord = false
-            tabSize = 4
             border = JBUI.Borders.empty(4, 2, 4, 2)
             font = Font("JetBrains Mono", Font.PLAIN, JBUI.scale(configuredOutputFontSize()))
             background = CODE_CARD_CODE_BG
             foreground = CODE_CARD_CODE_FG
             caretColor = foreground
+            document.putProperty(PlainDocument.tabSizeAttribute, 4)
         }
+        applyCodeSyntaxHighlight(codeArea, language = normalizedLanguage, code = displayCode)
 
         val scrollPane = JScrollPane(codeArea).apply {
             border = JBUI.Borders.empty()
@@ -1226,6 +1219,7 @@ open class ChatMessagePanel(
             event.consume()
         }
         codeArea.addMouseWheelListener(forwardWheelToParentScroller)
+        scrollPane.viewport.addMouseWheelListener(forwardWheelToParentScroller)
         scrollPane.addMouseWheelListener(forwardWheelToParentScroller)
 
         val lineCount = normalizedCode.lineSequence().count().coerceAtLeast(1)
@@ -1303,6 +1297,190 @@ open class ChatMessagePanel(
         card.add(header, BorderLayout.NORTH)
         card.add(scrollPane, BorderLayout.CENTER)
         return card
+    }
+
+    private fun applyCodeSyntaxHighlight(
+        pane: JTextPane,
+        language: String,
+        code: String,
+    ) {
+        val doc = pane.styledDocument
+        doc.remove(0, doc.length)
+        doc.insertString(0, code, null)
+
+        if (doc.length <= 0) return
+
+        val baseAttrs = SimpleAttributeSet().apply {
+            StyleConstants.setFontFamily(this, pane.font.family)
+            StyleConstants.setFontSize(this, pane.font.size)
+            StyleConstants.setForeground(this, CODE_CARD_CODE_FG)
+        }
+        doc.setCharacterAttributes(0, doc.length, baseAttrs, true)
+
+        if (code.length > CODE_CARD_HIGHLIGHT_MAX_CHARS) return
+
+        val fileType = resolveCodeFenceFileType(language)
+        var highlighted = false
+
+        if (fileType !== PlainTextFileType.INSTANCE) {
+            val syntaxHighlighter = runCatching {
+                SyntaxHighlighterFactory.getSyntaxHighlighter(fileType, null, null)
+            }.getOrNull()
+
+            if (syntaxHighlighter != null) {
+                val lexer = syntaxHighlighter.highlightingLexer
+                val colorScheme = EditorColorsManager.getInstance().globalScheme
+                runCatching {
+                    lexer.start(code)
+                    while (true) {
+                        val tokenType = lexer.tokenType ?: break
+                        val start = lexer.tokenStart
+                        val end = lexer.tokenEnd
+                        if (end > start) {
+                            val tokenAttrs = mergeTokenAttributes(
+                                keys = syntaxHighlighter.getTokenHighlights(tokenType),
+                                scheme = colorScheme,
+                            )
+                            if (tokenAttrs != null) {
+                                doc.setCharacterAttributes(start, end - start, tokenAttrs, false)
+                                if (isMeaningfulHighlightStyle(tokenAttrs)) {
+                                    highlighted = true
+                                }
+                            }
+                        }
+                        lexer.advance()
+                    }
+                }
+            }
+        }
+
+        if (!highlighted) {
+            applySimpleCodeFallbackHighlight(
+                doc = doc,
+                language = language,
+                code = code,
+            )
+        }
+    }
+
+    private fun mergeTokenAttributes(
+        keys: Array<TextAttributesKey>,
+        scheme: EditorColorsScheme,
+    ): SimpleAttributeSet? {
+        var foreground: java.awt.Color? = null
+        var background: java.awt.Color? = null
+        var bold = false
+        var italic = false
+
+        keys.forEach { key ->
+            val attrs = scheme.getAttributes(key) ?: key.defaultAttributes ?: return@forEach
+            if (foreground == null) {
+                foreground = attrs.foregroundColor
+            }
+            if (background == null) {
+                background = attrs.backgroundColor
+            }
+            bold = bold || (attrs.fontType and Font.BOLD) != 0
+            italic = italic || (attrs.fontType and Font.ITALIC) != 0
+        }
+
+        if (foreground == null && background == null && !bold && !italic) return null
+
+        return SimpleAttributeSet().apply {
+            foreground?.let { StyleConstants.setForeground(this, it) }
+            background?.let { StyleConstants.setBackground(this, it) }
+            StyleConstants.setBold(this, bold)
+            StyleConstants.setItalic(this, italic)
+        }
+    }
+
+    private fun isMeaningfulHighlightStyle(attrs: SimpleAttributeSet): Boolean {
+        val hasForeground = attrs.isDefined(StyleConstants.Foreground)
+        val hasBackground = attrs.isDefined(StyleConstants.Background)
+        val hasBold = attrs.isDefined(StyleConstants.Bold) && StyleConstants.isBold(attrs)
+        val hasItalic = attrs.isDefined(StyleConstants.Italic) && StyleConstants.isItalic(attrs)
+        if (hasBackground || hasBold || hasItalic) return true
+        if (!hasForeground) return false
+        return StyleConstants.getForeground(attrs) != CODE_CARD_CODE_FG
+    }
+
+    private fun applySimpleCodeFallbackHighlight(
+        doc: StyledDocument,
+        language: String,
+        code: String,
+    ) {
+        val normalizedLanguage = language.trim().lowercase(Locale.ROOT)
+        val keywordSet = when (normalizedLanguage) {
+            "java", "kotlin", "kt", "kts", "javascript", "js", "typescript", "ts", "tsx", "jsx", "go", "rust", "rs", "c", "cpp", "c++", "cxx" -> COMMON_C_STYLE_KEYWORDS
+            "python", "py" -> PYTHON_KEYWORDS
+            "sql" -> SQL_KEYWORDS
+            "shell", "bash", "sh", "zsh", "powershell", "ps1" -> SHELL_KEYWORDS
+            else -> COMMON_C_STYLE_KEYWORDS
+        }
+
+        val keywordPattern = """\b(?:${keywordSet.joinToString("|") { Regex.escape(it) }})\b"""
+        val keywordRegex = if (normalizedLanguage == "sql") {
+            Regex(keywordPattern, RegexOption.IGNORE_CASE)
+        } else {
+            Regex(keywordPattern)
+        }
+        val numberRegex = Regex("""\b\d+(?:\.\d+)?\b""")
+        val stringRegex = Regex(""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""")
+        val lineCommentRegex = Regex("""//.*$""", RegexOption.MULTILINE)
+        val hashCommentRegex = Regex("""#.*$""", RegexOption.MULTILINE)
+        val blockCommentRegex = Regex("""/\*.*?\*/""", setOf(RegexOption.DOT_MATCHES_ALL))
+
+        val keywordAttrs = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, CODE_CARD_FALLBACK_KEYWORD_FG)
+            StyleConstants.setBold(this, true)
+        }
+        val numberAttrs = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, CODE_CARD_FALLBACK_NUMBER_FG)
+        }
+        val stringAttrs = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, CODE_CARD_FALLBACK_STRING_FG)
+        }
+        val commentAttrs = SimpleAttributeSet().apply {
+            StyleConstants.setForeground(this, CODE_CARD_FALLBACK_COMMENT_FG)
+            StyleConstants.setItalic(this, true)
+        }
+
+        applyRegexAttributes(doc, code, keywordRegex, keywordAttrs)
+        applyRegexAttributes(doc, code, numberRegex, numberAttrs)
+        applyRegexAttributes(doc, code, stringRegex, stringAttrs)
+        applyRegexAttributes(doc, code, lineCommentRegex, commentAttrs)
+        if (normalizedLanguage in setOf("python", "py", "shell", "bash", "sh", "zsh", "powershell", "ps1", "yaml", "yml")) {
+            applyRegexAttributes(doc, code, hashCommentRegex, commentAttrs)
+        }
+        applyRegexAttributes(doc, code, blockCommentRegex, commentAttrs)
+    }
+
+    private fun applyRegexAttributes(
+        doc: StyledDocument,
+        text: String,
+        regex: Regex,
+        attrs: SimpleAttributeSet,
+    ) {
+        regex.findAll(text).forEach { match ->
+            val start = match.range.first
+            val length = match.value.length
+            if (length > 0) {
+                doc.setCharacterAttributes(start, length, attrs, false)
+            }
+        }
+    }
+
+    private fun resolveCodeFenceFileType(language: String): FileType {
+        val normalizedLanguage = language.trim().lowercase(Locale.ROOT)
+        if (normalizedLanguage.isBlank()) return PlainTextFileType.INSTANCE
+
+        val extension = CODE_FENCE_LANGUAGE_EXTENSION_ALIASES[normalizedLanguage] ?: normalizedLanguage
+        val manager = FileTypeManager.getInstance()
+        val byExtension = manager.getFileTypeByExtension(extension)
+        if (byExtension !== PlainTextFileType.INSTANCE) {
+            return byExtension
+        }
+        return manager.findFileTypeByName(extension.uppercase(Locale.ROOT)) ?: PlainTextFileType.INSTANCE
     }
 
     private fun splitMarkdownSegments(content: String): List<MarkdownSegment> {
@@ -1462,6 +1640,7 @@ open class ChatMessagePanel(
         val attrs = SimpleAttributeSet()
         StyleConstants.setFontFamily(attrs, "Monospaced")
         StyleConstants.setFontSize(attrs, configuredOutputFontSize())
+        StyleConstants.setLineSpacing(attrs, PLAIN_TEXT_LINE_SPACING)
         doc.insertString(0, content, attrs)
     }
 
@@ -1471,13 +1650,18 @@ open class ChatMessagePanel(
         } else {
             content.take(scanLimit.coerceAtLeast(0))
         }
-        val normalizedSample = normalizePipeTableLine(markerSample)
+        val normalizedSample = normalizeMarkdownSignalSample(
+            normalizePipeTableLine(markerSample),
+        )
         if (normalizedSample.contains("**") || normalizedSample.contains('`')) return true
         var scannedChars = 0
         var previousPipeLikeLine = false
         for (line in normalizedSample.lineSequence()) {
-            val trimmed = line.trimStart()
+            val trimmed = normalizeMarkdownSignalSample(line).trimStart()
             scannedChars += line.length + 1
+            if (MARKDOWN_HORIZONTAL_RULE_REGEX.matches(trimmed.trim())) {
+                return true
+            }
             val matched = MARKDOWN_HEADING_REGEX.matches(trimmed) ||
                 trimmed.startsWith("- ") ||
                 trimmed.startsWith("* ") ||
@@ -1546,6 +1730,30 @@ open class ChatMessagePanel(
             .replace('│', '|')
             .replace('┃', '|')
             .replace('丨', '|')
+    }
+
+    private fun normalizeMarkdownSignalSample(text: String): String {
+        if (text.isEmpty()) return text
+        var changed = false
+        val normalized = buildString(text.length) {
+            text.forEach { ch ->
+                when {
+                    MARKDOWN_IGNORED_CHARS.contains(ch) -> {
+                        changed = true
+                    }
+                    MARKDOWN_ASTERISK_ALIASES.contains(ch) -> {
+                        if (ch != '*') changed = true
+                        append('*')
+                    }
+                    ch == MARKDOWN_NBSP_CHAR -> {
+                        changed = true
+                        append(' ')
+                    }
+                    else -> append(ch)
+                }
+            }
+        }
+        return if (changed) normalized else text
     }
 
     private fun kindLabel(kind: ExecutionTimelineParser.Kind): String = when (kind) {
@@ -2390,6 +2598,10 @@ open class ChatMessagePanel(
         }
     }
 
+    private class NoWrapCodeTextPane : JTextPane() {
+        override fun getScrollableTracksViewportWidth(): Boolean = false
+    }
+
     companion object {
         private const val MAX_FILE_ACTIONS = 4
         private const val MAX_COMMAND_ACTIONS = 4
@@ -2398,6 +2610,7 @@ open class ChatMessagePanel(
         private const val MARKDOWN_SEGMENT_GAP = 6
         private const val CODE_CARD_COLLAPSE_THRESHOLD_LINES = 8
         private const val CODE_CARD_COLLAPSED_VISIBLE_LINES = 4
+        private const val CODE_CARD_HIGHLIGHT_MAX_CHARS = 20_000
         private const val TRACE_DETAIL_PREVIEW_LENGTH = 220
         private const val TRACE_OUTPUT_PREVIEW_LENGTH = 140
         private const val TRACE_GROUP_DETAIL_PREVIEW_LENGTH = 96
@@ -2411,6 +2624,7 @@ open class ChatMessagePanel(
         private const val PREVIEW_EXTRA_SCAN_CHARS = 120
         private const val MARKDOWN_PREVIEW_EXTRA_SCAN_CHARS = 240
         private const val LIGHTWEIGHT_CONTENT_MAX_CHARS = 900
+        private const val PLAIN_TEXT_LINE_SPACING = 0.40f
         private const val LOOSE_PIPE_TABLE_DETECTION_MIN_ROWS = 2
         private const val OUTPUT_FILTER_TABLE_BYPASS_MIN_ROWS = 2
         private const val COMMAND_ACTION_TABLE_BLOCK_MIN_ROWS = 2
@@ -2438,6 +2652,10 @@ open class ChatMessagePanel(
         private val CODE_CARD_META_FG = JBColor(java.awt.Color(101, 118, 146), java.awt.Color(156, 178, 210))
         private val CODE_CARD_CODE_BG = JBColor(java.awt.Color(239, 244, 250), java.awt.Color(39, 45, 53))
         private val CODE_CARD_CODE_FG = JBColor(java.awt.Color(49, 59, 72), java.awt.Color(214, 223, 236))
+        private val CODE_CARD_FALLBACK_KEYWORD_FG = JBColor(java.awt.Color(0, 92, 197), java.awt.Color(204, 120, 50))
+        private val CODE_CARD_FALLBACK_STRING_FG = JBColor(java.awt.Color(6, 125, 23), java.awt.Color(106, 135, 89))
+        private val CODE_CARD_FALLBACK_COMMENT_FG = JBColor(java.awt.Color(120, 125, 133), java.awt.Color(128, 128, 128))
+        private val CODE_CARD_FALLBACK_NUMBER_FG = JBColor(java.awt.Color(23, 99, 170), java.awt.Color(104, 151, 187))
         private val USER_IMAGE_CARD_BG = JBColor(java.awt.Color(245, 248, 253), java.awt.Color(47, 53, 63))
         private val USER_IMAGE_CARD_BORDER = JBColor(java.awt.Color(214, 224, 241), java.awt.Color(78, 88, 104))
         private val USER_IMAGE_META_FG = JBColor(java.awt.Color(101, 118, 146), java.awt.Color(156, 178, 210))
@@ -2450,9 +2668,13 @@ open class ChatMessagePanel(
             java.awt.Color(55, 75, 101),
         )
         private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}\s+.*$""")
-        private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+\.\s+.*""")
+        private val MARKDOWN_HORIZONTAL_RULE_REGEX = Regex("""^(?:-{3,}|\*{3,}|_{3,})\s*$""")
+        private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+[.)]\s+.*""")
         private val PIPE_TABLE_ROW_REGEX = Regex("""^\s*\|?(?:[^|\n]+\|){1,}[^|\n]*\|?\s*$""")
         private val PIPE_TABLE_SEPARATOR_REGEX = Regex("""^\s*\|?(?:\s*:?-{3,}:?\s*\|){1,}\s*$""")
+        private val MARKDOWN_ASTERISK_ALIASES = charArrayOf('*', '＊', '﹡', '∗')
+        private val MARKDOWN_IGNORED_CHARS = charArrayOf('\u200B', '\u200C', '\u200D', '\uFEFF', '\u2060')
+        private const val MARKDOWN_NBSP_CHAR = '\u00A0'
         private val USER_IMAGE_ATTACHMENT_LINE_REGEX = Regex("""^\[(?:图片|images?|image)\]\s+.+$""", RegexOption.IGNORE_CASE)
         private val PROMPT_REFERENCE_TOKEN_REGEX = Regex("""(?<!\S)#([\p{L}\p{N}_.-]+)""")
         private val THINKING_TAG_REGEX = Regex("""</?thinking>""", RegexOption.IGNORE_CASE)
@@ -2502,6 +2724,73 @@ open class ChatMessagePanel(
             "mdx",
             "mkdn",
             "mdown",
+        )
+        private val CODE_FENCE_LANGUAGE_EXTENSION_ALIASES = mapOf(
+            "kotlin" to "kt",
+            "kt" to "kt",
+            "kts" to "kts",
+            "java" to "java",
+            "python" to "py",
+            "py" to "py",
+            "javascript" to "js",
+            "js" to "js",
+            "typescript" to "ts",
+            "ts" to "ts",
+            "tsx" to "tsx",
+            "jsx" to "jsx",
+            "shell" to "sh",
+            "bash" to "sh",
+            "sh" to "sh",
+            "zsh" to "zsh",
+            "powershell" to "ps1",
+            "ps1" to "ps1",
+            "json" to "json",
+            "yaml" to "yml",
+            "yml" to "yml",
+            "xml" to "xml",
+            "html" to "html",
+            "css" to "css",
+            "scss" to "scss",
+            "sql" to "sql",
+            "go" to "go",
+            "rust" to "rs",
+            "rs" to "rs",
+            "c" to "c",
+            "cpp" to "cpp",
+            "c++" to "cpp",
+            "cxx" to "cpp",
+            "h" to "h",
+            "hpp" to "hpp",
+            "markdown" to "md",
+            "md" to "md",
+            "dockerfile" to "dockerfile",
+            "text" to "txt",
+            "txt" to "txt",
+        )
+        private val COMMON_C_STYLE_KEYWORDS = setOf(
+            "abstract", "assert", "async", "await", "bool", "boolean", "break", "byte", "case", "catch", "char", "class",
+            "const", "continue", "data", "default", "def", "do", "double", "else", "enum", "export", "extends", "extern",
+            "false", "final", "finally", "float", "for", "fun", "function", "if", "implements", "import", "in", "inline",
+            "int", "interface", "internal", "let", "long", "mut", "namespace", "new", "null", "object", "open", "operator",
+            "override", "package", "private", "protected", "public", "register", "return", "sealed", "short", "signed",
+            "static", "struct", "super", "switch", "this", "throw", "throws", "trait", "true", "try", "type", "typeof",
+            "union", "unsafe", "unsigned", "use", "val", "var", "void", "volatile", "when", "where", "while", "with",
+            "yield",
+        )
+        private val PYTHON_KEYWORDS = setOf(
+            "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except",
+            "False", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not",
+            "or", "pass", "raise", "return", "True", "try", "while", "with", "yield",
+        )
+        private val SQL_KEYWORDS = setOf(
+            "select", "from", "where", "join", "left", "right", "inner", "outer", "on", "group", "by", "order", "having",
+            "limit", "offset", "insert", "into", "values", "update", "set", "delete", "create", "table", "alter", "drop",
+            "primary", "key", "foreign", "references", "index", "distinct", "union", "all", "as", "and", "or", "not",
+            "null", "is", "like", "between", "exists", "case", "when", "then", "else", "end",
+        )
+        private val SHELL_KEYWORDS = setOf(
+            "if", "then", "else", "fi", "for", "do", "done", "while", "in", "case", "esac", "function", "return", "exit",
+            "break", "continue", "export", "readonly", "local", "declare", "set", "unset", "trap", "source",
         )
     }
 
