@@ -12,6 +12,7 @@ import java.nio.file.StandardOpenOption
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Base64
 
 /**
  * Spec 文档存储管理器
@@ -398,6 +399,9 @@ class SpecStorage(private val project: Project) {
             workflow.baselineWorkflowId?.takeIf { it.isNotBlank() }?.let {
                 appendLine("baselineWorkflowId: $it")
             }
+            workflow.clarificationRetryState?.let { retry ->
+                appendLine("clarificationRetryState: ${encodeClarificationRetryState(retry)}")
+            }
             appendLine("currentPhase: ${workflow.currentPhase.name}")
             appendLine("status: ${workflow.status.name}")
             appendLine("createdAt: ${workflow.createdAt}")
@@ -422,6 +426,7 @@ class SpecStorage(private val project: Project) {
         var description = ""
         var changeIntent = SpecChangeIntent.FULL
         var baselineWorkflowId: String? = null
+        var clarificationRetryState: ClarificationRetryState? = null
         var createdAt = System.currentTimeMillis()
         var updatedAt = System.currentTimeMillis()
 
@@ -446,6 +451,10 @@ class SpecStorage(private val project: Project) {
                 }
                 trimmed.startsWith("baselineWorkflowId:") -> {
                     baselineWorkflowId = trimmed.substringAfter(":").trim().takeIf { it.isNotBlank() }
+                }
+                trimmed.startsWith("clarificationRetryState:") -> {
+                    val value = trimmed.substringAfter(":").trim()
+                    clarificationRetryState = decodeClarificationRetryState(value)
                 }
                 trimmed.startsWith("status:") -> {
                     val value = trimmed.substringAfter(":").trim()
@@ -477,9 +486,75 @@ class SpecStorage(private val project: Project) {
             description = description,
             changeIntent = changeIntent,
             baselineWorkflowId = baselineWorkflowId,
+            clarificationRetryState = clarificationRetryState,
             createdAt = createdAt,
             updatedAt = updatedAt
         )
+    }
+
+    private fun encodeClarificationRetryState(state: ClarificationRetryState): String {
+        val structuredPayload = state.structuredQuestions
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString(STRUCTURED_QUESTION_DELIMITER.toString())
+        return listOf(
+            encodeBase64Url(state.input),
+            encodeBase64Url(state.confirmedContext),
+            encodeBase64Url(state.questionsMarkdown),
+            encodeBase64Url(structuredPayload),
+            state.clarificationRound.coerceAtLeast(1).toString(),
+            encodeBase64Url(state.lastError.orEmpty()),
+            if (state.confirmed) "1" else "0",
+        ).joinToString(RETRY_FIELD_DELIMITER.toString())
+    }
+
+    private fun decodeClarificationRetryState(payload: String): ClarificationRetryState? {
+        if (payload.isBlank()) {
+            return null
+        }
+        val parts = payload.split(RETRY_FIELD_DELIMITER)
+        if (parts.size < 7) {
+            return null
+        }
+        val input = decodeBase64Url(parts[0]) ?: return null
+        val confirmedContext = decodeBase64Url(parts[1]) ?: return null
+        val questionsMarkdown = decodeBase64Url(parts[2]) ?: return null
+        val structuredPayload = decodeBase64Url(parts[3]).orEmpty()
+        val clarificationRound = parts[4].toIntOrNull()?.coerceAtLeast(1) ?: 1
+        val lastError = decodeBase64Url(parts[5])
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val confirmed = parts[6] == "1" || parts[6].equals("true", ignoreCase = true)
+        val structuredQuestions = structuredPayload
+            .split(STRUCTURED_QUESTION_DELIMITER)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (input.isBlank() && confirmedContext.isBlank() && questionsMarkdown.isBlank() && structuredQuestions.isEmpty()) {
+            return null
+        }
+        return ClarificationRetryState(
+            input = input,
+            confirmedContext = confirmedContext,
+            questionsMarkdown = questionsMarkdown,
+            structuredQuestions = structuredQuestions,
+            clarificationRound = clarificationRound,
+            lastError = lastError,
+            confirmed = confirmed,
+        )
+    }
+
+    private fun encodeBase64Url(raw: String): String {
+        return Base64.getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(raw.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    private fun decodeBase64Url(raw: String): String? {
+        return runCatching {
+            val bytes = Base64.getUrlDecoder().decode(raw)
+            String(bytes, StandardCharsets.UTF_8)
+        }.getOrNull()
     }
 
     /**
@@ -552,6 +627,9 @@ class SpecStorage(private val project: Project) {
     }
 
     companion object {
+        private const val RETRY_FIELD_DELIMITER = ':'
+        private const val STRUCTURED_QUESTION_DELIMITER = '\u001F'
+
         fun getInstance(project: Project): SpecStorage {
             return SpecStorage(project)
         }

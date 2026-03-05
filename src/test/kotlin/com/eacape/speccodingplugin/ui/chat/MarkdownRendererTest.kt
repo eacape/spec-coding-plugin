@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import javax.swing.JTextPane
 import javax.swing.SwingUtilities
+import javax.swing.text.StyleConstants
 
 class MarkdownRendererTest {
 
@@ -42,6 +43,30 @@ class MarkdownRendererTest {
 
         assertTrue(pane.text.contains("🧭 两种方式运行项目："))
         assertFalse(pane.text.contains("##🧭"))
+    }
+
+    @Test
+    fun `render should normalize keycap emoji heading marker to plain ordinal`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, "## 1️⃣ 为什么学习 Dart？")
+        }
+
+        assertTrue(pane.text.contains("1. 为什么学习 Dart？"))
+        assertFalse(pane.text.contains("1️⃣"))
+    }
+
+    @Test
+    fun `render should normalize enclosed numeral heading marker to plain ordinal`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, "## ①为什么学习 Dart？")
+        }
+
+        assertTrue(pane.text.contains("1. 为什么学习 Dart？"))
+        assertFalse(pane.text.contains("①"))
     }
 
     @Test
@@ -200,6 +225,75 @@ class MarkdownRendererTest {
         assertFalse(text.contains("・检查环境配置"))
         assertFalse(text.contains("•列出可用设备"))
         assertFalse(text.contains("●启动应用"))
+    }
+
+    @Test
+    fun `render should normalize dash list item without whitespace before emoji`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(pane, "-✅ **语法相似**：和 Java 很像")
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("• ✅ 语法相似：和 Java 很像"))
+        assertFalse(text.contains("-✅"))
+    }
+
+    @Test
+    fun `render should add paragraph spacing for unordered list items`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                - 第一项
+                - 第二项
+                """.trimIndent(),
+            )
+        }
+
+        val text = pane.text
+        val firstBullet = text.indexOf('•')
+        val secondBullet = text.indexOf('•', firstBullet + 1)
+        assertTrue(firstBullet >= 0)
+        assertTrue(secondBullet > firstBullet)
+
+        val firstAttrs = pane.styledDocument.getParagraphElement(firstBullet).attributes
+        val secondAttrs = pane.styledDocument.getParagraphElement(secondBullet).attributes
+        assertTrue(StyleConstants.getSpaceAbove(firstAttrs) >= 1.0f)
+        assertTrue(StyleConstants.getSpaceBelow(firstAttrs) >= 1.0f)
+        assertTrue(StyleConstants.getSpaceAbove(secondAttrs) >= 1.0f)
+        assertTrue(StyleConstants.getSpaceBelow(secondAttrs) >= 1.0f)
+    }
+
+    @Test
+    fun `render should add paragraph spacing for ordered list items`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                1. 第一项
+                2. 第二项
+                """.trimIndent(),
+            )
+        }
+
+        val text = pane.text
+        val firstItem = text.indexOf("1. 第一项")
+        val secondItem = text.indexOf("2. 第二项")
+        assertTrue(firstItem >= 0)
+        assertTrue(secondItem > firstItem)
+
+        val firstAttrs = pane.styledDocument.getParagraphElement(firstItem).attributes
+        val secondAttrs = pane.styledDocument.getParagraphElement(secondItem).attributes
+        assertTrue(StyleConstants.getSpaceAbove(firstAttrs) >= 1.0f)
+        assertTrue(StyleConstants.getSpaceBelow(firstAttrs) >= 1.0f)
+        assertTrue(StyleConstants.getSpaceAbove(secondAttrs) >= 1.0f)
+        assertTrue(StyleConstants.getSpaceBelow(secondAttrs) >= 1.0f)
     }
 
     @Test

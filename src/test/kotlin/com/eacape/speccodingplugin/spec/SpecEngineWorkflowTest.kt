@@ -597,4 +597,35 @@ class SpecEngineWorkflowTest {
         assertTrue(capturedConfirmedContext!!.contains("LegacyService.kt"))
         assertTrue(capturedConfirmedContext!!.contains("增量需求基线上下文"))
     }
+
+    @Test
+    fun `saveClarificationRetryState should persist and clear retry state`() {
+        val engine = SpecEngine(project, storage) {
+            SpecGenerationResult.Failure("not used")
+        }
+        val created = engine.createWorkflow(
+            title = "Retry State",
+            description = "persist clarify retry",
+        ).getOrThrow()
+
+        val retryState = ClarificationRetryState(
+            input = "generate spec",
+            confirmedContext = "**已确认澄清项**\n- 离线支持",
+            questionsMarkdown = "1. 是否要离线？",
+            structuredQuestions = listOf("是否要离线？"),
+            clarificationRound = 2,
+            lastError = "interrupted",
+            confirmed = true,
+        )
+        val saved = engine.saveClarificationRetryState(created.id, retryState).getOrThrow()
+        assertEquals(retryState, saved.clarificationRetryState)
+
+        val reloaded = engine.reloadWorkflow(created.id).getOrThrow()
+        assertEquals(retryState, reloaded.clarificationRetryState)
+
+        val cleared = engine.saveClarificationRetryState(created.id, null).getOrThrow()
+        assertEquals(null, cleared.clarificationRetryState)
+        val reloadedCleared = engine.reloadWorkflow(created.id).getOrThrow()
+        assertEquals(null, reloadedCleared.clarificationRetryState)
+    }
 }

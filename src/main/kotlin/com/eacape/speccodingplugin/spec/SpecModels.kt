@@ -173,6 +173,7 @@ data class SpecWorkflow(
     val description: String = "",
     val changeIntent: SpecChangeIntent = SpecChangeIntent.FULL,
     val baselineWorkflowId: String? = null,
+    val clarificationRetryState: ClarificationRetryState? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 ) {
@@ -221,6 +222,16 @@ data class SpecWorkflow(
         return changeIntent == SpecChangeIntent.INCREMENTAL && !baselineWorkflowId.isNullOrBlank()
     }
 }
+
+data class ClarificationRetryState(
+    val input: String,
+    val confirmedContext: String,
+    val questionsMarkdown: String,
+    val structuredQuestions: List<String> = emptyList(),
+    val clarificationRound: Int = 1,
+    val lastError: String? = null,
+    val confirmed: Boolean = false,
+)
 
 /**
  * 工作流状态枚举

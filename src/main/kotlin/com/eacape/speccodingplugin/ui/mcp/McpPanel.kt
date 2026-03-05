@@ -33,6 +33,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
 import java.util.Locale
@@ -841,6 +842,7 @@ class McpPanel(
     private fun configureToolbarActionButton(button: JButton, icon: javax.swing.Icon, tooltip: String) {
         button.text = ""
         button.icon = icon
+        button.disabledIcon = IconLoader.getDisabledIcon(icon)
         button.iconTextGap = 0
         button.toolTipText = tooltip
         button.accessibleContext?.accessibleName = tooltip
@@ -860,6 +862,7 @@ class McpPanel(
         button.margin = if (iconOnly) JBUI.emptyInsets() else JBUI.insets(1, 4, 1, 4)
         button.foreground = fg
         SpecUiStyle.applyRoundRect(button, arc = 10)
+        installToolbarButtonCursorTracking(button)
         if (iconOnly) {
             installToolbarIconButtonStateTracking(button)
             applyToolbarIconButtonVisualState(button)
@@ -894,6 +897,21 @@ class McpPanel(
         button.addPropertyChangeListener("enabled") { applyToolbarIconButtonVisualState(button) }
     }
 
+    private fun installToolbarButtonCursorTracking(button: JButton) {
+        if (button.getClientProperty("mcp.toolbar.cursorTrackingInstalled") == true) return
+        button.putClientProperty("mcp.toolbar.cursorTrackingInstalled", true)
+        updateToolbarButtonCursor(button)
+        button.addPropertyChangeListener("enabled") { updateToolbarButtonCursor(button) }
+    }
+
+    private fun updateToolbarButtonCursor(button: JButton) {
+        button.cursor = if (button.isEnabled) {
+            Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        } else {
+            Cursor.getDefaultCursor()
+        }
+    }
+
     private fun applyToolbarIconButtonVisualState(button: JButton) {
         val model = button.model
         val background = when {
@@ -908,9 +926,10 @@ class McpPanel(
             model.isRollover -> ICON_BUTTON_BORDER_HOVER
             else -> ICON_BUTTON_BORDER
         }
+        val borderThickness = if (model.isPressed || model.isSelected) JBUI.scale(2) else 1
         button.background = background
         button.border = javax.swing.BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10)),
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10), thickness = borderThickness),
             JBUI.Borders.empty(4),
         )
     }
@@ -946,12 +965,12 @@ class McpPanel(
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
         private val ICON_BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
-        private val ICON_BUTTON_BG_HOVER = JBColor(Color(233, 243, 255), Color(72, 81, 94))
-        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 254), Color(82, 92, 107))
+        private val ICON_BUTTON_BG_HOVER = JBColor(Color(235, 246, 255), Color(77, 89, 106))
+        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(227, 240, 255), Color(85, 99, 118))
         private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
-        private val ICON_BUTTON_BORDER = JBColor(Color(138, 186, 144), Color(118, 168, 126))
-        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(120, 172, 128), Color(132, 185, 141))
-        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(104, 160, 113), Color(146, 201, 156))
+        private val ICON_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(104, 116, 134))
+        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(124, 167, 229), Color(124, 158, 205))
+        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(89, 136, 208), Color(143, 182, 232))
         private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))

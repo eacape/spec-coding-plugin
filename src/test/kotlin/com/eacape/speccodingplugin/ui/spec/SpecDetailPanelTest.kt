@@ -810,6 +810,38 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `clicking generate with empty requirements should continue when reusable input is available`() {
+        var generatedInput: String? = null
+        val panel = createPanel(
+            onGenerate = { generatedInput = it },
+            canGenerateWithEmptyInput = { true },
+        )
+        val workflow = SpecWorkflow(
+            id = "wf-generate-empty-resume",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements content",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Generate Empty Resume",
+            description = "Generate empty workflow resume",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.setInputTextForTest("")
+
+        panel.clickGenerateForTest()
+
+        assertEquals("", generatedInput)
+        assertEquals("", panel.currentInputTextForTest())
+    }
+
+    @Test
     fun `validation failure should provide interactive repair guidance`() {
         val panel = createPanel()
         val workflow = SpecWorkflow(
@@ -946,12 +978,14 @@ class SpecDetailPanelTest {
 
     private fun createPanel(
         onGenerate: (String) -> Unit = {},
+        canGenerateWithEmptyInput: () -> Boolean = { false },
         onClarificationConfirm: (String, String) -> Unit = { _, _ -> },
         onClarificationRegenerate: (String, String) -> Unit = { _, _ -> },
         onClarificationDraftAutosave: (String, String, String, List<String>) -> Unit = { _, _, _, _ -> },
     ): SpecDetailPanel {
         return SpecDetailPanel(
             onGenerate = onGenerate,
+            canGenerateWithEmptyInput = canGenerateWithEmptyInput,
             onClarificationConfirm = onClarificationConfirm,
             onClarificationRegenerate = onClarificationRegenerate,
             onClarificationSkip = {},

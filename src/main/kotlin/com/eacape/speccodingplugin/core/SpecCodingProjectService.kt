@@ -67,9 +67,7 @@ class SpecCodingProjectService(private val project: Project) {
         }
 
         // 3. Conversation history (if present), fallback to single-turn user message.
-        val normalizedHistory = conversationHistory
-            .filter { it.role == LlmRole.USER || it.role == LlmRole.ASSISTANT }
-            .takeLast(MAX_CHAT_HISTORY_MESSAGES)
+        val normalizedHistory = normalizeChatHistory(conversationHistory)
         if (normalizedHistory.isNotEmpty()) {
             messages.addAll(normalizedHistory)
             if (normalizedHistory.lastOrNull()?.role != LlmRole.USER && userInput.isNotBlank()) {
@@ -105,6 +103,29 @@ class SpecCodingProjectService(private val project: Project) {
 
     companion object {
         private const val MAX_CHAT_HISTORY_MESSAGES = 24
+
+        internal fun normalizeChatHistory(conversationHistory: List<LlmMessage>): List<LlmMessage> {
+            if (conversationHistory.isEmpty()) {
+                return emptyList()
+            }
+            val leadingSystemSummary = conversationHistory.firstOrNull()
+                ?.takeIf { it.role == LlmRole.SYSTEM }
+            val dialogHistory = conversationHistory
+                .filter { it.role == LlmRole.USER || it.role == LlmRole.ASSISTANT }
+            if (leadingSystemSummary == null) {
+                return dialogHistory.takeLast(MAX_CHAT_HISTORY_MESSAGES)
+            }
+            val tailBudget = (MAX_CHAT_HISTORY_MESSAGES - 1).coerceAtLeast(0)
+            val tailHistory = if (tailBudget == 0) {
+                emptyList()
+            } else {
+                dialogHistory.takeLast(tailBudget)
+            }
+            return buildList(1 + tailHistory.size) {
+                add(leadingSystemSummary)
+                addAll(tailHistory)
+            }
+        }
     }
 
     private fun buildDevWorkflowSystemInstruction(planExecuteVerifySections: Boolean): String {

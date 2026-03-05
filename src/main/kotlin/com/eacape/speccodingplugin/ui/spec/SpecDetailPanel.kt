@@ -61,6 +61,7 @@ import javax.swing.tree.TreeCellRenderer
 
 class SpecDetailPanel(
     private val onGenerate: (String) -> Unit,
+    private val canGenerateWithEmptyInput: () -> Boolean = { false },
     private val onClarificationConfirm: (String, String) -> Unit,
     private val onClarificationRegenerate: (String, String) -> Unit,
     private val onClarificationSkip: (String) -> Unit,
@@ -366,7 +367,8 @@ class SpecDetailPanel(
             val text = inputArea.text.trim()
             val phase = currentWorkflow?.currentPhase
             val allowBlank = phase == SpecPhase.DESIGN || phase == SpecPhase.IMPLEMENT
-            if (text.isNotBlank() || allowBlank) {
+            val canReuseLastInput = canGenerateWithEmptyInput()
+            if (text.isNotBlank() || allowBlank || canReuseLastInput) {
                 onGenerate(text)
                 clearInput()
             } else {
@@ -1202,7 +1204,10 @@ class SpecDetailPanel(
         button.putClientProperty("spec.detail.iconStyleInstalled", true)
         button.isRolloverEnabled = true
         button.addChangeListener { applyActionIconButtonVisualState(button) }
-        button.addPropertyChangeListener("enabled") { applyActionIconButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") {
+            applyActionIconButtonVisualState(button)
+            updateButtonCursor(button)
+        }
     }
 
     private fun applyActionIconButtonVisualState(button: JButton) {
@@ -1219,9 +1224,10 @@ class SpecDetailPanel(
             model.isRollover -> ICON_BUTTON_BORDER_HOVER
             else -> ICON_BUTTON_BORDER
         }
+        val borderThickness = if (model.isPressed || model.isSelected) JBUI.scale(2) else 1
         button.background = background
         button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10)),
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10), thickness = borderThickness),
             JBUI.Borders.empty(1, 1, 1, 1),
         )
     }
@@ -3664,11 +3670,11 @@ class SpecDetailPanel(
         private val TREE_STATUS_PENDING_TEXT = JBColor(Color(120, 132, 149), Color(196, 210, 230))
         private val TREE_STATUS_PENDING_TEXT_SELECTED = JBColor(Color(100, 113, 131), Color(215, 224, 239))
         private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
-        private val ICON_BUTTON_BORDER = JBColor(Color(98, 174, 108), Color(132, 188, 142))
-        private val ICON_BUTTON_BG_HOVER = JBColor(Color(238, 246, 255), Color(76, 84, 98))
-        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(70, 158, 83), Color(152, 210, 163))
-        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(230, 240, 254), Color(84, 94, 111))
-        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(46, 144, 61), Color(174, 226, 184))
+        private val ICON_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(104, 116, 134))
+        private val ICON_BUTTON_BG_HOVER = JBColor(Color(236, 246, 255), Color(76, 86, 100))
+        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(124, 167, 229), Color(124, 158, 205))
+        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 255), Color(84, 97, 116))
+        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(89, 136, 208), Color(143, 182, 232))
         private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
         private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))

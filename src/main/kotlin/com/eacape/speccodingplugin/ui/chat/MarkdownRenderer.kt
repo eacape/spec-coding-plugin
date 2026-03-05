@@ -400,8 +400,29 @@ object MarkdownRenderer {
         val headingNormalized = LOOSE_HEADING_REGEX.matchEntire(line)?.let { match ->
             "${match.groupValues[1]}${match.groupValues[2]} ${match.groupValues[3]}"
         } ?: line
-        val orderedNormalized = normalizeLooseOrderedListLine(headingNormalized)
-        return normalizeLooseUnorderedListLine(orderedNormalized)
+        val headingOrdinalNormalized = normalizeHeadingOrdinalMarkerLine(headingNormalized)
+        val orderedNormalized = normalizeLooseOrderedListLine(headingOrdinalNormalized)
+        val unorderedNormalized = normalizeLooseUnorderedListLine(orderedNormalized)
+        return normalizeCompactDashUnorderedListLine(unorderedNormalized)
+    }
+
+    private fun normalizeHeadingOrdinalMarkerLine(line: String): String {
+        val keycapMatch = HEADING_KEYCAP_ORDINAL_REGEX.matchEntire(line)
+        if (keycapMatch != null) {
+            val number = keycapMatch.groupValues[2]
+            val content = keycapMatch.groupValues[3]
+            return "${keycapMatch.groupValues[1]}$number. $content"
+        }
+
+        val enclosedMatch = HEADING_ENCLOSED_ORDINAL_REGEX.matchEntire(line)
+        if (enclosedMatch != null) {
+            val enclosed = enclosedMatch.groupValues[2]
+            val number = ENCLOSED_ORDINAL_MAP[enclosed] ?: return line
+            val content = enclosedMatch.groupValues[3]
+            return "${enclosedMatch.groupValues[1]}$number. $content"
+        }
+
+        return line
     }
 
     private fun normalizeLooseOrderedListLine(line: String): String {
@@ -420,6 +441,11 @@ object MarkdownRenderer {
 
     private fun normalizeLooseUnorderedListLine(line: String): String {
         val match = LOOSE_UNORDERED_LIST_REGEX.matchEntire(line) ?: return line
+        return "${match.groupValues[1]}- ${match.groupValues[2]}"
+    }
+
+    private fun normalizeCompactDashUnorderedListLine(line: String): String {
+        val match = LOOSE_DASH_UNORDERED_LIST_REGEX.matchEntire(line) ?: return line
         return "${match.groupValues[1]}- ${match.groupValues[2]}"
     }
 
@@ -1145,6 +1171,7 @@ object MarkdownRenderer {
         proseFontFamily: String,
         baseFontSize: Int,
     ) {
+        val listParagraphStart = doc.length
         val indent = line.length - line.trimStart().length
         val prefix = "  ".repeat(indent / 2)
 
@@ -1169,6 +1196,15 @@ object MarkdownRenderer {
             trimmed.removePrefix("- ").removePrefix("* ")
         }
         renderInlineMarkdown(doc, content, proseFontFamily, baseFontSize)
+        applyListParagraphSpacing(doc, listParagraphStart)
+    }
+
+    private fun applyListParagraphSpacing(doc: StyledDocument, paragraphStart: Int) {
+        val length = (doc.length - paragraphStart).coerceAtLeast(1)
+        val paragraphAttrs = SimpleAttributeSet()
+        StyleConstants.setSpaceAbove(paragraphAttrs, LIST_ITEM_SPACE_ABOVE)
+        StyleConstants.setSpaceBelow(paragraphAttrs, LIST_ITEM_SPACE_BELOW)
+        doc.setParagraphAttributes(paragraphStart, length, paragraphAttrs, false)
     }
 
     /**
@@ -1259,6 +1295,11 @@ object MarkdownRenderer {
         }
         var compacted = normalized
         if (compacted.contains('*')) {
+            val strippedVariationSelectors = ASTERISK_ADJACENT_VARIATION_SELECTOR_REGEX.replace(compacted, "")
+            if (strippedVariationSelectors != compacted) {
+                compacted = strippedVariationSelectors
+                changed = true
+            }
             val collapsed = STAR_PAIR_WITH_SPACES_REGEX.replace(compacted, "**")
             if (collapsed != compacted) {
                 compacted = collapsed
@@ -1324,8 +1365,11 @@ object MarkdownRenderer {
 
     private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+(.*)$""")
     private val LOOSE_HEADING_REGEX = Regex("""^(\s{0,3})(#{2,6})([^\s#].*)$""")
+    private val HEADING_KEYCAP_ORDINAL_REGEX = Regex("""^(\s{0,3}#{1,6}\s+)([0-9])(?:\uFE0F)?\u20E3\s*(\S.*)$""")
+    private val HEADING_ENCLOSED_ORDINAL_REGEX = Regex("""^(\s{0,3}#{1,6}\s+)([①②③④⑤⑥⑦⑧⑨⑩])\s*(\S.*)$""")
     private val LOOSE_ORDERED_LIST_REGEX = Regex("""^(\s*)(\d+)([.)、）．])([^\s].*)$""")
     private val LOOSE_UNORDERED_LIST_REGEX = Regex("""^(\s*)[•●·・▪◦‣]\s*(\S.*)$""")
+    private val LOOSE_DASH_UNORDERED_LIST_REGEX = Regex("""^(\s*)-([^\s-].*)$""")
     private val ORDERED_LIST_REGEX = Regex("""^(\d+)[.)]\s+(.*)$""")
     private val TABLE_OPEN_TAG_REGEX = Regex("""<table\b([^>]*)>""", RegexOption.IGNORE_CASE)
     private val TABLE_BORDER_ATTR_REGEX = Regex("""\bborder\s*=""", RegexOption.IGNORE_CASE)
@@ -1353,8 +1397,8 @@ object MarkdownRenderer {
     )
     private val INLINE_MARKDOWN_IGNORED_CHARS = charArrayOf(
         '\u200B', '\u200C', '\u200D', '\uFEFF', '\u2060',
-        '\uFE0E', '\uFE0F',
     )
+    private val ASTERISK_ADJACENT_VARIATION_SELECTOR_REGEX = Regex("""(?<=\*)[\uFE0E\uFE0F]+|[\uFE0E\uFE0F]+(?=\*)""")
     private const val INLINE_MARKDOWN_NBSP = '\u00A0'
     private val STAR_PAIR_WITH_SPACES_REGEX = Regex("""\*\s+\*""")
     private const val PLAIN_TEXT_CONTENT_TYPE = "text/plain"
@@ -1364,6 +1408,20 @@ object MarkdownRenderer {
     private const val MIN_BASE_FONT_SIZE = 9
     private const val MAX_BASE_FONT_SIZE = 36
     private const val PROSE_LINE_SPACING = 0.52f
+    private const val LIST_ITEM_SPACE_ABOVE = 1.8f
+    private const val LIST_ITEM_SPACE_BELOW = 1.8f
+    private val ENCLOSED_ORDINAL_MAP = mapOf(
+        "①" to "1",
+        "②" to "2",
+        "③" to "3",
+        "④" to "4",
+        "⑤" to "5",
+        "⑥" to "6",
+        "⑦" to "7",
+        "⑧" to "8",
+        "⑨" to "9",
+        "⑩" to "10",
+    )
 
     private data class TableBlock(
         val rows: List<List<String>>,

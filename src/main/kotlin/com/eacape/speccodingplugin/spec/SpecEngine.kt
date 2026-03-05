@@ -253,6 +253,7 @@ class SpecEngine(private val project: Project) {
                     // 更新工作流
                     val updatedWorkflow = workflow.copy(
                         documents = workflow.documents + (workflow.currentPhase to result.document),
+                        clarificationRetryState = null,
                         updatedAt = System.currentTimeMillis()
                     )
                     activeWorkflows[workflowId] = updatedWorkflow
@@ -384,6 +385,70 @@ class SpecEngine(private val project: Project) {
         }
     }
 
+    fun saveClarificationRetryState(
+        workflowId: String,
+        state: ClarificationRetryState?,
+    ): Result<SpecWorkflow> {
+        return runCatching {
+            val workflow = activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            val normalizedState = state?.normalize()
+            if (workflow.clarificationRetryState == normalizedState) {
+                activeWorkflows[workflowId] = workflow
+                return@runCatching workflow
+            }
+            val updatedWorkflow = workflow.copy(
+                clarificationRetryState = normalizedState,
+            )
+            activeWorkflows[workflowId] = updatedWorkflow
+            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
+            updatedWorkflow
+        }
+    }
+
+    private fun ClarificationRetryState.normalize(): ClarificationRetryState? {
+        val normalizedInput = input
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        val normalizedContext = confirmedContext
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        val normalizedQuestions = questionsMarkdown
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .trim()
+        val normalizedStructuredQuestions = structuredQuestions
+            .map {
+                it.replace("\r\n", "\n")
+                    .replace('\r', '\n')
+                    .trim()
+            }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val normalizedLastError = lastError
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        if (normalizedInput.isBlank() &&
+            normalizedContext.isBlank() &&
+            normalizedQuestions.isBlank() &&
+            normalizedStructuredQuestions.isEmpty()
+        ) {
+            return null
+        }
+        return copy(
+            input = normalizedInput,
+            confirmedContext = normalizedContext,
+            questionsMarkdown = normalizedQuestions,
+            structuredQuestions = normalizedStructuredQuestions,
+            clarificationRound = clarificationRound.coerceAtLeast(1),
+            lastError = normalizedLastError,
+        )
+    }
+
     /**
      * 进入下一阶段
      */
@@ -427,6 +492,7 @@ class SpecEngine(private val project: Project) {
             // 更新工作流
             val updatedWorkflow = workflow.copy(
                 currentPhase = nextPhase,
+                clarificationRetryState = null,
                 updatedAt = System.currentTimeMillis()
             )
 
@@ -460,6 +526,7 @@ class SpecEngine(private val project: Project) {
 
             val updatedWorkflow = workflow.copy(
                 currentPhase = previousPhase,
+                clarificationRetryState = null,
                 updatedAt = System.currentTimeMillis()
             )
 
@@ -497,6 +564,7 @@ class SpecEngine(private val project: Project) {
 
             val updatedWorkflow = workflow.copy(
                 status = WorkflowStatus.COMPLETED,
+                clarificationRetryState = null,
                 updatedAt = System.currentTimeMillis()
             )
 

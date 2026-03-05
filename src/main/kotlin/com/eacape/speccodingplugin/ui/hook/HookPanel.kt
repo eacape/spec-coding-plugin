@@ -248,6 +248,7 @@ class HookPanel(
         button.isOpaque = true
         button.foreground = BUTTON_FG
         SpecUiStyle.applyRoundRect(button, arc = 10)
+        installHookButtonCursorTracking(button)
         if (iconOnly) {
             installHookIconButtonStateTracking(button)
             applyHookIconButtonVisualState(button)
@@ -276,6 +277,21 @@ class HookPanel(
         button.addPropertyChangeListener("enabled") { applyHookIconButtonVisualState(button) }
     }
 
+    private fun installHookButtonCursorTracking(button: JButton) {
+        if (button.getClientProperty("hook.toolbar.cursorTrackingInstalled") == true) return
+        button.putClientProperty("hook.toolbar.cursorTrackingInstalled", true)
+        updateHookButtonCursor(button)
+        button.addPropertyChangeListener("enabled") { updateHookButtonCursor(button) }
+    }
+
+    private fun updateHookButtonCursor(button: JButton) {
+        button.cursor = if (button.isEnabled) {
+            Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        } else {
+            Cursor.getDefaultCursor()
+        }
+    }
+
     private fun applyHookIconButtonVisualState(button: JButton) {
         val model = button.model
         val background = when {
@@ -290,9 +306,10 @@ class HookPanel(
             model.isRollover -> ICON_BUTTON_BORDER_HOVER
             else -> ICON_BUTTON_BORDER
         }
+        val borderThickness = if (model.isPressed || model.isSelected) JBUI.scale(2) else 1
         button.background = background
         button.border = javax.swing.BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10)),
+            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10), thickness = borderThickness),
             JBUI.Borders.empty(4),
         )
     }
@@ -338,6 +355,7 @@ class HookPanel(
     private fun applyButtonIcon(button: JButton, icon: Icon, tooltip: String) {
         button.text = ""
         button.icon = icon
+        button.disabledIcon = IconLoader.getDisabledIcon(icon)
         button.toolTipText = tooltip
         button.accessibleContext.accessibleName = tooltip
         button.accessibleContext.accessibleDescription = tooltip
@@ -1287,12 +1305,12 @@ class HookPanel(
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
         private val ICON_BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
-        private val ICON_BUTTON_BG_HOVER = JBColor(Color(233, 243, 255), Color(72, 81, 94))
-        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 254), Color(82, 92, 107))
+        private val ICON_BUTTON_BG_HOVER = JBColor(Color(235, 246, 255), Color(76, 88, 103))
+        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(227, 240, 255), Color(85, 99, 118))
         private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
-        private val ICON_BUTTON_BORDER = JBColor(Color(138, 186, 144), Color(118, 168, 126))
-        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(120, 172, 128), Color(132, 185, 141))
-        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(104, 160, 113), Color(146, 201, 156))
+        private val ICON_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(104, 116, 134))
+        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(124, 167, 229), Color(124, 158, 205))
+        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(89, 136, 208), Color(143, 182, 232))
         private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))

@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -102,5 +103,51 @@ class SpecStorageWorkflowMetadataTest {
         val loaded = SpecStorage.getInstance(project).loadWorkflow(workflowId).getOrThrow()
         assertEquals(SpecChangeIntent.INCREMENTAL, loaded.changeIntent)
         assertEquals(baselineWorkflowId, loaded.baselineWorkflowId)
+    }
+
+    @Test
+    fun `loadWorkflow should preserve clarification retry state metadata`() {
+        val workflowId = "wf-retry"
+        val retryState = ClarificationRetryState(
+            input = "请生成需求文档",
+            confirmedContext = "**已确认澄清项**\n- 支持离线",
+            questionsMarkdown = "1. 是否需要离线缓存？",
+            structuredQuestions = listOf("是否需要离线缓存？", "是否需要多语言？"),
+            clarificationRound = 2,
+            lastError = "request interrupted",
+            confirmed = true,
+        )
+        val workflow = SpecWorkflow(
+            id = workflowId,
+            currentPhase = SpecPhase.SPECIFY,
+            documents = emptyMap(),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Retry Workflow",
+            description = "retry state persist",
+            clarificationRetryState = retryState,
+            createdAt = 1700000010000L,
+            updatedAt = 1700000015000L,
+        )
+
+        storage.saveWorkflow(workflow).getOrThrow()
+
+        val yamlPath = tempDir
+            .resolve(".spec-coding")
+            .resolve("specs")
+            .resolve(workflowId)
+            .resolve("workflow.yaml")
+        val yamlContent = Files.readString(yamlPath)
+        assertTrue(yamlContent.contains("clarificationRetryState:"))
+
+        val loaded = SpecStorage.getInstance(project).loadWorkflow(workflowId).getOrThrow()
+        val loadedRetry = loaded.clarificationRetryState
+        assertNotNull(loadedRetry)
+        assertEquals(retryState.input, loadedRetry?.input)
+        assertEquals(retryState.confirmedContext, loadedRetry?.confirmedContext)
+        assertEquals(retryState.questionsMarkdown, loadedRetry?.questionsMarkdown)
+        assertEquals(retryState.structuredQuestions, loadedRetry?.structuredQuestions)
+        assertEquals(retryState.clarificationRound, loadedRetry?.clarificationRound)
+        assertEquals(retryState.lastError, loadedRetry?.lastError)
+        assertEquals(retryState.confirmed, loadedRetry?.confirmed)
     }
 }
