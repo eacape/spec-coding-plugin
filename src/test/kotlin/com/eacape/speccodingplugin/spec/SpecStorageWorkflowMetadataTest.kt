@@ -64,7 +64,7 @@ class SpecStorageWorkflowMetadataTest {
             .resolve("workflow.yaml")
         val yamlContent = Files.readString(yamlPath)
         assertTrue(yamlContent.contains("title: $workflowTitle"))
-        assertTrue(yamlContent.contains("    title: $documentTitle"))
+        assertTrue(yamlContent.contains("title: $documentTitle"))
 
         val loaded = SpecStorage.getInstance(project).loadWorkflow(workflowId).getOrThrow()
         assertEquals(workflowTitle, loaded.title)

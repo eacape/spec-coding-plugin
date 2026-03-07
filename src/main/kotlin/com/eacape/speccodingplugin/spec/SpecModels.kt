@@ -219,7 +219,7 @@ data class SpecWorkflow(
      * 是否是增量需求工作流
      */
     fun isIncrementalWorkflow(): Boolean {
-        return changeIntent == SpecChangeIntent.INCREMENTAL && !baselineWorkflowId.isNullOrBlank()
+        return changeIntent == SpecChangeIntent.INCREMENTAL
     }
 }
 

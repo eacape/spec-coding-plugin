@@ -1,0 +1,104 @@
+package com.eacape.speccodingplugin.spec
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import java.nio.file.Files
+import java.nio.file.Path
+import kotlin.io.path.name
+
+class SpecArchitectureContractTest {
+
+    @Test
+    fun `task00 dependency decisions should cover mandatory capabilities`() {
+        val decisions = SpecArchitectureContract.dependencyDecisions.associateBy { it.key }
+
+        assertTrue(decisions.containsKey("markdown-ast"))
+        assertTrue(decisions.containsKey("yaml-codec"))
+        assertTrue(decisions.containsKey("project-config"))
+        assertTrue(decisions.containsKey("security"))
+        assertTrue(decisions.containsKey("workflow-id"))
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("workflow-id").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("yaml-codec").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("markdown-ast").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("project-config").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("security").status,
+        )
+    }
+
+    @Test
+    fun `every spec kotlin source should have architecture source rule`() {
+        val fileNames = listSpecKotlinSourceFiles()
+            .map { it.name }
+            .toSortedSet()
+
+        val configured = SpecArchitectureContract.sourceRules
+            .map { it.fileName }
+            .toSortedSet()
+
+        assertEquals(fileNames, configured)
+    }
+
+    @Test
+    fun `spec imports should satisfy blocked dependency prefixes`() {
+        val violations = mutableListOf<String>()
+
+        listSpecKotlinSourceFiles().forEach { source ->
+            val fileName = source.name
+            val blockedPrefixes = SpecArchitectureContract.blockedImportPrefixesFor(fileName)
+
+            Files.readAllLines(source).forEachIndexed { index, rawLine ->
+                val line = rawLine.trim()
+                if (!line.startsWith("import ")) {
+                    return@forEachIndexed
+                }
+                val importRef = line.removePrefix("import ").trim()
+                if (blockedPrefixes.any { importRef.startsWith(it) }) {
+                    violations += "$fileName:${index + 1} -> $importRef"
+                }
+            }
+        }
+
+        assertTrue(
+            violations.isEmpty(),
+            "Blocked dependency imports found:\n${violations.joinToString("\n")}",
+        )
+    }
+
+    private fun listSpecKotlinSourceFiles(): List<Path> {
+        Files.list(specSourceRoot).use { stream ->
+            return stream
+                .filter { path ->
+                    Files.isRegularFile(path) &&
+                        path.fileName.toString().endsWith(".kt")
+                }
+                .toList()
+        }
+    }
+
+    companion object {
+        private val specSourceRoot: Path = Path.of(
+            "src",
+            "main",
+            "kotlin",
+            "com",
+            "eacape",
+            "speccodingplugin",
+            "spec",
+        )
+    }
+}

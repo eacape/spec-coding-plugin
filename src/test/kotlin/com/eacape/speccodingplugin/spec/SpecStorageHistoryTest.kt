@@ -85,11 +85,27 @@ class SpecStorageHistoryTest {
         assertTrue(Files.exists(archived.archivePath.resolve("workflow.yaml")))
         assertTrue(Files.exists(archived.archivePath.resolve(SpecPhase.IMPLEMENT.outputFileName)))
         assertTrue(Files.exists(archived.auditLogPath))
+        assertEquals(
+            archived.archivePath.resolve(".history").resolve("audit.yaml"),
+            archived.auditLogPath,
+        )
         assertTrue(storage.listWorkflows().none { it == workflowId })
 
         val logContent = Files.readString(archived.auditLogPath)
-        assertTrue(logContent.contains("|DOCUMENT_SAVED|$workflowId|"))
-        assertTrue(logContent.contains("|WORKFLOW_ARCHIVED|$workflowId|"))
+        val events = SpecAuditLogCodec.decodeDocuments(logContent)
+        assertTrue(
+            events.any { event ->
+                event.workflowId == workflowId &&
+                    event.eventType == SpecAuditEventType.DOCUMENT_SAVED
+            }
+        )
+        assertTrue(
+            events.any { event ->
+                event.workflowId == workflowId &&
+                    event.eventType == SpecAuditEventType.WORKFLOW_ARCHIVED &&
+                    event.details["archiveId"] == archived.archiveId
+            }
+        )
     }
 
     @Test

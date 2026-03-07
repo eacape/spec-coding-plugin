@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -171,6 +172,32 @@ class SpecEngineWorkflowTest {
         assertTrue(result.isFailure)
         val message = result.exceptionOrNull()?.message ?: ""
         assertTrue(message.contains("Cannot proceed to next phase"))
+    }
+
+    @Test
+    fun `createWorkflow should fail when project config schema version is unsupported`() {
+        val configPath = tempDir
+            .resolve(".spec-coding")
+            .resolve("config.yaml")
+        Files.createDirectories(configPath.parent)
+        Files.writeString(
+            configPath,
+            """
+            schemaVersion: 99
+            """.trimIndent() + "\n",
+        )
+
+        val engine = SpecEngine(project, storage) {
+            SpecGenerationResult.Failure("not used")
+        }
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            engine.createWorkflow(
+                title = "Config error",
+                description = "schema mismatch",
+            ).getOrThrow()
+        }
+        assertTrue(error.message?.contains("Unsupported config schemaVersion") == true)
     }
 
     @Test

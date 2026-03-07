@@ -6,46 +6,55 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Base64
+import java.util.UUID
 
 /**
  * Spec 文档存储管理器
  * 负责 Spec 文档的文件系统存储和读取
  */
-class SpecStorage(private val project: Project) {
+class SpecStorage(
+    project: Project,
+    private val atomicFileIO: AtomicFileIO = AtomicFileIO(),
+    private val workspaceInitializer: SpecWorkspaceInitializer = SpecWorkspaceInitializer(project),
+    private val lockManager: SpecFileLockManager = SpecFileLockManager(workspaceInitializer),
+) {
     private val logger = thisLogger()
+    private val yamlCodec = SpecYamlCodec
 
     /**
      * 保存 Spec 文档
      */
     fun saveDocument(workflowId: String, document: SpecDocument): Result<Path> {
         return runCatching {
-            val workflowDir = getWorkflowDirectory(workflowId)
-            Files.createDirectories(workflowDir)
+            lockManager.withWorkflowLock(workflowId) {
+                val workflowDir = workspaceInitializer
+                    .initializeWorkflowWorkspace(workflowId)
+                    .workflowDir
 
-            val filePath = workflowDir.resolve(document.phase.outputFileName)
-            val content = formatDocument(document)
+                val filePath = workflowDir.resolve(document.phase.outputFileName)
+                val content = formatDocument(document)
 
-            Files.writeString(filePath, content, StandardCharsets.UTF_8)
-            val snapshotId = saveDocumentSnapshot(workflowId, document, content)
-            appendAuditEntry(
-                eventType = SpecAuditEventType.DOCUMENT_SAVED,
-                workflowId = workflowId,
-                details = mapOf(
-                    "phase" to document.phase.name,
-                    "snapshotId" to snapshotId,
-                    "file" to document.phase.outputFileName,
-                ),
-            )
-            logger.info("Saved ${document.phase} document to $filePath")
+                atomicFileIO.writeString(filePath, content, StandardCharsets.UTF_8)
+                val snapshotId = saveDocumentSnapshot(workflowId, document, content)
+                appendAuditEntry(
+                    eventType = SpecAuditEventType.DOCUMENT_SAVED,
+                    workflowId = workflowId,
+                    details = mapOf(
+                        "phase" to document.phase.name,
+                        "snapshotId" to snapshotId,
+                        "file" to document.phase.outputFileName,
+                    ),
+                )
+                logger.info("Saved ${document.phase} document to $filePath")
 
-            filePath
+                filePath
+            }
         }
     }
 
@@ -104,20 +113,22 @@ class SpecStorage(private val project: Project) {
         snapshotId: String,
     ): Result<Unit> {
         return runCatching {
-            val snapshotPath = getHistoryDirectory(workflowId, phase).resolve("$snapshotId.md")
-            if (!Files.exists(snapshotPath)) {
-                throw IllegalStateException("Document snapshot not found: $snapshotPath")
+            lockManager.withWorkflowLock(workflowId) {
+                val snapshotPath = getHistoryDirectory(workflowId, phase).resolve("$snapshotId.md")
+                if (!Files.exists(snapshotPath)) {
+                    throw IllegalStateException("Document snapshot not found: $snapshotPath")
+                }
+                Files.delete(snapshotPath)
+                cleanupIfEmpty(getHistoryDirectory(workflowId, phase))
+                appendAuditEntry(
+                    eventType = SpecAuditEventType.SNAPSHOT_DELETED,
+                    workflowId = workflowId,
+                    details = mapOf(
+                        "phase" to phase.name,
+                        "snapshotId" to snapshotId,
+                    ),
+                )
             }
-            Files.delete(snapshotPath)
-            cleanupIfEmpty(getHistoryDirectory(workflowId, phase))
-            appendAuditEntry(
-                eventType = SpecAuditEventType.SNAPSHOT_DELETED,
-                workflowId = workflowId,
-                details = mapOf(
-                    "phase" to phase.name,
-                    "snapshotId" to snapshotId,
-                ),
-            )
         }
     }
 
@@ -127,26 +138,28 @@ class SpecStorage(private val project: Project) {
         keepLatest: Int,
     ): Result<Int> {
         return runCatching {
-            require(keepLatest >= 0) { "keepLatest must be >= 0" }
-            val history = listDocumentHistory(workflowId, phase)
-            val toDelete = history.drop(keepLatest)
-            toDelete.forEach { entry ->
-                val path = getHistoryDirectory(workflowId, phase).resolve("${entry.snapshotId}.md")
-                if (Files.exists(path)) {
-                    Files.delete(path)
+            lockManager.withWorkflowLock(workflowId) {
+                require(keepLatest >= 0) { "keepLatest must be >= 0" }
+                val history = listDocumentHistory(workflowId, phase)
+                val toDelete = history.drop(keepLatest)
+                toDelete.forEach { entry ->
+                    val path = getHistoryDirectory(workflowId, phase).resolve("${entry.snapshotId}.md")
+                    if (Files.exists(path)) {
+                        Files.delete(path)
+                    }
                 }
+                cleanupIfEmpty(getHistoryDirectory(workflowId, phase))
+                appendAuditEntry(
+                    eventType = SpecAuditEventType.HISTORY_PRUNED,
+                    workflowId = workflowId,
+                    details = mapOf(
+                        "phase" to phase.name,
+                        "keepLatest" to keepLatest.toString(),
+                        "pruned" to toDelete.size.toString(),
+                    ),
+                )
+                toDelete.size
             }
-            cleanupIfEmpty(getHistoryDirectory(workflowId, phase))
-            appendAuditEntry(
-                eventType = SpecAuditEventType.HISTORY_PRUNED,
-                workflowId = workflowId,
-                details = mapOf(
-                    "phase" to phase.name,
-                    "keepLatest" to keepLatest.toString(),
-                    "pruned" to toDelete.size.toString(),
-                ),
-            )
-            toDelete.size
         }
     }
 
@@ -172,25 +185,28 @@ class SpecStorage(private val project: Project) {
      */
     fun saveWorkflow(workflow: SpecWorkflow): Result<Path> {
         return runCatching {
-            val workflowDir = getWorkflowDirectory(workflow.id)
-            Files.createDirectories(workflowDir)
+            lockManager.withWorkflowLock(workflow.id) {
+                val workflowDir = workspaceInitializer
+                    .initializeWorkflowWorkspace(workflow.id)
+                    .workflowDir
 
-            val metadataPath = workflowDir.resolve("workflow.yaml")
-            val metadata = formatWorkflowMetadata(workflow)
+                val metadataPath = workflowDir.resolve("workflow.yaml")
+                val metadata = formatWorkflowMetadata(workflow)
 
-            Files.writeString(metadataPath, metadata, StandardCharsets.UTF_8)
-            appendAuditEntry(
-                eventType = SpecAuditEventType.WORKFLOW_SAVED,
-                workflowId = workflow.id,
-                details = mapOf(
-                    "status" to workflow.status.name,
-                    "phase" to workflow.currentPhase.name,
-                    "changeIntent" to workflow.changeIntent.name,
-                ),
-            )
-            logger.info("Saved workflow metadata to $metadataPath")
+                atomicFileIO.writeString(metadataPath, metadata, StandardCharsets.UTF_8)
+                appendAuditEntry(
+                    eventType = SpecAuditEventType.WORKFLOW_SAVED,
+                    workflowId = workflow.id,
+                    details = mapOf(
+                        "status" to workflow.status.name,
+                        "phase" to workflow.currentPhase.name,
+                        "changeIntent" to workflow.changeIntent.name,
+                    ),
+                )
+                logger.info("Saved workflow metadata to $metadataPath")
 
-            metadataPath
+                metadataPath
+            }
         }
     }
 
@@ -236,59 +252,77 @@ class SpecStorage(private val project: Project) {
      */
     fun deleteWorkflow(workflowId: String): Result<Unit> {
         return runCatching {
-            val workflowDir = getWorkflowDirectory(workflowId)
-            if (Files.exists(workflowDir)) {
-                Files.walk(workflowDir)
-                    .sorted(Comparator.reverseOrder())
-                    .forEach { Files.delete(it) }
-                appendAuditEntry(
-                    eventType = SpecAuditEventType.WORKFLOW_DELETED,
-                    workflowId = workflowId,
-                )
-                logger.info("Deleted workflow: $workflowId")
+            lockManager.withWorkflowLock(workflowId) {
+                val workflowDir = getWorkflowDirectory(workflowId)
+                if (Files.exists(workflowDir)) {
+                    appendAuditEntry(
+                        eventType = SpecAuditEventType.WORKFLOW_DELETED,
+                        workflowId = workflowId,
+                    )
+                    Files.walk(workflowDir)
+                        .sorted(Comparator.reverseOrder())
+                        .forEach { Files.delete(it) }
+                    logger.info("Deleted workflow: $workflowId")
+                }
             }
         }
     }
 
     fun archiveWorkflow(workflow: SpecWorkflow): Result<SpecArchiveResult> {
         return runCatching {
-            require(workflow.status == WorkflowStatus.COMPLETED) {
-                "Only completed workflow can be archived: ${workflow.id}"
+            lockManager.withWorkflowLock(workflow.id) {
+                require(workflow.status == WorkflowStatus.COMPLETED) {
+                    "Only completed workflow can be archived: ${workflow.id}"
+                }
+
+                val workflowDir = getWorkflowDirectory(workflow.id)
+                if (!Files.exists(workflowDir)) {
+                    throw IllegalStateException("Workflow not found for archive: ${workflow.id}")
+                }
+
+                val archiveRoot = getArchiveDirectory()
+                Files.createDirectories(archiveRoot)
+                val archiveId = "${workflow.id}-${System.currentTimeMillis()}"
+                val archivePath = archiveRoot.resolve(archiveId)
+                try {
+                    Files.move(workflowDir, archivePath, StandardCopyOption.ATOMIC_MOVE)
+                } catch (_: AtomicMoveNotSupportedException) {
+                    Files.move(workflowDir, archivePath)
+                }
+                val auditLogPath = getAuditLogPath(archivePath)
+
+                appendAuditEntry(
+                    eventType = SpecAuditEventType.WORKFLOW_ARCHIVED,
+                    workflowId = workflow.id,
+                    details = mapOf(
+                        "archiveId" to archiveId,
+                        "status" to workflow.status.name,
+                        "phase" to workflow.currentPhase.name,
+                        "title" to workflow.title,
+                        "changeIntent" to workflow.changeIntent.name,
+                    ),
+                    auditLogPath = auditLogPath,
+                )
+
+                SpecArchiveResult(
+                    workflowId = workflow.id,
+                    archiveId = archiveId,
+                    archivePath = archivePath,
+                    auditLogPath = auditLogPath,
+                )
             }
+        }
+    }
 
-            val workflowDir = getWorkflowDirectory(workflow.id)
-            if (!Files.exists(workflowDir)) {
-                throw IllegalStateException("Workflow not found for archive: ${workflow.id}")
-            }
+    fun initializeWorkspace(): Result<SpecWorkspacePaths> {
+        return runCatching {
+            workspaceInitializer.initializeProjectWorkspace()
+        }
+    }
 
-            val archiveRoot = getArchiveDirectory()
-            Files.createDirectories(archiveRoot)
-            val archiveId = "${workflow.id}-${System.currentTimeMillis()}"
-            val archivePath = archiveRoot.resolve(archiveId)
-            try {
-                Files.move(workflowDir, archivePath, StandardCopyOption.ATOMIC_MOVE)
-            } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(workflowDir, archivePath)
-            }
-
-            appendAuditEntry(
-                eventType = SpecAuditEventType.WORKFLOW_ARCHIVED,
-                workflowId = workflow.id,
-                details = mapOf(
-                    "archiveId" to archiveId,
-                    "status" to workflow.status.name,
-                    "phase" to workflow.currentPhase.name,
-                    "title" to workflow.title,
-                    "changeIntent" to workflow.changeIntent.name,
-                ),
-            )
-
-            SpecArchiveResult(
-                workflowId = workflow.id,
-                archiveId = archiveId,
-                archivePath = archivePath,
-                auditLogPath = getAuditLogPath(),
-            )
+    fun initializeWorkflowWorkspace(workflowId: String): Result<WorkflowWorkspacePaths> {
+        return runCatching {
+            workspaceInitializer.initializeWorkflowWorkspace(workflowId)
         }
     }
 
@@ -309,8 +343,12 @@ class SpecStorage(private val project: Project) {
         return getSpecCodingDirectory().resolve("spec-archive")
     }
 
-    private fun getAuditLogPath(): Path {
-        return getSpecCodingDirectory().resolve("spec-audit.log")
+    private fun getAuditLogPath(workflowId: String): Path {
+        return getAuditLogPath(getWorkflowDirectory(workflowId))
+    }
+
+    private fun getAuditLogPath(workflowRoot: Path): Path {
+        return workflowRoot.resolve(".history").resolve("audit.yaml")
     }
 
     /**
@@ -321,9 +359,7 @@ class SpecStorage(private val project: Project) {
     }
 
     private fun getSpecCodingDirectory(): Path {
-        val basePath = project.basePath ?: throw IllegalStateException("Project base path is null")
-        return Paths.get(basePath)
-            .resolve(".spec-coding")
+        return workspaceInitializer.specCodingDirectory()
     }
 
     /**
@@ -391,83 +427,53 @@ class SpecStorage(private val project: Project) {
      * 格式化工作流元数据
      */
     private fun formatWorkflowMetadata(workflow: SpecWorkflow): String {
-        return buildString {
-            appendLine("id: ${workflow.id}")
-            appendLine("title: ${workflow.title}")
-            appendLine("description: ${workflow.description.replace("\n", " ")}")
-            appendLine("changeIntent: ${workflow.changeIntent.name}")
-            workflow.baselineWorkflowId?.takeIf { it.isNotBlank() }?.let {
-                appendLine("baselineWorkflowId: $it")
-            }
-            workflow.clarificationRetryState?.let { retry ->
-                appendLine("clarificationRetryState: ${encodeClarificationRetryState(retry)}")
-            }
-            appendLine("currentPhase: ${workflow.currentPhase.name}")
-            appendLine("status: ${workflow.status.name}")
-            appendLine("createdAt: ${workflow.createdAt}")
-            appendLine("updatedAt: ${workflow.updatedAt}")
-            appendLine("documents:")
-            workflow.documents.forEach { (phase, doc) ->
-                appendLine("  - phase: ${phase.name}")
-                appendLine("    id: ${doc.id}")
-                appendLine("    title: ${doc.metadata.title}")
-            }
+        val metadata = linkedMapOf<String, Any?>(
+            "id" to workflow.id,
+            "title" to workflow.title,
+            "description" to workflow.description.replace("\n", " "),
+            "changeIntent" to workflow.changeIntent.name,
+            "currentPhase" to workflow.currentPhase.name,
+            "status" to workflow.status.name,
+            "createdAt" to workflow.createdAt,
+            "updatedAt" to workflow.updatedAt,
+            "documents" to workflow.documents.entries
+                .sortedBy { (phase, _) -> phase.name }
+                .map { (phase, doc) ->
+                    linkedMapOf<String, Any?>(
+                        "phase" to phase.name,
+                        "id" to doc.id,
+                        "title" to doc.metadata.title,
+                    )
+                },
+        )
+        workflow.baselineWorkflowId?.takeIf { it.isNotBlank() }?.let { baseline ->
+            metadata["baselineWorkflowId"] = baseline
         }
+        workflow.clarificationRetryState?.let { retry ->
+            metadata["clarificationRetryState"] = encodeClarificationRetryState(retry)
+        }
+        return yamlCodec.encodeMap(metadata)
     }
 
     /**
      * 解析工作流元数据
      */
     private fun parseWorkflowMetadata(workflowId: String, metadata: String): SpecWorkflow {
-        val lines = metadata.lines()
-        var currentPhase = SpecPhase.SPECIFY
-        var status = WorkflowStatus.IN_PROGRESS
-        var title = workflowId
-        var description = ""
-        var changeIntent = SpecChangeIntent.FULL
-        var baselineWorkflowId: String? = null
-        var clarificationRetryState: ClarificationRetryState? = null
-        var createdAt = System.currentTimeMillis()
-        var updatedAt = System.currentTimeMillis()
-
-        for (line in lines) {
-            // Only parse top-level fields (no indentation). Nested "documents" entries also contain
-            // keys like `title:` and would otherwise override workflow metadata.
-            val trimmed = line.trimEnd()
-            when {
-                trimmed.startsWith("currentPhase:") -> {
-                    val value = trimmed.substringAfter(":").trim()
-                    currentPhase = runCatching { SpecPhase.valueOf(value) }.getOrDefault(SpecPhase.SPECIFY)
-                }
-                trimmed.startsWith("title:") -> {
-                    title = trimmed.substringAfter(":").trim().ifBlank { workflowId }
-                }
-                trimmed.startsWith("description:") -> {
-                    description = trimmed.substringAfter(":").trim()
-                }
-                trimmed.startsWith("changeIntent:") -> {
-                    val value = trimmed.substringAfter(":").trim()
-                    changeIntent = runCatching { SpecChangeIntent.valueOf(value) }.getOrDefault(SpecChangeIntent.FULL)
-                }
-                trimmed.startsWith("baselineWorkflowId:") -> {
-                    baselineWorkflowId = trimmed.substringAfter(":").trim().takeIf { it.isNotBlank() }
-                }
-                trimmed.startsWith("clarificationRetryState:") -> {
-                    val value = trimmed.substringAfter(":").trim()
-                    clarificationRetryState = decodeClarificationRetryState(value)
-                }
-                trimmed.startsWith("status:") -> {
-                    val value = trimmed.substringAfter(":").trim()
-                    status = runCatching { WorkflowStatus.valueOf(value) }.getOrDefault(WorkflowStatus.IN_PROGRESS)
-                }
-                trimmed.startsWith("createdAt:") -> {
-                    createdAt = trimmed.substringAfter(":").trim().toLongOrNull() ?: createdAt
-                }
-                trimmed.startsWith("updatedAt:") -> {
-                    updatedAt = trimmed.substringAfter(":").trim().toLongOrNull() ?: updatedAt
-                }
-            }
-        }
+        val root = yamlCodec.decodeMap(metadata)
+        val currentPhase = parseEnumValue(root["currentPhase"], SpecPhase.SPECIFY, SpecPhase.entries)
+        val status = parseEnumValue(root["status"], WorkflowStatus.IN_PROGRESS, WorkflowStatus.entries)
+        val changeIntent = parseEnumValue(root["changeIntent"], SpecChangeIntent.FULL, SpecChangeIntent.entries)
+        val title = root["title"]?.toString()?.trim()?.ifBlank { workflowId } ?: workflowId
+        val description = root["description"]?.toString()?.trim().orEmpty()
+        val baselineWorkflowId = root["baselineWorkflowId"]?.toString()?.trim()?.takeIf { it.isNotBlank() }
+        val clarificationRetryState = root["clarificationRetryState"]
+            ?.toString()
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::decodeClarificationRetryState)
+        val now = System.currentTimeMillis()
+        val createdAt = parseLong(root["createdAt"], now)
+        val updatedAt = parseLong(root["updatedAt"], now)
 
         // 加载已有文档
         val documents = mutableMapOf<SpecPhase, SpecDocument>()
@@ -490,6 +496,26 @@ class SpecStorage(private val project: Project) {
             createdAt = createdAt,
             updatedAt = updatedAt
         )
+    }
+
+    private fun parseLong(raw: Any?, fallback: Long): Long {
+        return when (raw) {
+            is Number -> raw.toLong()
+            is String -> raw.trim().toLongOrNull() ?: fallback
+            else -> fallback
+        }
+    }
+
+    private fun <E : Enum<E>> parseEnumValue(
+        raw: Any?,
+        fallback: E,
+        candidates: Iterable<E>,
+    ): E {
+        val normalized = raw?.toString()?.trim().orEmpty()
+        if (normalized.isBlank()) {
+            return fallback
+        }
+        return candidates.firstOrNull { candidate -> candidate.name == normalized } ?: fallback
     }
 
     private fun encodeClarificationRetryState(state: ClarificationRetryState): String {
@@ -576,7 +602,7 @@ class SpecStorage(private val project: Project) {
         Files.createDirectories(historyDir)
         val snapshotId = System.currentTimeMillis().toString()
         val snapshotPath = historyDir.resolve("$snapshotId.md")
-        Files.writeString(snapshotPath, formattedContent, StandardCharsets.UTF_8)
+        atomicFileIO.writeString(snapshotPath, formattedContent, StandardCharsets.UTF_8)
         return snapshotId
     }
 
@@ -595,34 +621,65 @@ class SpecStorage(private val project: Project) {
         eventType: SpecAuditEventType,
         workflowId: String,
         details: Map<String, String> = emptyMap(),
+        auditLogPath: Path = getAuditLogPath(workflowId),
     ) {
         try {
-            val auditLogPath = getAuditLogPath()
-            Files.createDirectories(auditLogPath.parent)
-
-            val detailPayload = details.entries
-                .sortedBy { it.key }
-                .joinToString(";") { (key, value) ->
-                    "${sanitizeAuditValue(key)}=${sanitizeAuditValue(value)}"
-                }
-            val line = "${System.currentTimeMillis()}|${eventType.name}|${sanitizeAuditValue(workflowId)}|$detailPayload\n"
-            Files.writeString(
-                auditLogPath,
-                line,
-                StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.APPEND,
-            )
+            lockManager.withAuditLogLock(workflowId) {
+                Files.createDirectories(auditLogPath.parent)
+                val event = buildAuditEvent(
+                    eventType = eventType,
+                    workflowId = workflowId,
+                    details = details,
+                )
+                val document = SpecAuditLogCodec.encodeDocument(event)
+                Files.writeString(
+                    auditLogPath,
+                    document,
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND,
+                )
+            }
         } catch (e: Exception) {
             logger.warn("Failed to append spec audit log entry", e)
         }
     }
 
-    private fun sanitizeAuditValue(raw: String): String {
+    private fun buildAuditEvent(
+        eventType: SpecAuditEventType,
+        workflowId: String,
+        details: Map<String, String>,
+    ): SpecAuditEvent {
+        val timestamp = System.currentTimeMillis()
+        val normalizedDetails = details.entries
+            .mapNotNull { (key, value) ->
+                val normalizedKey = normalizeAuditValue(key)
+                if (normalizedKey.isBlank()) {
+                    return@mapNotNull null
+                }
+                normalizedKey to normalizeAuditValue(value)
+            }
+            .toMap()
+            .toSortedMap()
+        return SpecAuditEvent(
+            eventId = "event-${UUID.randomUUID()}",
+            workflowId = normalizedWorkflowId(workflowId),
+            eventType = eventType,
+            occurredAtEpochMs = timestamp,
+            occurredAt = Instant.ofEpochMilli(timestamp).toString(),
+            actor = System.getProperty("user.name")?.trim()?.takeIf { it.isNotBlank() },
+            details = normalizedDetails,
+        )
+    }
+
+    private fun normalizedWorkflowId(workflowId: String): String {
+        return normalizeAuditValue(workflowId).ifBlank { "unknown-workflow" }
+    }
+
+    private fun normalizeAuditValue(raw: String): String {
         return raw
             .replace("\r", " ")
             .replace("\n", " ")
-            .replace("|", "/")
             .trim()
     }
 

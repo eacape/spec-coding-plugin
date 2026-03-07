@@ -10,10 +10,38 @@ data class SpecArchiveResult(
 )
 
 enum class SpecAuditEventType {
+    WORKFLOW_CREATED,
+    WORKFLOW_OPENED,
+    TEMPLATE_SELECTED,
+    TEMPLATE_SWITCHED,
+    TEMPLATE_SWITCH_ROLLED_BACK,
+    STAGE_ADVANCED,
+    STAGE_JUMPED,
+    STAGE_ROLLED_BACK,
     WORKFLOW_SAVED,
     DOCUMENT_SAVED,
+    TASK_STATUS_CHANGED,
+    RELATED_FILES_UPDATED,
+    VERIFICATION_RUN_COMPLETED,
+    DELTA_BASELINE_SELECTED,
+    DELTA_EXPORTED,
     SNAPSHOT_DELETED,
     HISTORY_PRUNED,
     WORKFLOW_DELETED,
     WORKFLOW_ARCHIVED,
+}
+
+data class SpecAuditEvent(
+    val schemaVersion: Int = CURRENT_SCHEMA_VERSION,
+    val eventId: String,
+    val workflowId: String,
+    val eventType: SpecAuditEventType,
+    val occurredAtEpochMs: Long,
+    val occurredAt: String,
+    val actor: String? = null,
+    val details: Map<String, String> = emptyMap(),
+) {
+    companion object {
+        const val CURRENT_SCHEMA_VERSION: Int = 1
+    }
 }

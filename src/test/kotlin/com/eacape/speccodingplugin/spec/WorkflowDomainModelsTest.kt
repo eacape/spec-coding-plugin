@@ -1,0 +1,105 @@
+package com.eacape.speccodingplugin.spec
+
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+
+class WorkflowDomainModelsTest {
+
+    @Test
+    fun `full spec template should keep order and allow verify toggle`() {
+        val definition = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
+
+        assertEquals(
+            listOf(
+                StageId.REQUIREMENTS,
+                StageId.DESIGN,
+                StageId.TASKS,
+                StageId.IMPLEMENT,
+                StageId.VERIFY,
+                StageId.ARCHIVE,
+            ),
+            definition.stagePlan.map { it.id },
+        )
+
+        assertEquals(
+            listOf(
+                StageId.REQUIREMENTS,
+                StageId.DESIGN,
+                StageId.TASKS,
+                StageId.IMPLEMENT,
+                StageId.ARCHIVE,
+            ),
+            definition.activeStages(verifyEnabled = false),
+        )
+    }
+
+    @Test
+    fun `design review template should support optional implement and verify`() {
+        val definition = WorkflowTemplates.definitionOf(WorkflowTemplate.DESIGN_REVIEW)
+
+        assertEquals(
+            listOf(StageId.DESIGN, StageId.TASKS, StageId.IMPLEMENT, StageId.ARCHIVE),
+            definition.activeStages(verifyEnabled = false, implementEnabled = true),
+        )
+        assertEquals(
+            listOf(StageId.DESIGN, StageId.TASKS, StageId.VERIFY, StageId.ARCHIVE),
+            definition.activeStages(verifyEnabled = true, implementEnabled = false),
+        )
+    }
+
+    @Test
+    fun `gate result should escalate to highest severity`() {
+        val warningOnly = GateResult.fromViolations(
+            listOf(
+                Violation(
+                    ruleId = "R-WARN",
+                    severity = GateStatus.WARNING,
+                    fileName = "tasks.md",
+                    line = 3,
+                    message = "warn",
+                ),
+            ),
+        )
+        assertEquals(GateStatus.WARNING, warningOnly.status)
+
+        val withError = GateResult.fromViolations(
+            listOf(
+                Violation("R1", GateStatus.WARNING, "a.md", 1, "warn"),
+                Violation("R2", GateStatus.ERROR, "b.md", 2, "error"),
+            ),
+        )
+        assertEquals(GateStatus.ERROR, withError.status)
+
+        val pass = GateResult.fromViolations(emptyList())
+        assertEquals(GateStatus.PASS, pass.status)
+    }
+
+    @Test
+    fun `task status should follow state machine`() {
+        assertTrue(TaskStatus.PENDING.canTransitionTo(TaskStatus.IN_PROGRESS))
+        assertTrue(TaskStatus.PENDING.canTransitionTo(TaskStatus.CANCELLED))
+        assertTrue(TaskStatus.IN_PROGRESS.canTransitionTo(TaskStatus.BLOCKED))
+        assertTrue(TaskStatus.BLOCKED.canTransitionTo(TaskStatus.IN_PROGRESS))
+
+        assertFalse(TaskStatus.PENDING.canTransitionTo(TaskStatus.COMPLETED))
+        assertFalse(TaskStatus.COMPLETED.canTransitionTo(TaskStatus.IN_PROGRESS))
+        assertFalse(TaskStatus.CANCELLED.canTransitionTo(TaskStatus.PENDING))
+    }
+
+    @Test
+    fun `template definition should reject duplicate stages`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            TemplateDefinition(
+                template = WorkflowTemplate.QUICK_TASK,
+                stagePlan = listOf(
+                    StagePlanItem(StageId.TASKS),
+                    StagePlanItem(StageId.TASKS),
+                    StagePlanItem(StageId.ARCHIVE),
+                ),
+            )
+        }
+    }
+}

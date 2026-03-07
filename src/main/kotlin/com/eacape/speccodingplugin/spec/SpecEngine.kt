@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.flow
 import java.nio.charset.Charset
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.UUID
 
 /**
  * Spec 工作流引擎
@@ -23,6 +22,8 @@ import java.util.UUID
 @Service(Service.Level.PROJECT)
 class SpecEngine(private val project: Project) {
     private val logger = thisLogger()
+    private val workflowIdGenerator = WorkflowIdGenerator()
+    private val projectConfigDelegate: SpecProjectConfigService by lazy { SpecProjectConfigService(project) }
 
     // Overridable by test constructor; lazy to avoid service lookups during construction
     private var _storageOverride: SpecStorage? = null
@@ -80,6 +81,10 @@ class SpecEngine(private val project: Project) {
         baselineWorkflowId: String? = null,
     ): Result<SpecWorkflow> {
         return runCatching {
+            val projectConfig = projectConfigDelegate.load()
+            logger.debug(
+                "Loaded spec project config: schemaVersion=${projectConfig.schemaVersion}, defaultTemplate=${projectConfig.defaultTemplate}",
+            )
             val normalizedBaselineWorkflowId = baselineWorkflowId
                 ?.trim()
                 ?.takeIf { it.isNotEmpty() }
@@ -916,7 +921,7 @@ class SpecEngine(private val project: Project) {
      * 生成工作流 ID
      */
     private fun generateWorkflowId(): String {
-        return "spec-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}"
+        return workflowIdGenerator.nextId()
     }
 
     companion object {
@@ -956,7 +961,7 @@ class SpecEngine(private val project: Project) {
         private const val MAX_TOP_LEVEL_ENTRIES = 12
         private const val MAX_KEY_FILE_SNIPPET_LINES = 120
         private const val MAX_KEY_FILE_SNIPPET_CHARS = 4000
-        private const val SOURCE_SNAPSHOT_DEPTH = 2
+        private const val SOURCE_SNAPSHOT_DEPTH = 4
         private const val MAX_SOURCE_FILES_PER_DIR = 18
 
         fun getInstance(project: Project): SpecEngine = project.service()
