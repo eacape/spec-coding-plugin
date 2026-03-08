@@ -16,7 +16,11 @@ class SpecArchitectureContractTest {
         assertTrue(decisions.containsKey("markdown-ast"))
         assertTrue(decisions.containsKey("yaml-codec"))
         assertTrue(decisions.containsKey("project-config"))
+        assertTrue(decisions.containsKey("config-pin"))
         assertTrue(decisions.containsKey("security"))
+        assertTrue(decisions.containsKey("artifact-service"))
+        assertTrue(decisions.containsKey("workflow-snapshot"))
+        assertTrue(decisions.containsKey("workflow-metadata"))
         assertTrue(decisions.containsKey("workflow-id"))
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
@@ -36,7 +40,23 @@ class SpecArchitectureContractTest {
         )
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("config-pin").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("security").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("artifact-service").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("workflow-snapshot").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("workflow-metadata").status,
         )
     }
 

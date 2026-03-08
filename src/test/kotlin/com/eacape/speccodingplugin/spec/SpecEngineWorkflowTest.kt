@@ -201,6 +201,71 @@ class SpecEngineWorkflowTest {
     }
 
     @Test
+    fun `createWorkflow should bind config pin hash and archive config snapshot`() {
+        val configPath = tempDir
+            .resolve(".spec-coding")
+            .resolve("config.yaml")
+        Files.createDirectories(configPath.parent)
+        Files.writeString(
+            configPath,
+            """
+            schemaVersion: 1
+            defaultTemplate: QUICK_TASK
+            gate:
+              allowWarningAdvance: false
+            """.trimIndent() + "\n",
+        )
+
+        val configService = SpecProjectConfigService(project)
+        val expectedPin = configService.createConfigPin(configService.load())
+
+        val engine = SpecEngine(project, storage) {
+            SpecGenerationResult.Failure("not used")
+        }
+        val workflow = engine.createWorkflow(
+            title = "Pinned workflow",
+            description = "config pin",
+        ).getOrThrow()
+
+        assertNotNull(workflow.configPinHash)
+        assertEquals(expectedPin.hash, workflow.configPinHash)
+        assertTrue(workflow.configPinHash!!.matches(Regex("^[a-f0-9]{64}$")))
+
+        val workflowDir = tempDir
+            .resolve(".spec-coding")
+            .resolve("specs")
+            .resolve(workflow.id)
+        val workflowMetadata = Files.readString(workflowDir.resolve("workflow.yaml"))
+        assertTrue(workflowMetadata.contains("configPinHash: ${workflow.configPinHash}"))
+
+        val snapshotPath = workflowDir
+            .resolve(".history")
+            .resolve("config")
+            .resolve("${workflow.configPinHash}.yaml")
+        assertTrue(Files.exists(snapshotPath))
+        assertEquals(expectedPin.snapshotYaml, Files.readString(snapshotPath))
+
+        Files.writeString(
+            configPath,
+            """
+            schemaVersion: 1
+            defaultTemplate: FULL_SPEC
+            gate:
+              allowWarningAdvance: true
+            """.trimIndent() + "\n",
+        )
+        val changedPin = configService.createConfigPin(configService.load())
+        assertNotEquals(workflow.configPinHash, changedPin.hash)
+
+        val paused = engine.pauseWorkflow(workflow.id).getOrThrow()
+        assertEquals(workflow.configPinHash, paused.configPinHash)
+
+        val reloaded = engine.reloadWorkflow(workflow.id).getOrThrow()
+        assertEquals(workflow.configPinHash, reloaded.configPinHash)
+        assertTrue(Files.exists(snapshotPath))
+    }
+
+    @Test
     fun `proceed to next phase should return validation details when current document is invalid`() {
         val engine = SpecEngine(project, storage) {
             SpecGenerationResult.Failure("not used")

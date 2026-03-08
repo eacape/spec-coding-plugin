@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.flow
 import java.nio.charset.Charset
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 
 /**
  * Spec 工作流引擎
@@ -24,6 +25,7 @@ class SpecEngine(private val project: Project) {
     private val logger = thisLogger()
     private val workflowIdGenerator = WorkflowIdGenerator()
     private val projectConfigDelegate: SpecProjectConfigService by lazy { SpecProjectConfigService(project) }
+    private val artifactServiceDelegate: SpecArtifactService by lazy { SpecArtifactService(project) }
 
     // Overridable by test constructor; lazy to avoid service lookups during construction
     private var _storageOverride: SpecStorage? = null
@@ -82,6 +84,9 @@ class SpecEngine(private val project: Project) {
     ): Result<SpecWorkflow> {
         return runCatching {
             val projectConfig = projectConfigDelegate.load()
+            val configPin = projectConfigDelegate.createConfigPin(projectConfig)
+            val template = projectConfig.defaultTemplate
+            val templatePolicy = projectConfig.policyFor(template)
             logger.debug(
                 "Loaded spec project config: schemaVersion=${projectConfig.schemaVersion}, defaultTemplate=${projectConfig.defaultTemplate}",
             )
@@ -97,25 +102,47 @@ class SpecEngine(private val project: Project) {
                 }
             }
             val workflowId = generateWorkflowId()
+            val createdAt = System.currentTimeMillis()
+            val stageMetadata = initializeStageMetadata(
+                template = template,
+                templatePolicy = templatePolicy,
+                timestampMillis = createdAt,
+            )
             val workflow = SpecWorkflow(
                 id = workflowId,
-                currentPhase = SpecPhase.SPECIFY,
+                currentPhase = initialPhaseForStage(stageMetadata.currentStage),
                 documents = emptyMap(),
                 status = WorkflowStatus.IN_PROGRESS,
                 title = title,
                 description = description,
                 changeIntent = changeIntent,
+                template = template,
+                stageStates = stageMetadata.stageStates,
+                currentStage = stageMetadata.currentStage,
+                verifyEnabled = stageMetadata.verifyEnabled,
                 baselineWorkflowId = if (changeIntent == SpecChangeIntent.INCREMENTAL) {
                     normalizedBaselineWorkflowId
                 } else {
                     null
                 },
+                configPinHash = configPin.hash,
+                createdAt = createdAt,
+                updatedAt = createdAt,
             )
 
-            activeWorkflows[workflowId] = workflow
+            storageDelegate.saveConfigPinSnapshot(workflowId, configPin).getOrThrow()
             storageDelegate.saveWorkflow(workflow).getOrThrow()
+            val artifactWrites = artifactServiceDelegate.ensureMissingArtifacts(
+                workflowId = workflowId,
+                template = template,
+                templatePolicy = templatePolicy,
+            )
+            activeWorkflows[workflowId] = workflow
 
-            logger.info("Created workflow: $workflowId")
+            logger.info(
+                "Created workflow: $workflowId, template=$template, " +
+                    "scaffoldedArtifacts=${artifactWrites.count { it.created }}",
+            )
             workflow
         }
     }
@@ -153,6 +180,18 @@ class SpecEngine(private val project: Project) {
         return storageDelegate.listWorkflows()
     }
 
+    fun listWorkflowMetadata(): List<WorkflowMeta> {
+        return storageDelegate.listWorkflowMetadata()
+    }
+
+    fun openWorkflow(workflowId: String): Result<WorkflowSnapshot> {
+        return runCatching {
+            val snapshot = storageDelegate.openWorkflow(workflowId).getOrThrow()
+            activeWorkflows[workflowId] = snapshot.workflow
+            snapshot
+        }
+    }
+
     fun listDocumentHistory(
         workflowId: String,
         phase: SpecPhase,
@@ -182,6 +221,36 @@ class SpecEngine(private val project: Project) {
         keepLatest: Int,
     ): Result<Int> {
         return storageDelegate.pruneDocumentHistory(workflowId, phase, keepLatest)
+    }
+
+    fun listWorkflowSnapshots(workflowId: String): List<SpecWorkflowSnapshotEntry> {
+        return storageDelegate.listWorkflowSnapshots(workflowId)
+    }
+
+    fun loadWorkflowSnapshot(
+        workflowId: String,
+        snapshotId: String,
+    ): Result<SpecWorkflow> {
+        return storageDelegate.loadWorkflowSnapshot(workflowId, snapshotId)
+    }
+
+    fun pinDeltaBaseline(
+        workflowId: String,
+        snapshotId: String,
+        label: String? = null,
+    ): Result<SpecDeltaBaselineRef> {
+        return storageDelegate.pinDeltaBaseline(workflowId, snapshotId, label)
+    }
+
+    fun listDeltaBaselines(workflowId: String): List<SpecDeltaBaselineRef> {
+        return storageDelegate.listDeltaBaselines(workflowId)
+    }
+
+    fun loadDeltaBaselineWorkflow(
+        workflowId: String,
+        baselineId: String,
+    ): Result<SpecWorkflow> {
+        return storageDelegate.loadDeltaBaselineWorkflow(workflowId, baselineId)
     }
 
     /**
@@ -495,10 +564,18 @@ class SpecEngine(private val project: Project) {
             }
 
             // 更新工作流
+            val transitionTime = System.currentTimeMillis()
+            val stageProgress = advanceStageMetadata(
+                workflow = workflow,
+                toPhase = nextPhase,
+                timestampMillis = transitionTime,
+            )
             val updatedWorkflow = workflow.copy(
                 currentPhase = nextPhase,
+                stageStates = stageProgress.stageStates,
+                currentStage = stageProgress.currentStage,
                 clarificationRetryState = null,
-                updatedAt = System.currentTimeMillis()
+                updatedAt = transitionTime
             )
 
             activeWorkflows[workflowId] = updatedWorkflow
@@ -529,10 +606,18 @@ class SpecEngine(private val project: Project) {
             val previousPhase = workflow.currentPhase.previous()
                 ?: throw IllegalStateException("No previous phase")
 
+            val rollbackTime = System.currentTimeMillis()
+            val stageProgress = rollbackStageMetadata(
+                workflow = workflow,
+                toPhase = previousPhase,
+                timestampMillis = rollbackTime,
+            )
             val updatedWorkflow = workflow.copy(
                 currentPhase = previousPhase,
+                stageStates = stageProgress.stageStates,
+                currentStage = stageProgress.currentStage,
                 clarificationRetryState = null,
-                updatedAt = System.currentTimeMillis()
+                updatedAt = rollbackTime
             )
 
             activeWorkflows[workflowId] = updatedWorkflow
@@ -567,10 +652,16 @@ class SpecEngine(private val project: Project) {
                 throw IllegalStateException("Cannot complete workflow. Implement phase validation failed.")
             }
 
+            val completedAt = System.currentTimeMillis()
+            val completedStageStates = markCurrentStageCompleted(
+                workflow = workflow,
+                timestampMillis = completedAt,
+            )
             val updatedWorkflow = workflow.copy(
                 status = WorkflowStatus.COMPLETED,
+                stageStates = completedStageStates,
                 clarificationRetryState = null,
-                updatedAt = System.currentTimeMillis()
+                updatedAt = completedAt
             )
 
             activeWorkflows[workflowId] = updatedWorkflow
@@ -678,6 +769,156 @@ class SpecEngine(private val project: Project) {
                 error,
             )
         }
+    }
+
+    private data class StageMetadataState(
+        val currentStage: StageId,
+        val verifyEnabled: Boolean,
+        val stageStates: Map<StageId, StageState>,
+    )
+
+    private fun initialPhaseForStage(stage: StageId): SpecPhase {
+        return when (stage) {
+            StageId.REQUIREMENTS -> SpecPhase.SPECIFY
+            StageId.DESIGN -> SpecPhase.DESIGN
+            StageId.TASKS,
+            StageId.IMPLEMENT,
+            StageId.VERIFY,
+            StageId.ARCHIVE,
+            -> SpecPhase.IMPLEMENT
+        }
+    }
+
+    private fun initializeStageMetadata(
+        template: WorkflowTemplate,
+        templatePolicy: SpecTemplatePolicy,
+        timestampMillis: Long,
+    ): StageMetadataState {
+        val definition = templatePolicy.definition
+        val activeStages = definition.activeStages(
+            verifyEnabled = templatePolicy.verifyEnabledByDefault,
+            implementEnabled = templatePolicy.implementEnabledByDefault,
+        )
+        val currentStage = activeStages.firstOrNull() ?: definition.stagePlan.first().id
+        val enteredAt = Instant.ofEpochMilli(timestampMillis).toString()
+        val stageStates = linkedMapOf<StageId, StageState>()
+        StageId.entries.forEach { stageId ->
+            val active = activeStages.contains(stageId)
+            stageStates[stageId] = if (stageId == currentStage) {
+                StageState(
+                    active = true,
+                    status = StageProgress.IN_PROGRESS,
+                    enteredAt = enteredAt,
+                    completedAt = null,
+                )
+            } else {
+                StageState(
+                    active = active,
+                    status = StageProgress.NOT_STARTED,
+                    enteredAt = null,
+                    completedAt = null,
+                )
+            }
+        }
+        return StageMetadataState(
+            currentStage = currentStage,
+            verifyEnabled = activeStages.contains(StageId.VERIFY),
+            stageStates = stageStates,
+        )
+    }
+
+    private fun advanceStageMetadata(
+        workflow: SpecWorkflow,
+        toPhase: SpecPhase,
+        timestampMillis: Long,
+    ): StageMetadataState {
+        val toStage = toPhase.toStageId()
+        val beforeStage = workflow.currentStage
+        val timestamp = Instant.ofEpochMilli(timestampMillis).toString()
+        val updated = workflow.stageStates.toMutableMap()
+
+        val previousState = updated[beforeStage] ?: StageState(
+            active = true,
+            status = StageProgress.NOT_STARTED,
+        )
+        updated[beforeStage] = previousState.copy(
+            active = true,
+            status = StageProgress.DONE,
+            enteredAt = previousState.enteredAt ?: timestamp,
+            completedAt = timestamp,
+        )
+
+        val nextState = updated[toStage] ?: StageState(
+            active = true,
+            status = StageProgress.NOT_STARTED,
+        )
+        updated[toStage] = nextState.copy(
+            active = true,
+            status = StageProgress.IN_PROGRESS,
+            enteredAt = nextState.enteredAt ?: timestamp,
+            completedAt = null,
+        )
+        return StageMetadataState(
+            currentStage = toStage,
+            verifyEnabled = workflow.verifyEnabled,
+            stageStates = updated,
+        )
+    }
+
+    private fun rollbackStageMetadata(
+        workflow: SpecWorkflow,
+        toPhase: SpecPhase,
+        timestampMillis: Long,
+    ): StageMetadataState {
+        val toStage = toPhase.toStageId()
+        val fromStage = workflow.currentStage
+        val timestamp = Instant.ofEpochMilli(timestampMillis).toString()
+        val updated = workflow.stageStates.toMutableMap()
+
+        val fromState = updated[fromStage] ?: StageState(
+            active = true,
+            status = StageProgress.IN_PROGRESS,
+        )
+        updated[fromStage] = fromState.copy(
+            active = fromState.active,
+            status = StageProgress.NOT_STARTED,
+            completedAt = null,
+        )
+
+        val targetState = updated[toStage] ?: StageState(
+            active = true,
+            status = StageProgress.NOT_STARTED,
+        )
+        updated[toStage] = targetState.copy(
+            active = true,
+            status = StageProgress.IN_PROGRESS,
+            enteredAt = targetState.enteredAt ?: timestamp,
+            completedAt = null,
+        )
+        return StageMetadataState(
+            currentStage = toStage,
+            verifyEnabled = workflow.verifyEnabled,
+            stageStates = updated,
+        )
+    }
+
+    private fun markCurrentStageCompleted(
+        workflow: SpecWorkflow,
+        timestampMillis: Long,
+    ): Map<StageId, StageState> {
+        val timestamp = Instant.ofEpochMilli(timestampMillis).toString()
+        val updated = workflow.stageStates.toMutableMap()
+        val currentState = updated[workflow.currentStage] ?: StageState(
+            active = true,
+            status = StageProgress.IN_PROGRESS,
+        )
+        updated[workflow.currentStage] = currentState.copy(
+            active = true,
+            status = StageProgress.DONE,
+            enteredAt = currentState.enteredAt ?: timestamp,
+            completedAt = timestamp,
+        )
+        return updated
     }
 
     private fun enrichGenerationOptions(

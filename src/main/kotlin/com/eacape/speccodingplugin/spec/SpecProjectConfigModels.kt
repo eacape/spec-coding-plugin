@@ -14,6 +14,11 @@ data class SpecProjectConfig(
     }
 }
 
+data class SpecConfigPin(
+    val hash: String,
+    val snapshotYaml: String,
+)
+
 data class SpecTemplatePolicy(
     val definition: TemplateDefinition,
     val verifyEnabledByDefault: Boolean,

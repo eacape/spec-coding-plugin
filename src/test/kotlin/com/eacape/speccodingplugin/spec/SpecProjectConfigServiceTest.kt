@@ -5,6 +5,7 @@ import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -122,6 +123,49 @@ class SpecProjectConfigServiceTest {
             service.load()
         }
         assertTrue(error.message?.contains("must end with ARCHIVE") == true)
+    }
+
+    @Test
+    fun `createConfigPin should return deterministic sha256 hash and snapshot yaml`() {
+        writeConfig(
+            """
+            schemaVersion: 1
+            defaultTemplate: QUICK_TASK
+            gate:
+              allowWarningAdvance: false
+            """.trimIndent(),
+        )
+
+        val config = service.load()
+        val first = service.createConfigPin(config)
+        val second = service.createConfigPin(config)
+
+        assertEquals(first.hash, second.hash)
+        assertTrue(first.hash.matches(Regex("^[a-f0-9]{64}$")))
+        assertEquals(first.snapshotYaml, second.snapshotYaml)
+        assertTrue(first.snapshotYaml.contains("schemaVersion: 1"))
+        assertTrue(first.snapshotYaml.contains("defaultTemplate: QUICK_TASK"))
+    }
+
+    @Test
+    fun `createConfigPin should change hash when effective config changes`() {
+        writeConfig(
+            """
+            schemaVersion: 1
+            defaultTemplate: QUICK_TASK
+            """.trimIndent(),
+        )
+        val firstHash = service.createConfigPin(service.load()).hash
+
+        writeConfig(
+            """
+            schemaVersion: 1
+            defaultTemplate: FULL_SPEC
+            """.trimIndent(),
+        )
+        val secondHash = service.createConfigPin(service.load()).hash
+
+        assertNotEquals(firstHash, secondHash)
     }
 
     private fun writeConfig(raw: String) {

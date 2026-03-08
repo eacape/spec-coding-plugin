@@ -23,6 +23,36 @@ class SpecDeltaService(private val project: Project) {
         }
     }
 
+    fun compareBySnapshot(
+        workflowId: String,
+        snapshotId: String,
+        targetWorkflowId: String = workflowId,
+    ): Result<SpecWorkflowDelta> {
+        return runCatching {
+            val baseline = specEngine.loadWorkflowSnapshot(workflowId, snapshotId).getOrThrow()
+            val target = specEngine.loadWorkflow(targetWorkflowId).getOrThrow()
+            SpecDeltaCalculator.compareWorkflows(
+                baselineWorkflow = baseline,
+                targetWorkflow = target,
+            )
+        }
+    }
+
+    fun compareByDeltaBaseline(
+        workflowId: String,
+        baselineId: String,
+        targetWorkflowId: String = workflowId,
+    ): Result<SpecWorkflowDelta> {
+        return runCatching {
+            val baseline = specEngine.loadDeltaBaselineWorkflow(workflowId, baselineId).getOrThrow()
+            val target = specEngine.loadWorkflow(targetWorkflowId).getOrThrow()
+            SpecDeltaCalculator.compareWorkflows(
+                baselineWorkflow = baseline,
+                targetWorkflow = target,
+            )
+        }
+    }
+
     companion object {
         fun getInstance(project: Project): SpecDeltaService = project.service()
     }

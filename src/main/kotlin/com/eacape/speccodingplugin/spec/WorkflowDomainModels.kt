@@ -31,6 +31,39 @@ data class StagePlanItem(
     val defaultEnabled: Boolean = !optional,
 )
 
+enum class StageProgress {
+    NOT_STARTED,
+    IN_PROGRESS,
+    DONE,
+}
+
+data class StageState(
+    val active: Boolean,
+    val status: StageProgress,
+    val enteredAt: String? = null,
+    val completedAt: String? = null,
+)
+
+data class WorkflowMeta(
+    val workflowId: String,
+    val title: String?,
+    val template: WorkflowTemplate,
+    val stageStates: Map<StageId, StageState>,
+    val currentStage: StageId,
+    val verifyEnabled: Boolean,
+    val configPinHash: String?,
+    val baselineWorkflowId: String?,
+    val status: WorkflowStatus,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+data class WorkflowSnapshot(
+    val meta: WorkflowMeta,
+    val workflow: SpecWorkflow,
+    val documents: Map<SpecPhase, SpecDocument>,
+)
+
 /**
  * 模板定义：固定阶段顺序 + 可选阶段默认启用策略。
  */

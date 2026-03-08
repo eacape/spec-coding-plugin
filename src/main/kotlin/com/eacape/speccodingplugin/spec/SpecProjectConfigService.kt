@@ -4,6 +4,8 @@ import com.intellij.openapi.project.Project
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
+import java.util.HexFormat
 
 /**
  * Loads `.spec-coding/config.yaml`, validates schema and merges defaults.
@@ -26,6 +28,14 @@ class SpecProjectConfigService(
 
     fun configPath(): Path {
         return workspaceInitializer.specCodingDirectory().resolve(CONFIG_FILE_NAME)
+    }
+
+    fun createConfigPin(config: SpecProjectConfig = load()): SpecConfigPin {
+        val snapshotYaml = SpecYamlCodec.encodeMap(serializeConfig(config))
+        return SpecConfigPin(
+            hash = sha256Hex(snapshotYaml),
+            snapshotYaml = snapshotYaml,
+        )
     }
 
     private fun parseConfig(root: Map<String, Any?>): SpecProjectConfig {
@@ -51,6 +61,58 @@ class SpecProjectConfigService(
             gate = SpecGatePolicy(),
             rules = emptyMap(),
         )
+    }
+
+    private fun serializeConfig(config: SpecProjectConfig): Map<String, Any?> {
+        val templates = linkedMapOf<String, Any?>()
+        config.templates
+            .entries
+            .sortedBy { (template, _) -> template.name }
+            .forEach { (template, policy) ->
+                val stagePlan = policy.definition.stagePlan.map { item ->
+                    linkedMapOf<String, Any?>(
+                        "id" to item.id.name,
+                        "optional" to item.optional,
+                        "defaultEnabled" to item.defaultEnabled,
+                    )
+                }
+                templates[template.name] = linkedMapOf<String, Any?>(
+                    "verifyEnabledByDefault" to policy.verifyEnabledByDefault,
+                    "implementEnabledByDefault" to policy.implementEnabledByDefault,
+                    "stagePlan" to stagePlan,
+                )
+            }
+
+        val rules = linkedMapOf<String, Any?>()
+        config.rules
+            .entries
+            .sortedBy { (ruleId, _) -> ruleId }
+            .forEach { (ruleId, policy) ->
+                rules[ruleId] = linkedMapOf<String, Any?>(
+                    "enabled" to policy.enabled,
+                    "severity" to policy.severity.name,
+                )
+            }
+
+        return linkedMapOf<String, Any?>(
+            "schemaVersion" to config.schemaVersion,
+            "defaultTemplate" to config.defaultTemplate.name,
+            "templates" to templates,
+            "gate" to linkedMapOf<String, Any?>(
+                "allowWarningAdvance" to config.gate.allowWarningAdvance,
+                "requireWarningConfirmation" to config.gate.requireWarningConfirmation,
+                "allowJump" to config.gate.allowJump,
+                "jumpRequiresMinimalGate" to config.gate.jumpRequiresMinimalGate,
+                "allowRollback" to config.gate.allowRollback,
+            ),
+            "rules" to rules,
+        )
+    }
+
+    private fun sha256Hex(raw: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hashBytes = digest.digest(raw.toByteArray(StandardCharsets.UTF_8))
+        return HEX_FORMAT.formatHex(hashBytes)
     }
 
     private fun defaultTemplatePolicies(): Map<WorkflowTemplate, SpecTemplatePolicy> {
@@ -333,5 +395,6 @@ class SpecProjectConfigService(
 
     companion object {
         private const val CONFIG_FILE_NAME = "config.yaml"
+        private val HEX_FORMAT: HexFormat = HexFormat.of()
     }
 }

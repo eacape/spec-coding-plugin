@@ -172,7 +172,12 @@ data class SpecWorkflow(
     val title: String = "",
     val description: String = "",
     val changeIntent: SpecChangeIntent = SpecChangeIntent.FULL,
+    val template: WorkflowTemplate = WorkflowTemplate.FULL_SPEC,
+    val stageStates: Map<StageId, StageState> = emptyMap(),
+    val currentStage: StageId = currentPhase.toStageId(),
+    val verifyEnabled: Boolean = false,
     val baselineWorkflowId: String? = null,
+    val configPinHash: String? = null,
     val clarificationRetryState: ClarificationRetryState? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
@@ -220,6 +225,22 @@ data class SpecWorkflow(
      */
     fun isIncrementalWorkflow(): Boolean {
         return changeIntent == SpecChangeIntent.INCREMENTAL
+    }
+
+    fun toWorkflowMeta(): WorkflowMeta {
+        return WorkflowMeta(
+            workflowId = id,
+            title = title.ifBlank { null },
+            template = template,
+            stageStates = stageStates,
+            currentStage = currentStage,
+            verifyEnabled = verifyEnabled,
+            configPinHash = configPinHash,
+            baselineWorkflowId = baselineWorkflowId,
+            status = status,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+        )
     }
 }
 
@@ -303,4 +324,12 @@ sealed class SpecGenerationResult {
     data class Success(val document: SpecDocument) : SpecGenerationResult()
     data class Failure(val error: String, val details: String? = null) : SpecGenerationResult()
     data class ValidationFailed(val document: SpecDocument, val validation: ValidationResult) : SpecGenerationResult()
+}
+
+fun SpecPhase.toStageId(): StageId {
+    return when (this) {
+        SpecPhase.SPECIFY -> StageId.REQUIREMENTS
+        SpecPhase.DESIGN -> StageId.DESIGN
+        SpecPhase.IMPLEMENT -> StageId.TASKS
+    }
 }

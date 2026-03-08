@@ -75,6 +75,13 @@ object SpecArchitectureContract {
             status = AdoptionStatus.ADOPTED,
         ),
         DependencyDecision(
+            key = "config-pin",
+            capability = "workflow-bound config hash pinning and snapshot archival",
+            selection = "SpecProjectConfigService deterministic SHA-256 pin + workflow `.history/config` snapshots",
+            rationale = "Task 10 requires config hash binding to workflow metadata and immutable snapshot traceability.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
             key = "markdown-ast",
             capability = "markdown structural parsing and stable source locations",
             selection = "org.intellij.markdown AST + `SpecMarkdownAstParser`",
@@ -86,6 +93,27 @@ object SpecArchitectureContract {
             capability = "storage and audit security hardening",
             selection = "atomic writes + lock manager + append-only YAML audit stream",
             rationale = "Task 04/05/08 establish baseline hardening; Task 51 extends rule coverage.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
+            key = "artifact-service",
+            capability = "artifact locate/read/write and template-driven skeleton bootstrap",
+            selection = "SpecArtifactService + AtomicFileIO + workflow lock",
+            rationale = "Task 11 requires reusable artifact operations and deterministic missing-artifact scaffolding.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
+            key = "workflow-snapshot",
+            capability = "before/after operation snapshots and delta baseline references",
+            selection = "SpecStorage snapshots in `.history/snapshots` + baseline pointers in `.history/baselines`",
+            rationale = "Task 12 requires key operation snapshots and reusable delta baseline references.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
+            key = "workflow-metadata",
+            capability = "workflow metadata persistence and retrieval for create/list/open operations",
+            selection = "workflow.yaml stage metadata (`template/currentStage/stageStates`) + storage query APIs",
+            rationale = "Task 13 requires durable template and stage-state records with list/open retrieval.",
             status = AdoptionStatus.ADOPTED,
         ),
     )
@@ -105,6 +133,11 @@ object SpecArchitectureContract {
             fileName = "SpecArchitectureContract.kt",
             layer = Layer.DOMAIN,
             blockedImportPrefixes = domainBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecArtifactService.kt",
+            layer = Layer.INFRASTRUCTURE,
+            blockedImportPrefixes = infrastructureBlockedImportPrefixes,
         ),
         SourceRule(
             fileName = "SpecArchiveModels.kt",
