@@ -33,6 +33,7 @@ class SpecArchitectureContractTest {
         assertTrue(decisions.containsKey("tasks-service"))
         assertTrue(decisions.containsKey("task-status-transitions"))
         assertTrue(decisions.containsKey("task-reference-normalization"))
+        assertTrue(decisions.containsKey("task-verification-results"))
         assertTrue(decisions.containsKey("workflow-id"))
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
@@ -117,6 +118,10 @@ class SpecArchitectureContractTest {
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("task-reference-normalization").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("task-verification-results").status,
         )
     }
 

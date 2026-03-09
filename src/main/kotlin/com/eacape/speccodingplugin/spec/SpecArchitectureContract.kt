@@ -200,6 +200,13 @@ object SpecArchitectureContract {
             rationale = "Task 26 requires deduplicated dependency ids, stable ordering, and related file paths normalized under the project root before writing back to tasks.md.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "task-verification-results",
+            capability = "task-scoped verificationResult writes and clearing with stable YAML serialization",
+            selection = "SpecTasksService updateVerificationResult/clearVerificationResult + SpecYamlCodec-backed verificationResult rendering",
+            rationale = "Task 27 requires task-associated verification summaries to be written back or cleared safely, while preserving handwritten markdown and serializing special characters deterministically.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(

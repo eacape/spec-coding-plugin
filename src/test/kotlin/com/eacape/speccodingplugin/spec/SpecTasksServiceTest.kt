@@ -581,4 +581,158 @@ class SpecTasksServiceTest {
         assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))
         assertTrue(storage.listAuditEvents(workflowId).getOrThrow().isEmpty())
     }
+
+    @Test
+    fun `updateVerificationResult should serialize deterministically and append audit event`() {
+        val workflowId = "wf-tasks-verification-result-update"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Verify implementation
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            Handwritten paragraph that must stay untouched.
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+
+        val updatedTask = tasksService.updateVerificationResult(
+            workflowId = workflowId,
+            taskId = "t-001",
+            verificationResult = TaskVerificationResult(
+                conclusion = VerificationConclusion.WARN,
+                runId = "  run-verify-001  ",
+                summary = "  Warning: flaky assertion\nNeeds manual follow-up  ",
+                at = " 2026-03-09T10:11:12Z ",
+            ),
+        )
+        val persisted = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
+        val reparsedTask = tasksService.parse(workflowId).single()
+        val auditEvent = storage.listAuditEvents(workflowId).getOrThrow().last()
+        val expectedVerificationYaml = SpecYamlCodec.encodeMap(
+            linkedMapOf(
+                "verificationResult" to linkedMapOf(
+                    "conclusion" to "WARN",
+                    "runId" to "run-verify-001",
+                    "summary" to "Warning: flaky assertion\nNeeds manual follow-up",
+                    "at" to "2026-03-09T10:11:12Z",
+                ),
+            ),
+        ).trimEnd()
+
+        assertEquals(
+            TaskVerificationResult(
+                conclusion = VerificationConclusion.WARN,
+                runId = "run-verify-001",
+                summary = "Warning: flaky assertion\nNeeds manual follow-up",
+                at = "2026-03-09T10:11:12Z",
+            ),
+            updatedTask.verificationResult,
+        )
+        assertEquals(updatedTask.verificationResult, reparsedTask.verificationResult)
+        assertTrue(persisted.contains(expectedVerificationYaml))
+        assertTrue(persisted.contains("Handwritten paragraph that must stay untouched."))
+        assertEquals(SpecAuditEventType.TASK_VERIFICATION_RESULT_UPDATED, auditEvent.eventType)
+        assertEquals("T-001", auditEvent.details["taskId"])
+        assertEquals("Verify implementation", auditEvent.details["title"])
+        assertEquals("SET", auditEvent.details["action"])
+        assertEquals("WARN", auditEvent.details["conclusion"])
+        assertEquals("run-verify-001", auditEvent.details["runId"])
+        assertEquals("2026-03-09T10:11:12Z", auditEvent.details["at"])
+    }
+
+    @Test
+    fun `clearVerificationResult should reset field to null and append audit event`() {
+        val workflowId = "wf-tasks-verification-result-clear"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Verify implementation
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult:
+              conclusion: PASS
+              runId: run-verify-002
+              summary: looks good
+              at: "2026-03-09T11:12:13Z"
+            ```
+            Handwritten paragraph that must stay untouched.
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+
+        val updatedTask = tasksService.clearVerificationResult(
+            workflowId = workflowId,
+            taskId = "T-001",
+        )
+        val persisted = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
+        val reparsedTask = tasksService.parse(workflowId).single()
+        val auditEvent = storage.listAuditEvents(workflowId).getOrThrow().last()
+
+        assertNull(updatedTask.verificationResult)
+        assertNull(reparsedTask.verificationResult)
+        assertTrue(persisted.contains("verificationResult: null"))
+        assertTrue(persisted.contains("Handwritten paragraph that must stay untouched."))
+        assertEquals(SpecAuditEventType.TASK_VERIFICATION_RESULT_UPDATED, auditEvent.eventType)
+        assertEquals("T-001", auditEvent.details["taskId"])
+        assertEquals("Verify implementation", auditEvent.details["title"])
+        assertEquals("CLEARED", auditEvent.details["action"])
+        assertEquals("PASS", auditEvent.details["previousConclusion"])
+        assertEquals("run-verify-002", auditEvent.details["previousRunId"])
+        assertEquals("2026-03-09T11:12:13Z", auditEvent.details["previousAt"])
+    }
+
+    @Test
+    fun `updateVerificationResult should reject blank fields without touching artifact or audit`() {
+        val workflowId = "wf-tasks-verification-result-invalid"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Verify implementation
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+        val originalPersisted = artifactService.readArtifact(workflowId, StageId.TASKS)
+
+        val error = assertThrows(InvalidTaskVerificationResultError::class.java) {
+            tasksService.updateVerificationResult(
+                workflowId = workflowId,
+                taskId = "T-001",
+                verificationResult = TaskVerificationResult(
+                    conclusion = VerificationConclusion.FAIL,
+                    runId = "run-verify-003",
+                    summary = "   ",
+                    at = "2026-03-09T12:13:14Z",
+                ),
+            )
+        }
+
+        assertEquals(
+            "Task T-001 has invalid verificationResult field `summary`: must be a non-blank string",
+            error.message,
+        )
+        assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))
+        assertTrue(storage.listAuditEvents(workflowId).getOrThrow().isEmpty())
+    }
 }

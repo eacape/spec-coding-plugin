@@ -302,6 +302,60 @@ class SpecTasksService(private val project: Project) {
         }
     }
 
+    fun updateVerificationResult(
+        workflowId: String,
+        taskId: String,
+        verificationResult: TaskVerificationResult,
+    ): StructuredTask {
+        return updateTaskMetadata(workflowId, taskId) { targetTask, _ ->
+            val normalizedVerificationResult = normalizeVerificationResult(
+                taskId = targetTask.id,
+                verificationResult = verificationResult,
+            )
+            val details = linkedMapOf(
+                "taskId" to targetTask.id,
+                "title" to targetTask.title,
+                "action" to if (targetTask.verificationResult == null) "SET" else "UPDATED",
+                "conclusion" to normalizedVerificationResult.conclusion.name,
+                "runId" to normalizedVerificationResult.runId,
+                "at" to normalizedVerificationResult.at,
+            )
+            targetTask.verificationResult?.let { previousVerificationResult ->
+                details["previousConclusion"] = previousVerificationResult.conclusion.name
+                details["previousRunId"] = previousVerificationResult.runId
+                details["previousAt"] = previousVerificationResult.at
+            }
+            TaskMetadataUpdate(
+                updatedTask = targetTask.copy(verificationResult = normalizedVerificationResult),
+                auditEventType = SpecAuditEventType.TASK_VERIFICATION_RESULT_UPDATED,
+                auditDetails = details,
+            )
+        }
+    }
+
+    fun clearVerificationResult(
+        workflowId: String,
+        taskId: String,
+    ): StructuredTask {
+        return updateTaskMetadata(workflowId, taskId) { targetTask, _ ->
+            val details = linkedMapOf(
+                "taskId" to targetTask.id,
+                "title" to targetTask.title,
+                "action" to "CLEARED",
+            )
+            targetTask.verificationResult?.let { previousVerificationResult ->
+                details["previousConclusion"] = previousVerificationResult.conclusion.name
+                details["previousRunId"] = previousVerificationResult.runId
+                details["previousAt"] = previousVerificationResult.at
+            }
+            TaskMetadataUpdate(
+                updatedTask = targetTask.copy(verificationResult = null),
+                auditEventType = SpecAuditEventType.TASK_VERIFICATION_RESULT_UPDATED,
+                auditDetails = details,
+            )
+        }
+    }
+
     private data class TaskMetadataUpdate(
         val updatedTask: StructuredTask,
         val auditEventType: SpecAuditEventType? = null,
@@ -391,6 +445,26 @@ class SpecTasksService(private val project: Project) {
             .map { rawPath -> normalizeRelatedFile(taskId, rawPath, projectRoot) }
             .distinct()
             .sorted()
+    }
+
+    private fun normalizeVerificationResult(
+        taskId: String,
+        verificationResult: TaskVerificationResult,
+    ): TaskVerificationResult {
+        val runId = verificationResult.runId.trim()
+            .takeIf(String::isNotEmpty)
+            ?: throw InvalidTaskVerificationResultError(taskId, "runId", "must be a non-blank string")
+        val summary = verificationResult.summary.trim()
+            .takeIf(String::isNotEmpty)
+            ?: throw InvalidTaskVerificationResultError(taskId, "summary", "must be a non-blank string")
+        val at = verificationResult.at.trim()
+            .takeIf(String::isNotEmpty)
+            ?: throw InvalidTaskVerificationResultError(taskId, "at", "must be a non-blank string")
+        return verificationResult.copy(
+            runId = runId,
+            summary = summary,
+            at = at,
+        )
     }
 
     private fun resolveProjectRoot(): Path {
@@ -631,17 +705,24 @@ class SpecTasksService(private val project: Project) {
             append("priority: ${task.priority}\n")
             append(renderStringListField("dependsOn", task.dependsOn))
             append(renderStringListField("relatedFiles", task.relatedFiles))
-            append("verificationResult: ")
-            if (task.verificationResult == null) {
-                append("null\n")
-            } else {
-                append('\n')
-                append("  conclusion: ${task.verificationResult.conclusion}\n")
-                append("  runId: ${task.verificationResult.runId}\n")
-                append("  summary: ${task.verificationResult.summary}\n")
-                append("  at: ${task.verificationResult.at}\n")
-            }
+            append(renderVerificationResultField(task.verificationResult))
         }
+    }
+
+    private fun renderVerificationResultField(verificationResult: TaskVerificationResult?): String {
+        if (verificationResult == null) {
+            return "verificationResult: null\n"
+        }
+        return SpecYamlCodec.encodeMap(
+            linkedMapOf(
+                "verificationResult" to linkedMapOf(
+                    "conclusion" to verificationResult.conclusion.name,
+                    "runId" to verificationResult.runId,
+                    "summary" to verificationResult.summary,
+                    "at" to verificationResult.at,
+                ),
+            ),
+        )
     }
 
     private fun renderStringListField(fieldName: String, values: List<String>): String {

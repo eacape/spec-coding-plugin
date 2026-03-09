@@ -629,6 +629,23 @@ class InvalidTaskRelatedFileError(taskId: String, rawPath: String, details: Stri
 class RelatedFileOutsideProjectRootError(taskId: String, rawPath: String, projectRoot: String) :
     WorkflowDomainError("Task $taskId related file escapes project root $projectRoot: $rawPath")
 
+class InvalidTaskVerificationResultError(taskId: String, fieldName: String, details: String? = null) :
+    WorkflowDomainError(
+        buildString {
+            append("Task ")
+            append(taskId)
+            append(" has invalid verificationResult field `")
+            append(fieldName)
+            append('`')
+            details
+                ?.takeIf(String::isNotBlank)
+                ?.let { reason ->
+                    append(": ")
+                    append(reason)
+                }
+        },
+    )
+
 class InvalidTasksArtifactEditError(details: String) :
     WorkflowDomainError("tasks.md cannot be edited safely: $details")
 
