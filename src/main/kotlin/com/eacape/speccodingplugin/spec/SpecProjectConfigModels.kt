@@ -6,6 +6,7 @@ data class SpecProjectConfig(
     val templates: Map<WorkflowTemplate, SpecTemplatePolicy>,
     val gate: SpecGatePolicy,
     val rules: Map<String, SpecRulePolicy>,
+    val verify: SpecVerifyConfig,
 ) {
     fun policyFor(template: WorkflowTemplate): SpecTemplatePolicy = templates.getValue(template)
 
@@ -55,4 +56,28 @@ data class SpecGatePolicy(
 data class SpecRulePolicy(
     val enabled: Boolean = true,
     val severityOverride: GateStatus? = null,
+)
+
+data class SpecVerifyConfig(
+    val defaultWorkingDirectory: String = DEFAULT_WORKING_DIRECTORY,
+    val defaultTimeoutMs: Int = DEFAULT_TIMEOUT_MS,
+    val defaultOutputLimitChars: Int = DEFAULT_OUTPUT_LIMIT_CHARS,
+    val redactionPatterns: List<String> = emptyList(),
+    val commands: List<SpecVerifyCommand> = emptyList(),
+) {
+    companion object {
+        const val DEFAULT_WORKING_DIRECTORY: String = "."
+        const val DEFAULT_TIMEOUT_MS: Int = 300_000
+        const val DEFAULT_OUTPUT_LIMIT_CHARS: Int = 12_000
+    }
+}
+
+data class SpecVerifyCommand(
+    val id: String,
+    val displayName: String? = null,
+    val command: List<String>,
+    val workingDirectory: String? = null,
+    val timeoutMs: Int? = null,
+    val outputLimitChars: Int? = null,
+    val redactionPatterns: List<String> = emptyList(),
 )

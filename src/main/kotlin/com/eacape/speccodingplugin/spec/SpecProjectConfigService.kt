@@ -44,12 +44,14 @@ class SpecProjectConfigService(
         val templates = parseTemplates(root["templates"])
         val gate = parseGatePolicy(root["gate"])
         val rules = parseRules(root["rules"])
+        val verify = parseVerifyConfig(root["verify"])
         return SpecProjectConfig(
             schemaVersion = schemaVersion,
             defaultTemplate = defaultTemplate,
             templates = templates,
             gate = gate,
             rules = rules,
+            verify = verify,
         )
     }
 
@@ -60,6 +62,7 @@ class SpecProjectConfigService(
             templates = defaultTemplatePolicies(),
             gate = SpecGatePolicy(),
             rules = emptyMap(),
+            verify = SpecVerifyConfig(),
         )
     }
 
@@ -97,6 +100,26 @@ class SpecProjectConfigService(
                 rules[ruleId] = ruleMap
             }
 
+        val verify = linkedMapOf<String, Any?>(
+            "defaultWorkingDirectory" to config.verify.defaultWorkingDirectory,
+            "defaultTimeoutMs" to config.verify.defaultTimeoutMs,
+            "defaultOutputLimitChars" to config.verify.defaultOutputLimitChars,
+            "redactionPatterns" to config.verify.redactionPatterns,
+            "commands" to config.verify.commands
+                .sortedBy(SpecVerifyCommand::id)
+                .map { command ->
+                    linkedMapOf<String, Any?>(
+                        "id" to command.id,
+                        "displayName" to command.displayName,
+                        "command" to command.command,
+                        "workingDirectory" to command.workingDirectory,
+                        "timeoutMs" to command.timeoutMs,
+                        "outputLimitChars" to command.outputLimitChars,
+                        "redactionPatterns" to command.redactionPatterns,
+                    ).filterValues { value -> value != null }
+                },
+        )
+
         return linkedMapOf<String, Any?>(
             "schemaVersion" to config.schemaVersion,
             "defaultTemplate" to config.defaultTemplate.name,
@@ -109,6 +132,7 @@ class SpecProjectConfigService(
                 "allowRollback" to config.gate.allowRollback,
             ),
             "rules" to rules,
+            "verify" to verify,
         )
     }
 
@@ -285,6 +309,77 @@ class SpecProjectConfigService(
             .toMap()
     }
 
+    private fun parseVerifyConfig(raw: Any?): SpecVerifyConfig {
+        val verifyMap = parseMap(raw, "verify") ?: return SpecVerifyConfig()
+        val defaultWorkingDirectory = parseStringOptional(
+            readFirst(verifyMap, "defaultWorkingDirectory", "workingDirectory", "workdir"),
+            "verify.defaultWorkingDirectory",
+        ) ?: SpecVerifyConfig.DEFAULT_WORKING_DIRECTORY
+        val defaultTimeoutMs = parsePositiveInt(
+            readFirst(verifyMap, "defaultTimeoutMs", "timeoutMs"),
+            "verify.defaultTimeoutMs",
+        ) ?: SpecVerifyConfig.DEFAULT_TIMEOUT_MS
+        val defaultOutputLimitChars = parsePositiveInt(
+            readFirst(verifyMap, "defaultOutputLimitChars", "outputLimitChars", "maxOutputChars"),
+            "verify.defaultOutputLimitChars",
+        ) ?: SpecVerifyConfig.DEFAULT_OUTPUT_LIMIT_CHARS
+        val redactionPatterns = parseRegexStringList(
+            verifyMap["redactionPatterns"],
+            "verify.redactionPatterns",
+        )
+        val commands = parseVerifyCommands(verifyMap["commands"])
+        return SpecVerifyConfig(
+            defaultWorkingDirectory = defaultWorkingDirectory,
+            defaultTimeoutMs = defaultTimeoutMs,
+            defaultOutputLimitChars = defaultOutputLimitChars,
+            redactionPatterns = redactionPatterns,
+            commands = commands,
+        )
+    }
+
+    private fun parseVerifyCommands(raw: Any?): List<SpecVerifyCommand> {
+        val items = raw as? List<*> ?: return emptyList()
+        val commands = items.mapIndexed { index, rawCommand ->
+            val path = "verify.commands[$index]"
+            val commandMap = normalizeMap(rawCommand, path)
+            val id = parseRequiredString(commandMap["id"], "$path.id")
+            val displayName = parseStringOptional(commandMap["displayName"], "$path.displayName")
+            val command = parseStringSequence(commandMap["command"], "$path.command")
+            val workingDirectory = parseStringOptional(
+                readFirst(commandMap, "workingDirectory", "workdir"),
+                "$path.workingDirectory",
+            )
+            val timeoutMs = parsePositiveInt(commandMap["timeoutMs"], "$path.timeoutMs")
+            val outputLimitChars = parsePositiveInt(
+                readFirst(commandMap, "outputLimitChars", "maxOutputChars"),
+                "$path.outputLimitChars",
+            )
+            val redactionPatterns = parseRegexStringList(
+                commandMap["redactionPatterns"],
+                "$path.redactionPatterns",
+            )
+            SpecVerifyCommand(
+                id = id,
+                displayName = displayName,
+                command = command,
+                workingDirectory = workingDirectory,
+                timeoutMs = timeoutMs,
+                outputLimitChars = outputLimitChars,
+                redactionPatterns = redactionPatterns,
+            )
+        }
+        val duplicateId = commands
+            .groupingBy(SpecVerifyCommand::id)
+            .eachCount()
+            .entries
+            .firstOrNull { (_, count) -> count > 1 }
+            ?.key
+        require(duplicateId == null) {
+            "verify.commands contains duplicate id '$duplicateId'."
+        }
+        return commands
+    }
+
     private fun parseTemplate(value: Any?, path: String, fallback: WorkflowTemplate?): WorkflowTemplate {
         if (value == null) {
             return fallback ?: throw IllegalArgumentException("$path is required.")
@@ -346,6 +441,20 @@ class SpecProjectConfigService(
         }
     }
 
+    private fun parseStringOptional(value: Any?, path: String): String? {
+        if (value == null) {
+            return null
+        }
+        val normalized = value.toString().trim()
+        require(normalized.isNotBlank()) { "$path cannot be blank." }
+        return normalized
+    }
+
+    private fun parseRequiredString(value: Any?, path: String): String {
+        return parseStringOptional(value, path)
+            ?: throw IllegalArgumentException("$path is required.")
+    }
+
     private fun parseInt(value: Any?, path: String): Int? {
         if (value == null) {
             return null
@@ -357,6 +466,47 @@ class SpecProjectConfigService(
                 ?: throw IllegalArgumentException("$path must be an integer.")
 
             else -> throw IllegalArgumentException("$path must be an integer.")
+        }
+    }
+
+    private fun parsePositiveInt(value: Any?, path: String): Int? {
+        val parsed = parseInt(value, path) ?: return null
+        require(parsed > 0) { "$path must be greater than 0." }
+        return parsed
+    }
+
+    private fun parseStringSequence(value: Any?, path: String): List<String> {
+        val items = value as? List<*>
+            ?: throw IllegalArgumentException("$path must be a sequence of strings.")
+        require(items.isNotEmpty()) { "$path cannot be empty." }
+        return items.mapIndexed { index, rawItem ->
+            parseRequiredString(rawItem, "$path[$index]")
+        }
+    }
+
+    private fun parseRegexStringList(value: Any?, path: String): List<String> {
+        val rawPatterns = parseStringListOptional(value, path) ?: return emptyList()
+        rawPatterns.forEachIndexed { index, pattern ->
+            try {
+                Regex(pattern)
+            } catch (error: IllegalArgumentException) {
+                throw IllegalArgumentException(
+                    "$path[$index] must be a valid regex: ${error.message ?: pattern}",
+                    error,
+                )
+            }
+        }
+        return rawPatterns.distinct()
+    }
+
+    private fun parseStringListOptional(value: Any?, path: String): List<String>? {
+        if (value == null) {
+            return null
+        }
+        val items = value as? List<*>
+            ?: throw IllegalArgumentException("$path must be a sequence.")
+        return items.mapIndexed { index, rawItem ->
+            parseRequiredString(rawItem, "$path[$index]")
         }
     }
 

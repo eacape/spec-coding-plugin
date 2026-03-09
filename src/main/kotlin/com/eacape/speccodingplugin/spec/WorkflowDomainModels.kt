@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.spec
 
+import java.nio.file.Path
+
 /**
  * Workflow 模板枚举。
  */
@@ -563,6 +565,31 @@ data class TaskVerificationResult(
     val at: String,
 )
 
+data class VerifyCommandExecutionRequest(
+    val commandId: String,
+    val displayName: String?,
+    val command: List<String>,
+    val workingDirectory: Path,
+    val timeoutMs: Int,
+    val outputLimitChars: Int,
+    val redactionPatterns: List<String> = emptyList(),
+)
+
+data class VerifyCommandExecutionResult(
+    val commandId: String,
+    val exitCode: Int?,
+    val stdout: String,
+    val stderr: String,
+    val durationMs: Long,
+    val timedOut: Boolean,
+    val stdoutTruncated: Boolean,
+    val stderrTruncated: Boolean,
+    val redacted: Boolean,
+) {
+    val truncated: Boolean
+        get() = stdoutTruncated || stderrTruncated
+}
+
 data class StructuredTask(
     val id: String,
     val title: String,
@@ -644,6 +671,26 @@ class InvalidTaskVerificationResultError(taskId: String, fieldName: String, deta
                     append(reason)
                 }
         },
+    )
+
+class InvalidVerifyCommandError(commandId: String?, details: String) :
+    WorkflowDomainError(
+        buildString {
+            append("Verify command")
+            commandId
+                ?.takeIf(String::isNotBlank)
+                ?.let { normalizedId ->
+                    append(' ')
+                    append(normalizedId)
+                }
+            append(" is invalid: ")
+            append(details)
+        },
+    )
+
+class VerifyCommandWorkingDirectoryError(commandId: String, workingDirectory: String, projectRoot: String) :
+    WorkflowDomainError(
+        "Verify command $commandId working directory escapes project root $projectRoot: $workingDirectory",
     )
 
 class InvalidTasksArtifactEditError(details: String) :

@@ -207,6 +207,13 @@ object SpecArchitectureContract {
             rationale = "Task 27 requires task-associated verification summaries to be written back or cleared safely, while preserving handwritten markdown and serializing special characters deterministically.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "verify-command-runner",
+            capability = "parameterized local VERIFY command execution with timeout, truncation, redaction, and project-root-safe working directories",
+            selection = "SpecProcessRunner + typed verify config commands + structured execution request/result models",
+            rationale = "Task 28 requires a reusable process runner primitive that stays offline, avoids shell injection, and normalizes execution behavior across operating systems.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(
@@ -283,6 +290,11 @@ object SpecArchitectureContract {
         ),
         SourceRule(
             fileName = "SpecProjectConfigService.kt",
+            layer = Layer.INFRASTRUCTURE,
+            blockedImportPrefixes = infrastructureBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecProcessRunner.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
         ),

@@ -40,6 +40,7 @@ class SpecProjectConfigServiceTest {
         assertEquals(WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC), config.policyFor(WorkflowTemplate.FULL_SPEC).definition)
         assertEquals(SpecGatePolicy(), config.gate)
         assertTrue(config.rules.isEmpty())
+        assertEquals(SpecVerifyConfig(), config.verify)
     }
 
     @Test
@@ -67,6 +68,24 @@ class SpecProjectConfigServiceTest {
                 severity: WARNING
               verify-conclusion:
                 severity: ERROR
+            verify:
+              defaultWorkingDirectory: .
+              defaultTimeoutMs: 45000
+              defaultOutputLimitChars: 4096
+              redactionPatterns:
+                - '(?i)session[_-]?id=\\S+'
+              commands:
+                - id: gradle-test
+                  displayName: Gradle tests
+                  command:
+                    - ./gradlew.bat
+                    - test
+                    - --offline
+                  workingDirectory: .spec-coding
+                  timeoutMs: 60000
+                  outputLimitChars: 8192
+                  redactionPatterns:
+                    - '(?i)password=\\S+'
             """.trimIndent(),
         )
 
@@ -90,6 +109,24 @@ class SpecProjectConfigServiceTest {
         assertEquals(GateStatus.WARNING, config.rules.getValue("task-structure").severityOverride)
         assertEquals(true, config.rules.getValue("verify-conclusion").enabled)
         assertEquals(GateStatus.ERROR, config.rules.getValue("verify-conclusion").severityOverride)
+
+        assertEquals(".", config.verify.defaultWorkingDirectory)
+        assertEquals(45_000, config.verify.defaultTimeoutMs)
+        assertEquals(4_096, config.verify.defaultOutputLimitChars)
+        assertEquals(listOf("(?i)session[_-]?id=\\\\S+"), config.verify.redactionPatterns)
+        assertEquals(1, config.verify.commands.size)
+        assertEquals(
+            SpecVerifyCommand(
+                id = "gradle-test",
+                displayName = "Gradle tests",
+                command = listOf("./gradlew.bat", "test", "--offline"),
+                workingDirectory = ".spec-coding",
+                timeoutMs = 60_000,
+                outputLimitChars = 8_192,
+                redactionPatterns = listOf("(?i)password=\\\\S+"),
+            ),
+            config.verify.commands.single(),
+        )
     }
 
     @Test
@@ -126,6 +163,24 @@ class SpecProjectConfigServiceTest {
     }
 
     @Test
+    fun `load should reject invalid verify redaction regex`() {
+        writeConfig(
+            """
+            schemaVersion: 1
+            verify:
+              redactionPatterns:
+                - "[unterminated"
+            """.trimIndent(),
+        )
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            service.load()
+        }
+
+        assertTrue(error.message?.contains("verify.redactionPatterns[0]") == true)
+    }
+
+    @Test
     fun `createConfigPin should return deterministic sha256 hash and snapshot yaml`() {
         writeConfig(
             """
@@ -145,6 +200,7 @@ class SpecProjectConfigServiceTest {
         assertEquals(first.snapshotYaml, second.snapshotYaml)
         assertTrue(first.snapshotYaml.contains("schemaVersion: 1"))
         assertTrue(first.snapshotYaml.contains("defaultTemplate: QUICK_TASK"))
+        assertTrue(first.snapshotYaml.contains("verify:"))
     }
 
     @Test
