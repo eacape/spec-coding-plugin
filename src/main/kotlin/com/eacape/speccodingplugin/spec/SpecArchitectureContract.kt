@@ -172,6 +172,13 @@ object SpecArchitectureContract {
             rationale = "Task 21 requires PASS/WARN/FAIL verification conclusions to map into gate outcomes while recording any severity downgrade in audit history.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "gate-aggregation",
+            capability = "structured gate aggregation and explicit warning confirmation audit for UI-facing workflows",
+            selection = "GateResult aggregation/warning confirmation models + SpecEngine gate preview API + dedicated warning confirmation audit event",
+            rationale = "Task 22 requires warning pass-through callbacks, auditable confirmation records, and structured gate output that later UI actions/tool windows can render directly.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(

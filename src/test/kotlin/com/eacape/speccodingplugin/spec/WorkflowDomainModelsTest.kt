@@ -130,6 +130,9 @@ class WorkflowDomainModelsTest {
             ),
         )
         assertEquals(GateStatus.WARNING, warningOnly.status)
+        assertEquals(1, warningOnly.aggregation.warningCount)
+        assertTrue(warningOnly.aggregation.requiresWarningConfirmation)
+        assertEquals("R-WARN", warningOnly.warningConfirmation?.warnings?.single()?.ruleId)
 
         val withError = GateResult.fromViolations(
             listOf(
@@ -138,9 +141,15 @@ class WorkflowDomainModelsTest {
             ),
         )
         assertEquals(GateStatus.ERROR, withError.status)
+        assertEquals(1, withError.aggregation.errorCount)
+        assertEquals(1, withError.aggregation.warningCount)
+        assertFalse(withError.aggregation.canProceed)
+        assertEquals(null, withError.warningConfirmation)
 
         val pass = GateResult.fromViolations(emptyList())
         assertEquals(GateStatus.PASS, pass.status)
+        assertTrue(pass.aggregation.canProceed)
+        assertEquals(0, pass.aggregation.totalViolationCount)
     }
 
     @Test

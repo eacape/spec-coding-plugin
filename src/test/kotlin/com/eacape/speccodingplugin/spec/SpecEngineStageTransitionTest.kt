@@ -95,12 +95,17 @@ class SpecEngineStageTransitionTest {
         val rejected = engine.jumpToStage(created.id, StageId.TASKS)
         assertTrue(rejected.isFailure)
         assertTrue(rejected.exceptionOrNull() is StageWarningConfirmationRequiredError)
+        val warningError = rejected.exceptionOrNull() as StageWarningConfirmationRequiredError
+        assertEquals(GateStatus.WARNING, warningError.gateResult.status)
+        assertNotNull(warningError.gateResult.warningConfirmation)
+        assertEquals(1, warningError.gateResult.aggregation.warningCount)
 
         val result = engine.jumpToStage(created.id, StageId.TASKS) { true }.getOrThrow()
 
         assertEquals(StageTransitionType.JUMP, result.transitionType)
         assertTrue(result.warningConfirmed)
         assertEquals(GateStatus.WARNING, result.gateResult.status)
+        assertNotNull(result.gateResult.warningConfirmation)
 
         val reloaded = engine.reloadWorkflow(created.id).getOrThrow()
         assertEquals(StageId.TASKS, reloaded.currentStage)
@@ -108,11 +113,57 @@ class SpecEngineStageTransitionTest {
         assertEquals(StageProgress.DONE, reloaded.stageStates.getValue(StageId.DESIGN).status)
         assertEquals(StageProgress.IN_PROGRESS, reloaded.stageStates.getValue(StageId.TASKS).status)
 
+        val warningAudit = loadAuditEvents(created.id)
+            .last { it.eventType == SpecAuditEventType.GATE_WARNING_CONFIRMED }
+        assertEquals("JUMP", warningAudit.details["transitionType"])
+        assertEquals("1", warningAudit.details["warningCount"])
+        assertEquals("warn-only", warningAudit.details["warningRules"])
+
         val event = loadAuditEvents(created.id)
             .last { it.eventType == SpecAuditEventType.STAGE_JUMPED }
         assertEquals("WARNING", event.details["gateStatus"])
         assertEquals("true", event.details["warningConfirmed"])
         assertEquals("REQUIREMENTS,DESIGN", event.details["evaluatedStages"])
+    }
+
+    @Test
+    fun `previewStageTransition should expose structured warning result without mutating workflow`() {
+        val warningGate = SpecStageGateEvaluator {
+            GateResult.fromViolations(
+                listOf(
+                    Violation(
+                        ruleId = "warn-preview",
+                        severity = GateStatus.WARNING,
+                        fileName = "requirements.md",
+                        line = 2,
+                        message = "preview warning",
+                    ),
+                ),
+            )
+        }
+        val engine = SpecEngine(
+            project = project,
+            storage = storage,
+            generationHandler = { SpecGenerationResult.Failure("unused") },
+            stageGateEvaluator = warningGate,
+        )
+        val created = engine.createWorkflow(
+            title = "Preview Workflow",
+            description = "preview gate",
+        ).getOrThrow()
+
+        val preview = engine.previewStageTransition(created.id, StageTransitionType.ADVANCE).getOrThrow()
+
+        assertEquals(created.id, preview.workflowId)
+        assertEquals(StageTransitionType.ADVANCE, preview.transitionType)
+        assertEquals(StageId.REQUIREMENTS, preview.fromStage)
+        assertEquals(StageId.DESIGN, preview.targetStage)
+        assertEquals(GateStatus.WARNING, preview.gateResult.status)
+        assertEquals(1, preview.gateResult.aggregation.warningCount)
+        assertEquals("warn-preview", preview.gateResult.warningConfirmation?.warnings?.single()?.ruleId)
+
+        val reloaded = engine.reloadWorkflow(created.id).getOrThrow()
+        assertEquals(StageId.REQUIREMENTS, reloaded.currentStage)
     }
 
     @Test
@@ -296,6 +347,9 @@ class SpecEngineStageTransitionTest {
 
         assertTrue(blocked.isFailure)
         assertTrue(blocked.exceptionOrNull() is StageWarningConfirmationRequiredError)
+        val warningError = blocked.exceptionOrNull() as StageWarningConfirmationRequiredError
+        assertEquals(GateStatus.WARNING, warningError.gateResult.status)
+        assertEquals(1, warningError.gateResult.aggregation.warningCount)
         val downgradeEvent = loadAuditEvents(workflowId)
             .last { it.eventType == SpecAuditEventType.GATE_RULE_DOWNGRADED }
         assertEquals("VERIFY", downgradeEvent.details["fromStage"])
@@ -307,6 +361,10 @@ class SpecEngineStageTransitionTest {
         val result = engine.advanceWorkflow(workflowId) { true }.getOrThrow()
 
         assertEquals(GateStatus.WARNING, result.gateResult.status)
+        val warningAudit = loadAuditEvents(workflowId)
+            .last { it.eventType == SpecAuditEventType.GATE_WARNING_CONFIRMED }
+        assertEquals("ADVANCE", warningAudit.details["transitionType"])
+        assertEquals("verify-conclusion", warningAudit.details["warningRules"])
         val verifyRule = result.gateResult.ruleResults.first { it.ruleId == "verify-conclusion" }
         assertEquals(GateStatus.WARNING, verifyRule.violations.single().severity)
         assertEquals(GateStatus.ERROR, verifyRule.violations.single().originalSeverity)
