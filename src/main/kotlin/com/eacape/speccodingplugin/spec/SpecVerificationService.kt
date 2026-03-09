@@ -11,14 +11,20 @@ class SpecVerificationService(private val project: Project) {
     private var _projectConfigServiceOverride: SpecProjectConfigService? = null
     private var _processRunnerOverride: SpecProcessRunner? = null
     private var _planIdGeneratorOverride: WorkflowIdGenerator? = null
+    private var _runIdGeneratorOverride: WorkflowIdGenerator? = null
 
     private val storage: SpecStorage by lazy { _storageOverride ?: SpecStorage.getInstance(project) }
     private val projectConfigService: SpecProjectConfigService by lazy {
         _projectConfigServiceOverride ?: SpecProjectConfigService(project)
     }
+    private val artifactService: SpecArtifactService by lazy { SpecArtifactService(project) }
+    private val tasksService: SpecTasksService by lazy { SpecTasksService(project) }
     private val processRunner: SpecProcessRunner by lazy { _processRunnerOverride ?: SpecProcessRunner() }
     private val planIdGenerator: WorkflowIdGenerator by lazy {
         _planIdGeneratorOverride ?: WorkflowIdGenerator(prefix = VERIFY_PLAN_ID_PREFIX)
+    }
+    private val runIdGenerator: WorkflowIdGenerator by lazy {
+        _runIdGeneratorOverride ?: WorkflowIdGenerator(prefix = VERIFY_RUN_ID_PREFIX)
     }
     private val pendingPlans = mutableMapOf<String, PendingVerifyPlan>()
 
@@ -28,11 +34,13 @@ class SpecVerificationService(private val project: Project) {
         projectConfigService: SpecProjectConfigService = SpecProjectConfigService(project),
         processRunner: SpecProcessRunner = SpecProcessRunner(),
         planIdGenerator: WorkflowIdGenerator = WorkflowIdGenerator(prefix = VERIFY_PLAN_ID_PREFIX),
+        runIdGenerator: WorkflowIdGenerator = WorkflowIdGenerator(prefix = VERIFY_RUN_ID_PREFIX),
     ) : this(project) {
         _storageOverride = storage
         _projectConfigServiceOverride = projectConfigService
         _processRunnerOverride = processRunner
         _planIdGeneratorOverride = planIdGenerator
+        _runIdGeneratorOverride = runIdGenerator
     }
 
     fun preview(workflowId: String): VerifyPlan {
@@ -76,12 +84,78 @@ class SpecVerificationService(private val project: Project) {
         return plan
     }
 
+    fun run(workflowId: String, planId: String, scopeTaskIds: List<String>): VerifyRunResult {
+        val pendingPlan = consumePendingPlan(workflowId, planId)
+        val scopeTasks = resolveScopeTasks(workflowId, scopeTaskIds)
+        val executedAt = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
+        val runId = runIdGenerator.nextId()
+        val commandResults = pendingPlan.requests.map(processRunner::execute)
+        val conclusion = determineConclusion(commandResults)
+        val summary = buildSummary(commandResults, conclusion)
+        val verificationDocumentPath = artifactService.writeArtifact(
+            workflowId,
+            StageId.VERIFY,
+            renderVerificationDocument(
+                plan = pendingPlan.plan,
+                scopeTasks = scopeTasks,
+                runId = runId,
+                executedAt = executedAt,
+                commandResults = commandResults,
+                conclusion = conclusion,
+                summary = summary,
+            ),
+        )
+        val verificationResult = TaskVerificationResult(
+            conclusion = conclusion,
+            runId = runId,
+            summary = summary,
+            at = executedAt,
+        )
+        val updatedTasks = scopeTasks.map { task ->
+            tasksService.updateVerificationResult(workflowId, task.id, verificationResult)
+        }
+
+        storage.appendAuditEvent(
+            workflowId = workflowId,
+            eventType = SpecAuditEventType.VERIFICATION_RUN_COMPLETED,
+            details = buildAuditDetails(
+                plan = pendingPlan.plan,
+                runId = runId,
+                executedAt = executedAt,
+                scopeTasks = scopeTasks,
+                commandResults = commandResults,
+                conclusion = conclusion,
+                summary = summary,
+                verificationDocumentPath = verificationDocumentPath,
+            ),
+        ).getOrThrow()
+
+        return VerifyRunResult(
+            runId = runId,
+            workflowId = workflowId,
+            planId = pendingPlan.plan.planId,
+            currentStage = pendingPlan.plan.currentStage,
+            executedAt = executedAt,
+            conclusion = conclusion,
+            summary = summary,
+            verificationDocumentPath = verificationDocumentPath,
+            commandResults = commandResults,
+            updatedTasks = updatedTasks,
+        )
+    }
+
     internal fun resolvePlan(workflowId: String, planId: String): VerifyPlan {
         return resolvePendingPlan(workflowId, planId).plan
     }
 
     internal fun resolveExecutionRequests(workflowId: String, planId: String): List<VerifyCommandExecutionRequest> {
         return resolvePendingPlan(workflowId, planId).requests
+    }
+
+    private fun consumePendingPlan(workflowId: String, planId: String): PendingVerifyPlan {
+        val pendingPlan = resolvePendingPlan(workflowId, planId)
+        pendingPlans.remove(planId)
+        return pendingPlan
     }
 
     private fun resolvePendingPlan(workflowId: String, planId: String): PendingVerifyPlan {
@@ -152,6 +226,244 @@ class SpecVerificationService(private val project: Project) {
         )
     }
 
+    private fun resolveScopeTasks(workflowId: String, scopeTaskIds: List<String>): List<StructuredTask> {
+        if (scopeTaskIds.isEmpty()) {
+            return emptyList()
+        }
+
+        val tasksById = tasksService.parse(workflowId).associateBy(StructuredTask::id)
+        val normalizedIds = scopeTaskIds
+            .map(::normalizeTaskId)
+            .distinct()
+            .sorted()
+        normalizedIds.firstOrNull { taskId -> taskId !in tasksById }
+            ?.let { missingTaskId ->
+                throw MissingStructuredTaskError(missingTaskId)
+            }
+        return normalizedIds.map(tasksById::getValue)
+    }
+
+    private fun normalizeTaskId(rawTaskId: String): String {
+        val normalizedTaskId = rawTaskId.trim().uppercase()
+        if (!TASK_ID_REGEX.matches(normalizedTaskId)) {
+            throw MissingStructuredTaskError(normalizedTaskId)
+        }
+        return normalizedTaskId
+    }
+
+    private fun determineConclusion(commandResults: List<VerifyCommandExecutionResult>): VerificationConclusion {
+        if (commandResults.isEmpty()) {
+            return VerificationConclusion.WARN
+        }
+        return when {
+            commandResults.any { result -> result.timedOut || result.exitCode != 0 } -> VerificationConclusion.FAIL
+            commandResults.any(VerifyCommandExecutionResult::truncated) -> VerificationConclusion.WARN
+            else -> VerificationConclusion.PASS
+        }
+    }
+
+    private fun buildSummary(
+        commandResults: List<VerifyCommandExecutionResult>,
+        conclusion: VerificationConclusion,
+    ): String {
+        if (commandResults.isEmpty()) {
+            return "No verify commands were configured; review verification scope manually."
+        }
+
+        val failedCommandIds = commandResults
+            .filter { result -> result.timedOut || result.exitCode != 0 }
+            .map(VerifyCommandExecutionResult::commandId)
+        val truncatedCommandIds = commandResults
+            .filter(VerifyCommandExecutionResult::truncated)
+            .map(VerifyCommandExecutionResult::commandId)
+        val redactedCount = commandResults.count(VerifyCommandExecutionResult::redacted)
+
+        return buildString {
+            when (conclusion) {
+                VerificationConclusion.FAIL -> {
+                    append("${failedCommandIds.size}/${commandResults.size} verify command(s) failed or timed out")
+                    if (failedCommandIds.isNotEmpty()) {
+                        append(": ${failedCommandIds.joinToString(", ")}")
+                    }
+                    append('.')
+                }
+
+                VerificationConclusion.WARN -> {
+                    append("${commandResults.size}/${commandResults.size} verify command(s) completed, but output was truncated")
+                    if (truncatedCommandIds.isNotEmpty()) {
+                        append(" for ${truncatedCommandIds.joinToString(", ")}")
+                    }
+                    append('.')
+                }
+
+                VerificationConclusion.PASS -> {
+                    append("${commandResults.size}/${commandResults.size} verify command(s) completed successfully.")
+                }
+            }
+            if (redactedCount > 0) {
+                append(" Sensitive output was redacted.")
+            }
+        }
+    }
+
+    private fun buildAuditDetails(
+        plan: VerifyPlan,
+        runId: String,
+        executedAt: String,
+        scopeTasks: List<StructuredTask>,
+        commandResults: List<VerifyCommandExecutionResult>,
+        conclusion: VerificationConclusion,
+        summary: String,
+        verificationDocumentPath: Path,
+    ): Map<String, String> {
+        val failedCommandIds = commandResults
+            .filter { result -> result.timedOut || result.exitCode != 0 }
+            .map(VerifyCommandExecutionResult::commandId)
+        val truncatedCommandIds = commandResults
+            .filter(VerifyCommandExecutionResult::truncated)
+            .map(VerifyCommandExecutionResult::commandId)
+        val redactedCommandIds = commandResults
+            .filter(VerifyCommandExecutionResult::redacted)
+            .map(VerifyCommandExecutionResult::commandId)
+        return linkedMapOf(
+            "planId" to plan.planId,
+            "runId" to runId,
+            "executedAt" to executedAt,
+            "currentStage" to plan.currentStage.name,
+            "conclusion" to conclusion.name,
+            "commandCount" to commandResults.size.toString(),
+            "scopeTaskCount" to scopeTasks.size.toString(),
+            "scopeTaskIds" to scopeTasks.joinToString(", ") { task -> task.id },
+            "failedCommandIds" to failedCommandIds.joinToString(", "),
+            "truncatedCommandIds" to truncatedCommandIds.joinToString(", "),
+            "redactedCommandIds" to redactedCommandIds.joinToString(", "),
+            "verificationFile" to verificationDocumentPath.fileName.toString(),
+            "summary" to summary,
+        )
+    }
+
+    private fun renderVerificationDocument(
+        plan: VerifyPlan,
+        scopeTasks: List<StructuredTask>,
+        runId: String,
+        executedAt: String,
+        commandResults: List<VerifyCommandExecutionResult>,
+        conclusion: VerificationConclusion,
+        summary: String,
+    ): String {
+        val commandsById = plan.commands.associateBy(VerifyPlanCommand::commandId)
+        return buildString {
+            append("# Verification Document\n\n")
+            append("## Verification Scope\n")
+            append("- Workflow: `${plan.workflowId}`\n")
+            append("- Plan ID: `${plan.planId}`\n")
+            append("- Run ID: `$runId`\n")
+            append("- Stage at execution: `${plan.currentStage}`\n")
+            if (scopeTasks.isEmpty()) {
+                append("- Related tasks: none selected\n")
+            } else {
+                append("- Related tasks:\n")
+                scopeTasks.forEach { task ->
+                    append("  - `${task.id}` ${task.title}\n")
+                }
+            }
+
+            append("\n## Verification Method\n")
+            append("- Execution mode: local parameterized commands via `SpecProcessRunner`\n")
+            append("- Config source: `${plan.policy.configSource}`\n")
+            append("- Effective config hash: `${plan.policy.effectiveConfigHash}`\n")
+            plan.policy.workflowConfigPinHash?.let { workflowConfigPinHash ->
+                append("- Workflow config pin: `$workflowConfigPinHash`\n")
+            }
+            append("- Project root: `${normalizePath(resolveProjectRoot())}`\n")
+            append("- Environment: `${System.getProperty("os.name")} ${System.getProperty("os.arch")}`, Java `${System.getProperty("java.version")}`\n")
+            append("- Generated at: `${plan.generatedAt}`\n")
+            append("- Executed at: `$executedAt`\n")
+
+            append("\n## Commands\n")
+            if (commandResults.isEmpty()) {
+                append("- No verify commands configured.\n")
+            } else {
+                commandResults.forEach { commandResult ->
+                    val planCommand = commandsById.getValue(commandResult.commandId)
+                    append("\n### ${planCommand.commandId}: ${planCommand.displayName ?: planCommand.commandId}\n")
+                    append("- Working directory: `${normalizePath(planCommand.workingDirectory)}`\n")
+                    append("- Timeout: `${planCommand.timeoutMs} ms`\n")
+                    append("- Output limit: `${planCommand.outputLimitChars}` chars\n")
+                    append("- Outcome: `${formatOutcome(commandResult)}`\n")
+                    append("- Duration: `${commandResult.durationMs} ms`\n")
+                    append("- Redacted: `${if (commandResult.redacted) "yes" else "no"}`\n")
+                    append("- Truncated: `${if (commandResult.truncated) "yes" else "no"}`\n\n")
+                    append(renderCodeBlock("bash", renderCommand(planCommand.command)))
+                    if (commandResult.stdout.isNotBlank()) {
+                        append("\n#### stdout\n\n")
+                        append(renderCodeBlock("text", commandResult.stdout))
+                    }
+                    if (commandResult.stderr.isNotBlank()) {
+                        append("\n#### stderr\n\n")
+                        append(renderCodeBlock("text", commandResult.stderr))
+                    }
+                }
+            }
+
+            append("\n## Result\n")
+            append(
+                SpecYamlCodec.encodeMap(
+                    linkedMapOf(
+                        "conclusion" to conclusion.name,
+                        "runId" to runId,
+                        "at" to executedAt,
+                        "summary" to summary,
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun formatOutcome(commandResult: VerifyCommandExecutionResult): String {
+        return when {
+            commandResult.timedOut -> "TIMEOUT"
+            commandResult.exitCode == 0 -> "SUCCESS"
+            else -> "EXIT ${commandResult.exitCode}"
+        }
+    }
+
+    private fun renderCommand(command: List<String>): String {
+        return command.joinToString(" ") { token ->
+            if (token.any(Char::isWhitespace)) {
+                "\"${token.replace("\"", "\\\"")}\""
+            } else {
+                token
+            }
+        }
+    }
+
+    private fun renderCodeBlock(language: String, content: String): String {
+        val normalizedContent = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+        val fenceLength = maxOf(
+            3,
+            (BACKTICK_RUN_REGEX.findAll(normalizedContent).maxOfOrNull { match -> match.value.length } ?: 0) + 1,
+        )
+        val fence = "`".repeat(fenceLength)
+        return buildString {
+            append(fence)
+            append(language)
+            append('\n')
+            append(normalizedContent)
+            if (!normalizedContent.endsWith("\n")) {
+                append('\n')
+            }
+            append(fence)
+            append('\n')
+        }
+    }
+
+    private fun normalizePath(path: Path): String {
+        return path.toString().replace('\\', '/')
+    }
+
     private fun isVerifyEnabled(workflow: SpecWorkflow): Boolean {
         return workflow.verifyEnabled || workflow.stageStates[StageId.VERIFY]?.active == true
     }
@@ -176,8 +488,11 @@ class SpecVerificationService(private val project: Project) {
 
     companion object {
         private const val VERIFY_PLAN_ID_PREFIX = "verify-plan"
+        private const val VERIFY_RUN_ID_PREFIX = "verify-run"
         private const val DEFAULT_CONFIRMATION_REASON = "Review verify commands before execution."
         private const val PINNED_SNAPSHOT_CONFIRMATION_REASON =
             "Current project config differs from the workflow pin; using the pinned config snapshot for this plan."
+        private val TASK_ID_REGEX = Regex("""^T-\d{3}$""")
+        private val BACKTICK_RUN_REGEX = Regex("`+")
     }
 }

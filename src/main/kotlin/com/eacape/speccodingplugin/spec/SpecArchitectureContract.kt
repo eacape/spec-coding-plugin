@@ -221,6 +221,13 @@ object SpecArchitectureContract {
             rationale = "Task 29 requires users to preview normalized VERIFY commands, inspect working directory/timeout/redaction policy, and carry a planId into the later confirmed execution flow.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "verify-run-execution",
+            capability = "confirmed VERIFY execution with verification.md generation, task verificationResult updates, and audit logging",
+            selection = "SpecVerificationService.run() + SpecProcessRunner.execute() + verification.md renderer + task-scoped verificationResult writes",
+            rationale = "Task 30 requires the confirmed verify plan to execute locally, persist structured verification evidence, update scoped tasks, and leave an auditable completion event.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(

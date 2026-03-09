@@ -4,6 +4,8 @@ import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -21,6 +23,8 @@ class SpecVerificationServiceTest {
     private lateinit var project: Project
     private lateinit var storage: SpecStorage
     private lateinit var configService: SpecProjectConfigService
+    private lateinit var artifactService: SpecArtifactService
+    private lateinit var tasksService: SpecTasksService
     private lateinit var verificationService: SpecVerificationService
 
     @BeforeEach
@@ -29,6 +33,8 @@ class SpecVerificationServiceTest {
         every { project.basePath } returns tempDir.toString()
         storage = SpecStorage.getInstance(project)
         configService = SpecProjectConfigService(project)
+        artifactService = SpecArtifactService(project)
+        tasksService = SpecTasksService(project)
         verificationService = SpecVerificationService(project, storage, configService, SpecProcessRunner())
     }
 
@@ -159,6 +165,165 @@ class SpecVerificationServiceTest {
         }
     }
 
+    @Test
+    fun `run should execute commands write verification artifact update scoped tasks and append audit event`() {
+        writeVerifyConfig(
+            commandId = "java-echo",
+            command = javaCommand(tempDir, "echo"),
+            outputLimitChars = 4096,
+        )
+        val workflow = createWorkflow(workflowId = "wf-verify-run-pass")
+        writeTasks(
+            workflow.id,
+            """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Verify implementation
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+
+            ### T-002: Leave untouched
+            ```spec-task
+            status: IN_PROGRESS
+            priority: P1
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            """.trimIndent(),
+        )
+
+        val plan = verificationService.preview(workflow.id)
+        val result = verificationService.run(workflow.id, plan.planId, listOf("T-001"))
+
+        assertTrue(WorkflowIdGenerator.isValid(result.runId, prefix = "verify-run"))
+        assertEquals(plan.planId, result.planId)
+        assertEquals(VerificationConclusion.PASS, result.conclusion)
+        assertEquals(listOf("T-001"), result.updatedTasks.map(StructuredTask::id))
+        assertEquals(1, result.commandResults.size)
+        assertEquals(0, result.commandResults.single().exitCode)
+
+        val verificationDocument = artifactService.readArtifact(workflow.id, StageId.VERIFY)
+        assertNotNull(verificationDocument)
+        assertTrue(verificationDocument!!.contains("# Verification Document"))
+        assertTrue(verificationDocument.contains("conclusion: PASS"))
+        assertTrue(verificationDocument.contains("runId: ${result.runId}"))
+        assertTrue(verificationDocument.contains("`T-001` Verify implementation"))
+        assertTrue(verificationDocument.contains("<redacted>"))
+        assertFalse(verificationDocument.contains("super-secret-token"))
+
+        val parsedTasks = tasksService.parse(workflow.id).associateBy(StructuredTask::id)
+        assertEquals(VerificationConclusion.PASS, parsedTasks.getValue("T-001").verificationResult?.conclusion)
+        assertEquals(result.runId, parsedTasks.getValue("T-001").verificationResult?.runId)
+        assertEquals(null, parsedTasks.getValue("T-002").verificationResult)
+
+        val runEvent = storage.listAuditEvents(workflow.id).getOrThrow()
+            .last { event -> event.eventType == SpecAuditEventType.VERIFICATION_RUN_COMPLETED }
+        assertEquals(plan.planId, runEvent.details["planId"])
+        assertEquals(result.runId, runEvent.details["runId"])
+        assertEquals("PASS", runEvent.details["conclusion"])
+        assertEquals("T-001", runEvent.details["scopeTaskIds"])
+        assertEquals("verification.md", runEvent.details["verificationFile"])
+    }
+
+    @Test
+    fun `run should mark verification as warn when output is truncated`() {
+        writeVerifyConfig(
+            commandId = "java-echo",
+            command = javaCommand(tempDir, "echo"),
+            outputLimitChars = 48,
+        )
+        val workflow = createWorkflow(workflowId = "wf-verify-run-warn")
+        writeTasks(
+            workflow.id,
+            """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Verify truncation handling
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            """.trimIndent(),
+        )
+
+        val plan = verificationService.preview(workflow.id)
+        val result = verificationService.run(workflow.id, plan.planId, listOf("T-001"))
+
+        assertEquals(VerificationConclusion.WARN, result.conclusion)
+        assertTrue(result.summary.contains("truncated"))
+        assertTrue(result.commandResults.single().truncated)
+
+        val verificationDocument = artifactService.readArtifact(workflow.id, StageId.VERIFY)
+        assertNotNull(verificationDocument)
+        assertTrue(verificationDocument!!.contains("conclusion: WARN"))
+        assertTrue(verificationDocument.contains("- Truncated: `yes`"))
+        assertEquals(
+            VerificationConclusion.WARN,
+            tasksService.parse(workflow.id).single().verificationResult?.conclusion,
+        )
+    }
+
+    @Test
+    fun `run should record failure conclusion when command exits non-zero`() {
+        writeVerifyConfig(
+            commandId = "java-fail",
+            command = javaCommand(tempDir, "boom"),
+            outputLimitChars = 4096,
+        )
+        val workflow = createWorkflow(workflowId = "wf-verify-run-fail")
+        writeTasks(
+            workflow.id,
+            """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Verify failing command
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            """.trimIndent(),
+        )
+
+        val plan = verificationService.preview(workflow.id)
+        val result = verificationService.run(workflow.id, plan.planId, listOf("T-001"))
+
+        assertEquals(VerificationConclusion.FAIL, result.conclusion)
+        assertTrue((result.commandResults.single().exitCode ?: 0) != 0)
+        assertTrue(result.summary.contains("failed or timed out"))
+
+        val verificationDocument = artifactService.readArtifact(workflow.id, StageId.VERIFY)
+        assertNotNull(verificationDocument)
+        assertTrue(verificationDocument!!.contains("conclusion: FAIL"))
+        assertTrue(verificationDocument.contains("Outcome: `EXIT"))
+        assertEquals(
+            VerificationConclusion.FAIL,
+            tasksService.parse(workflow.id).single().verificationResult?.conclusion,
+        )
+
+        val runEvent = storage.listAuditEvents(workflow.id).getOrThrow()
+            .last { event -> event.eventType == SpecAuditEventType.VERIFICATION_RUN_COMPLETED }
+        assertEquals("FAIL", runEvent.details["conclusion"])
+        assertEquals("java-fail", runEvent.details["failedCommandIds"])
+    }
+
     private fun createWorkflow(
         workflowId: String,
         currentStage: StageId = StageId.VERIFY,
@@ -225,5 +390,85 @@ class SpecVerificationServiceTest {
         val configPath = configService.configPath()
         Files.createDirectories(configPath.parent)
         Files.writeString(configPath, "$raw\n", StandardCharsets.UTF_8)
+    }
+
+    private fun writeVerifyConfig(
+        commandId: String,
+        command: List<String>,
+        outputLimitChars: Int,
+        timeoutMs: Int = 15_000,
+    ) {
+        val renderedConfig = buildString {
+            appendLine("schemaVersion: 1")
+            appendLine("verify:")
+            appendLine("  defaultWorkingDirectory: .")
+            appendLine("  defaultTimeoutMs: $timeoutMs")
+            appendLine("  defaultOutputLimitChars: $outputLimitChars")
+            appendLine("  commands:")
+            appendLine("    - id: $commandId")
+            appendLine("      command:")
+            command.forEach { token ->
+                appendLine("        - ${yamlString(token)}")
+            }
+        }.trimEnd()
+        writeConfig(renderedConfig)
+    }
+
+    private fun writeTasks(workflowId: String, markdown: String) {
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+    }
+
+    private fun javaCommand(projectRoot: Path, vararg args: String): List<String> {
+        val sourceFile = writeFixtureSource(projectRoot)
+        return buildList {
+            add(javaExecutable().toString())
+            add(sourceFile.toString())
+            addAll(args)
+        }
+    }
+
+    private fun writeFixtureSource(projectRoot: Path): Path {
+        val sourceFile = projectRoot.resolve("VerifyFixture.java")
+        if (Files.exists(sourceFile)) {
+            return sourceFile
+        }
+        Files.writeString(
+            sourceFile,
+            """
+            public class VerifyFixture {
+                public static void main(String[] args) throws Exception {
+                    String mode = args.length == 0 ? "" : args[0];
+                    if ("echo".equals(mode)) {
+                        System.out.println("token=super-secret-token");
+                        System.out.println("payload=" + "A".repeat(256));
+                        System.err.println("password=hunter2");
+                        return;
+                    }
+                    if ("sleep".equals(mode)) {
+                        long millis = args.length > 1 ? Long.parseLong(args[1]) : 5000L;
+                        Thread.sleep(millis);
+                        System.out.println("slept=" + millis);
+                        return;
+                    }
+                    throw new IllegalArgumentException("Unknown mode: " + mode);
+                }
+            }
+            """.trimIndent() + "\n",
+            StandardCharsets.UTF_8,
+        )
+        return sourceFile
+    }
+
+    private fun javaExecutable(): Path {
+        val executableName = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+            "java.exe"
+        } else {
+            "java"
+        }
+        return Path.of(System.getProperty("java.home"), "bin", executableName)
+    }
+
+    private fun yamlString(value: String): String {
+        return "'${value.replace("'", "''")}'"
     }
 }

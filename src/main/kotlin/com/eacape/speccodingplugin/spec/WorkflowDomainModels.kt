@@ -623,6 +623,19 @@ data class VerifyPlan(
     val policy: VerifyPlanPolicy,
 )
 
+data class VerifyRunResult(
+    val runId: String,
+    val workflowId: String,
+    val planId: String,
+    val currentStage: StageId,
+    val executedAt: String,
+    val conclusion: VerificationConclusion,
+    val summary: String,
+    val verificationDocumentPath: Path,
+    val commandResults: List<VerifyCommandExecutionResult>,
+    val updatedTasks: List<StructuredTask>,
+)
+
 data class StructuredTask(
     val id: String,
     val title: String,
