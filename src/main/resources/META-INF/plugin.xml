@@ -56,6 +56,7 @@
         <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookExecutor"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookManager"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.hook.HookGitCommitWatcher"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.ui.spec.SpecWorkflowSelectionService"/>
 
         <!-- Context Engine Services -->
         <projectService serviceImplementation="com.eacape.speccodingplugin.context.ContextCollector"/>
@@ -121,5 +122,38 @@
                 description="%toolbar.action.description">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <group
+                id="SpecCoding.SpecWorkflowGroup"
+                popup="true"
+                text="%spec.action.group.text"
+                description="%spec.action.group.description">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action
+                    id="SpecCoding.SpecWorkflow.New"
+                    class="com.eacape.speccodingplugin.ui.actions.NewSpecWorkflowAction"
+                    text="%spec.action.create.text"
+                    description="%spec.action.create.description"/>
+            <action
+                    id="SpecCoding.SpecWorkflow.Open"
+                    class="com.eacape.speccodingplugin.ui.actions.OpenSpecWorkflowAction"
+                    text="%spec.action.open.text"
+                    description="%spec.action.open.description"/>
+            <separator/>
+            <action
+                    id="SpecCoding.SpecWorkflow.Advance"
+                    class="com.eacape.speccodingplugin.ui.actions.AdvanceSpecWorkflowStageAction"
+                    text="%spec.action.advance.text"
+                    description="%spec.action.advance.description"/>
+            <action
+                    id="SpecCoding.SpecWorkflow.Jump"
+                    class="com.eacape.speccodingplugin.ui.actions.JumpSpecWorkflowStageAction"
+                    text="%spec.action.jump.text"
+                    description="%spec.action.jump.description"/>
+            <action
+                    id="SpecCoding.SpecWorkflow.Rollback"
+                    class="com.eacape.speccodingplugin.ui.actions.RollbackSpecWorkflowStageAction"
+                    text="%spec.action.rollback.text"
+                    description="%spec.action.rollback.description"/>
+        </group>
     </actions>
 </idea-plugin>

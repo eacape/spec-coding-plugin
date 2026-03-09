@@ -132,6 +132,7 @@ class SpecWorkflowPanel(
         setupUI()
         CliDiscoveryService.getInstance().addDiscoveryListener(discoveryListener)
         subscribeToLocaleEvents()
+        subscribeToToolWindowControlEvents()
         subscribeToWorkflowEvents()
         subscribeToDocumentFileEvents()
         refreshWorkflows()
@@ -1746,6 +1747,27 @@ class SpecWorkflowPanel(
                 override fun onLocaleChanged(event: LocaleChangedEvent) {
                     invokeLaterSafe {
                         refreshLocalizedTexts()
+                    }
+                }
+            },
+        )
+    }
+
+    private fun subscribeToToolWindowControlEvents() {
+        project.messageBus.connect(this).subscribe(
+            SpecToolWindowControlListener.TOPIC,
+            object : SpecToolWindowControlListener {
+                override fun onCreateWorkflowRequested() {
+                    invokeLaterSafe {
+                        if (project.isDisposed || _isDisposed) return@invokeLaterSafe
+                        onCreateWorkflow()
+                    }
+                }
+
+                override fun onSelectWorkflowRequested(workflowId: String) {
+                    invokeLaterSafe {
+                        if (project.isDisposed || _isDisposed) return@invokeLaterSafe
+                        refreshWorkflows(selectWorkflowId = workflowId)
                     }
                 }
             },
