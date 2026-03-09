@@ -21,6 +21,22 @@ class SpecArtifactService(
     private val lockManager: SpecFileLockManager = SpecFileLockManager(workspaceInitializer),
 ) {
 
+    fun listWorkflowMarkdownArtifacts(workflowId: String): List<Path> {
+        validateWorkflowId(workflowId)
+        val workflowDir = workflowDirectory(workflowId)
+        if (!Files.isDirectory(workflowDir)) {
+            return emptyList()
+        }
+        return Files.newDirectoryStream(workflowDir).use { entries ->
+            entries
+                .filter { entry ->
+                    Files.isRegularFile(entry) && entry.fileName.toString().endsWith(".md", ignoreCase = true)
+                }
+                .sortedBy { it.fileName.toString().lowercase() }
+                .toList()
+        }
+    }
+
     fun locateArtifact(workflowId: String, stageId: StageId): Path {
         val fileName = stageId.artifactFileName
             ?: throw IllegalArgumentException("Stage $stageId has no artifact file.")

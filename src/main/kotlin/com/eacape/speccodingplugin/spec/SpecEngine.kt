@@ -32,6 +32,7 @@ class SpecEngine(private val project: Project) {
         SpecGateRuleEngine(
             artifactService = artifactServiceDelegate,
             rules = listOf(
+                FixedArtifactNamingRule(),
                 RequiredArtifactRule(),
                 DocumentValidationRule(),
             ),

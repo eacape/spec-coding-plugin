@@ -185,6 +185,33 @@ class SpecEngineStageTransitionTest {
         assertTrue(ruleResult.violations.all { !it.fixHint.isNullOrBlank() })
     }
 
+    @Test
+    fun `advanceWorkflow should block when active artifact uses non canonical file name`() {
+        val engine = SpecEngine(project, storage, generationHandler = ::generateValidDocument)
+        val created = engine.createWorkflow(
+            title = "Naming Workflow",
+            description = "fixed naming",
+        ).getOrThrow()
+        val workflowDir = tempDir.resolve(".spec-coding").resolve("specs").resolve(created.id)
+        val canonicalPath = workflowDir.resolve("requirements.md")
+        val aliasPath = workflowDir.resolve("requirement.md")
+        Files.move(canonicalPath, aliasPath)
+
+        val blocked = engine.advanceWorkflow(created.id)
+
+        assertTrue(blocked.isFailure)
+        val error = blocked.exceptionOrNull()
+        assertTrue(error is StageTransitionBlockedByGateError)
+        val gateResult = (error as StageTransitionBlockedByGateError).gateResult
+        assertEquals(GateStatus.ERROR, gateResult.status)
+        val namingRule = gateResult.ruleResults.first { it.ruleId == "artifact-fixed-naming" }
+        assertEquals(1, namingRule.violations.size)
+        assertEquals("requirement.md", namingRule.violations.single().fileName)
+        assertTrue(namingRule.violations.single().message.contains("requirements.md"))
+        val requiredRule = gateResult.ruleResults.first { it.ruleId == "artifact-required" }
+        assertTrue(requiredRule.violations.isEmpty())
+    }
+
     private fun loadAuditEvents(workflowId: String): List<SpecAuditEvent> {
         val auditPath = tempDir
             .resolve(".spec-coding")

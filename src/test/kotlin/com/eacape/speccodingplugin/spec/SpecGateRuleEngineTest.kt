@@ -109,9 +109,90 @@ class SpecGateRuleEngineTest {
         assertTrue(evaluation.violations.isEmpty())
     }
 
-    private fun stageRequest(): StageTransitionRequest {
+    @Test
+    fun `evaluate should report missing required artifact for active stage`() {
+        val engine = SpecGateRuleEngine(
+            artifactService,
+            listOf(FixedArtifactNamingRule(), RequiredArtifactRule()),
+        )
+
+        val result = engine.evaluate(
+            request = stageRequest(workflowId = "spec-test-missing-artifact"),
+            projectConfig = configService.load(),
+        )
+
+        assertEquals(GateStatus.ERROR, result.status)
+        val requiredResult = result.ruleResults.first { it.ruleId == "artifact-required" }
+        assertEquals(listOf(StageId.REQUIREMENTS), requiredResult.appliedStages)
+        assertEquals(1, requiredResult.violations.size)
+        assertTrue(requiredResult.violations.single().message.contains("requirements.md"))
+
+        val namingResult = result.ruleResults.first { it.ruleId == "artifact-fixed-naming" }
+        assertTrue(namingResult.violations.isEmpty())
+    }
+
+    @Test
+    fun `evaluate should prefer fixed naming violation over missing artifact when alias exists`() {
+        val workflowId = "spec-test-fixed-naming"
+        artifactService.writeArtifact(workflowId, "requirement.md", "# misplaced requirement\n")
+        val engine = SpecGateRuleEngine(
+            artifactService,
+            listOf(FixedArtifactNamingRule(), RequiredArtifactRule()),
+        )
+
+        val result = engine.evaluate(
+            request = stageRequest(workflowId = workflowId),
+            projectConfig = configService.load(),
+        )
+
+        assertEquals(GateStatus.ERROR, result.status)
+        val namingResult = result.ruleResults.first { it.ruleId == "artifact-fixed-naming" }
+        assertEquals(1, namingResult.violations.size)
+        assertEquals("requirement.md", namingResult.violations.single().fileName)
+        assertTrue(namingResult.violations.single().message.contains("requirements.md"))
+
+        val requiredResult = result.ruleResults.first { it.ruleId == "artifact-required" }
+        assertTrue(requiredResult.violations.isEmpty())
+    }
+
+    @Test
+    fun `evaluate should ignore inactive verify artifact for baseline rules`() {
+        val stagePlan = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
+            .buildStagePlan(StageActivationOptions.of(verifyEnabled = false))
         val workflow = SpecWorkflow(
-            id = "spec-test-rule-framework",
+            id = "spec-test-inactive-verify",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = emptyMap(),
+            status = WorkflowStatus.IN_PROGRESS,
+            stageStates = stagePlan.initialStageStates("2026-03-09T00:00:00Z"),
+            currentStage = StageId.IMPLEMENT,
+        )
+        val request = StageTransitionRequest(
+            workflowId = workflow.id,
+            transitionType = StageTransitionType.ADVANCE,
+            fromStage = StageId.IMPLEMENT,
+            targetStage = StageId.ARCHIVE,
+            evaluatedStages = listOf(StageId.VERIFY),
+            stagePlan = stagePlan,
+            workflow = workflow,
+        )
+        val engine = SpecGateRuleEngine(
+            artifactService,
+            listOf(FixedArtifactNamingRule(), RequiredArtifactRule()),
+        )
+
+        val result = engine.evaluate(
+            request = request,
+            projectConfig = configService.load(),
+        )
+
+        assertEquals(GateStatus.PASS, result.status)
+        assertTrue(result.ruleResults.all { it.violations.isEmpty() })
+    }
+
+    private fun stageRequest(workflowId: String = "spec-test-rule-framework"): StageTransitionRequest {
+        val workflow = SpecWorkflow(
+            id = workflowId,
             currentPhase = SpecPhase.SPECIFY,
             documents = mapOf(
                 SpecPhase.SPECIFY to SpecDocument(

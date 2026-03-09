@@ -151,6 +151,13 @@ object SpecArchitectureContract {
             rationale = "Task 18 requires reusable rule evaluation, config-driven enable/disable, and structured outputs with remediation hints.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "artifact-gate-rules",
+            capability = "baseline gate rules for required artifacts and canonical fixed file naming",
+            selection = "RequiredArtifactRule + FixedArtifactNamingRule backed by SpecArtifactService workflow artifact inspection",
+            rationale = "Task 19 requires active-stage artifact presence checks and precise rename guidance when users create task.md/verify.md or case-mismatched files.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(

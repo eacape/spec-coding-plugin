@@ -7,10 +7,15 @@ data class RuleArtifactContext(
     val stageId: StageId,
     val fileName: String?,
     val path: Path?,
+    val actualPath: Path?,
     val exists: Boolean,
+    val caseMismatch: Boolean,
+    val aliasPaths: List<Path>,
     val phase: SpecPhase?,
     val document: SpecDocument?,
-)
+) {
+    fun hasNamingMismatch(): Boolean = caseMismatch || aliasPaths.isNotEmpty()
+}
 
 data class RuleContext(
     val request: StageTransitionRequest,
@@ -73,17 +78,30 @@ class SpecGateRuleEngine(
     }
 
     private fun buildArtifacts(request: StageTransitionRequest): Map<StageId, RuleArtifactContext> {
+        val workflowArtifacts = artifactService.listWorkflowMarkdownArtifacts(request.workflowId)
+        val workflowArtifactsByLowercaseName = workflowArtifacts.associateBy {
+            it.fileName.toString().lowercase()
+        }
         return request.evaluatedStages
             .distinct()
             .associateWith { stageId ->
                 val fileName = stageId.artifactFileName
                 val path = fileName?.let { artifactService.locateArtifact(request.workflowId, stageId) }
+                val actualPath = fileName?.let { workflowArtifactsByLowercaseName[it.lowercase()] }
                 val phase = stageId.toDocumentPhaseOrNull()
                 RuleArtifactContext(
                     stageId = stageId,
                     fileName = fileName,
                     path = path,
-                    exists = path?.let(Files::exists) == true,
+                    actualPath = actualPath,
+                    exists = actualPath != null || path?.let(Files::exists) == true,
+                    caseMismatch = actualPath != null && actualPath.fileName.toString() != fileName,
+                    aliasPaths = fileName?.let {
+                        workflowArtifacts.filter { candidate ->
+                            candidate.fileName.toString().lowercase() != it.lowercase() &&
+                                candidate.fileName.toString().lowercase() in stageId.namingAliasFileNames()
+                        }
+                    } ?: emptyList(),
                     phase = phase,
                     document = phase?.let(request.workflow::getDocument),
                 )
@@ -170,7 +188,7 @@ class RequiredArtifactRule : Rule {
             .forEach { stageId ->
                 val artifact = ctx.artifact(stageId) ?: return@forEach
                 val fileName = artifact.fileName ?: return@forEach
-                if (!artifact.exists) {
+                if (!artifact.exists && !artifact.hasNamingMismatch()) {
                     violations += Violation(
                         ruleId = id,
                         severity = defaultSeverity,
@@ -179,6 +197,54 @@ class RequiredArtifactRule : Rule {
                         message = "Required artifact $fileName is missing for stage $stageId",
                         fixHint = "Create $fileName before continuing",
                     )
+                }
+            }
+        return violations
+    }
+}
+
+class FixedArtifactNamingRule : Rule {
+    override val id: String = "artifact-fixed-naming"
+    override val description: String = "Require active stage artifacts to use the canonical fixed file names."
+    override val defaultSeverity: GateStatus = GateStatus.ERROR
+    override val remediationHint: String = "Rename the artifact to the canonical fixed file name."
+
+    override fun appliesTo(stage: StageId): Boolean = stage.requiresArtifact()
+
+    override fun evaluate(ctx: RuleContext): List<Violation> {
+        val violations = mutableListOf<Violation>()
+        ctx.applicableStages(this)
+            .filter(ctx.request.stagePlan::participatesInGate)
+            .forEach { stageId ->
+                val artifact = ctx.artifact(stageId) ?: return@forEach
+                val expectedFileName = artifact.fileName ?: return@forEach
+
+                if (artifact.caseMismatch) {
+                    val actualFileName = artifact.actualPath?.fileName?.toString() ?: expectedFileName
+                    violations += Violation(
+                        ruleId = id,
+                        severity = defaultSeverity,
+                        fileName = actualFileName,
+                        line = 1,
+                        message = "Artifact for stage $stageId must be named $expectedFileName, found $actualFileName",
+                        fixHint = "Rename $actualFileName to $expectedFileName",
+                    )
+                }
+
+                if (!artifact.exists && artifact.aliasPaths.isNotEmpty()) {
+                    artifact.aliasPaths
+                        .sortedBy { it.fileName.toString().lowercase() }
+                        .forEach { aliasPath ->
+                            val actualFileName = aliasPath.fileName.toString()
+                            violations += Violation(
+                                ruleId = id,
+                                severity = defaultSeverity,
+                                fileName = actualFileName,
+                                line = 1,
+                                message = "Artifact for stage $stageId must use fixed name $expectedFileName, found $actualFileName",
+                                fixHint = "Rename $actualFileName to $expectedFileName",
+                            )
+                        }
                 }
             }
         return violations
@@ -223,5 +289,17 @@ private fun StageId.toDocumentPhaseOrNull(): SpecPhase? {
         StageId.VERIFY,
         StageId.ARCHIVE,
         -> null
+    }
+}
+
+private fun StageId.namingAliasFileNames(): Set<String> {
+    return when (this) {
+        StageId.REQUIREMENTS -> setOf("requirement.md")
+        StageId.DESIGN -> emptySet()
+        StageId.TASKS -> setOf("task.md")
+        StageId.VERIFY -> setOf("verify.md")
+        StageId.IMPLEMENT,
+        StageId.ARCHIVE,
+        -> emptySet()
     }
 }
