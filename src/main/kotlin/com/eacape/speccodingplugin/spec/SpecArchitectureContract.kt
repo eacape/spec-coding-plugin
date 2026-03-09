@@ -181,9 +181,9 @@ object SpecArchitectureContract {
         ),
         DependencyDecision(
             key = "tasks-service",
-            capability = "tasks.md parsing plus stable task ordering while preserving handwritten markdown sections",
+            capability = "tasks.md parsing and task mutation while preserving handwritten markdown sections",
             selection = "SpecTasksService backed by SpecTaskMarkdownParser + Markdown section slicing",
-            rationale = "Task 23 requires structured task parsing for UI consumption and deterministic tasks.md output ordered by task id without losing user-authored markdown bodies.",
+            rationale = "Task 23/24 require structured task parsing plus add/remove edits with max+1 id allocation and deterministic tasks.md output without losing user-authored markdown bodies.",
             status = AdoptionStatus.ADOPTED,
         ),
     )

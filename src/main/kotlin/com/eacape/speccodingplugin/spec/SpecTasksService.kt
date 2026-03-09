@@ -110,6 +110,10 @@ class SpecTasksService(private val project: Project) {
         return artifactService.readArtifact(workflowId, StageId.TASKS)?.let(::parseDocument)
     }
 
+    fun parse(workflowId: String): List<StructuredTask> {
+        return readTasksDocument(workflowId)?.tasksById.orEmpty()
+    }
+
     fun stabilizeOutput(markdown: String): String {
         return parseDocument(markdown).renderStable()
     }
@@ -125,6 +129,79 @@ class SpecTasksService(private val project: Project) {
         } else {
             parseDocument(stableMarkdown)
         }
+    }
+
+    fun addTask(
+        workflowId: String,
+        title: String,
+        priority: TaskPriority,
+        dependsOn: List<String> = emptyList(),
+    ): StructuredTask {
+        val normalizedTitle = title.trim()
+        require(normalizedTitle.isNotEmpty()) { "title cannot be blank." }
+
+        val editableDocument = loadEditableDocument(workflowId)
+        val nextTaskId = allocateNextTaskId(editableDocument.tasksById)
+        val task = StructuredTask(
+            id = nextTaskId,
+            title = normalizedTitle,
+            status = TaskStatus.PENDING,
+            priority = priority,
+            dependsOn = dependsOn
+                .map(String::trim)
+                .filter(String::isNotEmpty),
+            relatedFiles = emptyList(),
+            verificationResult = null,
+        )
+
+        val updatedMarkdown = if (editableDocument.taskSectionsInSourceOrder.isEmpty()) {
+            insertTaskSection(
+                normalizedMarkdown = editableDocument.normalizedMarkdown,
+                renderedTaskSection = renderTaskSection(task),
+            )
+        } else {
+            buildString {
+                append(editableDocument.preambleMarkdown)
+                editableDocument.taskSectionsInSourceOrder.forEach { section ->
+                    append(section.sectionMarkdown)
+                }
+                append(renderTaskSection(task))
+                append(editableDocument.trailingMarkdown)
+            }
+        }
+
+        val stableMarkdown = stabilizeOutput(updatedMarkdown)
+        artifactService.writeArtifact(workflowId, StageId.TASKS, stableMarkdown)
+        return parseDocument(stableMarkdown)
+            .tasksById
+            .first { existingTask -> existingTask.id == nextTaskId }
+    }
+
+    fun removeTask(workflowId: String, taskId: String) {
+        val normalizedTaskId = taskId.trim().uppercase()
+        require(TASK_ID_REGEX.matches(normalizedTaskId)) {
+            "taskId must use the format T-001."
+        }
+
+        val editableDocument = loadEditableDocument(workflowId)
+        val remainingSections = editableDocument.taskSectionsInSourceOrder
+            .filterNot { section -> section.entry.id == normalizedTaskId }
+        if (remainingSections.size == editableDocument.taskSectionsInSourceOrder.size) {
+            throw MissingStructuredTaskError(normalizedTaskId)
+        }
+
+        val updatedMarkdown = buildString {
+            append(editableDocument.preambleMarkdown)
+            remainingSections.forEach { section ->
+                append(section.sectionMarkdown)
+            }
+            append(editableDocument.trailingMarkdown)
+        }
+        artifactService.writeArtifact(
+            workflowId,
+            StageId.TASKS,
+            stabilizeOutput(updatedMarkdown),
+        )
     }
 
     private fun nextSectionStartOffset(
@@ -186,6 +263,136 @@ class SpecTasksService(private val project: Project) {
         )
     }
 
+    private fun loadEditableDocument(workflowId: String): ParsedTasksDocument {
+        val markdown = artifactService.readArtifact(workflowId, StageId.TASKS)
+            ?.takeIf { content -> content.isNotBlank() }
+            ?: EMPTY_TASKS_DOCUMENT
+        val parsedDocument = parseDocument(markdown)
+        if (parsedDocument.issues.isNotEmpty()) {
+            val details = parsedDocument.issues
+                .take(MAX_EDIT_ISSUES_TO_REPORT)
+                .joinToString(separator = "; ") { issue ->
+                    "line ${issue.line}: ${issue.message}"
+                }
+            throw InvalidTasksArtifactEditError(details)
+        }
+
+        parsedDocument.tasksById
+            .groupingBy(StructuredTask::id)
+            .eachCount()
+            .entries
+            .firstOrNull { (_, count) -> count > 1 }
+            ?.let { (duplicateTaskId, _) ->
+                throw DuplicateTaskIdError(duplicateTaskId)
+            }
+
+        return parsedDocument
+    }
+
+    private fun allocateNextTaskId(tasks: List<StructuredTask>): String {
+        val currentMaxSequence = tasks
+            .maxOfOrNull { task -> task.id.removePrefix(TASK_ID_PREFIX).toInt() }
+            ?: 0
+        val nextSequence = currentMaxSequence + 1
+        require(nextSequence <= MAX_TASK_SEQUENCE) {
+            "Task id limit exceeded: ${TASK_ID_PREFIX}${nextSequence.toString().padStart(3, '0')}"
+        }
+        return TASK_ID_PREFIX + nextSequence.toString().padStart(3, '0')
+    }
+
+    private fun insertTaskSection(
+        normalizedMarkdown: String,
+        renderedTaskSection: String,
+    ): String {
+        val insertionBase = normalizedMarkdown.takeIf { markdown -> markdown.isNotBlank() } ?: EMPTY_TASKS_DOCUMENT
+        val lineTable = buildLineTable(insertionBase)
+        val insertionLine = findEmptyTaskInsertionLine(lineTable.lines)
+        val insertionOffset = insertionLine
+            ?.let { line -> lineTable.startOffsets[line - 1] }
+            ?: insertionBase.length
+        val prefix = insertionBase.substring(0, insertionOffset)
+        val suffix = insertionBase.substring(insertionOffset)
+
+        return buildString {
+            append(prefix)
+            appendTaskSectionSeparator(prefix)
+            append(renderedTaskSection)
+            append(suffix)
+        }
+    }
+
+    private fun StringBuilder.appendTaskSectionSeparator(prefix: String) {
+        if (prefix.isEmpty()) {
+            return
+        }
+        if (!prefix.endsWith("\n")) {
+            append('\n')
+        }
+        if (!prefix.endsWith("\n\n")) {
+            append('\n')
+        }
+    }
+
+    private fun findEmptyTaskInsertionLine(lines: List<String>): Int? {
+        val taskListHeadingIndex = lines.indexOfFirst { line ->
+            TASK_LIST_HEADING_REGEX.matches(line)
+        }
+        if (taskListHeadingIndex == -1) {
+            return null
+        }
+        for (index in taskListHeadingIndex + 1 until lines.size) {
+            val match = HEADING_REGEX.matchEntire(lines[index]) ?: continue
+            if (match.groupValues[1].length <= TASK_LIST_HEADING_LEVEL) {
+                return index + 1
+            }
+        }
+        return null
+    }
+
+    private fun renderTaskSection(task: StructuredTask): String {
+        return buildString {
+            append("### ${task.id}: ${task.title}\n")
+            append("```")
+            append(SPEC_TASK_LANGUAGE)
+            append('\n')
+            append(renderTaskMetadata(task))
+            append("```\n\n")
+        }
+    }
+
+    private fun renderTaskMetadata(task: StructuredTask): String {
+        return buildString {
+            append("status: ${task.status}\n")
+            append("priority: ${task.priority}\n")
+            append(renderStringListField("dependsOn", task.dependsOn))
+            append(renderStringListField("relatedFiles", task.relatedFiles))
+            append("verificationResult: ")
+            if (task.verificationResult == null) {
+                append("null\n")
+            } else {
+                append('\n')
+                append("  conclusion: ${task.verificationResult.conclusion}\n")
+                append("  runId: ${task.verificationResult.runId}\n")
+                append("  summary: ${task.verificationResult.summary}\n")
+                append("  at: ${task.verificationResult.at}\n")
+            }
+        }
+    }
+
+    private fun renderStringListField(fieldName: String, values: List<String>): String {
+        if (values.isEmpty()) {
+            return "$fieldName: []\n"
+        }
+        return buildString {
+            append("$fieldName:\n")
+            values.forEach { value ->
+                append("  - ")
+                append(value)
+                append('\n')
+            }
+        }
+    }
+
     private data class LineTable(
         val lines: List<String>,
         val startOffsets: IntArray,
@@ -200,8 +407,15 @@ class SpecTasksService(private val project: Project) {
     companion object {
         private const val SPEC_TASK_LANGUAGE = "spec-task"
         private const val TASK_HEADING_LEVEL = 3
+        private const val TASK_LIST_HEADING_LEVEL = 2
+        private const val TASK_ID_PREFIX = "T-"
+        private const val MAX_TASK_SEQUENCE = 999
+        private const val MAX_EDIT_ISSUES_TO_REPORT = 3
+        private const val EMPTY_TASKS_DOCUMENT = "# Implement Document\n\n## Task List\n"
         private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+.*$""")
         private val CANONICAL_TASK_HEADING_REGEX = Regex("""^\s{0,3}###\s+T-\d{3}:\s+.+$""")
+        private val TASK_ID_REGEX = Regex("""^T-\d{3}$""")
+        private val TASK_LIST_HEADING_REGEX = Regex("""^\s{0,3}##\s+(Task\s+List|任务列表)\s*$""")
 
         fun getInstance(project: Project): SpecTasksService = project.service()
     }

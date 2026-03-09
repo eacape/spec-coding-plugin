@@ -606,6 +606,12 @@ class DuplicateTaskIdError(taskId: String) :
 class MissingTaskDependencyError(taskId: String, missingDependencyId: String) :
     WorkflowDomainError("Task $taskId depends on missing task id: $missingDependencyId")
 
+class InvalidTasksArtifactEditError(details: String) :
+    WorkflowDomainError("tasks.md cannot be edited safely: $details")
+
+class MissingStructuredTaskError(taskId: String) :
+    WorkflowDomainError("Task not found: $taskId")
+
 class MissingTemplateSwitchPreviewError(previewId: String) :
     WorkflowDomainError("Template switch preview not found: $previewId")
 
