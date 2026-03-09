@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.actions
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
+import com.eacape.speccodingplugin.spec.SpecArtifactService
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageTransitionBlockedByGateError
@@ -12,9 +13,11 @@ import com.eacape.speccodingplugin.spec.WorkflowMeta
 import com.eacape.speccodingplugin.ui.spec.SpecToolWindowControlListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedEvent
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedListener
+import com.intellij.CommonBundle
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -23,7 +26,10 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.ui.popup.PopupStep
 import com.intellij.openapi.ui.popup.util.BaseListPopupStep
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.wm.ToolWindowManager
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.Locale
 
 internal object SpecWorkflowActionSupport {
@@ -115,21 +121,48 @@ internal object SpecWorkflowActionSupport {
         )
     }
 
-    fun confirmWarnings(project: Project, gateResult: GateResult): Boolean {
-        return Messages.showYesNoDialog(
-            project,
-            gateSummary(gateResult),
-            SpecCodingBundle.message("spec.action.warning.title"),
-            Messages.getWarningIcon(),
-        ) == Messages.YES
+    fun confirmWarnings(project: Project, workflowId: String, gateResult: GateResult): Boolean {
+        while (true) {
+            when (
+                Messages.showDialog(
+                    project,
+                    gateSummary(gateResult),
+                    SpecCodingBundle.message("spec.action.warning.title"),
+                    arrayOf(
+                        SpecCodingBundle.message("spec.action.warning.proceed"),
+                        SpecCodingBundle.message("spec.action.gate.review.button"),
+                        CommonBundle.getCancelButtonText(),
+                    ),
+                    0,
+                    Messages.getWarningIcon(),
+                )
+            ) {
+                0 -> return true
+                1 -> reviewGateViolations(project, workflowId, gateResult)
+                else -> return false
+            }
+        }
     }
 
-    fun showGateBlocked(project: Project, gateResult: GateResult) {
-        showErrorDialog(
-            project = project,
-            title = SpecCodingBundle.message("spec.action.gate.blocked.title"),
-            message = gateSummary(gateResult),
-        )
+    fun showGateBlocked(project: Project, workflowId: String, gateResult: GateResult) {
+        while (true) {
+            when (
+                Messages.showDialog(
+                    project,
+                    gateSummary(gateResult),
+                    SpecCodingBundle.message("spec.action.gate.blocked.title"),
+                    arrayOf(
+                        SpecCodingBundle.message("spec.action.gate.review.button"),
+                        SpecCodingBundle.message("spec.action.gate.close"),
+                    ),
+                    0,
+                    Messages.getErrorIcon(),
+                )
+            ) {
+                0 -> reviewGateViolations(project, workflowId, gateResult)
+                else -> return
+            }
+        }
     }
 
     fun notifySuccess(project: Project, message: String) {
@@ -221,12 +254,61 @@ internal object SpecWorkflowActionSupport {
         }
     }
 
-    private fun formatViolation(violation: Violation): String {
-        val severity = when (violation.severity) {
-            GateStatus.ERROR -> SpecCodingBundle.message("spec.action.gate.severity.error")
-            GateStatus.WARNING -> SpecCodingBundle.message("spec.action.gate.severity.warning")
-            GateStatus.PASS -> SpecCodingBundle.message("spec.action.gate.severity.pass")
+    fun gateViolationOptionLabel(violation: Violation): String {
+        return SpecCodingBundle.message(
+            "spec.action.gate.review.option",
+            severityLabel(violation),
+            violation.ruleId,
+            violation.fileName,
+            violation.line,
+        )
+    }
+
+    fun gateViolationDetails(violation: Violation): String {
+        val lines = mutableListOf<String>()
+        lines += formatViolation(violation)
+        lines += SpecCodingBundle.message("spec.action.gate.review.rule", violation.ruleId)
+        lines += SpecCodingBundle.message(
+            "spec.action.gate.review.location",
+            violation.fileName,
+            violation.line,
+        )
+        violation.originalSeverity
+            ?.takeIf { it != violation.severity }
+            ?.let { originalSeverity ->
+                lines += SpecCodingBundle.message(
+                    "spec.action.gate.review.originalSeverity",
+                    severityLabel(violation.copy(severity = originalSeverity)),
+                )
+            }
+        violation.fixHint
+            ?.takeIf { it.isNotBlank() }
+            ?.let { fixHint -> lines += SpecCodingBundle.message("spec.action.gate.fix", fixHint) }
+        return lines.joinToString("\n")
+    }
+
+    fun resolveGateViolationPath(project: Project, workflowId: String, violation: Violation): Path? {
+        val normalizedFileName = violation.fileName.trim()
+        if (normalizedFileName.isEmpty()) {
+            return null
         }
+        val artifactService = SpecArtifactService(project)
+        return runCatching {
+            artifactService.locateArtifact(workflowId, normalizedFileName)
+        }.getOrNull()?.takeIf(Files::exists)
+            ?: artifactService.listWorkflowMarkdownArtifacts(workflowId)
+                .firstOrNull { path -> path.fileName.toString().equals(normalizedFileName, ignoreCase = true) }
+    }
+
+    fun openGateViolation(project: Project, workflowId: String, violation: Violation): Boolean {
+        val path = resolveGateViolationPath(project, workflowId, violation) ?: return false
+        val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return false
+        OpenFileDescriptor(project, virtualFile, (violation.line - 1).coerceAtLeast(0), 0).navigate(true)
+        return true
+    }
+
+    private fun formatViolation(violation: Violation): String {
+        val severity = severityLabel(violation)
         return SpecCodingBundle.message(
             "spec.action.gate.violation",
             severity,
@@ -235,6 +317,43 @@ internal object SpecWorkflowActionSupport {
             violation.line,
             violation.message,
         )
+    }
+
+    private fun severityLabel(violation: Violation): String {
+        val severity = when (violation.severity) {
+            GateStatus.ERROR -> SpecCodingBundle.message("spec.action.gate.severity.error")
+            GateStatus.WARNING -> SpecCodingBundle.message("spec.action.gate.severity.warning")
+            GateStatus.PASS -> SpecCodingBundle.message("spec.action.gate.severity.pass")
+        }
+        return severity
+    }
+
+    private fun reviewGateViolations(project: Project, workflowId: String, gateResult: GateResult) {
+        if (gateResult.violations.isEmpty()) {
+            return
+        }
+        val optionLabels = gateResult.violations.map(::gateViolationOptionLabel).toTypedArray()
+        val selection = Messages.showChooseDialog(
+            project,
+            SpecCodingBundle.message("spec.action.gate.review.message"),
+            SpecCodingBundle.message("spec.action.gate.review.title"),
+            Messages.getInformationIcon(),
+            optionLabels,
+            optionLabels.firstOrNull(),
+        ) ?: return
+        val selectedLabel = selection.toString()
+        val selectedIndex = optionLabels.indexOfFirst { option -> option == selectedLabel }
+        if (selectedIndex < 0) {
+            return
+        }
+        val violation = gateResult.violations[selectedIndex]
+        if (!openGateViolation(project, workflowId, violation)) {
+            showInfo(
+                project,
+                SpecCodingBundle.message("spec.action.gate.location.unavailable.title"),
+                gateViolationDetails(violation),
+            )
+        }
     }
 
     private fun openSpecTab(project: Project, afterOpen: () -> Unit) {

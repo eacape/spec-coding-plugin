@@ -77,6 +77,35 @@ class SpecWorkflowActionSupportTest {
         assertTrue(!summary.contains("rule-4"))
     }
 
+    @Test
+    fun `gate violation details include fix hint and original severity`() {
+        val details = SpecWorkflowActionSupport.gateViolationDetails(
+            Violation(
+                ruleId = "verify-conclusion",
+                severity = GateStatus.WARNING,
+                fileName = "tasks.md",
+                line = 42,
+                message = "Verification concluded WARN",
+                fixHint = "Review the warning and rerun verification.",
+                originalSeverity = GateStatus.ERROR,
+            ),
+        )
+
+        assertTrue(details.contains("verify-conclusion"))
+        assertTrue(details.contains("tasks.md:42"))
+        assertTrue(details.contains("Review the warning and rerun verification."))
+    }
+
+    @Test
+    fun `gate violation option label keeps file and line visible`() {
+        val label = SpecWorkflowActionSupport.gateViolationOptionLabel(
+            violation("tasks-syntax", 13),
+        )
+
+        assertTrue(label.contains("tasks-syntax"))
+        assertTrue(label.contains("requirements.md:13"))
+    }
+
     private fun workflowMeta(
         currentStage: StageId,
         stageStates: Map<StageId, StageState>,

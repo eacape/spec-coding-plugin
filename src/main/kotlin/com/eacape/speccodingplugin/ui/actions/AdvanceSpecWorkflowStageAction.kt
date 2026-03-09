@@ -68,12 +68,12 @@ class AdvanceSpecWorkflowStageAction : DumbAwareAction() {
             onSuccess = { preview ->
                 when (preview.gateResult.status) {
                     GateStatus.ERROR -> {
-                        SpecWorkflowActionSupport.showGateBlocked(project, preview.gateResult)
+                        SpecWorkflowActionSupport.showGateBlocked(project, workflowId, preview.gateResult)
                         SpecWorkflowActionSupport.showWorkflow(project, workflowId)
                     }
 
                     GateStatus.WARNING -> {
-                        if (!SpecWorkflowActionSupport.confirmWarnings(project, preview.gateResult)) {
+                        if (!SpecWorkflowActionSupport.confirmWarnings(project, workflowId, preview.gateResult)) {
                             return@runBackground
                         }
                         executeAdvance(project, specEngine, workflowId)
