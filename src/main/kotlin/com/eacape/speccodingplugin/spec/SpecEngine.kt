@@ -24,6 +24,8 @@ import java.time.Instant
 class SpecEngine(private val project: Project) {
     private val logger = thisLogger()
     private val workflowIdGenerator = WorkflowIdGenerator()
+    private val templateSwitchPreviewIdGenerator = WorkflowIdGenerator(prefix = "preview")
+    private val templateSwitchIdGenerator = WorkflowIdGenerator(prefix = "switch")
     private val projectConfigDelegate: SpecProjectConfigService by lazy { SpecProjectConfigService(project) }
     private val artifactServiceDelegate: SpecArtifactService by lazy { SpecArtifactService(project) }
 
@@ -31,6 +33,7 @@ class SpecEngine(private val project: Project) {
     private var _storageOverride: SpecStorage? = null
     private var _generationOverride: (suspend (SpecGenerationRequest) -> SpecGenerationResult)? = null
     private var _clarificationOverride: (suspend (SpecGenerationRequest) -> Result<SpecClarificationDraft>)? = null
+    private var _stageGateEvaluatorOverride: SpecStageGateEvaluator? = null
 
     private val storageDelegate: SpecStorage by lazy { _storageOverride ?: SpecStorage.getInstance(project) }
     private val generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult by lazy {
@@ -38,6 +41,11 @@ class SpecEngine(private val project: Project) {
     }
     private val clarificationHandler: suspend (SpecGenerationRequest) -> Result<SpecClarificationDraft> by lazy {
         _clarificationOverride ?: SpecGenerator(LlmRouter.getInstance())::draftClarification
+    }
+    private val stageGateEvaluator: SpecStageGateEvaluator by lazy {
+        _stageGateEvaluatorOverride ?: SpecStageGateEvaluator { request ->
+            evaluateStageGate(request)
+        }
     }
 
     internal constructor(
@@ -49,6 +57,16 @@ class SpecEngine(private val project: Project) {
         this._storageOverride = storage
         this._generationOverride = generationHandler
         this._clarificationOverride = clarificationHandler
+    }
+
+    internal constructor(
+        project: Project,
+        storage: SpecStorage,
+        generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult,
+        clarificationHandler: suspend (SpecGenerationRequest) -> Result<SpecClarificationDraft>,
+        stageGateEvaluator: SpecStageGateEvaluator,
+    ) : this(project, storage, generationHandler, clarificationHandler) {
+        this._stageGateEvaluatorOverride = stageGateEvaluator
     }
 
     internal constructor(
@@ -70,8 +88,30 @@ class SpecEngine(private val project: Project) {
         },
     )
 
+    internal constructor(
+        project: Project,
+        storage: SpecStorage,
+        generationHandler: suspend (SpecGenerationRequest) -> SpecGenerationResult,
+        stageGateEvaluator: SpecStageGateEvaluator,
+    ) : this(
+        project = project,
+        storage = storage,
+        generationHandler = generationHandler,
+        clarificationHandler = {
+            Result.success(
+                SpecClarificationDraft(
+                    phase = it.phase,
+                    questions = emptyList(),
+                    rawContent = "",
+                )
+            )
+        },
+        stageGateEvaluator = stageGateEvaluator,
+    )
+
     // 当前活跃的工作流
     private val activeWorkflows = mutableMapOf<String, SpecWorkflow>()
+    private val pendingTemplateSwitchPreviews = mutableMapOf<String, TemplateSwitchPreview>()
 
     /**
      * 创建新的工作流
@@ -104,7 +144,6 @@ class SpecEngine(private val project: Project) {
             val workflowId = generateWorkflowId()
             val createdAt = System.currentTimeMillis()
             val stageMetadata = initializeStageMetadata(
-                template = template,
                 templatePolicy = templatePolicy,
                 timestampMillis = createdAt,
             )
@@ -189,6 +228,188 @@ class SpecEngine(private val project: Project) {
             val snapshot = storageDelegate.openWorkflow(workflowId).getOrThrow()
             activeWorkflows[workflowId] = snapshot.workflow
             snapshot
+        }
+    }
+
+    fun previewTemplateSwitch(
+        workflowId: String,
+        toTemplate: WorkflowTemplate,
+    ): Result<TemplateSwitchPreview> {
+        return runCatching {
+            val workflow = activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            activeWorkflows[workflowId] = workflow
+
+            val projectConfig = projectConfigDelegate.load()
+            val currentStagePlan = resolveStagePlan(workflow, projectConfig)
+            val targetPolicy = projectConfig.policyFor(toTemplate)
+            val targetStagePlan = targetPolicy.defaultStagePlan()
+            val preview = TemplateSwitchPreview(
+                previewId = templateSwitchPreviewIdGenerator.nextId(),
+                workflowId = workflowId,
+                fromTemplate = workflow.template,
+                toTemplate = toTemplate,
+                currentStage = workflow.currentStage,
+                resultingStage = targetStagePlan.resolveCurrentStage(workflow.currentStage),
+                addedActiveStages = targetStagePlan.activeStages.filterNot { currentStagePlan.isActive(it) },
+                deactivatedStages = currentStagePlan.activeStages.filterNot { targetStagePlan.isActive(it) },
+                gateAddedStages = targetStagePlan.gateArtifactStages.filterNot { currentStagePlan.participatesInGate(it) },
+                gateRemovedStages = currentStagePlan.gateArtifactStages.filterNot { targetStagePlan.participatesInGate(it) },
+                artifactImpacts = artifactServiceDelegate.previewRequiredArtifacts(
+                    workflowId = workflowId,
+                    template = toTemplate,
+                    templatePolicy = targetPolicy,
+                ),
+            )
+            pendingTemplateSwitchPreviews[preview.previewId] = preview
+            logger.info(
+                "Prepared template switch preview ${preview.previewId} for workflow=$workflowId " +
+                    "${workflow.template} -> $toTemplate",
+            )
+            preview
+        }
+    }
+
+    fun applyTemplateSwitch(
+        workflowId: String,
+        previewId: String,
+    ): Result<TemplateSwitchApplyResult> {
+        return runCatching {
+            val preview = pendingTemplateSwitchPreviews[previewId]
+                ?: throw MissingTemplateSwitchPreviewError(previewId)
+            val workflow = activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            activeWorkflows[workflowId] = workflow
+
+            if (
+                preview.workflowId != workflowId ||
+                preview.fromTemplate != workflow.template ||
+                preview.currentStage != workflow.currentStage
+            ) {
+                pendingTemplateSwitchPreviews.remove(previewId)
+                throw StaleTemplateSwitchPreviewError(previewId, workflowId)
+            }
+
+            val projectConfig = projectConfigDelegate.load()
+            val targetPolicy = projectConfig.policyFor(preview.toTemplate)
+            val currentImpacts = artifactServiceDelegate.previewRequiredArtifacts(
+                workflowId = workflowId,
+                template = preview.toTemplate,
+                templatePolicy = targetPolicy,
+            )
+            val blockedImpact = currentImpacts.firstOrNull { impact ->
+                impact.strategy == TemplateSwitchArtifactStrategy.BLOCK_SWITCH
+            }
+            if (blockedImpact != null) {
+                throw StageTransitionPolicyError(
+                    "Template switch blocked by missing non-scaffoldable artifact ${blockedImpact.fileName} for ${blockedImpact.stageId}",
+                )
+            }
+
+            val generatedArtifacts = artifactServiceDelegate.ensureMissingArtifacts(
+                workflowId = workflowId,
+                template = preview.toTemplate,
+                templatePolicy = targetPolicy,
+            )
+                .filter { write -> write.created }
+                .map { write -> write.path.fileName.toString() }
+
+            val targetStagePlan = targetPolicy.defaultStagePlan()
+            val updatedAt = System.currentTimeMillis()
+            val targetStage = targetStagePlan.resolveCurrentStage(workflow.currentStage)
+            val stageMetadata = applyTemplateSwitchMetadata(
+                workflow = workflow,
+                targetStagePlan = targetStagePlan,
+                targetStage = targetStage,
+                timestampMillis = updatedAt,
+            )
+            val switchId = templateSwitchIdGenerator.nextId()
+            val updatedWorkflow = workflow.copy(
+                currentPhase = initialPhaseForStage(stageMetadata.currentStage),
+                template = preview.toTemplate,
+                stageStates = stageMetadata.stageStates,
+                currentStage = stageMetadata.currentStage,
+                verifyEnabled = stageMetadata.verifyEnabled,
+                updatedAt = updatedAt,
+            )
+
+            val saveResult = storageDelegate.saveWorkflowTransition(
+                workflow = updatedWorkflow,
+                eventType = SpecAuditEventType.TEMPLATE_SWITCHED,
+                details = buildTemplateSwitchAuditDetails(
+                    preview = preview,
+                    switchId = switchId,
+                    generatedArtifacts = generatedArtifacts,
+                ),
+            ).getOrThrow()
+
+            clearTemplateSwitchPreviews(workflowId)
+            val reloadedWorkflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            activeWorkflows[workflowId] = reloadedWorkflow
+            logger.info(
+                "Workflow $workflowId applied template switch $switchId: ${preview.fromTemplate} -> ${preview.toTemplate}",
+            )
+            TemplateSwitchApplyResult(
+                switchId = switchId,
+                previewId = preview.previewId,
+                workflow = reloadedWorkflow,
+                generatedArtifacts = generatedArtifacts,
+                beforeSnapshotId = saveResult.beforeSnapshotId,
+                afterSnapshotId = saveResult.afterSnapshotId,
+            )
+        }
+    }
+
+    fun rollbackTemplateSwitch(
+        workflowId: String,
+        switchId: String,
+    ): Result<TemplateSwitchRollbackResult> {
+        return runCatching {
+            val currentWorkflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            val switchEvent = storageDelegate.listAuditEvents(workflowId).getOrThrow()
+                .asReversed()
+                .firstOrNull { event ->
+                    event.eventType == SpecAuditEventType.TEMPLATE_SWITCHED &&
+                        event.details["switchId"] == switchId
+                }
+                ?: throw MissingTemplateSwitchHistoryError(workflowId, switchId)
+
+            val rollbackSnapshotId = switchEvent.details["beforeSnapshotId"]
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?: throw IllegalStateException("Template switch $switchId does not contain a rollback snapshot id")
+            val snapshotWorkflow = storageDelegate.loadWorkflowSnapshot(workflowId, rollbackSnapshotId).getOrThrow()
+            val restoredWorkflow = snapshotWorkflow.copy(
+                id = workflowId,
+                documents = currentWorkflow.documents,
+                updatedAt = System.currentTimeMillis(),
+            )
+
+            val saveResult = storageDelegate.saveWorkflowTransition(
+                workflow = restoredWorkflow,
+                eventType = SpecAuditEventType.TEMPLATE_SWITCH_ROLLED_BACK,
+                details = buildTemplateSwitchRollbackAuditDetails(
+                    currentWorkflow = currentWorkflow,
+                    restoredWorkflow = restoredWorkflow,
+                    switchId = switchId,
+                    rollbackSnapshotId = rollbackSnapshotId,
+                    switchEvent = switchEvent,
+                ),
+            ).getOrThrow()
+
+            clearTemplateSwitchPreviews(workflowId)
+            val reloadedWorkflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            activeWorkflows[workflowId] = reloadedWorkflow
+            logger.info(
+                "Workflow $workflowId rolled back template switch $switchId to ${reloadedWorkflow.template}",
+            )
+            TemplateSwitchRollbackResult(
+                switchId = switchId,
+                workflow = reloadedWorkflow,
+                restoredFromSnapshotId = rollbackSnapshotId,
+                beforeSnapshotId = saveResult.beforeSnapshotId,
+                afterSnapshotId = saveResult.afterSnapshotId,
+            )
         }
     }
 
@@ -523,6 +744,114 @@ class SpecEngine(private val project: Project) {
         )
     }
 
+    fun advanceWorkflow(
+        workflowId: String,
+        confirmWarnings: ((GateResult) -> Boolean)? = null,
+    ): Result<StageTransitionResult> {
+        return runCatching {
+            val workflow = activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            val projectConfig = projectConfigDelegate.load()
+            val stagePlan = resolveStagePlan(workflow, projectConfig)
+            val targetStage = stagePlan.nextActiveStage(workflow.currentStage)
+                ?: throw IllegalStateException("Already at the last active stage")
+            performStageTransition(
+                workflow = workflow,
+                stagePlan = stagePlan,
+                gatePolicy = projectConfig.gate,
+                transitionType = StageTransitionType.ADVANCE,
+                targetStage = targetStage,
+                evaluatedStages = listOf(workflow.currentStage),
+                confirmWarnings = confirmWarnings,
+            )
+        }
+    }
+
+    fun jumpToStage(
+        workflowId: String,
+        targetStage: StageId,
+        confirmWarnings: ((GateResult) -> Boolean)? = null,
+    ): Result<StageTransitionResult> {
+        return runCatching {
+            val workflow = activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            val projectConfig = projectConfigDelegate.load()
+            val stagePlan = resolveStagePlan(workflow, projectConfig)
+
+            if (!projectConfig.gate.allowJump) {
+                throw StageTransitionPolicyError("Jump transition is disabled by gate policy")
+            }
+            if (!stagePlan.isActive(targetStage)) {
+                throw InactiveWorkflowStageError(targetStage)
+            }
+            val currentIndex = stagePlan.activeStageIndex(workflow.currentStage)
+            val targetIndex = stagePlan.activeStageIndex(targetStage)
+            if (targetIndex <= currentIndex) {
+                throw InvalidStageTransitionError(workflow.currentStage, targetStage)
+            }
+            val evaluatedStages = if (projectConfig.gate.jumpRequiresMinimalGate) {
+                stagePlan.activeStagesBetween(workflow.currentStage, targetStage).dropLast(1)
+            } else {
+                listOf(workflow.currentStage)
+            }
+            performStageTransition(
+                workflow = workflow,
+                stagePlan = stagePlan,
+                gatePolicy = projectConfig.gate,
+                transitionType = StageTransitionType.JUMP,
+                targetStage = targetStage,
+                evaluatedStages = evaluatedStages,
+                confirmWarnings = confirmWarnings,
+            )
+        }
+    }
+
+    fun rollbackToStage(
+        workflowId: String,
+        targetStage: StageId,
+    ): Result<WorkflowMeta> {
+        return runCatching {
+            val workflow = activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            val projectConfig = projectConfigDelegate.load()
+            val stagePlan = resolveStagePlan(workflow, projectConfig)
+
+            if (!projectConfig.gate.allowRollback) {
+                throw StageTransitionPolicyError("Rollback transition is disabled by gate policy")
+            }
+            if (!stagePlan.isActive(targetStage)) {
+                throw InactiveWorkflowStageError(targetStage)
+            }
+            val currentIndex = stagePlan.activeStageIndex(workflow.currentStage)
+            val targetIndex = stagePlan.activeStageIndex(targetStage)
+            if (targetIndex > currentIndex) {
+                throw InvalidStageTransitionError(workflow.currentStage, targetStage)
+            }
+
+            val targetState = workflow.stageStates[targetStage]
+            if (targetStage != workflow.currentStage && targetState?.status != StageProgress.DONE) {
+                throw StageTransitionPolicyError(
+                    "Rollback target $targetStage must be a completed or current stage",
+                )
+            }
+
+            if (targetStage == workflow.currentStage) {
+                activeWorkflows[workflowId] = workflow
+                return@runCatching workflow.toWorkflowMeta()
+            }
+
+            performStageTransition(
+                workflow = workflow,
+                stagePlan = stagePlan,
+                gatePolicy = projectConfig.gate,
+                transitionType = StageTransitionType.ROLLBACK,
+                targetStage = targetStage,
+                evaluatedStages = emptyList(),
+                confirmWarnings = null,
+            ).workflow.toWorkflowMeta()
+        }
+    }
+
     /**
      * 进入下一阶段
      */
@@ -530,14 +859,11 @@ class SpecEngine(private val project: Project) {
         return runCatching {
             val workflow = activeWorkflows[workflowId]
                 ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
-
             val currentDocument = workflow.getCurrentDocument()
                 ?: throw IllegalStateException(
                     "Cannot proceed to next phase. Current phase document is missing. " +
                         "Run /spec generate <input> first.",
                 )
-
-            // 每次推进阶段前按最新规则实时重算校验，避免历史持久化结果过期
             val currentValidation = SpecValidator.validate(currentDocument)
             if (!currentValidation.valid) {
                 val detail = currentValidation.errors
@@ -548,46 +874,7 @@ class SpecEngine(private val project: Project) {
                     "Cannot proceed to next phase. Current phase validation failed: $detail",
                 )
             }
-
-            val nextPhase = workflow.currentPhase.next()
-                ?: throw IllegalStateException("Already at the last phase")
-
-            // 验证阶段转换
-            val validation = SpecValidator.validatePhaseTransition(
-                workflow.currentPhase,
-                currentDocument.copy(validationResult = currentValidation),
-                nextPhase
-            )
-
-            if (!validation.valid) {
-                throw IllegalStateException("Phase transition validation failed: ${validation.errors.joinToString(", ")}")
-            }
-
-            // 更新工作流
-            val transitionTime = System.currentTimeMillis()
-            val stageProgress = advanceStageMetadata(
-                workflow = workflow,
-                toPhase = nextPhase,
-                timestampMillis = transitionTime,
-            )
-            val updatedWorkflow = workflow.copy(
-                currentPhase = nextPhase,
-                stageStates = stageProgress.stageStates,
-                currentStage = stageProgress.currentStage,
-                clarificationRetryState = null,
-                updatedAt = transitionTime
-            )
-
-            activeWorkflows[workflowId] = updatedWorkflow
-            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
-
-            emitSpecStageChangedHook(
-                workflowId = workflowId,
-                previousPhase = workflow.currentPhase,
-                currentPhase = nextPhase,
-            )
-            logger.info("Workflow $workflowId proceeded to ${nextPhase.displayName}")
-            updatedWorkflow
+            advanceWorkflow(workflowId).getOrThrow().workflow
         }
     }
 
@@ -597,39 +884,14 @@ class SpecEngine(private val project: Project) {
     fun goBackToPreviousPhase(workflowId: String): Result<SpecWorkflow> {
         return runCatching {
             val workflow = activeWorkflows[workflowId]
-                ?: throw IllegalStateException("Workflow not found: $workflowId")
-
-            if (!workflow.canGoBack()) {
-                throw IllegalStateException("Already at the first phase")
-            }
-
-            val previousPhase = workflow.currentPhase.previous()
-                ?: throw IllegalStateException("No previous phase")
-
-            val rollbackTime = System.currentTimeMillis()
-            val stageProgress = rollbackStageMetadata(
-                workflow = workflow,
-                toPhase = previousPhase,
-                timestampMillis = rollbackTime,
-            )
-            val updatedWorkflow = workflow.copy(
-                currentPhase = previousPhase,
-                stageStates = stageProgress.stageStates,
-                currentStage = stageProgress.currentStage,
-                clarificationRetryState = null,
-                updatedAt = rollbackTime
-            )
-
-            activeWorkflows[workflowId] = updatedWorkflow
-            storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
-
-            emitSpecStageChangedHook(
-                workflowId = workflowId,
-                previousPhase = workflow.currentPhase,
-                currentPhase = previousPhase,
-            )
-            logger.info("Workflow $workflowId went back to ${previousPhase.displayName}")
-            updatedWorkflow
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+            val projectConfig = projectConfigDelegate.load()
+            val stagePlan = resolveStagePlan(workflow, projectConfig)
+            val targetStage = stagePlan.previousActiveStage(workflow.currentStage)
+                ?: throw IllegalStateException("Already at the first active stage")
+            rollbackToStage(workflowId, targetStage).getOrThrow()
+            activeWorkflows[workflowId]
+                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
         }
     }
 
@@ -745,21 +1007,394 @@ class SpecEngine(private val project: Project) {
         }
     }
 
+    private fun resolveStagePlan(
+        workflow: SpecWorkflow,
+        projectConfig: SpecProjectConfig,
+    ): WorkflowStagePlan {
+        val templatePolicy = projectConfig.policyFor(workflow.template)
+        return if (workflow.stageStates.isNotEmpty()) {
+            templatePolicy.definition.buildStagePlan(
+                StageActivationOptions.fromStageStates(workflow.stageStates),
+            )
+        } else {
+            templatePolicy.defaultStagePlan()
+        }
+    }
+
+    private fun performStageTransition(
+        workflow: SpecWorkflow,
+        stagePlan: WorkflowStagePlan,
+        gatePolicy: SpecGatePolicy,
+        transitionType: StageTransitionType,
+        targetStage: StageId,
+        evaluatedStages: List<StageId>,
+        confirmWarnings: ((GateResult) -> Boolean)?,
+    ): StageTransitionResult {
+        if (!stagePlan.isActive(workflow.currentStage)) {
+            throw InactiveWorkflowStageError(workflow.currentStage)
+        }
+        if (!stagePlan.isActive(targetStage)) {
+            throw InactiveWorkflowStageError(targetStage)
+        }
+
+        val gateResult = if (transitionType == StageTransitionType.ROLLBACK) {
+            GateResult.fromViolations(emptyList())
+        } else {
+            stageGateEvaluator.evaluate(
+                StageTransitionRequest(
+                    workflowId = workflow.id,
+                    transitionType = transitionType,
+                    fromStage = workflow.currentStage,
+                    targetStage = targetStage,
+                    evaluatedStages = evaluatedStages.distinct(),
+                    stagePlan = stagePlan,
+                    workflow = workflow,
+                ),
+            )
+        }
+        val warningConfirmed = resolveWarningDecision(
+            gatePolicy = gatePolicy,
+            gateResult = gateResult,
+            fromStage = workflow.currentStage,
+            targetStage = targetStage,
+            confirmWarnings = confirmWarnings,
+        )
+
+        val updatedAt = System.currentTimeMillis()
+        val stageMetadata = applyStageTransitionMetadata(
+            workflow = workflow,
+            stagePlan = stagePlan,
+            targetStage = targetStage,
+            timestampMillis = updatedAt,
+        )
+        val updatedWorkflow = workflow.copy(
+            currentPhase = initialPhaseForStage(stageMetadata.currentStage),
+            stageStates = stageMetadata.stageStates,
+            currentStage = stageMetadata.currentStage,
+            verifyEnabled = stageMetadata.verifyEnabled,
+            clarificationRetryState = null,
+            updatedAt = updatedAt,
+        )
+
+        val saveResult = storageDelegate.saveWorkflowTransition(
+            workflow = updatedWorkflow,
+            eventType = transitionAuditEventType(transitionType),
+            details = buildStageTransitionAuditDetails(
+                workflow = workflow,
+                transitionType = transitionType,
+                targetStage = targetStage,
+                gateResult = gateResult,
+                evaluatedStages = evaluatedStages,
+                warningConfirmed = warningConfirmed,
+            ),
+        ).getOrThrow()
+        activeWorkflows[workflow.id] = updatedWorkflow
+
+        emitSpecStageChangedHook(
+            workflowId = workflow.id,
+            previousPhase = workflow.currentPhase,
+            currentPhase = updatedWorkflow.currentPhase,
+            previousStage = workflow.currentStage,
+            currentStage = updatedWorkflow.currentStage,
+        )
+        logger.info(
+            "Workflow ${workflow.id} transitioned ${transitionType.name.lowercase()} " +
+                "${workflow.currentStage} -> ${updatedWorkflow.currentStage} (gate=${gateResult.status})",
+        )
+        return StageTransitionResult(
+            workflow = updatedWorkflow,
+            transitionType = transitionType,
+            fromStage = workflow.currentStage,
+            targetStage = updatedWorkflow.currentStage,
+            gateResult = gateResult,
+            warningConfirmed = warningConfirmed,
+            beforeSnapshotId = saveResult.beforeSnapshotId,
+            afterSnapshotId = saveResult.afterSnapshotId,
+        )
+    }
+
+    private fun applyStageTransitionMetadata(
+        workflow: SpecWorkflow,
+        stagePlan: WorkflowStagePlan,
+        targetStage: StageId,
+        timestampMillis: Long,
+    ): StageMetadataState {
+        val timestamp = Instant.ofEpochMilli(timestampMillis).toString()
+        val completedStages = stagePlan.activeStagesBefore(targetStage).toSet()
+        val updatedStates = linkedMapOf<StageId, StageState>()
+
+        StageId.entries.forEach { stageId ->
+            val previous = workflow.stageStates[stageId] ?: StageState(
+                active = stagePlan.isActive(stageId),
+                status = StageProgress.NOT_STARTED,
+            )
+            updatedStates[stageId] = when {
+                !stagePlan.isActive(stageId) -> StageState(
+                    active = false,
+                    status = StageProgress.NOT_STARTED,
+                    enteredAt = null,
+                    completedAt = null,
+                )
+
+                stageId == targetStage -> previous.copy(
+                    active = true,
+                    status = StageProgress.IN_PROGRESS,
+                    enteredAt = timestamp,
+                    completedAt = null,
+                )
+
+                completedStages.contains(stageId) -> previous.copy(
+                    active = true,
+                    status = StageProgress.DONE,
+                    enteredAt = previous.enteredAt ?: timestamp,
+                    completedAt = previous.completedAt ?: timestamp,
+                )
+
+                else -> StageState(
+                    active = true,
+                    status = StageProgress.NOT_STARTED,
+                    enteredAt = null,
+                    completedAt = null,
+                )
+            }
+        }
+
+        return StageMetadataState(
+            currentStage = targetStage,
+            verifyEnabled = stagePlan.isActive(StageId.VERIFY),
+            stageStates = updatedStates,
+        )
+    }
+
+    private fun applyTemplateSwitchMetadata(
+        workflow: SpecWorkflow,
+        targetStagePlan: WorkflowStagePlan,
+        targetStage: StageId,
+        timestampMillis: Long,
+    ): StageMetadataState {
+        val timestamp = Instant.ofEpochMilli(timestampMillis).toString()
+        val updatedStates = linkedMapOf<StageId, StageState>()
+
+        StageId.entries.forEach { stageId ->
+            val previous = workflow.stageStates[stageId] ?: StageState(
+                active = false,
+                status = StageProgress.NOT_STARTED,
+            )
+            updatedStates[stageId] = when {
+                !targetStagePlan.isActive(stageId) -> StageState(
+                    active = false,
+                    status = StageProgress.NOT_STARTED,
+                    enteredAt = null,
+                    completedAt = null,
+                )
+
+                stageId == targetStage -> previous.copy(
+                    active = true,
+                    status = StageProgress.IN_PROGRESS,
+                    enteredAt = previous.enteredAt ?: timestamp,
+                    completedAt = null,
+                )
+
+                previous.status == StageProgress.DONE -> previous.copy(active = true)
+
+                else -> StageState(
+                    active = true,
+                    status = StageProgress.NOT_STARTED,
+                    enteredAt = null,
+                    completedAt = null,
+                )
+            }
+        }
+
+        return StageMetadataState(
+            currentStage = targetStage,
+            verifyEnabled = targetStagePlan.isActive(StageId.VERIFY),
+            stageStates = updatedStates,
+        )
+    }
+
+    private fun resolveWarningDecision(
+        gatePolicy: SpecGatePolicy,
+        gateResult: GateResult,
+        fromStage: StageId,
+        targetStage: StageId,
+        confirmWarnings: ((GateResult) -> Boolean)?,
+    ): Boolean {
+        return when (gateResult.status) {
+            GateStatus.ERROR -> throw StageTransitionBlockedByGateError(fromStage, targetStage, gateResult)
+            GateStatus.WARNING -> {
+                if (!gatePolicy.allowWarningAdvance) {
+                    throw StageTransitionBlockedByGateError(fromStage, targetStage, gateResult)
+                }
+                if (!gatePolicy.requireWarningConfirmation) {
+                    true
+                } else {
+                    val confirmed = confirmWarnings?.invoke(gateResult) == true
+                    if (!confirmed) {
+                        throw StageWarningConfirmationRequiredError(fromStage, targetStage)
+                    }
+                    true
+                }
+            }
+
+            GateStatus.PASS -> false
+        }
+    }
+
+    private fun buildStageTransitionAuditDetails(
+        workflow: SpecWorkflow,
+        transitionType: StageTransitionType,
+        targetStage: StageId,
+        gateResult: GateResult,
+        evaluatedStages: List<StageId>,
+        warningConfirmed: Boolean,
+    ): Map<String, String> {
+        val details = linkedMapOf(
+            "fromStage" to workflow.currentStage.name,
+            "toStage" to targetStage.name,
+            "transitionType" to transitionType.name,
+            "gateStatus" to gateResult.status.name,
+            "warningConfirmed" to warningConfirmed.toString(),
+        )
+        if (evaluatedStages.isNotEmpty()) {
+            details["evaluatedStages"] = evaluatedStages.joinToString(",") { stage -> stage.name }
+        }
+        return details
+    }
+
+    private fun buildTemplateSwitchAuditDetails(
+        preview: TemplateSwitchPreview,
+        switchId: String,
+        generatedArtifacts: List<String>,
+    ): Map<String, String> {
+        val details = linkedMapOf(
+            "switchId" to switchId,
+            "previewId" to preview.previewId,
+            "fromTemplate" to preview.fromTemplate.name,
+            "toTemplate" to preview.toTemplate.name,
+            "fromStage" to preview.currentStage.name,
+            "toStage" to preview.resultingStage.name,
+            "currentStageChanged" to preview.currentStageChanged.toString(),
+        )
+        if (preview.addedActiveStages.isNotEmpty()) {
+            details["addedActiveStages"] = preview.addedActiveStages.joinToString(",") { stage -> stage.name }
+        }
+        if (preview.deactivatedStages.isNotEmpty()) {
+            details["deactivatedStages"] = preview.deactivatedStages.joinToString(",") { stage -> stage.name }
+        }
+        if (preview.gateAddedStages.isNotEmpty()) {
+            details["gateAddedStages"] = preview.gateAddedStages.joinToString(",") { stage -> stage.name }
+        }
+        if (preview.gateRemovedStages.isNotEmpty()) {
+            details["gateRemovedStages"] = preview.gateRemovedStages.joinToString(",") { stage -> stage.name }
+        }
+        if (generatedArtifacts.isNotEmpty()) {
+            details["generatedArtifacts"] = generatedArtifacts.joinToString(",")
+        }
+        return details
+    }
+
+    private fun buildTemplateSwitchRollbackAuditDetails(
+        currentWorkflow: SpecWorkflow,
+        restoredWorkflow: SpecWorkflow,
+        switchId: String,
+        rollbackSnapshotId: String,
+        switchEvent: SpecAuditEvent,
+    ): Map<String, String> {
+        val details = linkedMapOf(
+            "switchId" to switchId,
+            "restoredFromSnapshotId" to rollbackSnapshotId,
+            "fromTemplate" to currentWorkflow.template.name,
+            "toTemplate" to restoredWorkflow.template.name,
+            "fromStage" to currentWorkflow.currentStage.name,
+            "toStage" to restoredWorkflow.currentStage.name,
+            "switchEventId" to switchEvent.eventId,
+        )
+        switchEvent.details["previewId"]?.let { previewId ->
+            details["previewId"] = previewId
+        }
+        return details
+    }
+
+    private fun clearTemplateSwitchPreviews(workflowId: String) {
+        pendingTemplateSwitchPreviews.entries.removeIf { (_, preview) ->
+            preview.workflowId == workflowId
+        }
+    }
+
+    private fun transitionAuditEventType(transitionType: StageTransitionType): SpecAuditEventType {
+        return when (transitionType) {
+            StageTransitionType.ADVANCE -> SpecAuditEventType.STAGE_ADVANCED
+            StageTransitionType.JUMP -> SpecAuditEventType.STAGE_JUMPED
+            StageTransitionType.ROLLBACK -> SpecAuditEventType.STAGE_ROLLED_BACK
+        }
+    }
+
+    private fun evaluateStageGate(request: StageTransitionRequest): GateResult {
+        val violations = mutableListOf<Violation>()
+        request.evaluatedStages.distinct().forEach { stageId ->
+            if (request.stagePlan.participatesInGate(stageId)) {
+                val fileName = stageId.artifactFileName ?: return@forEach
+                val artifactPath = artifactServiceDelegate.locateArtifact(request.workflowId, stageId)
+                if (!Files.exists(artifactPath)) {
+                    violations += Violation(
+                        ruleId = "artifact-required",
+                        severity = GateStatus.ERROR,
+                        fileName = fileName,
+                        line = 1,
+                        message = "Required artifact $fileName is missing for stage $stageId",
+                        fixHint = "Create $fileName before continuing",
+                    )
+                    return@forEach
+                }
+            }
+
+            val phase = when (stageId) {
+                StageId.REQUIREMENTS -> SpecPhase.SPECIFY
+                StageId.DESIGN -> SpecPhase.DESIGN
+                StageId.TASKS -> SpecPhase.IMPLEMENT
+                StageId.IMPLEMENT,
+                StageId.VERIFY,
+                StageId.ARCHIVE,
+                -> null
+            } ?: return@forEach
+
+            val document = request.workflow.getDocument(phase) ?: return@forEach
+            val validation = SpecValidator.validate(document)
+            validation.errors.forEach { message ->
+                violations += Violation(
+                    ruleId = "document-validation",
+                    severity = GateStatus.ERROR,
+                    fileName = phase.outputFileName,
+                    line = 1,
+                    message = message,
+                )
+            }
+        }
+
+        return GateResult.fromViolations(violations)
+    }
+
     private fun emitSpecStageChangedHook(
         workflowId: String,
         previousPhase: SpecPhase,
         currentPhase: SpecPhase,
+        previousStage: StageId? = null,
+        currentStage: StageId? = null,
     ) {
         runCatching {
+            val metadata = linkedMapOf(
+                "workflowId" to workflowId,
+                "previousStage" to previousPhase.name,
+                "currentStage" to currentPhase.name,
+            )
+            previousStage?.let { stage -> metadata["previousWorkflowStage"] = stage.name }
+            currentStage?.let { stage -> metadata["currentWorkflowStage"] = stage.name }
             HookManager.getInstance(project).trigger(
                 event = HookEvent.SPEC_STAGE_CHANGED,
                 triggerContext = HookTriggerContext(
                     specStage = currentPhase.name,
-                    metadata = mapOf(
-                        "workflowId" to workflowId,
-                        "previousStage" to previousPhase.name,
-                        "currentStage" to currentPhase.name,
-                    ),
+                    metadata = metadata,
                 ),
             )
         }.onFailure { error ->
@@ -790,40 +1425,15 @@ class SpecEngine(private val project: Project) {
     }
 
     private fun initializeStageMetadata(
-        template: WorkflowTemplate,
         templatePolicy: SpecTemplatePolicy,
         timestampMillis: Long,
     ): StageMetadataState {
-        val definition = templatePolicy.definition
-        val activeStages = definition.activeStages(
-            verifyEnabled = templatePolicy.verifyEnabledByDefault,
-            implementEnabled = templatePolicy.implementEnabledByDefault,
-        )
-        val currentStage = activeStages.firstOrNull() ?: definition.stagePlan.first().id
+        val stagePlan = templatePolicy.defaultStagePlan()
         val enteredAt = Instant.ofEpochMilli(timestampMillis).toString()
-        val stageStates = linkedMapOf<StageId, StageState>()
-        StageId.entries.forEach { stageId ->
-            val active = activeStages.contains(stageId)
-            stageStates[stageId] = if (stageId == currentStage) {
-                StageState(
-                    active = true,
-                    status = StageProgress.IN_PROGRESS,
-                    enteredAt = enteredAt,
-                    completedAt = null,
-                )
-            } else {
-                StageState(
-                    active = active,
-                    status = StageProgress.NOT_STARTED,
-                    enteredAt = null,
-                    completedAt = null,
-                )
-            }
-        }
         return StageMetadataState(
-            currentStage = currentStage,
-            verifyEnabled = activeStages.contains(StageId.VERIFY),
-            stageStates = stageStates,
+            currentStage = stagePlan.firstActiveStage,
+            verifyEnabled = stagePlan.isActive(StageId.VERIFY),
+            stageStates = stagePlan.initialStageStates(enteredAt),
         )
     }
 

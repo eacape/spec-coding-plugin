@@ -100,6 +100,8 @@ open class ChatMessagePanel(
     private var cachedTraceSnapshotTraceVersion = -1
     private var cachedTraceSnapshotIncludeRawContent = true
     private var cachedTraceSnapshot: StreamingTraceAssembler.TraceSnapshot? = null
+    private var cachedStreamingRenderContentVersion = -1
+    private var cachedStreamingRenderFontSize = -1
     private val userImageAttachments: List<UserImageAttachment> by lazy(LazyThreadSafetyMode.NONE) {
         if (role == MessageRole.USER) {
             loadUserImageAttachments(attachedImagePaths)
@@ -251,6 +253,22 @@ open class ChatMessagePanel(
             return
         }
         if (role == MessageRole.ASSISTANT) {
+            if (!messageFinished && !useStructured) {
+                val shouldRepaintStreamingContent =
+                    cachedStreamingRenderContentVersion != contentVersion ||
+                        cachedStreamingRenderFontSize != outputFontSize ||
+                        contentHost.componentCount != 1 ||
+                        contentHost.getComponent(0) !== contentPane
+                if (shouldRepaintStreamingContent) {
+                    renderAssistantStreamingContent(content, outputFontSize)
+                    cachedStreamingRenderContentVersion = contentVersion
+                    cachedStreamingRenderFontSize = outputFontSize
+                    revalidate()
+                    repaint()
+                }
+                return
+            }
+
             val traceSnapshot = resolveTraceSnapshot(content)
             if (traceSnapshot.hasTrace) {
                 val answerContent = resolveAssistantAnswerContent(content)
@@ -285,6 +303,20 @@ open class ChatMessagePanel(
         }
         revalidate()
         repaint()
+    }
+
+    private fun renderAssistantStreamingContent(content: String, fontSize: Int) {
+        if (contentHost.componentCount != 1 || contentHost.getComponent(0) !== contentPane) {
+            contentHost.removeAll()
+            contentHost.add(contentPane, BorderLayout.CENTER)
+        }
+        val doc = contentPane.styledDocument
+        doc.remove(0, doc.length)
+        val attrs = SimpleAttributeSet()
+        StyleConstants.setFontFamily(attrs, "Monospaced")
+        StyleConstants.setFontSize(attrs, fontSize)
+        StyleConstants.setLineSpacing(attrs, PLAIN_TEXT_LINE_SPACING)
+        doc.insertString(0, content, attrs)
     }
 
     private fun resolveAssistantAnswerContent(content: String): String {

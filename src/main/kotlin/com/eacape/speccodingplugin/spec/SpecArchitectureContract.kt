@@ -116,6 +116,34 @@ object SpecArchitectureContract {
             rationale = "Task 13 requires durable template and stage-state records with list/open retrieval.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "stage-plan",
+            capability = "template-aware ordered stage planning with optional-stage activation and gate scoping",
+            selection = "domain `WorkflowStagePlan` + `StageActivationOptions` derived from template definitions and persisted stage states",
+            rationale = "Task 14 requires a reusable stage-plan engine so optional stages and non-active artifacts stay out of gate scope.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
+            key = "stage-transition",
+            capability = "workflow stage advance/jump/rollback state machine with gate integration and auditable metadata-only persistence",
+            selection = "SpecEngine transition coordinator + typed `StageTransitionResult` + storage-backed transition snapshots",
+            rationale = "Task 15 requires stage-aware transitions, warning confirmation, and dedicated transition audit records without rewriting artifacts.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
+            key = "template-switch-preview",
+            capability = "template switch impact preview with stable preview id and artifact backfill strategies",
+            selection = "SpecEngine preview cache + domain `TemplateSwitchPreview` + artifact requirement inspection",
+            rationale = "Task 16 requires previewing stage activation diffs, gate scope changes, and missing artifact handling before apply/rollback lands in Task 17.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
+            key = "template-switch-apply",
+            capability = "template switch apply/rollback with snapshot-backed metadata restore and audit traceability",
+            selection = "SpecEngine apply/rollback + SpecStorage audit event lookup + workflow metadata snapshots",
+            rationale = "Task 17 requires confirmed preview application, non-destructive artifact preservation, and rollback to pre-switch metadata.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(

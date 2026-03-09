@@ -24,17 +24,23 @@ data class SpecTemplatePolicy(
     val verifyEnabledByDefault: Boolean,
     val implementEnabledByDefault: Boolean,
 ) {
+    fun defaultStagePlan(): WorkflowStagePlan {
+        return definition.buildStagePlan(defaultActivationOptions())
+    }
+
     fun defaultActiveStages(): List<StageId> {
-        val verifyOverride = definition.stagePlan
+        return defaultStagePlan().activeStages
+    }
+
+    private fun defaultActivationOptions(): StageActivationOptions {
+        val overrides = linkedMapOf<StageId, Boolean>()
+        definition.stagePlan
             .firstOrNull { item -> item.id == StageId.VERIFY && item.optional }
-            ?.let { verifyEnabledByDefault }
-        val implementOverride = definition.stagePlan
+            ?.let { overrides[StageId.VERIFY] = verifyEnabledByDefault }
+        definition.stagePlan
             .firstOrNull { item -> item.id == StageId.IMPLEMENT && item.optional }
-            ?.let { implementEnabledByDefault }
-        return definition.activeStages(
-            verifyEnabled = verifyOverride,
-            implementEnabled = implementOverride,
-        )
+            ?.let { overrides[StageId.IMPLEMENT] = implementEnabledByDefault }
+        return StageActivationOptions(stageOverrides = overrides)
     }
 }
 

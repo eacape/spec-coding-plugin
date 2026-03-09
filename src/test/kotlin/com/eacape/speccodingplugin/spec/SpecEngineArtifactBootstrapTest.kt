@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -48,6 +49,10 @@ class SpecEngineArtifactBootstrapTest {
             .resolve(".spec-coding")
             .resolve("specs")
             .resolve(workflow.id)
+        assertEquals(StageId.TASKS, workflow.currentStage)
+        assertTrue(workflow.stageStates.getValue(StageId.TASKS).active)
+        assertFalse(workflow.stageStates.getValue(StageId.REQUIREMENTS).active)
+        assertFalse(workflow.stageStates.getValue(StageId.DESIGN).active)
         assertTrue(Files.exists(workflowDir.resolve("tasks.md")))
         assertFalse(Files.exists(workflowDir.resolve("requirements.md")))
         assertFalse(Files.exists(workflowDir.resolve("design.md")))
@@ -79,6 +84,9 @@ class SpecEngineArtifactBootstrapTest {
             .resolve(".spec-coding")
             .resolve("specs")
             .resolve(workflow.id)
+        assertEquals(StageId.IMPLEMENT, workflow.currentStage)
+        assertFalse(workflow.stageStates.getValue(StageId.TASKS).active)
+        assertTrue(workflow.stageStates.getValue(StageId.VERIFY).active)
         assertTrue(Files.exists(workflowDir.resolve("tasks.md")))
         assertTrue(Files.exists(workflowDir.resolve("verification.md")))
     }

@@ -89,18 +89,42 @@ class SpecArtifactService(
         }
     }
 
+    fun previewRequiredArtifacts(
+        workflowId: String,
+        template: WorkflowTemplate,
+        templatePolicy: SpecTemplatePolicy,
+    ): List<TemplateSwitchArtifactImpact> {
+        validateWorkflowId(workflowId)
+        val workflowDir = workflowDirectory(workflowId)
+        return requiredArtifacts(template, templatePolicy).map { (stageId, fileName) ->
+            val path = workflowDir.resolve(fileName)
+            val exists = Files.exists(path)
+            TemplateSwitchArtifactImpact(
+                stageId = stageId,
+                fileName = fileName,
+                exists = exists,
+                strategy = when {
+                    exists -> TemplateSwitchArtifactStrategy.REUSE_EXISTING
+                    canScaffold(stageId) -> TemplateSwitchArtifactStrategy.GENERATE_SKELETON
+                    else -> TemplateSwitchArtifactStrategy.BLOCK_SWITCH
+                },
+            )
+        }
+    }
+
     private fun requiredArtifacts(
         template: WorkflowTemplate,
         templatePolicy: SpecTemplatePolicy,
     ): List<Pair<StageId, String>> {
         val ordered = LinkedHashMap<String, StageId>()
+        val stagePlan = templatePolicy.defaultStagePlan()
 
         // DIRECT_IMPLEMENT must still materialize a minimal tasks.md for task traceability.
         if (template == WorkflowTemplate.DIRECT_IMPLEMENT) {
             ordered[StageId.TASKS.artifactFileName!!] = StageId.TASKS
         }
 
-        templatePolicy.defaultActiveStages().forEach { stageId ->
+        stagePlan.gateArtifactStages.forEach { stageId ->
             val fileName = stageId.artifactFileName ?: return@forEach
             ordered.putIfAbsent(fileName, stageId)
         }
@@ -118,6 +142,20 @@ class SpecArtifactService(
                 throw IllegalArgumentException("Stage $stageId has no artifact skeleton.")
         }
         return normalizeContent(raw.trimIndent())
+    }
+
+    private fun canScaffold(stageId: StageId): Boolean {
+        return when (stageId) {
+            StageId.REQUIREMENTS,
+            StageId.DESIGN,
+            StageId.TASKS,
+            StageId.VERIFY,
+            -> true
+
+            StageId.IMPLEMENT,
+            StageId.ARCHIVE,
+            -> false
+        }
     }
 
     private fun workflowDirectory(workflowId: String): Path {

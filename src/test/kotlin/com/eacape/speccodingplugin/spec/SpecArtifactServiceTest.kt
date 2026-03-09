@@ -121,4 +121,46 @@ class SpecArtifactServiceTest {
         assertTrue(tasksContent.contains("```spec-task"))
         assertTrue(tasksContent.contains("T-001"))
     }
+
+    @Test
+    fun `previewRequiredArtifacts should report backfill strategies without writing files`() {
+        val workflowId = "wf-preview-artifacts"
+        val directImplementPolicy = SpecTemplatePolicy(
+            definition = WorkflowTemplates.definitionOf(WorkflowTemplate.DIRECT_IMPLEMENT),
+            verifyEnabledByDefault = false,
+            implementEnabledByDefault = true,
+        )
+        service.ensureMissingArtifacts(
+            workflowId = workflowId,
+            template = WorkflowTemplate.DIRECT_IMPLEMENT,
+            templatePolicy = directImplementPolicy,
+        )
+
+        val fullSpecPolicy = SpecTemplatePolicy(
+            definition = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC),
+            verifyEnabledByDefault = false,
+            implementEnabledByDefault = true,
+        )
+        val preview = service.previewRequiredArtifacts(
+            workflowId = workflowId,
+            template = WorkflowTemplate.FULL_SPEC,
+            templatePolicy = fullSpecPolicy,
+        )
+
+        assertEquals(listOf("requirements.md", "design.md", "tasks.md"), preview.map { it.fileName })
+        assertEquals(
+            TemplateSwitchArtifactStrategy.GENERATE_SKELETON,
+            preview.first { it.fileName == "requirements.md" }.strategy,
+        )
+        assertEquals(
+            TemplateSwitchArtifactStrategy.GENERATE_SKELETON,
+            preview.first { it.fileName == "design.md" }.strategy,
+        )
+        assertEquals(
+            TemplateSwitchArtifactStrategy.REUSE_EXISTING,
+            preview.first { it.fileName == "tasks.md" }.strategy,
+        )
+        assertFalse(Files.exists(service.locateArtifact(workflowId, StageId.REQUIREMENTS)))
+        assertFalse(Files.exists(service.locateArtifact(workflowId, StageId.DESIGN)))
+    }
 }

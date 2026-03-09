@@ -24,6 +24,12 @@ class SpecStorage(
     private val workspaceInitializer: SpecWorkspaceInitializer = SpecWorkspaceInitializer(project),
     private val lockManager: SpecFileLockManager = SpecFileLockManager(workspaceInitializer),
 ) {
+    data class WorkflowMetadataWriteResult(
+        val path: Path,
+        val beforeSnapshotId: String,
+        val afterSnapshotId: String,
+    )
+
     private val logger = thisLogger()
     private val yamlCodec = SpecYamlCodec
 
@@ -305,48 +311,24 @@ class SpecStorage(
      */
     fun saveWorkflow(workflow: SpecWorkflow): Result<Path> {
         return runCatching {
-            lockManager.withWorkflowLock(workflow.id) {
-                val workflowDir = workspaceInitializer
-                    .initializeWorkflowWorkspace(workflow.id)
-                    .workflowDir
+            persistWorkflowMetadata(
+                workflow = workflow,
+                eventType = SpecAuditEventType.WORKFLOW_SAVED,
+            ).path
+        }
+    }
 
-                val metadataPath = workflowDir.resolve("workflow.yaml")
-                val metadata = formatWorkflowMetadata(workflow)
-                val operationId = UUID.randomUUID().toString()
-                val beforeSnapshot = captureWorkflowSnapshot(
-                    workflowId = workflow.id,
-                    trigger = SpecSnapshotTrigger.WORKFLOW_SAVE_BEFORE,
-                    operationId = operationId,
-                )
-
-                atomicFileIO.writeString(metadataPath, metadata, StandardCharsets.UTF_8)
-                val afterSnapshot = captureWorkflowSnapshot(
-                    workflowId = workflow.id,
-                    trigger = SpecSnapshotTrigger.WORKFLOW_SAVE_AFTER,
-                    operationId = operationId,
-                )
-                val auditDetails = linkedMapOf(
-                    "status" to workflow.status.name,
-                    "phase" to workflow.currentPhase.name,
-                    "changeIntent" to workflow.changeIntent.name,
-                    "beforeSnapshotId" to beforeSnapshot.snapshotId,
-                    "afterSnapshotId" to afterSnapshot.snapshotId,
-                )
-                workflow.configPinHash
-                    ?.trim()
-                    ?.takeIf { it.isNotEmpty() }
-                    ?.let { configPinHash ->
-                        auditDetails["configPinHash"] = configPinHash
-                    }
-                appendAuditEntry(
-                    eventType = SpecAuditEventType.WORKFLOW_SAVED,
-                    workflowId = workflow.id,
-                    details = auditDetails,
-                )
-                logger.info("Saved workflow metadata to $metadataPath")
-
-                metadataPath
-            }
+    fun saveWorkflowTransition(
+        workflow: SpecWorkflow,
+        eventType: SpecAuditEventType,
+        details: Map<String, String> = emptyMap(),
+    ): Result<WorkflowMetadataWriteResult> {
+        return runCatching {
+            persistWorkflowMetadata(
+                workflow = workflow,
+                eventType = eventType,
+                extraAuditDetails = details,
+            )
         }
     }
 
@@ -421,6 +403,19 @@ class SpecStorage(
                 workflow = workflow,
                 documents = workflow.documents,
             )
+        }
+    }
+
+    fun listAuditEvents(workflowId: String): Result<List<SpecAuditEvent>> {
+        return runCatching {
+            lockManager.withAuditLogLock(workflowId) {
+                val auditLogPath = getAuditLogPath(workflowId)
+                if (!Files.isRegularFile(auditLogPath)) {
+                    emptyList()
+                } else {
+                    SpecAuditLogCodec.decodeDocuments(Files.readString(auditLogPath, StandardCharsets.UTF_8))
+                }
+            }
         }
     }
 
@@ -1350,6 +1345,62 @@ class SpecStorage(
             }
         } catch (e: Exception) {
             logger.warn("Failed to append spec audit log entry", e)
+        }
+    }
+
+    private fun persistWorkflowMetadata(
+        workflow: SpecWorkflow,
+        eventType: SpecAuditEventType,
+        extraAuditDetails: Map<String, String> = emptyMap(),
+    ): WorkflowMetadataWriteResult {
+        return lockManager.withWorkflowLock(workflow.id) {
+            val workflowDir = workspaceInitializer
+                .initializeWorkflowWorkspace(workflow.id)
+                .workflowDir
+
+            val metadataPath = workflowDir.resolve(WORKFLOW_METADATA_FILE_NAME)
+            val metadata = formatWorkflowMetadata(workflow)
+            val operationId = UUID.randomUUID().toString()
+            val beforeSnapshot = captureWorkflowSnapshot(
+                workflowId = workflow.id,
+                trigger = SpecSnapshotTrigger.WORKFLOW_SAVE_BEFORE,
+                operationId = operationId,
+            )
+
+            atomicFileIO.writeString(metadataPath, metadata, StandardCharsets.UTF_8)
+
+            val afterSnapshot = captureWorkflowSnapshot(
+                workflowId = workflow.id,
+                trigger = SpecSnapshotTrigger.WORKFLOW_SAVE_AFTER,
+                operationId = operationId,
+            )
+            val auditDetails = linkedMapOf(
+                "status" to workflow.status.name,
+                "phase" to workflow.currentPhase.name,
+                "changeIntent" to workflow.changeIntent.name,
+                "beforeSnapshotId" to beforeSnapshot.snapshotId,
+                "afterSnapshotId" to afterSnapshot.snapshotId,
+            )
+            workflow.configPinHash
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { configPinHash ->
+                    auditDetails["configPinHash"] = configPinHash
+                }
+            extraAuditDetails.forEach { (key, value) ->
+                auditDetails[key] = value
+            }
+            appendAuditEntry(
+                eventType = eventType,
+                workflowId = workflow.id,
+                details = auditDetails,
+            )
+            logger.info("Saved workflow metadata to $metadataPath with event $eventType")
+            WorkflowMetadataWriteResult(
+                path = metadataPath,
+                beforeSnapshotId = beforeSnapshot.snapshotId,
+                afterSnapshotId = afterSnapshot.snapshotId,
+            )
         }
     }
 

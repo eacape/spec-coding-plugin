@@ -51,6 +51,72 @@ class WorkflowDomainModelsTest {
     }
 
     @Test
+    fun `stage plan should keep gate scope limited to active artifact stages`() {
+        val plan = WorkflowTemplates.definitionOf(WorkflowTemplate.DIRECT_IMPLEMENT)
+            .buildStagePlan(StageActivationOptions.of(verifyEnabled = true))
+
+        assertEquals(
+            listOf(StageId.IMPLEMENT, StageId.VERIFY, StageId.ARCHIVE),
+            plan.activeStages,
+        )
+        assertEquals(listOf(StageId.VERIFY), plan.gateArtifactStages)
+        assertFalse(plan.participatesInGate(StageId.TASKS))
+        assertFalse(plan.participatesInGate(StageId.IMPLEMENT))
+        assertTrue(plan.participatesInGate(StageId.VERIFY))
+    }
+
+    @Test
+    fun `stage plan should initialize states from first active stage in order`() {
+        val plan = WorkflowTemplates.definitionOf(WorkflowTemplate.DESIGN_REVIEW)
+            .buildStagePlan(
+                StageActivationOptions.of(
+                    verifyEnabled = true,
+                    implementEnabled = false,
+                ),
+            )
+
+        val states = plan.initialStageStates("2026-03-09T00:00:00Z")
+
+        assertEquals(StageId.DESIGN, plan.firstActiveStage)
+        assertEquals(StageProgress.IN_PROGRESS, states.getValue(StageId.DESIGN).status)
+        assertFalse(states.getValue(StageId.IMPLEMENT).active)
+        assertTrue(states.getValue(StageId.VERIFY).active)
+        assertEquals(StageProgress.NOT_STARTED, states.getValue(StageId.VERIFY).status)
+        assertEquals(StageId.VERIFY, plan.nextActiveStage(StageId.TASKS))
+        assertEquals(StageId.TASKS, plan.previousActiveStage(StageId.VERIFY))
+    }
+
+    @Test
+    fun `stage plan should expose active stage slices for transitions`() {
+        val plan = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
+            .buildStagePlan(StageActivationOptions.of(verifyEnabled = true))
+
+        assertEquals(
+            listOf(StageId.REQUIREMENTS, StageId.DESIGN, StageId.TASKS),
+            plan.activeStagesThrough(StageId.TASKS),
+        )
+        assertEquals(
+            listOf(StageId.DESIGN, StageId.TASKS, StageId.IMPLEMENT),
+            plan.activeStagesBetween(StageId.DESIGN, StageId.IMPLEMENT),
+        )
+        assertEquals(
+            listOf(StageId.REQUIREMENTS, StageId.DESIGN),
+            plan.activeStagesBefore(StageId.TASKS),
+        )
+    }
+
+    @Test
+    fun `stage plan should resolve inactive current stage to nearest active stage`() {
+        val plan = WorkflowTemplates.definitionOf(WorkflowTemplate.DIRECT_IMPLEMENT)
+            .buildStagePlan(StageActivationOptions.of(verifyEnabled = false))
+
+        assertEquals(StageId.IMPLEMENT, plan.resolveCurrentStage(StageId.REQUIREMENTS))
+        assertEquals(StageId.IMPLEMENT, plan.resolveCurrentStage(StageId.DESIGN))
+        assertEquals(StageId.IMPLEMENT, plan.resolveCurrentStage(StageId.IMPLEMENT))
+        assertEquals(StageId.ARCHIVE, plan.resolveCurrentStage(StageId.ARCHIVE))
+    }
+
+    @Test
     fun `gate result should escalate to highest severity`() {
         val warningOnly = GateResult.fromViolations(
             listOf(

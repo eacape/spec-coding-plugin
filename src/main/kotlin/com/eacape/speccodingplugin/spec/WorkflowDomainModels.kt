@@ -29,7 +29,39 @@ data class StagePlanItem(
     val id: StageId,
     val optional: Boolean = false,
     val defaultEnabled: Boolean = !optional,
-)
+) {
+    fun isEnabled(options: StageActivationOptions = StageActivationOptions()): Boolean {
+        return if (!optional) {
+            true
+        } else {
+            options.overrideFor(id) ?: defaultEnabled
+        }
+    }
+}
+
+data class StageActivationOptions(
+    val stageOverrides: Map<StageId, Boolean> = emptyMap(),
+) {
+    fun overrideFor(stageId: StageId): Boolean? = stageOverrides[stageId]
+
+    companion object {
+        fun of(
+            verifyEnabled: Boolean? = null,
+            implementEnabled: Boolean? = null,
+        ): StageActivationOptions {
+            val overrides = linkedMapOf<StageId, Boolean>()
+            verifyEnabled?.let { overrides[StageId.VERIFY] = it }
+            implementEnabled?.let { overrides[StageId.IMPLEMENT] = it }
+            return StageActivationOptions(stageOverrides = overrides)
+        }
+
+        fun fromStageStates(stageStates: Map<StageId, StageState>): StageActivationOptions {
+            return StageActivationOptions(
+                stageOverrides = stageStates.mapValues { (_, state) -> state.active },
+            )
+        }
+    }
+}
 
 enum class StageProgress {
     NOT_STARTED,
@@ -85,15 +117,127 @@ data class TemplateDefinition(
         verifyEnabled: Boolean? = null,
         implementEnabled: Boolean? = null,
     ): List<StageId> {
-        return stagePlan
-            .filter { item ->
-                when (item.id) {
-                    StageId.VERIFY -> if (item.optional) verifyEnabled ?: item.defaultEnabled else true
-                    StageId.IMPLEMENT -> if (item.optional) implementEnabled ?: item.defaultEnabled else true
-                    else -> if (item.optional) item.defaultEnabled else true
-                }
-            }
+        return buildStagePlan(
+            StageActivationOptions.of(
+                verifyEnabled = verifyEnabled,
+                implementEnabled = implementEnabled,
+            ),
+        ).activeStages
+    }
+
+    fun buildStagePlan(
+        options: StageActivationOptions = StageActivationOptions(),
+    ): WorkflowStagePlan {
+        val orderedStages = stagePlan.map { it.id }
+        val activeStages = stagePlan
+            .filter { item -> item.isEnabled(options) }
             .map { it.id }
+        return WorkflowStagePlan(
+            template = template,
+            orderedStages = orderedStages,
+            activeStages = activeStages,
+        )
+    }
+}
+
+data class WorkflowStagePlan(
+    val template: WorkflowTemplate,
+    val orderedStages: List<StageId>,
+    val activeStages: List<StageId>,
+) {
+    init {
+        require(orderedStages.isNotEmpty()) { "orderedStages must not be empty" }
+        require(activeStages.isNotEmpty()) { "activeStages must not be empty for template $template" }
+        require(activeStages.all { orderedStages.contains(it) }) {
+            "activeStages must be a subset of orderedStages for template $template"
+        }
+    }
+
+    val inactiveStages: List<StageId>
+        get() = orderedStages.filterNot { isActive(it) }
+
+    val gateArtifactStages: List<StageId>
+        get() = activeStages.filter { it.requiresArtifact() }
+
+    val firstActiveStage: StageId
+        get() = activeStages.first()
+
+    fun isActive(stageId: StageId): Boolean = activeStages.contains(stageId)
+
+    fun activeStageIndex(stageId: StageId): Int {
+        val index = activeStages.indexOf(stageId)
+        require(index >= 0) {
+            "stage $stageId is not active for template $template"
+        }
+        return index
+    }
+
+    fun activeStagesBefore(stageId: StageId): List<StageId> {
+        return activeStages.take(activeStageIndex(stageId))
+    }
+
+    fun activeStagesThrough(stageId: StageId): List<StageId> {
+        return activeStages.take(activeStageIndex(stageId) + 1)
+    }
+
+    fun activeStagesBetween(from: StageId, to: StageId): List<StageId> {
+        val fromIndex = activeStageIndex(from)
+        val toIndex = activeStageIndex(to)
+        return if (fromIndex <= toIndex) {
+            activeStages.subList(fromIndex, toIndex + 1)
+        } else {
+            activeStages.subList(toIndex, fromIndex + 1)
+        }
+    }
+
+    fun participatesInGate(stageId: StageId): Boolean {
+        return stageId.requiresArtifact() && isActive(stageId)
+    }
+
+    fun nextActiveStage(current: StageId): StageId? {
+        return orderedStages
+            .dropWhile { it != current }
+            .drop(1)
+            .firstOrNull { isActive(it) }
+    }
+
+    fun previousActiveStage(current: StageId): StageId? {
+        return orderedStages
+            .takeWhile { it != current }
+            .lastOrNull { isActive(it) }
+    }
+
+    fun resolveCurrentStage(preferred: StageId): StageId {
+        if (isActive(preferred)) {
+            return preferred
+        }
+        val preferredIndex = StageId.entries.indexOf(preferred)
+        return activeStages.firstOrNull { StageId.entries.indexOf(it) > preferredIndex }
+            ?: activeStages.lastOrNull { StageId.entries.indexOf(it) < preferredIndex }
+            ?: firstActiveStage
+    }
+
+    fun initialStageStates(enteredAt: String): Map<StageId, StageState> {
+        val states = linkedMapOf<StageId, StageState>()
+        StageId.entries.forEach { stageId ->
+            val active = isActive(stageId)
+            states[stageId] = if (stageId == firstActiveStage) {
+                StageState(
+                    active = true,
+                    status = StageProgress.IN_PROGRESS,
+                    enteredAt = enteredAt,
+                    completedAt = null,
+                )
+            } else {
+                StageState(
+                    active = active,
+                    status = StageProgress.NOT_STARTED,
+                    enteredAt = null,
+                    completedAt = null,
+                )
+            }
+        }
+        return states
     }
 }
 
@@ -176,6 +320,87 @@ data class GateResult(
     }
 }
 
+enum class StageTransitionType {
+    ADVANCE,
+    JUMP,
+    ROLLBACK,
+}
+
+data class StageTransitionRequest(
+    val workflowId: String,
+    val transitionType: StageTransitionType,
+    val fromStage: StageId,
+    val targetStage: StageId,
+    val evaluatedStages: List<StageId>,
+    val stagePlan: WorkflowStagePlan,
+    val workflow: SpecWorkflow,
+)
+
+fun interface SpecStageGateEvaluator {
+    fun evaluate(request: StageTransitionRequest): GateResult
+}
+
+data class StageTransitionResult(
+    val workflow: SpecWorkflow,
+    val transitionType: StageTransitionType,
+    val fromStage: StageId,
+    val targetStage: StageId,
+    val gateResult: GateResult,
+    val warningConfirmed: Boolean,
+    val beforeSnapshotId: String? = null,
+    val afterSnapshotId: String? = null,
+)
+
+enum class TemplateSwitchArtifactStrategy {
+    REUSE_EXISTING,
+    GENERATE_SKELETON,
+    BLOCK_SWITCH,
+}
+
+data class TemplateSwitchArtifactImpact(
+    val stageId: StageId,
+    val fileName: String,
+    val exists: Boolean,
+    val strategy: TemplateSwitchArtifactStrategy,
+)
+
+data class TemplateSwitchPreview(
+    val previewId: String,
+    val workflowId: String,
+    val fromTemplate: WorkflowTemplate,
+    val toTemplate: WorkflowTemplate,
+    val currentStage: StageId,
+    val resultingStage: StageId,
+    val addedActiveStages: List<StageId>,
+    val deactivatedStages: List<StageId>,
+    val gateAddedStages: List<StageId>,
+    val gateRemovedStages: List<StageId>,
+    val artifactImpacts: List<TemplateSwitchArtifactImpact>,
+) {
+    val currentStageChanged: Boolean
+        get() = currentStage != resultingStage
+
+    val missingRequiredArtifacts: List<TemplateSwitchArtifactImpact>
+        get() = artifactImpacts.filterNot { it.exists }
+}
+
+data class TemplateSwitchApplyResult(
+    val switchId: String,
+    val previewId: String,
+    val workflow: SpecWorkflow,
+    val generatedArtifacts: List<String>,
+    val beforeSnapshotId: String? = null,
+    val afterSnapshotId: String? = null,
+)
+
+data class TemplateSwitchRollbackResult(
+    val switchId: String,
+    val workflow: SpecWorkflow,
+    val restoredFromSnapshotId: String,
+    val beforeSnapshotId: String? = null,
+    val afterSnapshotId: String? = null,
+)
+
 enum class TaskPriority {
     P0,
     P1,
@@ -229,6 +454,21 @@ sealed class WorkflowDomainError(message: String) : IllegalStateException(messag
 class InvalidStageTransitionError(from: StageId, to: StageId) :
     WorkflowDomainError("Invalid stage transition: $from -> $to")
 
+class InactiveWorkflowStageError(stageId: StageId) :
+    WorkflowDomainError("Stage $stageId is not active for the current workflow")
+
+class StageTransitionPolicyError(message: String) :
+    WorkflowDomainError(message)
+
+class StageWarningConfirmationRequiredError(from: StageId, to: StageId) :
+    WorkflowDomainError("Stage transition $from -> $to requires explicit warning confirmation")
+
+class StageTransitionBlockedByGateError(
+    from: StageId,
+    to: StageId,
+    val gateResult: GateResult,
+) : WorkflowDomainError("Stage transition $from -> $to blocked by gate status ${gateResult.status}")
+
 class InvalidTaskStateTransitionError(taskId: String, from: TaskStatus, to: TaskStatus) :
     WorkflowDomainError("Invalid task state transition for $taskId: $from -> $to")
 
@@ -237,3 +477,12 @@ class DuplicateTaskIdError(taskId: String) :
 
 class MissingTaskDependencyError(taskId: String, missingDependencyId: String) :
     WorkflowDomainError("Task $taskId depends on missing task id: $missingDependencyId")
+
+class MissingTemplateSwitchPreviewError(previewId: String) :
+    WorkflowDomainError("Template switch preview not found: $previewId")
+
+class StaleTemplateSwitchPreviewError(previewId: String, workflowId: String) :
+    WorkflowDomainError("Template switch preview $previewId is stale for workflow $workflowId")
+
+class MissingTemplateSwitchHistoryError(workflowId: String, switchId: String) :
+    WorkflowDomainError("Template switch $switchId not found for workflow $workflowId")

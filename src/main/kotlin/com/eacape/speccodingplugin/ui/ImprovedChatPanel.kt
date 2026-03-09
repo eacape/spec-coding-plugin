@@ -1099,6 +1099,7 @@ class ImprovedChatPanel(
             val pendingDelta = StringBuilder()
             val pendingEvents = mutableListOf<ChatStreamEvent>()
             val autoStopIssued = AtomicBoolean(false)
+            val uiFlushScheduled = AtomicBoolean(false)
             var assistantFinishedAtMillis: Long? = null
             var pendingChunks = 0
             var lastFlushAtNanos = System.nanoTime()
@@ -1109,14 +1110,13 @@ class ImprovedChatPanel(
                 val shouldFlush = force ||
                     dueByTime ||
                     pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
-                    pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
-                    pendingDelta.contains('\n') ||
-                    pendingEvents.isNotEmpty()
+                    pendingDelta.length >= STREAM_BATCH_CHAR_COUNT
                 if (!shouldFlush) return
                 if (pendingDelta.isEmpty() && pendingEvents.isEmpty()) {
                     pendingChunks = 0
                     return
                 }
+                if (!force && uiFlushScheduled.get()) return
 
                 val delta = pendingDelta.toString()
                 val events = pendingEvents.toList()
@@ -1124,8 +1124,17 @@ class ImprovedChatPanel(
                 pendingEvents.clear()
                 pendingChunks = 0
                 lastFlushAtNanos = now
+                if (!uiFlushScheduled.compareAndSet(false, true)) {
+                    pendingDelta.insert(0, delta)
+                    if (events.isNotEmpty()) {
+                        pendingEvents.addAll(0, events)
+                    }
+                    pendingChunks += 1
+                    return
+                }
 
                 ApplicationManager.getApplication().invokeLater {
+                    uiFlushScheduled.set(false)
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
@@ -5306,6 +5315,7 @@ class ImprovedChatPanel(
             val pendingDelta = StringBuilder()
             val pendingEvents = mutableListOf<ChatStreamEvent>()
             val autoStopIssued = AtomicBoolean(false)
+            val uiFlushScheduled = AtomicBoolean(false)
             var assistantFinishedAtMillis: Long? = null
             var pendingChunks = 0
             var lastFlushAtNanos = System.nanoTime()
@@ -5316,14 +5326,13 @@ class ImprovedChatPanel(
                 val shouldFlush = force ||
                     dueByTime ||
                     pendingChunks >= STREAM_BATCH_CHUNK_COUNT ||
-                    pendingDelta.length >= STREAM_BATCH_CHAR_COUNT ||
-                    pendingDelta.contains('\n') ||
-                    pendingEvents.isNotEmpty()
+                    pendingDelta.length >= STREAM_BATCH_CHAR_COUNT
                 if (!shouldFlush) return
                 if (pendingDelta.isEmpty() && pendingEvents.isEmpty()) {
                     pendingChunks = 0
                     return
                 }
+                if (!force && uiFlushScheduled.get()) return
 
                 val delta = pendingDelta.toString()
                 val events = pendingEvents.toList()
@@ -5331,8 +5340,17 @@ class ImprovedChatPanel(
                 pendingEvents.clear()
                 pendingChunks = 0
                 lastFlushAtNanos = now
+                if (!uiFlushScheduled.compareAndSet(false, true)) {
+                    pendingDelta.insert(0, delta)
+                    if (events.isNotEmpty()) {
+                        pendingEvents.addAll(0, events)
+                    }
+                    pendingChunks += 1
+                    return
+                }
 
                 ApplicationManager.getApplication().invokeLater {
+                    uiFlushScheduled.set(false)
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
