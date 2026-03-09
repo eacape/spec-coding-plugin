@@ -85,7 +85,16 @@ class SpecEngineWorkflowMetadataTest {
 
                 SpecPhase.IMPLEMENT -> """
                     ## 任务列表
-                    - [ ] Task 1: 完成实现
+
+                    ### T-001: 完成实现
+                    ```spec-task
+                    status: PENDING
+                    priority: P0
+                    dependsOn: []
+                    relatedFiles: []
+                    verificationResult: null
+                    ```
+                    - [ ] 编写实现代码
 
                     ## 实现步骤
                     1. 编写实现代码

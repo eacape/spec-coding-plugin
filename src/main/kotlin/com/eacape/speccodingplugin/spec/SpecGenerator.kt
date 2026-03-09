@@ -271,8 +271,11 @@ class SpecGenerator(
             appendLine("4. 估算任务工时")
             appendLine("5. 定义任务依赖关系")
             appendLine("6. 包含测试计划")
-            appendLine("7. 使用 Markdown Checkbox 格式")
-            appendLine("8. 必须包含二级标题：## 任务列表 与 ## 实现步骤")
+            appendLine("7. 每个任务必须使用标题 `### T-001: 标题`，并在下一行紧跟 `spec-task` YAML 代码块")
+            appendLine("8. `spec-task` 必须包含固定字段：status、priority、dependsOn、relatedFiles、verificationResult")
+            appendLine("9. 初始任务状态使用 `PENDING`，依赖/关联文件默认 `[]`，verificationResult 默认 `null`")
+            appendLine("10. 在 `spec-task` 代码块后使用 Markdown Checkbox 描述该任务的执行子项")
+            appendLine("11. 必须包含二级标题：## 任务列表 与 ## 实现步骤")
 
             if (request.options.includeExamples) {
                 appendLine()
@@ -897,29 +900,46 @@ class SpecGenerator(
 
             ## 任务列表
 
-            ### Phase 1: 基础功能（P0）
+            ### T-001: 创建 User 数据模型
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 定义实体字段与约束
+            - [ ] 补充序列化与持久化测试
 
-            - [ ] Task 1: 创建 User 数据模型（2h）
-            - [ ] Task 2: 实现用户注册 API（4h）
-            - [ ] Task 3: 实现用户登录 API（4h）
-            - [ ] Task 4: 实现 JWT Token 生成（2h）
+            ### T-002: 实现用户注册 API
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn:
+              - T-001
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 定义请求/响应模型
+            - [ ] 接入服务层并补充接口测试
 
-            ### Phase 2: 前端集成（P1）
-
-            - [ ] Task 5: 创建登录页面（4h）
-            - [ ] Task 6: 集成登录 API（2h）
-
-            ## 任务依赖
-
-            - Task 2 依赖 Task 1
-            - Task 3 依赖 Task 1, Task 4
-            - Task 6 依赖 Task 3, Task 5
+            ### T-003: 集成登录页面
+            ```spec-task
+            status: PENDING
+            priority: P1
+            dependsOn:
+              - T-002
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 创建表单 UI
+            - [ ] 接入登录 API 并补充交互验证
 
             ## 测试计划
 
-            - [ ] 单元测试：User 模型测试
-            - [ ] 集成测试：登录 API 测试
-            - [ ] E2E 测试：完整登录流程测试
+            - [ ] 单元测试：User 模型与服务校验
+            - [ ] 集成测试：注册/登录 API 链路
+            - [ ] E2E 测试：完整登录流程
         """.trimIndent()
     }
 
@@ -959,9 +979,37 @@ class SpecGenerator(
         private val IMPLEMENT_SKELETON = """
             ## 任务列表
             
-            - [ ] Task 1: 明确本阶段交付范围与接口边界
-            - [ ] Task 2: 完成核心功能实现并补充对应测试
-            - [ ] Task 3: 执行回归验证并更新文档
+            ### T-001: 明确本阶段交付范围与接口边界
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 明确需求范围、接口边界与关键依赖
+
+            ### T-002: 完成核心功能实现并补充对应测试
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn:
+              - T-001
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 实现核心逻辑并补充单元/集成测试
+
+            ### T-003: 执行回归验证并更新文档
+            ```spec-task
+            status: PENDING
+            priority: P1
+            dependsOn:
+              - T-002
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 运行回归验证并同步文档与状态
             
             ## 实现步骤
             

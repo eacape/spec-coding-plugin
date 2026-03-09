@@ -68,9 +68,38 @@ class SpecEngineWorkflowTest {
 
                 SpecPhase.IMPLEMENT -> """
                     ## 任务列表
-                    - [ ] Task 1: 实现数据模型（1h）
-                    - [ ] Task 2: 实现服务层（2h）
-                    - [ ] Task 3: 实现 UI 交互（2h）
+
+                    ### T-001: 实现数据模型
+                    ```spec-task
+                    status: PENDING
+                    priority: P0
+                    dependsOn: []
+                    relatedFiles: []
+                    verificationResult: null
+                    ```
+                    - [ ] 定义领域模型与持久化结构
+
+                    ### T-002: 实现服务层
+                    ```spec-task
+                    status: PENDING
+                    priority: P0
+                    dependsOn:
+                      - T-001
+                    relatedFiles: []
+                    verificationResult: null
+                    ```
+                    - [ ] 接入业务流程与测试
+
+                    ### T-003: 实现 UI 交互
+                    ```spec-task
+                    status: PENDING
+                    priority: P1
+                    dependsOn:
+                      - T-002
+                    relatedFiles: []
+                    verificationResult: null
+                    ```
+                    - [ ] 完成 UI 联调
 
                     ## 实现步骤
                     1. 先建模

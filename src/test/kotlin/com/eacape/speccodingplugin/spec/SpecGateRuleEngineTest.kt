@@ -190,6 +190,136 @@ class SpecGateRuleEngineTest {
         assertTrue(result.ruleResults.all { it.violations.isEmpty() })
     }
 
+    @Test
+    fun `evaluate should report task syntax violations for malformed headings`() {
+        val workflowId = "spec-test-task-syntax"
+        val markdown = """
+            ## 任务列表
+
+            ### Task 1
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+        val engine = SpecGateRuleEngine(
+            artifactService,
+            listOf(TasksSyntaxRule()),
+        )
+
+        val result = engine.evaluate(
+            request = tasksStageRequest(workflowId, markdown),
+            projectConfig = configService.load(),
+        )
+
+        assertEquals(GateStatus.ERROR, result.status)
+        val syntaxResult = result.ruleResults.single()
+        assertEquals("tasks-syntax", syntaxResult.ruleId)
+        assertEquals(1, syntaxResult.violations.size)
+        assertEquals(3, syntaxResult.violations.single().line)
+        assertTrue(syntaxResult.violations.single().message.contains("### T-001: Title"))
+    }
+
+    @Test
+    fun `evaluate should report duplicate task ids and missing dependencies`() {
+        val workflowId = "spec-test-task-duplicates"
+        val markdown = """
+            ## 任务列表
+
+            ### T-001: 先完成基础建模
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 定义模型
+
+            ### T-001: 再接接口层
+            ```spec-task
+            status: PENDING
+            priority: P1
+            dependsOn:
+              - T-999
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 接入服务
+        """.trimIndent()
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+        val engine = SpecGateRuleEngine(
+            artifactService,
+            listOf(TasksSyntaxRule(), TaskUniqueIdRule(), TaskDependencyExistsRule()),
+        )
+
+        val result = engine.evaluate(
+            request = tasksStageRequest(workflowId, markdown),
+            projectConfig = configService.load(),
+        )
+
+        assertEquals(GateStatus.ERROR, result.status)
+        val duplicateResult = result.ruleResults.first { it.ruleId == "tasks-id-unique" }
+        assertEquals(1, duplicateResult.violations.size)
+        assertEquals(13, duplicateResult.violations.single().line)
+        assertTrue(duplicateResult.violations.single().message.contains("duplicated"))
+
+        val dependencyResult = result.ruleResults.first { it.ruleId == "tasks-dependency-exists" }
+        assertEquals(1, dependencyResult.violations.size)
+        assertEquals(17, dependencyResult.violations.single().line)
+        assertTrue(dependencyResult.violations.single().message.contains("T-999"))
+    }
+
+    @Test
+    fun `evaluate should report task state consistency when dependency is unfinished`() {
+        val workflowId = "spec-test-task-state"
+        val markdown = """
+            ## 任务列表
+
+            ### T-001: 完成前置设计
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 完成设计
+
+            ### T-002: 开始实现
+            ```spec-task
+            status: IN_PROGRESS
+            priority: P0
+            dependsOn:
+              - T-001
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 编写实现
+        """.trimIndent()
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+        val engine = SpecGateRuleEngine(
+            artifactService,
+            listOf(TasksSyntaxRule(), TaskDependencyExistsRule(), TaskStateConsistencyRule()),
+        )
+
+        val result = engine.evaluate(
+            request = tasksStageRequest(workflowId, markdown),
+            projectConfig = configService.load(),
+        )
+
+        assertEquals(GateStatus.ERROR, result.status)
+        val stateResult = result.ruleResults.first { it.ruleId == "tasks-state-consistency" }
+        assertEquals(1, stateResult.violations.size)
+        assertEquals(15, stateResult.violations.single().line)
+        assertTrue(stateResult.violations.single().message.contains("IN_PROGRESS"))
+        assertTrue(stateResult.violations.single().message.contains("PENDING"))
+    }
+
     private fun stageRequest(workflowId: String = "spec-test-rule-framework"): StageTransitionRequest {
         val workflow = SpecWorkflow(
             id = workflowId,
@@ -219,6 +349,38 @@ class SpecGateRuleEngineTest {
             evaluatedStages = listOf(StageId.REQUIREMENTS),
             stagePlan = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
                 .buildStagePlan(StageActivationOptions.of(verifyEnabled = false)),
+            workflow = workflow,
+        )
+    }
+
+    private fun tasksStageRequest(workflowId: String, markdown: String): StageTransitionRequest {
+        val stagePlan = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
+            .buildStagePlan(StageActivationOptions.of(verifyEnabled = false))
+        val workflow = SpecWorkflow(
+            id = workflowId,
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to SpecDocument(
+                    id = "tasks-doc",
+                    phase = SpecPhase.IMPLEMENT,
+                    content = markdown,
+                    metadata = SpecMetadata(
+                        title = "Tasks",
+                        description = "task rule test",
+                    ),
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            stageStates = stagePlan.initialStageStates("2026-03-09T00:00:00Z"),
+            currentStage = StageId.TASKS,
+        )
+        return StageTransitionRequest(
+            workflowId = workflow.id,
+            transitionType = StageTransitionType.ADVANCE,
+            fromStage = StageId.TASKS,
+            targetStage = StageId.IMPLEMENT,
+            evaluatedStages = listOf(StageId.TASKS),
+            stagePlan = stagePlan,
             workflow = workflow,
         )
     }

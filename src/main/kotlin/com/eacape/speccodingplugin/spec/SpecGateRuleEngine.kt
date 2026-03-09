@@ -17,10 +17,17 @@ data class RuleArtifactContext(
     fun hasNamingMismatch(): Boolean = caseMismatch || aliasPaths.isNotEmpty()
 }
 
+data class RuleTasksContext(
+    val fileName: String,
+    val path: Path?,
+    val parsedDocument: SpecTaskMarkdownParser.ParsedTaskDocument,
+)
+
 data class RuleContext(
     val request: StageTransitionRequest,
     val projectConfig: SpecProjectConfig,
     val artifacts: Map<StageId, RuleArtifactContext>,
+    val tasksDocument: RuleTasksContext?,
 ) {
     val workflow: SpecWorkflow
         get() = request.workflow
@@ -66,15 +73,40 @@ class SpecGateRuleEngine(
         request: StageTransitionRequest,
         projectConfig: SpecProjectConfig,
     ): GateResult {
+        val artifacts = buildArtifacts(request)
         val context = RuleContext(
             request = request,
             projectConfig = projectConfig,
-            artifacts = buildArtifacts(request),
+            artifacts = artifacts,
+            tasksDocument = buildTasksContext(request, artifacts),
         )
         val evaluations = rules
             .sortedBy(Rule::id)
             .map { rule -> evaluateRule(rule, context) }
         return GateResult.fromRuleResults(evaluations)
+    }
+
+    private fun buildTasksContext(
+        request: StageTransitionRequest,
+        artifacts: Map<StageId, RuleArtifactContext>,
+    ): RuleTasksContext? {
+        if (!request.evaluatedStages.contains(StageId.TASKS) || !request.stagePlan.participatesInGate(StageId.TASKS)) {
+            return null
+        }
+        val taskArtifact = artifacts[StageId.TASKS] ?: return null
+        val contentPath = sequenceOf(taskArtifact.actualPath, taskArtifact.path)
+            .filterNotNull()
+            .firstOrNull(Files::exists)
+        val content = when {
+            contentPath != null -> Files.readString(contentPath)
+            taskArtifact.document != null -> taskArtifact.document.content
+            else -> return null
+        }
+        return RuleTasksContext(
+            fileName = contentPath?.fileName?.toString() ?: taskArtifact.fileName ?: StageId.TASKS.artifactFileName.orEmpty(),
+            path = contentPath,
+            parsedDocument = SpecTaskMarkdownParser.parse(content),
+        )
     }
 
     private fun buildArtifacts(request: StageTransitionRequest): Map<StageId, RuleArtifactContext> {
@@ -277,6 +309,154 @@ class DocumentValidationRule : Rule {
             }
         }
         return violations
+    }
+}
+
+class TasksSyntaxRule : Rule {
+    override val id: String = "tasks-syntax"
+    override val description: String = "Require tasks.md to use canonical task headings and spec-task YAML blocks."
+    override val defaultSeverity: GateStatus = GateStatus.ERROR
+    override val remediationHint: String = "Fix tasks.md headings and spec-task YAML blocks before continuing."
+
+    override fun appliesTo(stage: StageId): Boolean = stage == StageId.TASKS
+
+    override fun evaluate(ctx: RuleContext): List<Violation> {
+        if (!ctx.request.stagePlan.participatesInGate(StageId.TASKS)) {
+            return emptyList()
+        }
+        val tasksDocument = ctx.tasksDocument ?: return emptyList()
+        return tasksDocument.parsedDocument.issues.map { issue ->
+            Violation(
+                ruleId = id,
+                severity = defaultSeverity,
+                fileName = tasksDocument.fileName,
+                line = issue.line,
+                message = issue.message,
+                fixHint = issue.fixHint,
+            )
+        }
+    }
+}
+
+class TaskUniqueIdRule : Rule {
+    override val id: String = "tasks-id-unique"
+    override val description: String = "Require every structured task id in tasks.md to be unique."
+    override val defaultSeverity: GateStatus = GateStatus.ERROR
+    override val remediationHint: String = "Rename duplicate task ids so each task has a unique T-XXX id."
+
+    override fun appliesTo(stage: StageId): Boolean = stage == StageId.TASKS
+
+    override fun evaluate(ctx: RuleContext): List<Violation> {
+        if (!ctx.request.stagePlan.participatesInGate(StageId.TASKS)) {
+            return emptyList()
+        }
+        val tasksDocument = ctx.tasksDocument ?: return emptyList()
+        return tasksDocument.parsedDocument.tasks
+            .groupBy { it.id }
+            .filterValues { it.size > 1 }
+            .toSortedMap()
+            .flatMap { (taskId, duplicates) ->
+                val firstHeadingLine = duplicates.first().headingLine
+                duplicates.drop(1).map { duplicate ->
+                    Violation(
+                        ruleId = id,
+                        severity = defaultSeverity,
+                        fileName = tasksDocument.fileName,
+                        line = duplicate.headingLine,
+                        message = "Task id $taskId is duplicated; first declared at line $firstHeadingLine.",
+                        fixHint = "Rename this task heading to the next available T-XXX id.",
+                    )
+                }
+            }
+    }
+}
+
+class TaskDependencyExistsRule : Rule {
+    override val id: String = "tasks-dependency-exists"
+    override val description: String = "Require task dependencies to reference existing task ids in the same workflow."
+    override val defaultSeverity: GateStatus = GateStatus.ERROR
+    override val remediationHint: String = "Fix dependsOn so it only references existing task ids."
+
+    override fun appliesTo(stage: StageId): Boolean = stage == StageId.TASKS
+
+    override fun evaluate(ctx: RuleContext): List<Violation> {
+        if (!ctx.request.stagePlan.participatesInGate(StageId.TASKS)) {
+            return emptyList()
+        }
+        val tasksDocument = ctx.tasksDocument ?: return emptyList()
+        val taskIds = tasksDocument.parsedDocument.tasks.map { it.id }.toSet()
+        return tasksDocument.parsedDocument.tasks.flatMap { task ->
+            task.dependsOn.distinct().sorted().mapNotNull { dependencyId ->
+                when {
+                    dependencyId == task.id -> Violation(
+                        ruleId = id,
+                        severity = defaultSeverity,
+                        fileName = tasksDocument.fileName,
+                        line = task.lineForKey("dependsOn"),
+                        message = "Task ${task.id} cannot depend on itself.",
+                        fixHint = "Remove ${task.id} from dependsOn.",
+                    )
+
+                    dependencyId !in taskIds -> Violation(
+                        ruleId = id,
+                        severity = defaultSeverity,
+                        fileName = tasksDocument.fileName,
+                        line = task.lineForKey("dependsOn"),
+                        message = "Task ${task.id} depends on missing task id $dependencyId.",
+                        fixHint = "Create $dependencyId or remove it from dependsOn.",
+                    )
+
+                    else -> null
+                }
+            }
+        }
+    }
+}
+
+class TaskStateConsistencyRule : Rule {
+    override val id: String = "tasks-state-consistency"
+    override val description: String = "Require task status progression to remain consistent with dependency completion."
+    override val defaultSeverity: GateStatus = GateStatus.ERROR
+    override val remediationHint: String = "Complete dependencies before starting, blocking, or completing dependent tasks."
+
+    override fun appliesTo(stage: StageId): Boolean = stage == StageId.TASKS
+
+    override fun evaluate(ctx: RuleContext): List<Violation> {
+        if (!ctx.request.stagePlan.participatesInGate(StageId.TASKS)) {
+            return emptyList()
+        }
+        val tasksDocument = ctx.tasksDocument ?: return emptyList()
+        val tasksById = tasksDocument.parsedDocument.tasks.associateBy { it.id }
+        return tasksDocument.parsedDocument.tasks.flatMap { task ->
+            val currentStatus = task.status ?: return@flatMap emptyList()
+            if (currentStatus !in ENFORCED_DEPENDENCY_STATUSES) {
+                return@flatMap emptyList()
+            }
+            task.dependsOn.distinct().sorted().mapNotNull { dependencyId ->
+                val dependency = tasksById[dependencyId] ?: return@mapNotNull null
+                val dependencyStatus = dependency.status ?: return@mapNotNull null
+                if (dependencyStatus == TaskStatus.COMPLETED) {
+                    null
+                } else {
+                    Violation(
+                        ruleId = id,
+                        severity = defaultSeverity,
+                        fileName = tasksDocument.fileName,
+                        line = task.lineForKey("status"),
+                        message = "Task ${task.id} is $currentStatus but dependency $dependencyId is still $dependencyStatus.",
+                        fixHint = "Complete $dependencyId before moving ${task.id} past PENDING.",
+                    )
+                }
+            }
+        }
+    }
+
+    private companion object {
+        private val ENFORCED_DEPENDENCY_STATUSES = setOf(
+            TaskStatus.IN_PROGRESS,
+            TaskStatus.BLOCKED,
+            TaskStatus.COMPLETED,
+        )
     }
 }
 

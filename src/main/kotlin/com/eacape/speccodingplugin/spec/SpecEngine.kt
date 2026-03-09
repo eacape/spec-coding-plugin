@@ -34,6 +34,10 @@ class SpecEngine(private val project: Project) {
             rules = listOf(
                 FixedArtifactNamingRule(),
                 RequiredArtifactRule(),
+                TasksSyntaxRule(),
+                TaskUniqueIdRule(),
+                TaskDependencyExistsRule(),
+                TaskStateConsistencyRule(),
                 DocumentValidationRule(),
             ),
         )

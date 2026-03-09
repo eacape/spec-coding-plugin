@@ -212,6 +212,54 @@ class SpecEngineStageTransitionTest {
         assertTrue(requiredRule.violations.isEmpty())
     }
 
+    @Test
+    fun `advanceWorkflow should block when tasks document violates structured task syntax`() {
+        val engine = SpecEngine(project, storage, generationHandler = ::generateValidDocument)
+        val created = engine.createWorkflow(
+            title = "Tasks Rule Workflow",
+            description = "tasks syntax",
+        ).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(created.id, "generate requirements").collect()
+        }
+        engine.advanceWorkflow(created.id).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(created.id, "generate design").collect()
+        }
+        engine.advanceWorkflow(created.id).getOrThrow()
+
+        val workflowDir = tempDir.resolve(".spec-coding").resolve("specs").resolve(created.id)
+        Files.writeString(
+            workflowDir.resolve("tasks.md"),
+            """
+                ## 任务列表
+
+                ### T-001 Broken heading
+                ```spec-task
+                status: PENDING
+                priority: P0
+                dependsOn: []
+                relatedFiles: []
+                verificationResult: null
+                ```
+            """.trimIndent() + "\n",
+            StandardCharsets.UTF_8,
+        )
+
+        val blocked = engine.advanceWorkflow(created.id)
+
+        assertTrue(blocked.isFailure)
+        val error = blocked.exceptionOrNull()
+        assertTrue(error is StageTransitionBlockedByGateError)
+        val gateResult = (error as StageTransitionBlockedByGateError).gateResult
+        assertEquals(GateStatus.ERROR, gateResult.status)
+        val syntaxRule = gateResult.ruleResults.first { it.ruleId == "tasks-syntax" }
+        assertEquals(1, syntaxRule.violations.size)
+        assertTrue(syntaxRule.violations.single().message.contains("### T-001: Title"))
+    }
+
     private fun loadAuditEvents(workflowId: String): List<SpecAuditEvent> {
         val auditPath = tempDir
             .resolve(".spec-coding")
@@ -275,7 +323,16 @@ class SpecEngineStageTransitionTest {
 
             SpecPhase.IMPLEMENT -> """
                 ## 任务列表
-                - [ ] Task 1: 更新状态机
+
+                ### T-001: 更新状态机
+                ```spec-task
+                status: PENDING
+                priority: P0
+                dependsOn: []
+                relatedFiles: []
+                verificationResult: null
+                ```
+                - [ ] 编写状态机实现
 
                 ## 实现步骤
                 1. 编写状态机

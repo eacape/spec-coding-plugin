@@ -158,6 +158,13 @@ object SpecArchitectureContract {
             rationale = "Task 19 requires active-stage artifact presence checks and precise rename guidance when users create task.md/verify.md or case-mismatched files.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "tasks-gate-rules",
+            capability = "structured tasks.md parsing plus task syntax/dependency/state gate rules",
+            selection = "SpecTaskMarkdownParser + TasksSyntaxRule/TaskUniqueIdRule/TaskDependencyExistsRule/TaskStateConsistencyRule",
+            rationale = "Task 20 requires tasks.md to be machine-validated for spec-task syntax, unique ids, dependency integrity, and dependency-aware status consistency.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(
@@ -239,6 +246,11 @@ object SpecArchitectureContract {
         ),
         SourceRule(
             fileName = "SpecStorage.kt",
+            layer = Layer.INFRASTRUCTURE,
+            blockedImportPrefixes = infrastructureBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecTaskMarkdownParser.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
         ),
