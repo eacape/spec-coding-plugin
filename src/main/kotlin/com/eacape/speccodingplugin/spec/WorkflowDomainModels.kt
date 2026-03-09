@@ -301,6 +301,7 @@ data class Violation(
     val line: Int,
     val message: String,
     val fixHint: String? = null,
+    val originalSeverity: GateStatus? = null,
 )
 
 data class GateResult(

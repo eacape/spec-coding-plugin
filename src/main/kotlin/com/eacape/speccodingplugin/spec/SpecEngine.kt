@@ -38,6 +38,7 @@ class SpecEngine(private val project: Project) {
                 TaskUniqueIdRule(),
                 TaskDependencyExistsRule(),
                 TaskStateConsistencyRule(),
+                VerifyConclusionRule(),
                 DocumentValidationRule(),
             ),
         )
@@ -1066,6 +1067,11 @@ class SpecEngine(private val project: Project) {
                 ),
             )
         }
+        recordGateRuleDowngradeAudit(
+            workflow = workflow,
+            targetStage = targetStage,
+            gateResult = gateResult,
+        )
         val warningConfirmed = resolveWarningDecision(
             gatePolicy = gatePolicy,
             gateResult = gateResult,
@@ -1274,6 +1280,52 @@ class SpecEngine(private val project: Project) {
             details["evaluatedStages"] = evaluatedStages.joinToString(",") { stage -> stage.name }
         }
         return details
+    }
+
+    private fun recordGateRuleDowngradeAudit(
+        workflow: SpecWorkflow,
+        targetStage: StageId,
+        gateResult: GateResult,
+    ) {
+        val downgradedViolations = gateResult.ruleResults
+            .flatMap { evaluation ->
+                evaluation.violations
+                    .filter { violation ->
+                        val originalSeverity = violation.originalSeverity ?: return@filter false
+                        violation.severity.ordinal < originalSeverity.ordinal
+                    }
+                    .map { violation -> evaluation.ruleId to violation }
+            }
+        if (downgradedViolations.isEmpty()) {
+            return
+        }
+
+        val details = linkedMapOf(
+            "fromStage" to workflow.currentStage.name,
+            "toStage" to targetStage.name,
+            "gateStatus" to gateResult.status.name,
+            "downgradeCount" to downgradedViolations.size.toString(),
+            "downgradedRules" to downgradedViolations
+                .map { (ruleId, violation) ->
+                    val originalSeverity = violation.originalSeverity ?: violation.severity
+                    "$ruleId:${originalSeverity.name}->${violation.severity.name}"
+                }
+                .distinct()
+                .sorted()
+                .joinToString(","),
+            "downgradedViolations" to downgradedViolations
+                .map { (ruleId, violation) ->
+                    val originalSeverity = violation.originalSeverity ?: violation.severity
+                    "$ruleId@${violation.fileName}:${violation.line}:${originalSeverity.name}->${violation.severity.name}"
+                }
+                .sorted()
+                .joinToString(";"),
+        )
+        storageDelegate.appendAuditEvent(
+            workflowId = workflow.id,
+            eventType = SpecAuditEventType.GATE_RULE_DOWNGRADED,
+            details = details,
+        ).getOrThrow()
     }
 
     private fun buildTemplateSwitchAuditDetails(

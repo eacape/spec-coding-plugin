@@ -260,6 +260,58 @@ class SpecEngineStageTransitionTest {
         assertTrue(syntaxRule.violations.single().message.contains("### T-001: Title"))
     }
 
+    @Test
+    fun `advanceWorkflow should audit downgraded verify conclusion before warning confirmation`() {
+        writeProjectConfig(
+            """
+                schemaVersion: 1
+                rules:
+                  verify-conclusion:
+                    severity: WARNING
+            """.trimIndent(),
+        )
+        val engine = SpecEngine(project, storage, generationHandler = ::generateValidDocument)
+        val workflowId = "spec-test-verify-downgrade-audit"
+        persistVerifyWorkflow(
+            workflowId = workflowId,
+            tasksMarkdown = """
+                ## 任务列表
+
+                ### T-001: Verify downgrade
+                ```spec-task
+                status: COMPLETED
+                priority: P0
+                dependsOn: []
+                relatedFiles: []
+                verificationResult:
+                  conclusion: FAIL
+                  runId: verify-001
+                  summary: regression suite failed
+                  at: "2026-03-09T12:00:00Z"
+                ```
+            """.trimIndent() + "\n",
+        )
+
+        val blocked = engine.advanceWorkflow(workflowId)
+
+        assertTrue(blocked.isFailure)
+        assertTrue(blocked.exceptionOrNull() is StageWarningConfirmationRequiredError)
+        val downgradeEvent = loadAuditEvents(workflowId)
+            .last { it.eventType == SpecAuditEventType.GATE_RULE_DOWNGRADED }
+        assertEquals("VERIFY", downgradeEvent.details["fromStage"])
+        assertEquals("ARCHIVE", downgradeEvent.details["toStage"])
+        assertEquals("1", downgradeEvent.details["downgradeCount"])
+        assertEquals("verify-conclusion:ERROR->WARNING", downgradeEvent.details["downgradedRules"])
+        assertTrue(downgradeEvent.details.getValue("downgradedViolations").contains("tasks.md"))
+
+        val result = engine.advanceWorkflow(workflowId) { true }.getOrThrow()
+
+        assertEquals(GateStatus.WARNING, result.gateResult.status)
+        val verifyRule = result.gateResult.ruleResults.first { it.ruleId == "verify-conclusion" }
+        assertEquals(GateStatus.WARNING, verifyRule.violations.single().severity)
+        assertEquals(GateStatus.ERROR, verifyRule.violations.single().originalSeverity)
+    }
+
     private fun loadAuditEvents(workflowId: String): List<SpecAuditEvent> {
         val auditPath = tempDir
             .resolve(".spec-coding")
@@ -274,6 +326,37 @@ class SpecEngineStageTransitionTest {
         val configPath = tempDir.resolve(".spec-coding").resolve("config.yaml")
         Files.createDirectories(configPath.parent)
         Files.writeString(configPath, "$raw\n", StandardCharsets.UTF_8)
+    }
+
+    private fun persistVerifyWorkflow(workflowId: String, tasksMarkdown: String) {
+        val stagePlan = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
+            .buildStagePlan(StageActivationOptions.of(verifyEnabled = true))
+        val stageStates = stagePlan.initialStageStates("2026-03-09T00:00:00Z").toMutableMap()
+        stageStates[StageId.REQUIREMENTS] = stageStates.getValue(StageId.REQUIREMENTS).copy(status = StageProgress.DONE)
+        stageStates[StageId.DESIGN] = stageStates.getValue(StageId.DESIGN).copy(status = StageProgress.DONE)
+        stageStates[StageId.TASKS] = stageStates.getValue(StageId.TASKS).copy(status = StageProgress.DONE)
+        stageStates[StageId.IMPLEMENT] = stageStates.getValue(StageId.IMPLEMENT).copy(status = StageProgress.DONE)
+        stageStates[StageId.VERIFY] = stageStates.getValue(StageId.VERIFY).copy(status = StageProgress.IN_PROGRESS)
+        val workflow = SpecWorkflow(
+            id = workflowId,
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = emptyMap(),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Verify Downgrade Workflow",
+            description = "verify conclusion audit",
+            template = WorkflowTemplate.FULL_SPEC,
+            stageStates = stageStates,
+            currentStage = StageId.VERIFY,
+            verifyEnabled = true,
+        )
+        storage.saveWorkflow(workflow).getOrThrow()
+        val workflowDir = tempDir.resolve(".spec-coding").resolve("specs").resolve(workflowId)
+        Files.writeString(workflowDir.resolve("tasks.md"), tasksMarkdown, StandardCharsets.UTF_8)
+        Files.writeString(
+            workflowDir.resolve("verification.md"),
+            "# Verification Document\n\n## Result\n- FAIL\n",
+            StandardCharsets.UTF_8,
+        )
     }
 
     private fun invalidRequirementsDocument(): SpecDocument {

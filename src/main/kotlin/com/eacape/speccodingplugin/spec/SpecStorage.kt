@@ -419,6 +419,35 @@ class SpecStorage(
         }
     }
 
+    fun appendAuditEvent(
+        workflowId: String,
+        eventType: SpecAuditEventType,
+        details: Map<String, String> = emptyMap(),
+    ): Result<SpecAuditEvent> {
+        return runCatching {
+            lockManager.withWorkflowLock(workflowId) {
+                val event = buildAuditEvent(
+                    eventType = eventType,
+                    workflowId = workflowId,
+                    details = details,
+                )
+                lockManager.withAuditLogLock(workflowId) {
+                    val auditLogPath = getAuditLogPath(workflowId)
+                    Files.createDirectories(auditLogPath.parent)
+                    val document = SpecAuditLogCodec.encodeDocument(event)
+                    Files.writeString(
+                        auditLogPath,
+                        document,
+                        StandardCharsets.UTF_8,
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.APPEND,
+                    )
+                }
+                event
+            }
+        }
+    }
+
     /**
      * 列出所有工作流
      */

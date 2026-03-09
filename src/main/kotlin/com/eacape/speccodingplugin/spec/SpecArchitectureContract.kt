@@ -165,6 +165,13 @@ object SpecArchitectureContract {
             rationale = "Task 20 requires tasks.md to be machine-validated for spec-task syntax, unique ids, dependency integrity, and dependency-aware status consistency.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "verify-gate-rules",
+            capability = "VERIFY gate mapping from task verification conclusions with auditable downgrade handling",
+            selection = "VerifyConclusionRule + task verificationResult parsing + SpecEngine downgrade audit event emission",
+            rationale = "Task 21 requires PASS/WARN/FAIL verification conclusions to map into gate outcomes while recording any severity downgrade in audit history.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(

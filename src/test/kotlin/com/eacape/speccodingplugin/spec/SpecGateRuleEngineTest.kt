@@ -320,6 +320,88 @@ class SpecGateRuleEngineTest {
         assertTrue(stateResult.violations.single().message.contains("PENDING"))
     }
 
+    @Test
+    fun `evaluate should map verification conclusions for verify stage`() {
+        val markdown = """
+            ## 任务列表
+
+            ### T-001: Warn path
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult:
+              conclusion: WARN
+              runId: verify-001
+              summary: flaky assertion remains
+              at: "2026-03-09T10:00:00Z"
+            ```
+
+            ### T-002: Fail path
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult:
+              conclusion: FAIL
+              runId: verify-002
+              summary: integration suite failed
+              at: "2026-03-09T10:10:00Z"
+            ```
+        """.trimIndent()
+        val engine = SpecGateRuleEngine(artifactService, listOf(VerifyConclusionRule()))
+
+        val result = engine.evaluate(
+            request = verifyStageRequest(workflowId = "spec-test-verify-conclusion", markdown = markdown),
+            projectConfig = configService.load(),
+        )
+
+        assertEquals(GateStatus.ERROR, result.status)
+        val evaluation = result.ruleResults.single()
+        assertEquals("verify-conclusion", evaluation.ruleId)
+        assertEquals(2, evaluation.violations.size)
+        assertEquals(listOf(GateStatus.WARNING, GateStatus.ERROR), evaluation.violations.map(Violation::severity))
+        assertTrue(evaluation.violations.first().message.contains("T-001"))
+        assertTrue(evaluation.violations.last().message.contains("T-002"))
+    }
+
+    @Test
+    fun `evaluate should keep original severity when verify conclusion is downgraded`() {
+        val markdown = """
+            ## 任务列表
+
+            ### T-010: Downgraded fail
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult:
+              conclusion: FAIL
+              runId: verify-010
+              summary: regression still failing
+              at: "2026-03-09T11:00:00Z"
+            ```
+        """.trimIndent()
+        val engine = SpecGateRuleEngine(artifactService, listOf(VerifyConclusionRule()))
+
+        val result = engine.evaluate(
+            request = verifyStageRequest(workflowId = "spec-test-verify-downgrade", markdown = markdown),
+            projectConfig = configService.load().copy(
+                rules = mapOf(
+                    "verify-conclusion" to SpecRulePolicy(severityOverride = GateStatus.WARNING),
+                ),
+            ),
+        )
+
+        assertEquals(GateStatus.WARNING, result.status)
+        val violation = result.violations.single()
+        assertEquals(GateStatus.WARNING, violation.severity)
+        assertEquals(GateStatus.ERROR, violation.originalSeverity)
+    }
+
     private fun stageRequest(workflowId: String = "spec-test-rule-framework"): StageTransitionRequest {
         val workflow = SpecWorkflow(
             id = workflowId,
@@ -349,6 +431,45 @@ class SpecGateRuleEngineTest {
             evaluatedStages = listOf(StageId.REQUIREMENTS),
             stagePlan = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
                 .buildStagePlan(StageActivationOptions.of(verifyEnabled = false)),
+            workflow = workflow,
+        )
+    }
+
+    private fun verifyStageRequest(workflowId: String, markdown: String): StageTransitionRequest {
+        val stagePlan = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
+            .buildStagePlan(StageActivationOptions.of(verifyEnabled = true))
+        val stageStates = stagePlan.initialStageStates("2026-03-09T00:00:00Z").toMutableMap()
+        stageStates[StageId.REQUIREMENTS] = stageStates.getValue(StageId.REQUIREMENTS).copy(status = StageProgress.DONE)
+        stageStates[StageId.DESIGN] = stageStates.getValue(StageId.DESIGN).copy(status = StageProgress.DONE)
+        stageStates[StageId.TASKS] = stageStates.getValue(StageId.TASKS).copy(status = StageProgress.DONE)
+        stageStates[StageId.IMPLEMENT] = stageStates.getValue(StageId.IMPLEMENT).copy(status = StageProgress.DONE)
+        stageStates[StageId.VERIFY] = stageStates.getValue(StageId.VERIFY).copy(status = StageProgress.IN_PROGRESS)
+        val workflow = SpecWorkflow(
+            id = workflowId,
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to SpecDocument(
+                    id = "verify-tasks-doc",
+                    phase = SpecPhase.IMPLEMENT,
+                    content = markdown,
+                    metadata = SpecMetadata(
+                        title = "Tasks",
+                        description = "verify rule test",
+                    ),
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            stageStates = stageStates,
+            currentStage = StageId.VERIFY,
+            verifyEnabled = true,
+        )
+        return StageTransitionRequest(
+            workflowId = workflow.id,
+            transitionType = StageTransitionType.ADVANCE,
+            fromStage = StageId.VERIFY,
+            targetStage = StageId.ARCHIVE,
+            evaluatedStages = listOf(StageId.VERIFY),
+            stagePlan = stagePlan,
             workflow = workflow,
         )
     }

@@ -90,10 +90,17 @@ class SpecGateRuleEngine(
         request: StageTransitionRequest,
         artifacts: Map<StageId, RuleArtifactContext>,
     ): RuleTasksContext? {
-        if (!request.evaluatedStages.contains(StageId.TASKS) || !request.stagePlan.participatesInGate(StageId.TASKS)) {
-            return null
-        }
-        val taskArtifact = artifacts[StageId.TASKS] ?: return null
+        val taskArtifact = artifacts[StageId.TASKS] ?: RuleArtifactContext(
+            stageId = StageId.TASKS,
+            fileName = StageId.TASKS.artifactFileName,
+            path = artifactService.locateArtifact(request.workflowId, StageId.TASKS),
+            actualPath = null,
+            exists = false,
+            caseMismatch = false,
+            aliasPaths = emptyList(),
+            phase = SpecPhase.IMPLEMENT,
+            document = request.workflow.getDocument(SpecPhase.IMPLEMENT),
+        )
         val contentPath = sequenceOf(taskArtifact.actualPath, taskArtifact.path)
             .filterNotNull()
             .firstOrNull(Files::exists)
@@ -177,10 +184,12 @@ class SpecGateRuleEngine(
 
         val violations = rule.evaluate(ctx)
             .map { violation ->
+                val originalSeverity = violation.originalSeverity ?: violation.severity
                 violation.copy(
                     ruleId = rule.id,
-                    severity = policy?.severityOverride ?: violation.severity,
+                    severity = policy?.severityOverride ?: originalSeverity,
                     fixHint = violation.fixHint ?: rule.remediationHint,
+                    originalSeverity = originalSeverity,
                 )
             }
             .sortedWith(compareBy(Violation::fileName, Violation::line, Violation::ruleId, Violation::message))
@@ -457,6 +466,45 @@ class TaskStateConsistencyRule : Rule {
             TaskStatus.BLOCKED,
             TaskStatus.COMPLETED,
         )
+    }
+}
+
+class VerifyConclusionRule : Rule {
+    override val id: String = "verify-conclusion"
+    override val description: String = "Map task verification conclusions into VERIFY gate outcomes."
+    override val defaultSeverity: GateStatus = GateStatus.ERROR
+    override val remediationHint: String = "Update task verification results or rerun verification before archiving."
+
+    override fun appliesTo(stage: StageId): Boolean = stage == StageId.VERIFY
+
+    override fun evaluate(ctx: RuleContext): List<Violation> {
+        if (!ctx.request.stagePlan.participatesInGate(StageId.VERIFY)) {
+            return emptyList()
+        }
+        val tasksDocument = ctx.tasksDocument ?: return emptyList()
+        return tasksDocument.parsedDocument.tasks.mapNotNull { task ->
+            val verificationResult = task.verificationResult ?: return@mapNotNull null
+            when (verificationResult.conclusion) {
+                VerificationConclusion.PASS -> null
+                VerificationConclusion.WARN -> Violation(
+                    ruleId = id,
+                    severity = GateStatus.WARNING,
+                    fileName = tasksDocument.fileName,
+                    line = task.lineForKey("verificationResult"),
+                    message = "Task ${task.id} verification concluded WARN (${verificationResult.runId}): ${verificationResult.summary}",
+                    fixHint = "Review the warning, update verificationResult when accepted, or rerun verification to reach PASS.",
+                )
+
+                VerificationConclusion.FAIL -> Violation(
+                    ruleId = id,
+                    severity = GateStatus.ERROR,
+                    fileName = tasksDocument.fileName,
+                    line = task.lineForKey("verificationResult"),
+                    message = "Task ${task.id} verification concluded FAIL (${verificationResult.runId}): ${verificationResult.summary}",
+                    fixHint = "Fix the failing checks for ${task.id} and rerun verification before archiving.",
+                )
+            }
+        }
     }
 }
 
