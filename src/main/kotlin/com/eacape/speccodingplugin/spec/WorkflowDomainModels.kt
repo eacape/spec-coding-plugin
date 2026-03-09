@@ -606,6 +606,29 @@ class DuplicateTaskIdError(taskId: String) :
 class MissingTaskDependencyError(taskId: String, missingDependencyId: String) :
     WorkflowDomainError("Task $taskId depends on missing task id: $missingDependencyId")
 
+class TaskSelfDependencyError(taskId: String) :
+    WorkflowDomainError("Task $taskId cannot depend on itself")
+
+class InvalidTaskRelatedFileError(taskId: String, rawPath: String, details: String? = null) :
+    WorkflowDomainError(
+        buildString {
+            append("Task ")
+            append(taskId)
+            append(" has invalid related file path: ")
+            append(rawPath)
+            details
+                ?.takeIf(String::isNotBlank)
+                ?.let { reason ->
+                    append(" (")
+                    append(reason)
+                    append(')')
+                }
+        },
+    )
+
+class RelatedFileOutsideProjectRootError(taskId: String, rawPath: String, projectRoot: String) :
+    WorkflowDomainError("Task $taskId related file escapes project root $projectRoot: $rawPath")
+
 class InvalidTasksArtifactEditError(details: String) :
     WorkflowDomainError("tasks.md cannot be edited safely: $details")
 

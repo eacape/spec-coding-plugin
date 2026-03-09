@@ -411,4 +411,174 @@ class SpecTasksServiceTest {
         assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))
         assertTrue(storage.listAuditEvents(workflowId).getOrThrow().isEmpty())
     }
+
+    @Test
+    fun `addTask should normalize dependsOn ids to sorted distinct canonical values`() {
+        val workflowId = "wf-tasks-add-depends-on"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: First task
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+
+            ### T-002: Second task
+            ```spec-task
+            status: PENDING
+            priority: P1
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+
+        val createdTask = tasksService.addTask(
+            workflowId = workflowId,
+            title = "Third task",
+            priority = TaskPriority.P2,
+            dependsOn = listOf(" t-002 ", "T-001", "t-001", "T-002"),
+        )
+        val persisted = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
+
+        assertEquals(listOf("T-001", "T-002"), createdTask.dependsOn)
+        assertTrue(
+            persisted.contains("dependsOn:\n  - T-001\n  - T-002"),
+            "Expected normalized dependsOn list in persisted artifact.",
+        )
+    }
+
+    @Test
+    fun `updateDependsOn should reject missing or self dependencies without touching artifact`() {
+        val workflowId = "wf-tasks-update-depends-on-invalid"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: First task
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+
+            ### T-002: Second task
+            ```spec-task
+            status: PENDING
+            priority: P1
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+        val originalPersisted = artifactService.readArtifact(workflowId, StageId.TASKS)
+
+        val selfDependencyError = assertThrows(TaskSelfDependencyError::class.java) {
+            tasksService.updateDependsOn(workflowId, "T-001", listOf("t-001"))
+        }
+        assertEquals("Task T-001 cannot depend on itself", selfDependencyError.message)
+
+        val missingDependencyError = assertThrows(MissingTaskDependencyError::class.java) {
+            tasksService.updateDependsOn(workflowId, "T-001", listOf("T-999"))
+        }
+        assertEquals(
+            "Task T-001 depends on missing task id: T-999",
+            missingDependencyError.message,
+        )
+        assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))
+        assertTrue(storage.listAuditEvents(workflowId).getOrThrow().isEmpty())
+    }
+
+    @Test
+    fun `updateRelatedFiles should normalize dedupe sort and append audit event`() {
+        val workflowId = "wf-tasks-related-files"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: First task
+            ```spec-task
+            status: IN_PROGRESS
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            Handwritten paragraph that must stay untouched.
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+
+        val updatedTask = tasksService.updateRelatedFiles(
+            workflowId = workflowId,
+            taskId = "T-001",
+            files = listOf(
+                " ./src\\main\\kotlin\\App.kt ",
+                tempDir.resolve("docs/../README.md").toString(),
+                "src/main/kotlin/App.kt",
+            ),
+        )
+        val persisted = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
+        val auditEvent = storage.listAuditEvents(workflowId).getOrThrow().last()
+
+        assertEquals(listOf("README.md", "src/main/kotlin/App.kt"), updatedTask.relatedFiles)
+        assertTrue(
+            persisted.contains("relatedFiles:\n  - README.md\n  - src/main/kotlin/App.kt"),
+            "Expected normalized relatedFiles list in persisted artifact.",
+        )
+        assertTrue(persisted.contains("Handwritten paragraph that must stay untouched."))
+        assertEquals(SpecAuditEventType.RELATED_FILES_UPDATED, auditEvent.eventType)
+        assertEquals("T-001", auditEvent.details["taskId"])
+        assertEquals("First task", auditEvent.details["title"])
+        assertEquals("2", auditEvent.details["fileCount"])
+        assertEquals("README.md, src/main/kotlin/App.kt", auditEvent.details["relatedFiles"])
+    }
+
+    @Test
+    fun `updateRelatedFiles should reject paths outside project root without touching artifact or audit`() {
+        val workflowId = "wf-tasks-related-files-outside-root"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: First task
+            ```spec-task
+            status: IN_PROGRESS
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+        val originalPersisted = artifactService.readArtifact(workflowId, StageId.TASKS)
+
+        val error = assertThrows(RelatedFileOutsideProjectRootError::class.java) {
+            tasksService.updateRelatedFiles(
+                workflowId = workflowId,
+                taskId = "T-001",
+                files = listOf("../secret.txt"),
+            )
+        }
+
+        assertTrue(error.message!!.contains("Task T-001 related file escapes project root"))
+        assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))
+        assertTrue(storage.listAuditEvents(workflowId).getOrThrow().isEmpty())
+    }
 }

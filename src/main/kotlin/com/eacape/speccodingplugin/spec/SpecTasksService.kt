@@ -3,6 +3,8 @@ package com.eacape.speccodingplugin.spec
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import java.nio.file.InvalidPathException
+import java.nio.file.Path
 
 @Service(Service.Level.PROJECT)
 class SpecTasksService(private val project: Project) {
@@ -169,14 +171,17 @@ class SpecTasksService(private val project: Project) {
 
         val editableDocument = loadEditableDocument(workflowId)
         val nextTaskId = allocateNextTaskId(editableDocument.tasksById)
+        val normalizedDependsOn = normalizeDependsOn(
+            taskId = nextTaskId,
+            dependsOn = dependsOn,
+            existingTaskIds = editableDocument.tasksById.map(StructuredTask::id).toSet(),
+        )
         val task = StructuredTask(
             id = nextTaskId,
             title = normalizedTitle,
             status = TaskStatus.PENDING,
             priority = priority,
-            dependsOn = dependsOn
-                .map(String::trim)
-                .filter(String::isNotEmpty),
+            dependsOn = normalizedDependsOn,
             relatedFiles = emptyList(),
             verificationResult = null,
         )
@@ -234,27 +239,119 @@ class SpecTasksService(private val project: Project) {
         to: TaskStatus,
         reason: String? = null,
     ) {
-        val normalizedTaskId = normalizeTaskId(taskId)
         val normalizedReason = reason
             ?.trim()
             ?.takeIf(String::isNotEmpty)
+        updateTaskMetadata(workflowId, taskId) { targetTask, _ ->
+            if (!targetTask.status.canTransitionTo(to)) {
+                throw InvalidTaskStateTransitionError(targetTask.id, targetTask.status, to)
+            }
+            val updatedTask = targetTask.copy(status = to)
+            val details = linkedMapOf(
+                "taskId" to targetTask.id,
+                "title" to targetTask.title,
+                "fromStatus" to targetTask.status.name,
+                "toStatus" to to.name,
+            )
+            normalizedReason?.let { trimmedReason ->
+                details["reason"] = trimmedReason
+            }
+            TaskMetadataUpdate(
+                updatedTask = updatedTask,
+                auditEventType = SpecAuditEventType.TASK_STATUS_CHANGED,
+                auditDetails = details,
+            )
+        }
+    }
+
+    fun updateDependsOn(
+        workflowId: String,
+        taskId: String,
+        dependsOn: List<String>,
+    ): StructuredTask {
+        return updateTaskMetadata(workflowId, taskId) { targetTask, editableDocument ->
+            val normalizedDependsOn = normalizeDependsOn(
+                taskId = targetTask.id,
+                dependsOn = dependsOn,
+                existingTaskIds = editableDocument.tasksById.map(StructuredTask::id).toSet(),
+            )
+            TaskMetadataUpdate(
+                updatedTask = targetTask.copy(dependsOn = normalizedDependsOn),
+            )
+        }
+    }
+
+    fun updateRelatedFiles(
+        workflowId: String,
+        taskId: String,
+        files: List<String>,
+    ): StructuredTask {
+        return updateTaskMetadata(workflowId, taskId) { targetTask, _ ->
+            val normalizedFiles = normalizeRelatedFiles(targetTask.id, files)
+            TaskMetadataUpdate(
+                updatedTask = targetTask.copy(relatedFiles = normalizedFiles),
+                auditEventType = SpecAuditEventType.RELATED_FILES_UPDATED,
+                auditDetails = linkedMapOf(
+                    "taskId" to targetTask.id,
+                    "title" to targetTask.title,
+                    "fileCount" to normalizedFiles.size.toString(),
+                    "previousRelatedFiles" to targetTask.relatedFiles.joinToString(", "),
+                    "relatedFiles" to normalizedFiles.joinToString(", "),
+                ),
+            )
+        }
+    }
+
+    private data class TaskMetadataUpdate(
+        val updatedTask: StructuredTask,
+        val auditEventType: SpecAuditEventType? = null,
+        val auditDetails: Map<String, String> = emptyMap(),
+    )
+
+    private fun updateTaskMetadata(
+        workflowId: String,
+        taskId: String,
+        transform: (StructuredTask, ParsedTasksDocument) -> TaskMetadataUpdate,
+    ): StructuredTask {
+        val normalizedTaskId = normalizeTaskId(taskId)
         val editableDocument = loadEditableDocument(workflowId)
         val targetSection = editableDocument.taskSectionsInSourceOrder
             .firstOrNull { section -> section.entry.id == normalizedTaskId }
             ?: throw MissingStructuredTaskError(normalizedTaskId)
         val targetTask = targetSection.task
             ?: throw InvalidTasksArtifactEditError("task $normalizedTaskId is missing required spec-task metadata")
-        if (!targetTask.status.canTransitionTo(to)) {
-            throw InvalidTaskStateTransitionError(normalizedTaskId, targetTask.status, to)
+        val update = transform(targetTask, editableDocument)
+        if (update.updatedTask == targetTask) {
+            return targetTask
         }
 
-        val updatedTask = targetTask.copy(status = to)
-        val updatedMarkdown = buildString {
+        val updatedMarkdown = renderDocumentWithUpdatedTask(
+            editableDocument = editableDocument,
+            taskId = normalizedTaskId,
+            task = update.updatedTask,
+        )
+        artifactService.writeArtifact(workflowId, StageId.TASKS, updatedMarkdown)
+        update.auditEventType?.let { eventType ->
+            storage.appendAuditEvent(
+                workflowId = workflowId,
+                eventType = eventType,
+                details = update.auditDetails,
+            ).getOrThrow()
+        }
+        return update.updatedTask
+    }
+
+    private fun renderDocumentWithUpdatedTask(
+        editableDocument: ParsedTasksDocument,
+        taskId: String,
+        task: StructuredTask,
+    ): String {
+        return buildString {
             append(editableDocument.preambleMarkdown)
             editableDocument.taskSectionsInSourceOrder.forEach { section ->
                 append(
-                    if (section.entry.id == normalizedTaskId) {
-                        renderUpdatedTaskSection(section, updatedTask)
+                    if (section.entry.id == taskId) {
+                        renderUpdatedTaskSection(section, task)
                     } else {
                         section.sectionMarkdown
                     },
@@ -262,22 +359,80 @@ class SpecTasksService(private val project: Project) {
             }
             append(editableDocument.trailingMarkdown)
         }
-        artifactService.writeArtifact(workflowId, StageId.TASKS, updatedMarkdown)
+    }
 
-        val details = linkedMapOf(
-            "taskId" to normalizedTaskId,
-            "title" to targetTask.title,
-            "fromStatus" to targetTask.status.name,
-            "toStatus" to to.name,
-        )
-        normalizedReason?.let { trimmedReason ->
-            details["reason"] = trimmedReason
+    private fun normalizeDependsOn(
+        taskId: String,
+        dependsOn: List<String>,
+        existingTaskIds: Set<String>,
+    ): List<String> {
+        val normalizedDependencies = dependsOn
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .map(::normalizeTaskId)
+            .distinct()
+            .sorted()
+
+        if (taskId in normalizedDependencies) {
+            throw TaskSelfDependencyError(taskId)
         }
-        storage.appendAuditEvent(
-            workflowId = workflowId,
-            eventType = SpecAuditEventType.TASK_STATUS_CHANGED,
-            details = details,
-        ).getOrThrow()
+        normalizedDependencies.firstOrNull { dependencyId -> dependencyId !in existingTaskIds }
+            ?.let { missingDependencyId ->
+                throw MissingTaskDependencyError(taskId, missingDependencyId)
+            }
+        return normalizedDependencies
+    }
+
+    private fun normalizeRelatedFiles(taskId: String, files: List<String>): List<String> {
+        val projectRoot = resolveProjectRoot()
+        return files
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .map { rawPath -> normalizeRelatedFile(taskId, rawPath, projectRoot) }
+            .distinct()
+            .sorted()
+    }
+
+    private fun resolveProjectRoot(): Path {
+        val basePath = project.basePath
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+            ?: throw InvalidTasksArtifactEditError("project base path is unavailable for relatedFiles normalization")
+        return try {
+            Path.of(basePath).toAbsolutePath().normalize()
+        } catch (error: InvalidPathException) {
+            throw InvalidTasksArtifactEditError(
+                "project base path is invalid for relatedFiles normalization: ${error.message ?: basePath}",
+            )
+        }
+    }
+
+    private fun normalizeRelatedFile(taskId: String, rawPath: String, projectRoot: Path): String {
+        val unifiedPath = rawPath.trim().replace('\\', '/')
+        val resolvedPath = try {
+            val candidate = if (isAbsolutePath(unifiedPath)) {
+                Path.of(unifiedPath)
+            } else {
+                projectRoot.resolve(unifiedPath)
+            }
+            candidate.normalize().toAbsolutePath()
+        } catch (error: InvalidPathException) {
+            throw InvalidTaskRelatedFileError(taskId, rawPath, error.message)
+        }
+        if (!resolvedPath.startsWith(projectRoot)) {
+            throw RelatedFileOutsideProjectRootError(taskId, rawPath, projectRoot.toString())
+        }
+        val relativePath = projectRoot.relativize(resolvedPath)
+            .joinToString(separator = "/") { segment -> segment.toString() }
+            .trim()
+        if (relativePath.isEmpty() || relativePath == ".") {
+            throw InvalidTaskRelatedFileError(taskId, rawPath, "path must point inside the project root")
+        }
+        return relativePath
+    }
+
+    private fun isAbsolutePath(path: String): Boolean {
+        return path.startsWith('/') || WINDOWS_ABSOLUTE_PATH_REGEX.matches(path) || path.startsWith("//")
     }
 
     private fun nextSectionStartOffset(
@@ -526,6 +681,7 @@ class SpecTasksService(private val project: Project) {
         private val CANONICAL_TASK_HEADING_REGEX = Regex("""^\s{0,3}###\s+T-\d{3}:\s+.+$""")
         private val TASK_ID_REGEX = Regex("""^T-\d{3}$""")
         private val TASK_LIST_HEADING_REGEX = Regex("""^\s{0,3}##\s+(Task\s+List|任务列表)\s*$""")
+        private val WINDOWS_ABSOLUTE_PATH_REGEX = Regex("""^[A-Za-z]:/.*$""")
 
         fun getInstance(project: Project): SpecTasksService = project.service()
     }

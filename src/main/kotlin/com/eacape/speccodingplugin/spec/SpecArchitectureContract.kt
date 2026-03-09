@@ -193,6 +193,13 @@ object SpecArchitectureContract {
             rationale = "Task 25 requires enforcing the task state machine while preserving handwritten markdown and recording auditable before/after status changes with optional reasons.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "task-reference-normalization",
+            capability = "canonical dependsOn and relatedFiles updates with project-root-safe path normalization",
+            selection = "SpecTasksService updateDependsOn/updateRelatedFiles + sorted distinct dependency ids + project-relative relatedFiles canonicalization",
+            rationale = "Task 26 requires deduplicated dependency ids, stable ordering, and related file paths normalized under the project root before writing back to tasks.md.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(
