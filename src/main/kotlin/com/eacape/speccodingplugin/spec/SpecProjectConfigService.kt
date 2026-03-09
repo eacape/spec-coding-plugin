@@ -22,6 +22,10 @@ class SpecProjectConfigService(
         }
 
         val raw = Files.readString(configPath, StandardCharsets.UTF_8)
+        return parseSnapshotYaml(raw)
+    }
+
+    fun parseSnapshotYaml(raw: String): SpecProjectConfig {
         val root = SpecYamlCodec.decodeMap(raw)
         return parseConfig(root)
     }

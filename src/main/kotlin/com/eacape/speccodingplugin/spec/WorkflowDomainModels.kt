@@ -590,6 +590,39 @@ data class VerifyCommandExecutionResult(
         get() = stdoutTruncated || stderrTruncated
 }
 
+enum class VerifyPlanConfigSource {
+    WORKFLOW_PINNED,
+    PROJECT_CONFIG,
+}
+
+data class VerifyPlanPolicy(
+    val configSource: VerifyPlanConfigSource,
+    val workflowConfigPinHash: String?,
+    val effectiveConfigHash: String,
+    val usesPinnedSnapshot: Boolean,
+    val confirmationRequired: Boolean,
+    val confirmationReasons: List<String>,
+)
+
+data class VerifyPlanCommand(
+    val commandId: String,
+    val displayName: String?,
+    val command: List<String>,
+    val workingDirectory: Path,
+    val timeoutMs: Int,
+    val outputLimitChars: Int,
+    val redactionPatterns: List<String>,
+)
+
+data class VerifyPlan(
+    val planId: String,
+    val workflowId: String,
+    val currentStage: StageId,
+    val generatedAt: String,
+    val commands: List<VerifyPlanCommand>,
+    val policy: VerifyPlanPolicy,
+)
+
 data class StructuredTask(
     val id: String,
     val title: String,
@@ -692,6 +725,15 @@ class VerifyCommandWorkingDirectoryError(commandId: String, workingDirectory: St
     WorkflowDomainError(
         "Verify command $commandId working directory escapes project root $projectRoot: $workingDirectory",
     )
+
+class VerifyStageDisabledError(workflowId: String) :
+    WorkflowDomainError("Workflow $workflowId does not have VERIFY enabled")
+
+class MissingVerifyPlanError(planId: String) :
+    WorkflowDomainError("Verify plan not found: $planId")
+
+class StaleVerifyPlanError(planId: String, workflowId: String) :
+    WorkflowDomainError("Verify plan $planId is stale for workflow $workflowId")
 
 class InvalidTasksArtifactEditError(details: String) :
     WorkflowDomainError("tasks.md cannot be edited safely: $details")

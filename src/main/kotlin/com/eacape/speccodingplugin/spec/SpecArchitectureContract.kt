@@ -214,6 +214,13 @@ object SpecArchitectureContract {
             rationale = "Task 28 requires a reusable process runner primitive that stays offline, avoids shell injection, and normalizes execution behavior across operating systems.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "verify-plan-preview",
+            capability = "VERIFY plan preview with plan ids, policy summaries, and workflow-pin-aware command resolution",
+            selection = "SpecVerificationService + pending plan cache + SpecProcessRunner.prepare() + pinned config snapshot fallback",
+            rationale = "Task 29 requires users to preview normalized VERIFY commands, inspect working directory/timeout/redaction policy, and carry a planId into the later confirmed execution flow.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(
@@ -310,6 +317,10 @@ object SpecArchitectureContract {
         ),
         SourceRule(
             fileName = "SpecTasksService.kt",
+            layer = Layer.APPLICATION,
+        ),
+        SourceRule(
+            fileName = "SpecVerificationService.kt",
             layer = Layer.APPLICATION,
         ),
         SourceRule(

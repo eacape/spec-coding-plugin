@@ -289,6 +289,24 @@ class SpecStorage(
         }
     }
 
+    fun loadConfigPinSnapshot(workflowId: String, configPinHash: String): Result<SpecConfigPin> {
+        return runCatching {
+            val normalizedHash = configPinHash.trim().lowercase()
+            require(CONFIG_PIN_HASH_PATTERN.matches(normalizedHash)) {
+                "Invalid config pin hash: $normalizedHash"
+            }
+            val workflowWorkspace = workspaceInitializer.initializeWorkflowWorkspace(workflowId)
+            val snapshotPath = workflowWorkspace.configSnapshotsDir.resolve("$normalizedHash.yaml")
+            require(Files.isRegularFile(snapshotPath)) {
+                "Config pin snapshot not found for workflow $workflowId: $normalizedHash"
+            }
+            SpecConfigPin(
+                hash = normalizedHash,
+                snapshotYaml = Files.readString(snapshotPath, StandardCharsets.UTF_8),
+            )
+        }
+    }
+
     /**
      * 加载 Spec 文档
      */
