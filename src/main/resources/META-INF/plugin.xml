@@ -154,6 +154,12 @@
                     class="com.eacape.speccodingplugin.ui.actions.RollbackSpecWorkflowStageAction"
                     text="%spec.action.rollback.text"
                     description="%spec.action.rollback.description"/>
+            <separator/>
+            <action
+                    id="SpecCoding.SpecWorkflow.Verify"
+                    class="com.eacape.speccodingplugin.ui.actions.RunSpecWorkflowVerificationAction"
+                    text="%spec.action.verify.text"
+                    description="%spec.action.verify.description"/>
         </group>
     </actions>
 </idea-plugin>

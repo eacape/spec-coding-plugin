@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.SpecArtifactService
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.Violation
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.nio.file.Path
 import kotlin.io.path.name
@@ -54,6 +55,22 @@ class SpecWorkflowActionSupportPlatformTest : BasePlatformTestCase() {
         )
 
         assertNull(resolvedPath)
+    }
+
+    fun `test open file opens verification artifact`() {
+        val workflowId = "wf-open-verify"
+        val artifactService = SpecArtifactService(project)
+        val verificationPath = artifactService.writeArtifact(
+            workflowId,
+            StageId.VERIFY,
+            "# Verification Document\n",
+        )
+
+        assertTrue(SpecWorkflowActionSupport.openFile(project, verificationPath))
+        assertEquals(
+            verificationPath.fileName.toString(),
+            FileEditorManager.getInstance(project).selectedFiles.singleOrNull()?.name,
+        )
     }
 
     private fun violation(fileName: String): Violation {

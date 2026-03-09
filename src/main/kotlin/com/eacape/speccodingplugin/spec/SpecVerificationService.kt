@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.spec
 
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import java.nio.file.Path
 import java.time.Instant
@@ -494,5 +495,7 @@ class SpecVerificationService(private val project: Project) {
             "Current project config differs from the workflow pin; using the pinned config snapshot for this plan."
         private val TASK_ID_REGEX = Regex("""^T-\d{3}$""")
         private val BACKTICK_RUN_REGEX = Regex("`+")
+
+        fun getInstance(project: Project): SpecVerificationService = project.service()
     }
 }

@@ -5,13 +5,24 @@ import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageState
+import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskPriority
+import com.eacape.speccodingplugin.spec.TaskStatus
+import com.eacape.speccodingplugin.spec.VerificationConclusion
 import com.eacape.speccodingplugin.spec.Violation
+import com.eacape.speccodingplugin.spec.VerifyCommandExecutionResult
+import com.eacape.speccodingplugin.spec.VerifyPlan
+import com.eacape.speccodingplugin.spec.VerifyPlanConfigSource
+import com.eacape.speccodingplugin.spec.VerifyPlanCommand
+import com.eacape.speccodingplugin.spec.VerifyPlanPolicy
+import com.eacape.speccodingplugin.spec.VerifyRunResult
 import com.eacape.speccodingplugin.spec.WorkflowMeta
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Path
 
 class SpecWorkflowActionSupportTest {
 
@@ -106,6 +117,80 @@ class SpecWorkflowActionSupportTest {
         assertTrue(label.contains("requirements.md:13"))
     }
 
+    @Test
+    fun `verification plan summary includes plan scope command and confirmation reasons`() {
+        val summary = SpecWorkflowActionSupport.verificationPlanSummary(
+            plan = VerifyPlan(
+                planId = "verify-plan-001",
+                workflowId = "wf-001",
+                currentStage = StageId.IMPLEMENT,
+                generatedAt = "2026-03-09T12:00:00Z",
+                commands = listOf(
+                    VerifyPlanCommand(
+                        commandId = "gradle-test",
+                        displayName = "Gradle Test",
+                        command = listOf("./gradlew", "testDebugUnitTest"),
+                        workingDirectory = Path.of("."),
+                        timeoutMs = 15_000,
+                        outputLimitChars = 4_000,
+                        redactionPatterns = listOf("token=.*"),
+                    ),
+                ),
+                policy = VerifyPlanPolicy(
+                    configSource = VerifyPlanConfigSource.WORKFLOW_PINNED,
+                    workflowConfigPinHash = "pin-123",
+                    effectiveConfigHash = "cfg-456",
+                    usesPinnedSnapshot = true,
+                    confirmationRequired = true,
+                    confirmationReasons = listOf("Review verify commands before execution."),
+                ),
+            ),
+            scopeTasks = listOf(task("T-002"), task("T-001")),
+        )
+
+        assertTrue(summary.contains("verify-plan-001"))
+        assertTrue(summary.contains("Task Scope: 2 task(s): T-001, T-002"))
+        assertTrue(summary.contains("Gradle Test [gradle-test]"))
+        assertTrue(summary.contains("Review verify commands before execution."))
+    }
+
+    @Test
+    fun `verification run summary includes conclusion document updated tasks and outcomes`() {
+        val summary = SpecWorkflowActionSupport.verificationRunSummary(
+            VerifyRunResult(
+                runId = "verify-run-001",
+                workflowId = "wf-001",
+                planId = "verify-plan-001",
+                currentStage = StageId.VERIFY,
+                executedAt = "2026-03-09T12:30:00Z",
+                conclusion = VerificationConclusion.WARN,
+                summary = "1/1 verify command(s) completed, but output was truncated for gradle-test.",
+                verificationDocumentPath = Path.of("verification.md"),
+                commandResults = listOf(
+                    VerifyCommandExecutionResult(
+                        commandId = "gradle-test",
+                        exitCode = 0,
+                        stdout = "ok",
+                        stderr = "",
+                        durationMs = 1_234,
+                        timedOut = false,
+                        stdoutTruncated = true,
+                        stderrTruncated = false,
+                        redacted = true,
+                    ),
+                ),
+                updatedTasks = listOf(task("T-003"), task("T-001")),
+            ),
+        )
+
+        assertTrue(summary.contains("Conclusion: WARN"))
+        assertTrue(summary.contains("Verification File: verification.md"))
+        assertTrue(summary.contains("Updated Tasks: 2 task(s): T-001, T-003"))
+        assertTrue(summary.contains("gradle-test: SUCCESS"))
+        assertTrue(summary.contains("truncated"))
+        assertTrue(summary.contains("redacted"))
+    }
+
     private fun workflowMeta(
         currentStage: StageId,
         stageStates: Map<StageId, StageState>,
@@ -127,6 +212,15 @@ class SpecWorkflowActionSupportTest {
 
     private fun state(active: Boolean, status: StageProgress): StageState {
         return StageState(active = active, status = status)
+    }
+
+    private fun task(id: String): StructuredTask {
+        return StructuredTask(
+            id = id,
+            title = "Task $id",
+            status = TaskStatus.COMPLETED,
+            priority = TaskPriority.P1,
+        )
     }
 
     private fun violation(ruleId: String, line: Int): Violation {

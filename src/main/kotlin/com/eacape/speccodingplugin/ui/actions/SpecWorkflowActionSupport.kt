@@ -8,7 +8,12 @@ import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageTransitionBlockedByGateError
 import com.eacape.speccodingplugin.spec.StageWarningConfirmationRequiredError
+import com.eacape.speccodingplugin.spec.StructuredTask
 import com.eacape.speccodingplugin.spec.Violation
+import com.eacape.speccodingplugin.spec.VerificationConclusion
+import com.eacape.speccodingplugin.spec.VerifyPlan
+import com.eacape.speccodingplugin.spec.VerifyPlanConfigSource
+import com.eacape.speccodingplugin.spec.VerifyRunResult
 import com.eacape.speccodingplugin.spec.WorkflowMeta
 import com.eacape.speccodingplugin.ui.spec.SpecToolWindowControlListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedEvent
@@ -35,6 +40,8 @@ import java.util.Locale
 internal object SpecWorkflowActionSupport {
     private const val TOOL_WINDOW_ID = "Spec Code"
     private const val MAX_GATE_VIOLATIONS = 5
+    private const val MAX_VERIFY_COMMANDS = 5
+    private const val MAX_VERIFY_TASKS = 5
 
     fun showCreateWorkflow(project: Project) {
         openSpecTab(project) {
@@ -47,16 +54,20 @@ internal object SpecWorkflowActionSupport {
         val normalizedWorkflowId = workflowId.trim()
         if (normalizedWorkflowId.isEmpty()) return
         openSpecTab(project) {
-            project.messageBus.syncPublisher(SpecToolWindowControlListener.TOPIC)
-                .onSelectWorkflowRequested(normalizedWorkflowId)
-            project.messageBus.syncPublisher(SpecWorkflowChangedListener.TOPIC)
-                .onWorkflowChanged(
-                    SpecWorkflowChangedEvent(
-                        workflowId = normalizedWorkflowId,
-                        reason = SpecWorkflowChangedListener.REASON_WORKFLOW_SELECTED,
-                    ),
-                )
+            publishWorkflowSelection(project, normalizedWorkflowId)
         }
+    }
+
+    fun rememberWorkflow(project: Project, workflowId: String) {
+        val normalizedWorkflowId = workflowId.trim()
+        if (normalizedWorkflowId.isEmpty()) return
+        project.messageBus.syncPublisher(SpecWorkflowChangedListener.TOPIC)
+            .onWorkflowChanged(
+                SpecWorkflowChangedEvent(
+                    workflowId = normalizedWorkflowId,
+                    reason = SpecWorkflowChangedListener.REASON_WORKFLOW_SELECTED,
+                ),
+            )
     }
 
     fun <T> runBackground(
@@ -246,6 +257,120 @@ internal object SpecWorkflowActionSupport {
         return lines.joinToString("\n").trim()
     }
 
+    fun confirmVerificationPlan(project: Project, plan: VerifyPlan, scopeTasks: List<StructuredTask>): Boolean {
+        val choice = Messages.showDialog(
+            project,
+            verificationPlanSummary(plan, scopeTasks),
+            SpecCodingBundle.message("spec.action.verify.confirm.title"),
+            arrayOf(
+                SpecCodingBundle.message("spec.action.verify.confirm.run"),
+                CommonBundle.getCancelButtonText(),
+            ),
+            0,
+            Messages.getQuestionIcon(),
+        )
+        return choice == 0
+    }
+
+    fun showVerificationRunResult(project: Project, result: VerifyRunResult) {
+        val choice = Messages.showDialog(
+            project,
+            verificationRunSummary(result),
+            SpecCodingBundle.message("spec.action.verify.result.title", result.conclusion.name),
+            arrayOf(
+                SpecCodingBundle.message("spec.action.verify.result.open"),
+                SpecCodingBundle.message("spec.action.verify.result.close"),
+            ),
+            0,
+            verificationResultIcon(result.conclusion),
+        )
+        if (choice == 0 && !openFile(project, result.verificationDocumentPath)) {
+            showInfo(
+                project,
+                SpecCodingBundle.message("spec.action.verify.document.unavailable.title"),
+                normalizePath(result.verificationDocumentPath),
+            )
+        }
+    }
+
+    fun verificationPlanSummary(
+        plan: VerifyPlan,
+        scopeTasks: List<StructuredTask>,
+        commandLimit: Int = MAX_VERIFY_COMMANDS,
+        taskLimit: Int = MAX_VERIFY_TASKS,
+    ): String {
+        val lines = mutableListOf<String>()
+        lines += "Plan ID: ${plan.planId}"
+        lines += "Workflow: ${plan.workflowId}"
+        lines += "Stage: ${stageLabel(plan.currentStage)}"
+        lines += "Generated At: ${plan.generatedAt}"
+        lines += "Task Scope: ${formatTaskScope(scopeTasks, taskLimit)}"
+        lines += "Config Source: ${formatVerifyConfigSource(plan.policy.configSource)}"
+        lines += "Effective Config Hash: ${plan.policy.effectiveConfigHash}"
+        plan.policy.workflowConfigPinHash?.let { workflowConfigPinHash ->
+            lines += "Workflow Pin Hash: $workflowConfigPinHash"
+        }
+        if (plan.policy.usesPinnedSnapshot) {
+            lines += "Using the pinned workflow config snapshot for this verification run."
+        }
+        if (plan.policy.confirmationReasons.isNotEmpty()) {
+            lines += ""
+            lines += "Confirmation Reasons:"
+            plan.policy.confirmationReasons.forEach { reason ->
+                lines += "- $reason"
+            }
+        }
+        lines += ""
+        if (plan.commands.isEmpty()) {
+            lines += "Commands: none configured"
+            return lines.joinToString("\n")
+        }
+        lines += "Commands:"
+        plan.commands.take(commandLimit).forEach { command ->
+            val title = command.displayName?.trim().orEmpty().ifBlank { command.commandId }
+            lines += "- $title [${command.commandId}]"
+            lines += "  ${renderCommand(command.command)}"
+            lines += "  dir=${normalizePath(command.workingDirectory)} · timeout=${command.timeoutMs} ms · output=${command.outputLimitChars} chars · redaction=${command.redactionPatterns.size}"
+        }
+        val remainingCommands = plan.commands.size - commandLimit
+        if (remainingCommands > 0) {
+            lines += "... and $remainingCommands more command(s)"
+        }
+        return lines.joinToString("\n")
+    }
+
+    fun verificationRunSummary(
+        result: VerifyRunResult,
+        commandLimit: Int = MAX_VERIFY_COMMANDS,
+        taskLimit: Int = MAX_VERIFY_TASKS,
+    ): String {
+        val lines = mutableListOf<String>()
+        lines += "Conclusion: ${result.conclusion.name}"
+        lines += "Workflow: ${result.workflowId}"
+        lines += "Plan ID: ${result.planId}"
+        lines += "Run ID: ${result.runId}"
+        lines += "Stage: ${stageLabel(result.currentStage)}"
+        lines += "Executed At: ${result.executedAt}"
+        lines += "Verification File: ${normalizePath(result.verificationDocumentPath)}"
+        lines += "Updated Tasks: ${formatTaskScope(result.updatedTasks, taskLimit)}"
+        lines += ""
+        lines += result.summary
+        lines += ""
+        if (result.commandResults.isEmpty()) {
+            lines += "Commands: none executed"
+            return lines.joinToString("\n")
+        }
+        lines += "Commands:"
+        result.commandResults.take(commandLimit).forEach { commandResult ->
+            lines += "- ${commandResult.commandId}: ${formatVerificationOutcome(commandResult)} · ${commandResult.durationMs} ms${if (commandResult.truncated) " · truncated" else ""}${if (commandResult.redacted) " · redacted" else ""}"
+        }
+        val remainingCommands = result.commandResults.size - commandLimit
+        if (remainingCommands > 0) {
+            lines += "... and $remainingCommands more command(s)"
+        }
+        return lines.joinToString("\n")
+    }
+
     fun describeFailure(error: Throwable): String {
         return when (error) {
             is StageTransitionBlockedByGateError -> gateSummary(error.gateResult)
@@ -300,11 +425,15 @@ internal object SpecWorkflowActionSupport {
                 .firstOrNull { path -> path.fileName.toString().equals(normalizedFileName, ignoreCase = true) }
     }
 
+    fun openFile(project: Project, path: Path, line: Int = 1): Boolean {
+        val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return false
+        OpenFileDescriptor(project, virtualFile, (line - 1).coerceAtLeast(0), 0).navigate(true)
+        return true
+    }
+
     fun openGateViolation(project: Project, workflowId: String, violation: Violation): Boolean {
         val path = resolveGateViolationPath(project, workflowId, violation) ?: return false
-        val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path) ?: return false
-        OpenFileDescriptor(project, virtualFile, (violation.line - 1).coerceAtLeast(0), 0).navigate(true)
-        return true
+        return openFile(project, path, violation.line)
     }
 
     private fun formatViolation(violation: Violation): String {
@@ -354,6 +483,62 @@ internal object SpecWorkflowActionSupport {
                 gateViolationDetails(violation),
             )
         }
+    }
+
+    private fun publishWorkflowSelection(project: Project, workflowId: String) {
+        project.messageBus.syncPublisher(SpecToolWindowControlListener.TOPIC)
+            .onSelectWorkflowRequested(workflowId)
+        rememberWorkflow(project, workflowId)
+    }
+
+    private fun verificationResultIcon(conclusion: VerificationConclusion) = when (conclusion) {
+        VerificationConclusion.PASS -> Messages.getInformationIcon()
+        VerificationConclusion.WARN -> Messages.getWarningIcon()
+        VerificationConclusion.FAIL -> Messages.getErrorIcon()
+    }
+
+    private fun formatVerifyConfigSource(configSource: VerifyPlanConfigSource): String {
+        return when (configSource) {
+            VerifyPlanConfigSource.WORKFLOW_PINNED -> "workflow-pinned snapshot"
+            VerifyPlanConfigSource.PROJECT_CONFIG -> "project config"
+        }
+    }
+
+    private fun formatTaskScope(tasks: List<StructuredTask>, limit: Int): String {
+        if (tasks.isEmpty()) {
+            return "none"
+        }
+        val taskIds = tasks
+            .map(StructuredTask::id)
+            .distinct()
+            .sorted()
+        return if (taskIds.size <= limit) {
+            "${taskIds.size} task(s): ${taskIds.joinToString(", ")}"
+        } else {
+            "${taskIds.size} task(s): ${taskIds.take(limit).joinToString(", ")} ... +${taskIds.size - limit}"
+        }
+    }
+
+    private fun renderCommand(command: List<String>): String {
+        return command.joinToString(" ") { token ->
+            if (token.any(Char::isWhitespace)) {
+                "\"${token.replace("\"", "\\\"")}\""
+            } else {
+                token
+            }
+        }
+    }
+
+    private fun formatVerificationOutcome(commandResult: com.eacape.speccodingplugin.spec.VerifyCommandExecutionResult): String {
+        return when {
+            commandResult.timedOut -> "TIMEOUT"
+            commandResult.exitCode == 0 -> "SUCCESS"
+            else -> "EXIT ${commandResult.exitCode}"
+        }
+    }
+
+    private fun normalizePath(path: Path): String {
+        return path.toString().replace('\\', '/')
     }
 
     private fun openSpecTab(project: Project, afterOpen: () -> Unit) {
