@@ -764,19 +764,17 @@ class SpecEngine(private val project: Project) {
         confirmWarnings: ((GateResult) -> Boolean)? = null,
     ): Result<StageTransitionResult> {
         return runCatching {
-            val workflow = activeWorkflows[workflowId]
-                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            val projectConfig = projectConfigDelegate.load()
-            val stagePlan = resolveStagePlan(workflow, projectConfig)
-            val targetStage = stagePlan.nextActiveStage(workflow.currentStage)
-                ?: throw IllegalStateException("Already at the last active stage")
-            performStageTransition(
-                workflow = workflow,
-                stagePlan = stagePlan,
-                gatePolicy = projectConfig.gate,
+            val prepared = prepareStageTransition(
+                workflowId = workflowId,
                 transitionType = StageTransitionType.ADVANCE,
-                targetStage = targetStage,
-                evaluatedStages = listOf(workflow.currentStage),
+            )
+            performStageTransition(
+                workflow = prepared.workflow,
+                stagePlan = prepared.stagePlan,
+                gatePolicy = prepared.gatePolicy,
+                transitionType = StageTransitionType.ADVANCE,
+                targetStage = prepared.targetStage,
+                evaluatedStages = prepared.evaluatedStages,
                 confirmWarnings = confirmWarnings,
             )
         }
@@ -788,34 +786,18 @@ class SpecEngine(private val project: Project) {
         confirmWarnings: ((GateResult) -> Boolean)? = null,
     ): Result<StageTransitionResult> {
         return runCatching {
-            val workflow = activeWorkflows[workflowId]
-                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            val projectConfig = projectConfigDelegate.load()
-            val stagePlan = resolveStagePlan(workflow, projectConfig)
-
-            if (!projectConfig.gate.allowJump) {
-                throw StageTransitionPolicyError("Jump transition is disabled by gate policy")
-            }
-            if (!stagePlan.isActive(targetStage)) {
-                throw InactiveWorkflowStageError(targetStage)
-            }
-            val currentIndex = stagePlan.activeStageIndex(workflow.currentStage)
-            val targetIndex = stagePlan.activeStageIndex(targetStage)
-            if (targetIndex <= currentIndex) {
-                throw InvalidStageTransitionError(workflow.currentStage, targetStage)
-            }
-            val evaluatedStages = if (projectConfig.gate.jumpRequiresMinimalGate) {
-                stagePlan.activeStagesBetween(workflow.currentStage, targetStage).dropLast(1)
-            } else {
-                listOf(workflow.currentStage)
-            }
-            performStageTransition(
-                workflow = workflow,
-                stagePlan = stagePlan,
-                gatePolicy = projectConfig.gate,
+            val prepared = prepareStageTransition(
+                workflowId = workflowId,
                 transitionType = StageTransitionType.JUMP,
-                targetStage = targetStage,
-                evaluatedStages = evaluatedStages,
+                requestedTargetStage = targetStage,
+            )
+            performStageTransition(
+                workflow = prepared.workflow,
+                stagePlan = prepared.stagePlan,
+                gatePolicy = prepared.gatePolicy,
+                transitionType = StageTransitionType.JUMP,
+                targetStage = prepared.targetStage,
+                evaluatedStages = prepared.evaluatedStages,
                 confirmWarnings = confirmWarnings,
             )
         }
@@ -826,42 +808,24 @@ class SpecEngine(private val project: Project) {
         targetStage: StageId,
     ): Result<WorkflowMeta> {
         return runCatching {
-            val workflow = activeWorkflows[workflowId]
-                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            val projectConfig = projectConfigDelegate.load()
-            val stagePlan = resolveStagePlan(workflow, projectConfig)
+            val prepared = prepareStageTransition(
+                workflowId = workflowId,
+                transitionType = StageTransitionType.ROLLBACK,
+                requestedTargetStage = targetStage,
+            )
 
-            if (!projectConfig.gate.allowRollback) {
-                throw StageTransitionPolicyError("Rollback transition is disabled by gate policy")
-            }
-            if (!stagePlan.isActive(targetStage)) {
-                throw InactiveWorkflowStageError(targetStage)
-            }
-            val currentIndex = stagePlan.activeStageIndex(workflow.currentStage)
-            val targetIndex = stagePlan.activeStageIndex(targetStage)
-            if (targetIndex > currentIndex) {
-                throw InvalidStageTransitionError(workflow.currentStage, targetStage)
-            }
-
-            val targetState = workflow.stageStates[targetStage]
-            if (targetStage != workflow.currentStage && targetState?.status != StageProgress.DONE) {
-                throw StageTransitionPolicyError(
-                    "Rollback target $targetStage must be a completed or current stage",
-                )
-            }
-
-            if (targetStage == workflow.currentStage) {
-                activeWorkflows[workflowId] = workflow
-                return@runCatching workflow.toWorkflowMeta()
+            if (prepared.targetStage == prepared.workflow.currentStage) {
+                activeWorkflows[workflowId] = prepared.workflow
+                return@runCatching prepared.workflow.toWorkflowMeta()
             }
 
             performStageTransition(
-                workflow = workflow,
-                stagePlan = stagePlan,
-                gatePolicy = projectConfig.gate,
+                workflow = prepared.workflow,
+                stagePlan = prepared.stagePlan,
+                gatePolicy = prepared.gatePolicy,
                 transitionType = StageTransitionType.ROLLBACK,
-                targetStage = targetStage,
-                evaluatedStages = emptyList(),
+                targetStage = prepared.targetStage,
+                evaluatedStages = prepared.evaluatedStages,
                 confirmWarnings = null,
             ).workflow.toWorkflowMeta()
         }
@@ -913,6 +877,41 @@ class SpecEngine(private val project: Project) {
     /**
      * 完成工作流
      */
+    fun previewStageTransition(
+        workflowId: String,
+        transitionType: StageTransitionType,
+        targetStage: StageId? = null,
+    ): Result<StageTransitionGatePreview> {
+        return runCatching {
+            val prepared = prepareStageTransition(
+                workflowId = workflowId,
+                transitionType = transitionType,
+                requestedTargetStage = targetStage,
+            )
+            val gateResult = if (transitionType == StageTransitionType.ROLLBACK) {
+                GateResult.fromViolations(emptyList())
+            } else {
+                stageGateEvaluator.evaluate(
+                    buildStageTransitionRequest(
+                        workflow = prepared.workflow,
+                        transitionType = transitionType,
+                        targetStage = prepared.targetStage,
+                        evaluatedStages = prepared.evaluatedStages,
+                        stagePlan = prepared.stagePlan,
+                    ),
+                )
+            }
+            StageTransitionGatePreview(
+                workflowId = prepared.workflow.id,
+                transitionType = transitionType,
+                fromStage = prepared.workflow.currentStage,
+                targetStage = prepared.targetStage,
+                evaluatedStages = prepared.evaluatedStages,
+                gateResult = gateResult,
+            )
+        }
+    }
+
     fun completeWorkflow(workflowId: String): Result<SpecWorkflow> {
         return runCatching {
             val workflow = activeWorkflows[workflowId]
@@ -1056,20 +1055,20 @@ class SpecEngine(private val project: Project) {
             GateResult.fromViolations(emptyList())
         } else {
             stageGateEvaluator.evaluate(
-                StageTransitionRequest(
-                    workflowId = workflow.id,
-                    transitionType = transitionType,
-                    fromStage = workflow.currentStage,
-                    targetStage = targetStage,
-                    evaluatedStages = evaluatedStages.distinct(),
-                    stagePlan = stagePlan,
+                buildStageTransitionRequest(
                     workflow = workflow,
+                    transitionType = transitionType,
+                    targetStage = targetStage,
+                    evaluatedStages = evaluatedStages,
+                    stagePlan = stagePlan,
                 ),
             )
         }
         recordGateRuleDowngradeAudit(
             workflow = workflow,
+            transitionType = transitionType,
             targetStage = targetStage,
+            evaluatedStages = evaluatedStages,
             gateResult = gateResult,
         )
         val warningConfirmed = resolveWarningDecision(
@@ -1079,6 +1078,15 @@ class SpecEngine(private val project: Project) {
             targetStage = targetStage,
             confirmWarnings = confirmWarnings,
         )
+        if (warningConfirmed) {
+            recordGateWarningConfirmationAudit(
+                workflow = workflow,
+                transitionType = transitionType,
+                targetStage = targetStage,
+                evaluatedStages = evaluatedStages,
+                gateResult = gateResult,
+            )
+        }
 
         val updatedAt = System.currentTimeMillis()
         val stageMetadata = applyStageTransitionMetadata(
@@ -1247,11 +1255,11 @@ class SpecEngine(private val project: Project) {
                     throw StageTransitionBlockedByGateError(fromStage, targetStage, gateResult)
                 }
                 if (!gatePolicy.requireWarningConfirmation) {
-                    true
+                    false
                 } else {
                     val confirmed = confirmWarnings?.invoke(gateResult) == true
                     if (!confirmed) {
-                        throw StageWarningConfirmationRequiredError(fromStage, targetStage)
+                        throw StageWarningConfirmationRequiredError(fromStage, targetStage, gateResult)
                     }
                     true
                 }
@@ -1275,6 +1283,9 @@ class SpecEngine(private val project: Project) {
             "transitionType" to transitionType.name,
             "gateStatus" to gateResult.status.name,
             "warningConfirmed" to warningConfirmed.toString(),
+            "gateSummary" to gateResult.aggregation.summary,
+            "warningCount" to gateResult.aggregation.warningCount.toString(),
+            "errorCount" to gateResult.aggregation.errorCount.toString(),
         )
         if (evaluatedStages.isNotEmpty()) {
             details["evaluatedStages"] = evaluatedStages.joinToString(",") { stage -> stage.name }
@@ -1284,7 +1295,9 @@ class SpecEngine(private val project: Project) {
 
     private fun recordGateRuleDowngradeAudit(
         workflow: SpecWorkflow,
+        transitionType: StageTransitionType,
         targetStage: StageId,
+        evaluatedStages: List<StageId>,
         gateResult: GateResult,
     ) {
         val downgradedViolations = gateResult.ruleResults
@@ -1303,6 +1316,7 @@ class SpecEngine(private val project: Project) {
         val details = linkedMapOf(
             "fromStage" to workflow.currentStage.name,
             "toStage" to targetStage.name,
+            "transitionType" to transitionType.name,
             "gateStatus" to gateResult.status.name,
             "downgradeCount" to downgradedViolations.size.toString(),
             "downgradedRules" to downgradedViolations
@@ -1321,9 +1335,49 @@ class SpecEngine(private val project: Project) {
                 .sorted()
                 .joinToString(";"),
         )
+        if (evaluatedStages.isNotEmpty()) {
+            details["evaluatedStages"] = evaluatedStages.joinToString(",") { stage -> stage.name }
+        }
         storageDelegate.appendAuditEvent(
             workflowId = workflow.id,
             eventType = SpecAuditEventType.GATE_RULE_DOWNGRADED,
+            details = details,
+        ).getOrThrow()
+    }
+
+    private fun recordGateWarningConfirmationAudit(
+        workflow: SpecWorkflow,
+        transitionType: StageTransitionType,
+        targetStage: StageId,
+        evaluatedStages: List<StageId>,
+        gateResult: GateResult,
+    ) {
+        val confirmation = gateResult.warningConfirmation ?: return
+        val warnings = confirmation.warnings
+        if (warnings.isEmpty()) {
+            return
+        }
+
+        val details = linkedMapOf(
+            "fromStage" to workflow.currentStage.name,
+            "toStage" to targetStage.name,
+            "transitionType" to transitionType.name,
+            "gateStatus" to gateResult.status.name,
+            "warningCount" to gateResult.aggregation.warningCount.toString(),
+            "warningRuleCount" to gateResult.aggregation.warningRuleCount.toString(),
+            "gateSummary" to gateResult.aggregation.summary,
+            "warningRules" to warnings.map(Violation::ruleId).distinct().sorted().joinToString(","),
+            "warningViolations" to warnings
+                .map { violation -> "${violation.ruleId}@${violation.fileName}:${violation.line}" }
+                .sorted()
+                .joinToString(";"),
+        )
+        if (evaluatedStages.isNotEmpty()) {
+            details["evaluatedStages"] = evaluatedStages.joinToString(",") { stage -> stage.name }
+        }
+        storageDelegate.appendAuditEvent(
+            workflowId = workflow.id,
+            eventType = SpecAuditEventType.GATE_WARNING_CONFIRMED,
             details = details,
         ).getOrThrow()
     }
@@ -1434,10 +1488,119 @@ class SpecEngine(private val project: Project) {
         }
     }
 
+    private fun buildStageTransitionRequest(
+        workflow: SpecWorkflow,
+        transitionType: StageTransitionType,
+        targetStage: StageId,
+        evaluatedStages: List<StageId>,
+        stagePlan: WorkflowStagePlan,
+    ): StageTransitionRequest {
+        return StageTransitionRequest(
+            workflowId = workflow.id,
+            transitionType = transitionType,
+            fromStage = workflow.currentStage,
+            targetStage = targetStage,
+            evaluatedStages = evaluatedStages.distinct(),
+            stagePlan = stagePlan,
+            workflow = workflow,
+        )
+    }
+
+    private fun prepareStageTransition(
+        workflowId: String,
+        transitionType: StageTransitionType,
+        requestedTargetStage: StageId? = null,
+    ): PreparedStageTransition {
+        val workflow = activeWorkflows[workflowId]
+            ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
+        val projectConfig = projectConfigDelegate.load()
+        val stagePlan = resolveStagePlan(workflow, projectConfig)
+
+        return when (transitionType) {
+            StageTransitionType.ADVANCE -> {
+                val targetStage = stagePlan.nextActiveStage(workflow.currentStage)
+                    ?: throw IllegalStateException("Already at the last active stage")
+                PreparedStageTransition(
+                    workflow = workflow,
+                    stagePlan = stagePlan,
+                    gatePolicy = projectConfig.gate,
+                    targetStage = targetStage,
+                    evaluatedStages = listOf(workflow.currentStage),
+                )
+            }
+
+            StageTransitionType.JUMP -> {
+                val targetStage = requestedTargetStage
+                    ?: throw IllegalArgumentException("targetStage is required for jump transitions")
+                if (!projectConfig.gate.allowJump) {
+                    throw StageTransitionPolicyError("Jump transition is disabled by gate policy")
+                }
+                if (!stagePlan.isActive(targetStage)) {
+                    throw InactiveWorkflowStageError(targetStage)
+                }
+                val currentIndex = stagePlan.activeStageIndex(workflow.currentStage)
+                val targetIndex = stagePlan.activeStageIndex(targetStage)
+                if (targetIndex <= currentIndex) {
+                    throw InvalidStageTransitionError(workflow.currentStage, targetStage)
+                }
+                val evaluatedStages = if (projectConfig.gate.jumpRequiresMinimalGate) {
+                    stagePlan.activeStagesBetween(workflow.currentStage, targetStage).dropLast(1)
+                } else {
+                    listOf(workflow.currentStage)
+                }
+                PreparedStageTransition(
+                    workflow = workflow,
+                    stagePlan = stagePlan,
+                    gatePolicy = projectConfig.gate,
+                    targetStage = targetStage,
+                    evaluatedStages = evaluatedStages,
+                )
+            }
+
+            StageTransitionType.ROLLBACK -> {
+                val targetStage = requestedTargetStage
+                    ?: throw IllegalArgumentException("targetStage is required for rollback transitions")
+                if (!projectConfig.gate.allowRollback) {
+                    throw StageTransitionPolicyError("Rollback transition is disabled by gate policy")
+                }
+                if (!stagePlan.isActive(targetStage)) {
+                    throw InactiveWorkflowStageError(targetStage)
+                }
+                val currentIndex = stagePlan.activeStageIndex(workflow.currentStage)
+                val targetIndex = stagePlan.activeStageIndex(targetStage)
+                if (targetIndex > currentIndex) {
+                    throw InvalidStageTransitionError(workflow.currentStage, targetStage)
+                }
+
+                val targetState = workflow.stageStates[targetStage]
+                if (targetStage != workflow.currentStage && targetState?.status != StageProgress.DONE) {
+                    throw StageTransitionPolicyError(
+                        "Rollback target $targetStage must be a completed or current stage",
+                    )
+                }
+                PreparedStageTransition(
+                    workflow = workflow,
+                    stagePlan = stagePlan,
+                    gatePolicy = projectConfig.gate,
+                    targetStage = targetStage,
+                    evaluatedStages = emptyList(),
+                )
+            }
+        }
+    }
+
     private data class StageMetadataState(
         val currentStage: StageId,
         val verifyEnabled: Boolean,
         val stageStates: Map<StageId, StageState>,
+    )
+
+    private data class PreparedStageTransition(
+        val workflow: SpecWorkflow,
+        val stagePlan: WorkflowStagePlan,
+        val gatePolicy: SpecGatePolicy,
+        val targetStage: StageId,
+        val evaluatedStages: List<StageId>,
     )
 
     private fun initialPhaseForStage(stage: StageId): SpecPhase {

@@ -304,10 +304,44 @@ data class Violation(
     val originalSeverity: GateStatus? = null,
 )
 
+data class GateAggregation(
+    val totalViolationCount: Int,
+    val errorCount: Int,
+    val warningCount: Int,
+    val passedRuleCount: Int,
+    val warningRuleCount: Int,
+    val errorRuleCount: Int,
+    val errorViolations: List<Violation>,
+    val warningViolations: List<Violation>,
+    val summary: String,
+    val canProceed: Boolean,
+    val requiresWarningConfirmation: Boolean,
+)
+
+data class GateWarningConfirmation(
+    val title: String,
+    val message: String,
+    val warnings: List<Violation>,
+)
+
 data class GateResult(
     val status: GateStatus,
     val violations: List<Violation>,
     val ruleResults: List<RuleEvaluationResult> = emptyList(),
+    val aggregation: GateAggregation = GateAggregation(
+        totalViolationCount = 0,
+        errorCount = 0,
+        warningCount = 0,
+        passedRuleCount = 0,
+        warningRuleCount = 0,
+        errorRuleCount = 0,
+        errorViolations = emptyList(),
+        warningViolations = emptyList(),
+        summary = "Gate passed.",
+        canProceed = true,
+        requiresWarningConfirmation = false,
+    ),
+    val warningConfirmation: GateWarningConfirmation? = null,
 ) {
     companion object {
         fun fromViolations(
@@ -320,10 +354,17 @@ data class GateResult(
                 else -> GateStatus.PASS
             }
             val sortedViolations = violations.sortedWith(compareBy(Violation::fileName, Violation::line, Violation::ruleId))
+            val aggregation = buildAggregation(
+                status = status,
+                violations = sortedViolations,
+                ruleResults = ruleResults,
+            )
             return GateResult(
                 status = status,
                 violations = sortedViolations,
                 ruleResults = ruleResults.sortedBy(RuleEvaluationResult::ruleId),
+                aggregation = aggregation,
+                warningConfirmation = buildWarningConfirmation(aggregation),
             )
         }
 
@@ -331,6 +372,64 @@ data class GateResult(
             return fromViolations(
                 violations = ruleResults.flatMap(RuleEvaluationResult::violations),
                 ruleResults = ruleResults,
+            )
+        }
+
+        private fun buildAggregation(
+            status: GateStatus,
+            violations: List<Violation>,
+            ruleResults: List<RuleEvaluationResult>,
+        ): GateAggregation {
+            val errorViolations = violations.filter { it.severity == GateStatus.ERROR }
+            val warningViolations = violations.filter { it.severity == GateStatus.WARNING }
+            val passRuleCount = if (ruleResults.isNotEmpty()) {
+                ruleResults.count { evaluation -> evaluation.violations.isEmpty() }
+            } else {
+                0
+            }
+            val warningRuleCount = if (ruleResults.isNotEmpty()) {
+                ruleResults.count { evaluation ->
+                    evaluation.violations.any { violation -> violation.severity == GateStatus.WARNING } &&
+                        evaluation.violations.none { violation -> violation.severity == GateStatus.ERROR }
+                }
+            } else {
+                warningViolations.map(Violation::ruleId).distinct().size
+            }
+            val errorRuleCount = if (ruleResults.isNotEmpty()) {
+                ruleResults.count { evaluation ->
+                    evaluation.violations.any { violation -> violation.severity == GateStatus.ERROR }
+                }
+            } else {
+                errorViolations.map(Violation::ruleId).distinct().size
+            }
+            val summary = when (status) {
+                GateStatus.PASS -> "Gate passed with ${passRuleCount.coerceAtLeast(ruleResults.size)} rule(s)."
+                GateStatus.WARNING -> "Gate requires warning confirmation: ${warningViolations.size} warning(s) across ${warningRuleCount.coerceAtLeast(1)} rule(s)."
+                GateStatus.ERROR -> "Gate blocked: ${errorViolations.size} error(s) and ${warningViolations.size} warning(s)."
+            }
+            return GateAggregation(
+                totalViolationCount = violations.size,
+                errorCount = errorViolations.size,
+                warningCount = warningViolations.size,
+                passedRuleCount = passRuleCount,
+                warningRuleCount = warningRuleCount,
+                errorRuleCount = errorRuleCount,
+                errorViolations = errorViolations,
+                warningViolations = warningViolations,
+                summary = summary,
+                canProceed = status != GateStatus.ERROR,
+                requiresWarningConfirmation = status == GateStatus.WARNING,
+            )
+        }
+
+        private fun buildWarningConfirmation(aggregation: GateAggregation): GateWarningConfirmation? {
+            if (!aggregation.requiresWarningConfirmation || aggregation.warningViolations.isEmpty()) {
+                return null
+            }
+            return GateWarningConfirmation(
+                title = "Confirm gate warnings",
+                message = aggregation.summary,
+                warnings = aggregation.warningViolations,
             )
         }
     }
@@ -365,6 +464,15 @@ data class StageTransitionResult(
     val warningConfirmed: Boolean,
     val beforeSnapshotId: String? = null,
     val afterSnapshotId: String? = null,
+)
+
+data class StageTransitionGatePreview(
+    val workflowId: String,
+    val transitionType: StageTransitionType,
+    val fromStage: StageId,
+    val targetStage: StageId,
+    val evaluatedStages: List<StageId>,
+    val gateResult: GateResult,
 )
 
 enum class TemplateSwitchArtifactStrategy {
@@ -476,7 +584,11 @@ class InactiveWorkflowStageError(stageId: StageId) :
 class StageTransitionPolicyError(message: String) :
     WorkflowDomainError(message)
 
-class StageWarningConfirmationRequiredError(from: StageId, to: StageId) :
+class StageWarningConfirmationRequiredError(
+    from: StageId,
+    to: StageId,
+    val gateResult: GateResult,
+) :
     WorkflowDomainError("Stage transition $from -> $to requires explicit warning confirmation")
 
 class StageTransitionBlockedByGateError(

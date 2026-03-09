@@ -68,4 +68,28 @@ class SpecTaskMarkdownParserTest {
         assertTrue(parsed.issues.first().message.contains("followed immediately"))
         assertTrue(parsed.issues.last().message.contains("immediately follow a task heading"))
     }
+
+    @Test
+    fun `parse should ignore handwritten non task headings inside task body`() {
+        val markdown = """
+            ## 任务列表
+
+            ### T-001: 定义任务模型
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] 保留正文
+            ### Notes
+            这是任务正文里的手写说明。
+        """.trimIndent()
+
+        val parsed = SpecTaskMarkdownParser.parse(markdown)
+
+        assertTrue(parsed.issues.isEmpty())
+        assertEquals(listOf("T-001"), parsed.tasks.map { task -> task.id })
+    }
 }

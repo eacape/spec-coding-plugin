@@ -172,6 +172,20 @@ object SpecArchitectureContract {
             rationale = "Task 21 requires PASS/WARN/FAIL verification conclusions to map into gate outcomes while recording any severity downgrade in audit history.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "gate-aggregation",
+            capability = "structured gate aggregation and explicit warning confirmation audit for UI-facing workflows",
+            selection = "GateResult aggregation/warning confirmation models + SpecEngine gate preview API + dedicated warning confirmation audit event",
+            rationale = "Task 22 requires warning pass-through callbacks, auditable confirmation records, and structured gate output that later UI actions/tool windows can render directly.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
+            key = "tasks-service",
+            capability = "tasks.md parsing plus stable task ordering while preserving handwritten markdown sections",
+            selection = "SpecTasksService backed by SpecTaskMarkdownParser + Markdown section slicing",
+            rationale = "Task 23 requires structured task parsing for UI consumption and deterministic tasks.md output ordered by task id without losing user-authored markdown bodies.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(
@@ -260,6 +274,10 @@ object SpecArchitectureContract {
             fileName = "SpecTaskMarkdownParser.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecTasksService.kt",
+            layer = Layer.APPLICATION,
         ),
         SourceRule(
             fileName = "SpecFileLockManager.kt",

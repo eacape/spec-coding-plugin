@@ -74,9 +74,10 @@ object SpecTaskMarkdownParser {
             val immediateFence = fencesByStartLine[lineNumber + 1]
             val match = TASK_HEADING_REGEX.matchEntire(rawLine)
             if (match == null) {
-                if (immediateFence != null) {
-                    consumedFenceLines += immediateFence.location.startLine
+                if (immediateFence == null) {
+                    return@forEachIndexed
                 }
+                consumedFenceLines += immediateFence.location.startLine
                 issues += ParseIssue(
                     line = lineNumber,
                     message = "Task headings must use the format `### T-001: Title`.",
