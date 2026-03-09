@@ -5,12 +5,14 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -147,6 +149,42 @@ class SpecEngineStageTransitionTest {
         assertEquals("PASS", event.details["gateStatus"])
     }
 
+    @Test
+    fun `advanceWorkflow should use rule severity override from project config`() {
+        writeProjectConfig(
+            """
+            schemaVersion: 1
+            rules:
+              document-validation:
+                severity: WARNING
+            """.trimIndent(),
+        )
+        val engine = SpecEngine(project, storage, generationHandler = ::generateValidDocument)
+        val created = engine.createWorkflow(
+            title = "Rule Override Workflow",
+            description = "warning override",
+        ).getOrThrow()
+
+        storage.saveDocument(created.id, invalidRequirementsDocument()).getOrThrow()
+        val reloaded = engine.reloadWorkflow(created.id).getOrThrow()
+        assertEquals(StageId.REQUIREMENTS, reloaded.currentStage)
+
+        val blocked = engine.advanceWorkflow(created.id)
+        assertTrue(blocked.isFailure)
+        assertTrue(blocked.exceptionOrNull() is StageWarningConfirmationRequiredError)
+
+        val result = engine.advanceWorkflow(created.id) { true }.getOrThrow()
+
+        assertEquals(GateStatus.WARNING, result.gateResult.status)
+        assertFalse(result.gateResult.ruleResults.isEmpty())
+        val ruleResult = result.gateResult.ruleResults.first { it.ruleId == "document-validation" }
+        assertTrue(ruleResult.severityOverridden)
+        assertEquals(GateStatus.WARNING, ruleResult.effectiveSeverity)
+        assertTrue(ruleResult.violations.isNotEmpty())
+        assertTrue(ruleResult.violations.all { it.severity == GateStatus.WARNING })
+        assertTrue(ruleResult.violations.all { !it.fixHint.isNullOrBlank() })
+    }
+
     private fun loadAuditEvents(workflowId: String): List<SpecAuditEvent> {
         val auditPath = tempDir
             .resolve(".spec-coding")
@@ -155,6 +193,24 @@ class SpecEngineStageTransitionTest {
             .resolve(".history")
             .resolve("audit.yaml")
         return SpecAuditLogCodec.decodeDocuments(Files.readString(auditPath))
+    }
+
+    private fun writeProjectConfig(raw: String) {
+        val configPath = tempDir.resolve(".spec-coding").resolve("config.yaml")
+        Files.createDirectories(configPath.parent)
+        Files.writeString(configPath, "$raw\n", StandardCharsets.UTF_8)
+    }
+
+    private fun invalidRequirementsDocument(): SpecDocument {
+        return SpecDocument(
+            id = "invalid-requirements",
+            phase = SpecPhase.SPECIFY,
+            content = "不完整的需求",
+            metadata = SpecMetadata(
+                title = "Invalid Requirements",
+                description = "missing required sections",
+            ),
+        )
     }
 
     private suspend fun generateValidDocument(request: SpecGenerationRequest): SpecGenerationResult {

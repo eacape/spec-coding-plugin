@@ -144,6 +144,13 @@ object SpecArchitectureContract {
             rationale = "Task 17 requires confirmed preview application, non-destructive artifact preservation, and rollback to pre-switch metadata.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "rule-framework",
+            capability = "configurable gate rule abstraction with explainable results and severity overrides",
+            selection = "SpecGateRuleEngine + Rule/RuleContext abstractions + per-rule config severity overrides",
+            rationale = "Task 18 requires reusable rule evaluation, config-driven enable/disable, and structured outputs with remediation hints.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(
@@ -187,6 +194,10 @@ object SpecArchitectureContract {
         ),
         SourceRule(
             fileName = "SpecGenerator.kt",
+            layer = Layer.APPLICATION,
+        ),
+        SourceRule(
+            fileName = "SpecGateRuleEngine.kt",
             layer = Layer.APPLICATION,
         ),
         SourceRule(

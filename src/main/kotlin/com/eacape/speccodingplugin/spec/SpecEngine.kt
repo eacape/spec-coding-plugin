@@ -28,6 +28,15 @@ class SpecEngine(private val project: Project) {
     private val templateSwitchIdGenerator = WorkflowIdGenerator(prefix = "switch")
     private val projectConfigDelegate: SpecProjectConfigService by lazy { SpecProjectConfigService(project) }
     private val artifactServiceDelegate: SpecArtifactService by lazy { SpecArtifactService(project) }
+    private val gateRuleEngine: SpecGateRuleEngine by lazy {
+        SpecGateRuleEngine(
+            artifactService = artifactServiceDelegate,
+            rules = listOf(
+                RequiredArtifactRule(),
+                DocumentValidationRule(),
+            ),
+        )
+    }
 
     // Overridable by test constructor; lazy to avoid service lookups during construction
     private var _storageOverride: SpecStorage? = null
@@ -1331,48 +1340,10 @@ class SpecEngine(private val project: Project) {
     }
 
     private fun evaluateStageGate(request: StageTransitionRequest): GateResult {
-        val violations = mutableListOf<Violation>()
-        request.evaluatedStages.distinct().forEach { stageId ->
-            if (request.stagePlan.participatesInGate(stageId)) {
-                val fileName = stageId.artifactFileName ?: return@forEach
-                val artifactPath = artifactServiceDelegate.locateArtifact(request.workflowId, stageId)
-                if (!Files.exists(artifactPath)) {
-                    violations += Violation(
-                        ruleId = "artifact-required",
-                        severity = GateStatus.ERROR,
-                        fileName = fileName,
-                        line = 1,
-                        message = "Required artifact $fileName is missing for stage $stageId",
-                        fixHint = "Create $fileName before continuing",
-                    )
-                    return@forEach
-                }
-            }
-
-            val phase = when (stageId) {
-                StageId.REQUIREMENTS -> SpecPhase.SPECIFY
-                StageId.DESIGN -> SpecPhase.DESIGN
-                StageId.TASKS -> SpecPhase.IMPLEMENT
-                StageId.IMPLEMENT,
-                StageId.VERIFY,
-                StageId.ARCHIVE,
-                -> null
-            } ?: return@forEach
-
-            val document = request.workflow.getDocument(phase) ?: return@forEach
-            val validation = SpecValidator.validate(document)
-            validation.errors.forEach { message ->
-                violations += Violation(
-                    ruleId = "document-validation",
-                    severity = GateStatus.ERROR,
-                    fileName = phase.outputFileName,
-                    line = 1,
-                    message = message,
-                )
-            }
-        }
-
-        return GateResult.fromViolations(violations)
+        return gateRuleEngine.evaluate(
+            request = request,
+            projectConfig = projectConfigDelegate.load(),
+        )
     }
 
     private fun emitSpecStageChangedHook(

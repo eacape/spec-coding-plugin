@@ -87,9 +87,9 @@ class SpecProjectConfigServiceTest {
 
         assertEquals(2, config.rules.size)
         assertEquals(false, config.rules.getValue("task-structure").enabled)
-        assertEquals(GateStatus.WARNING, config.rules.getValue("task-structure").severity)
+        assertEquals(GateStatus.WARNING, config.rules.getValue("task-structure").severityOverride)
         assertEquals(true, config.rules.getValue("verify-conclusion").enabled)
-        assertEquals(GateStatus.ERROR, config.rules.getValue("verify-conclusion").severity)
+        assertEquals(GateStatus.ERROR, config.rules.getValue("verify-conclusion").severityOverride)
     }
 
     @Test

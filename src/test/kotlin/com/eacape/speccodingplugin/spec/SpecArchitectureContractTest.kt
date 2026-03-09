@@ -25,6 +25,7 @@ class SpecArchitectureContractTest {
         assertTrue(decisions.containsKey("stage-transition"))
         assertTrue(decisions.containsKey("template-switch-preview"))
         assertTrue(decisions.containsKey("template-switch-apply"))
+        assertTrue(decisions.containsKey("rule-framework"))
         assertTrue(decisions.containsKey("workflow-id"))
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
@@ -77,6 +78,10 @@ class SpecArchitectureContractTest {
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("template-switch-apply").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("rule-framework").status,
         )
     }
 

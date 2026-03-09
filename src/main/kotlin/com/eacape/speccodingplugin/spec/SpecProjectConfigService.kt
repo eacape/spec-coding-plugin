@@ -88,10 +88,13 @@ class SpecProjectConfigService(
             .entries
             .sortedBy { (ruleId, _) -> ruleId }
             .forEach { (ruleId, policy) ->
-                rules[ruleId] = linkedMapOf<String, Any?>(
+                val ruleMap = linkedMapOf<String, Any?>(
                     "enabled" to policy.enabled,
-                    "severity" to policy.severity.name,
                 )
+                policy.severityOverride?.let { severity ->
+                    ruleMap["severity"] = severity.name
+                }
+                rules[ruleId] = ruleMap
             }
 
         return linkedMapOf<String, Any?>(
@@ -272,10 +275,10 @@ class SpecProjectConfigService(
                 val severity = parseSeverity(
                     ruleConfig["severity"],
                     "rules.$ruleId.severity",
-                ) ?: GateStatus.ERROR
+                )
                 ruleId to SpecRulePolicy(
                     enabled = enabled,
-                    severity = severity,
+                    severityOverride = severity,
                 )
             }
             .sortedBy { (ruleId, _) -> ruleId }

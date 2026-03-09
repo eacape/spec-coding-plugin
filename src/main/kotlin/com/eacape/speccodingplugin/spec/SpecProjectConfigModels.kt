@@ -54,5 +54,5 @@ data class SpecGatePolicy(
 
 data class SpecRulePolicy(
     val enabled: Boolean = true,
-    val severity: GateStatus = GateStatus.ERROR,
+    val severityOverride: GateStatus? = null,
 )

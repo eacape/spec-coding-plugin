@@ -306,16 +306,31 @@ data class Violation(
 data class GateResult(
     val status: GateStatus,
     val violations: List<Violation>,
+    val ruleResults: List<RuleEvaluationResult> = emptyList(),
 ) {
     companion object {
-        fun fromViolations(violations: List<Violation>): GateResult {
+        fun fromViolations(
+            violations: List<Violation>,
+            ruleResults: List<RuleEvaluationResult> = emptyList(),
+        ): GateResult {
             val status = when {
                 violations.any { it.severity == GateStatus.ERROR } -> GateStatus.ERROR
                 violations.any { it.severity == GateStatus.WARNING } -> GateStatus.WARNING
                 else -> GateStatus.PASS
             }
             val sortedViolations = violations.sortedWith(compareBy(Violation::fileName, Violation::line, Violation::ruleId))
-            return GateResult(status = status, violations = sortedViolations)
+            return GateResult(
+                status = status,
+                violations = sortedViolations,
+                ruleResults = ruleResults.sortedBy(RuleEvaluationResult::ruleId),
+            )
+        }
+
+        fun fromRuleResults(ruleResults: List<RuleEvaluationResult>): GateResult {
+            return fromViolations(
+                violations = ruleResults.flatMap(RuleEvaluationResult::violations),
+                ruleResults = ruleResults,
+            )
         }
     }
 }
