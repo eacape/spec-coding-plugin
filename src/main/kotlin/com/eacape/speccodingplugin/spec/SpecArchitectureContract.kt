@@ -186,6 +186,13 @@ object SpecArchitectureContract {
             rationale = "Task 23/24 require structured task parsing plus add/remove edits with max+1 id allocation and deterministic tasks.md output without losing user-authored markdown bodies.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "task-status-transitions",
+            capability = "strict task status transitions with spec-task-only writes and audit history",
+            selection = "SpecTasksService transitionStatus + metadata-only code fence patching + TASK_STATUS_CHANGED audit append",
+            rationale = "Task 25 requires enforcing the task state machine while preserving handwritten markdown and recording auditable before/after status changes with optional reasons.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(

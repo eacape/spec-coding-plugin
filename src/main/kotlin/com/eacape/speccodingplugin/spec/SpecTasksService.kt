@@ -7,12 +7,17 @@ import com.intellij.openapi.project.Project
 @Service(Service.Level.PROJECT)
 class SpecTasksService(private val project: Project) {
     private val artifactService: SpecArtifactService by lazy { SpecArtifactService(project) }
+    private val storage: SpecStorage by lazy { SpecStorage.getInstance(project) }
 
     data class TaskSection(
         val entry: SpecTaskMarkdownParser.ParsedTaskEntry,
         val sourceOrder: Int,
         val startOffset: Int,
         val endOffsetExclusive: Int,
+        val metadataFenceStartOffsetInSection: Int,
+        val metadataFenceEndOffsetExclusiveInSection: Int,
+        val metadataContentStartOffsetInSection: Int?,
+        val metadataContentEndOffsetExclusiveInSection: Int?,
         val sectionMarkdown: String,
         val bodyMarkdown: String,
     ) {
@@ -89,6 +94,28 @@ class SpecTasksService(private val project: Project) {
                 sourceOrder = sourceOrder,
                 startOffset = startOffset,
                 endOffsetExclusive = endOffsetExclusive,
+                metadataFenceStartOffsetInSection = metadataFence
+                    ?.location
+                    ?.startOffset
+                    ?.minus(startOffset)
+                    ?.coerceIn(0, endOffsetExclusive - startOffset)
+                    ?: 0,
+                metadataFenceEndOffsetExclusiveInSection = metadataFence
+                    ?.location
+                    ?.endOffsetExclusive
+                    ?.minus(startOffset)
+                    ?.coerceIn(0, endOffsetExclusive - startOffset)
+                    ?: 0,
+                metadataContentStartOffsetInSection = metadataFence
+                    ?.contentLocation
+                    ?.startOffset
+                    ?.minus(startOffset)
+                    ?.coerceIn(0, endOffsetExclusive - startOffset),
+                metadataContentEndOffsetExclusiveInSection = metadataFence
+                    ?.contentLocation
+                    ?.endOffsetExclusive
+                    ?.minus(startOffset)
+                    ?.coerceIn(0, endOffsetExclusive - startOffset),
                 sectionMarkdown = parsedMarkdown.normalizedMarkdown.substring(startOffset, endOffsetExclusive),
                 bodyMarkdown = parsedMarkdown.normalizedMarkdown.substring(
                     startIndex = bodyStartOffset.coerceAtMost(endOffsetExclusive),
@@ -178,10 +205,7 @@ class SpecTasksService(private val project: Project) {
     }
 
     fun removeTask(workflowId: String, taskId: String) {
-        val normalizedTaskId = taskId.trim().uppercase()
-        require(TASK_ID_REGEX.matches(normalizedTaskId)) {
-            "taskId must use the format T-001."
-        }
+        val normalizedTaskId = normalizeTaskId(taskId)
 
         val editableDocument = loadEditableDocument(workflowId)
         val remainingSections = editableDocument.taskSectionsInSourceOrder
@@ -202,6 +226,58 @@ class SpecTasksService(private val project: Project) {
             StageId.TASKS,
             stabilizeOutput(updatedMarkdown),
         )
+    }
+
+    fun transitionStatus(
+        workflowId: String,
+        taskId: String,
+        to: TaskStatus,
+        reason: String? = null,
+    ) {
+        val normalizedTaskId = normalizeTaskId(taskId)
+        val normalizedReason = reason
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+        val editableDocument = loadEditableDocument(workflowId)
+        val targetSection = editableDocument.taskSectionsInSourceOrder
+            .firstOrNull { section -> section.entry.id == normalizedTaskId }
+            ?: throw MissingStructuredTaskError(normalizedTaskId)
+        val targetTask = targetSection.task
+            ?: throw InvalidTasksArtifactEditError("task $normalizedTaskId is missing required spec-task metadata")
+        if (!targetTask.status.canTransitionTo(to)) {
+            throw InvalidTaskStateTransitionError(normalizedTaskId, targetTask.status, to)
+        }
+
+        val updatedTask = targetTask.copy(status = to)
+        val updatedMarkdown = buildString {
+            append(editableDocument.preambleMarkdown)
+            editableDocument.taskSectionsInSourceOrder.forEach { section ->
+                append(
+                    if (section.entry.id == normalizedTaskId) {
+                        renderUpdatedTaskSection(section, updatedTask)
+                    } else {
+                        section.sectionMarkdown
+                    },
+                )
+            }
+            append(editableDocument.trailingMarkdown)
+        }
+        artifactService.writeArtifact(workflowId, StageId.TASKS, updatedMarkdown)
+
+        val details = linkedMapOf(
+            "taskId" to normalizedTaskId,
+            "title" to targetTask.title,
+            "fromStatus" to targetTask.status.name,
+            "toStatus" to to.name,
+        )
+        normalizedReason?.let { trimmedReason ->
+            details["reason"] = trimmedReason
+        }
+        storage.appendAuditEvent(
+            workflowId = workflowId,
+            eventType = SpecAuditEventType.TASK_STATUS_CHANGED,
+            details = details,
+        ).getOrThrow()
     }
 
     private fun nextSectionStartOffset(
@@ -300,6 +376,33 @@ class SpecTasksService(private val project: Project) {
         return TASK_ID_PREFIX + nextSequence.toString().padStart(3, '0')
     }
 
+    private fun normalizeTaskId(taskId: String): String {
+        val normalizedTaskId = taskId.trim().uppercase()
+        require(TASK_ID_REGEX.matches(normalizedTaskId)) {
+            "taskId must use the format T-001."
+        }
+        return normalizedTaskId
+    }
+
+    private fun renderUpdatedTaskSection(section: TaskSection, task: StructuredTask): String {
+        val updatedMetadata = renderTaskMetadata(task).removeSuffix("\n")
+        val metadataContentStart = section.metadataContentStartOffsetInSection
+        val metadataContentEndExclusive = section.metadataContentEndOffsetExclusiveInSection
+        if (metadataContentStart != null && metadataContentEndExclusive != null) {
+            return buildString {
+                append(section.sectionMarkdown.substring(0, metadataContentStart))
+                append(updatedMetadata)
+                append(section.sectionMarkdown.substring(metadataContentEndExclusive))
+            }
+        }
+
+        return buildString {
+            append(section.sectionMarkdown.substring(0, section.metadataFenceStartOffsetInSection))
+            append(renderTaskMetadataFence(task))
+            append(section.sectionMarkdown.substring(section.metadataFenceEndOffsetExclusiveInSection))
+        }
+    }
+
     private fun insertTaskSection(
         normalizedMarkdown: String,
         renderedTaskSection: String,
@@ -352,11 +455,18 @@ class SpecTasksService(private val project: Project) {
     private fun renderTaskSection(task: StructuredTask): String {
         return buildString {
             append("### ${task.id}: ${task.title}\n")
+            append(renderTaskMetadataFence(task))
+            append('\n')
+        }
+    }
+
+    private fun renderTaskMetadataFence(task: StructuredTask): String {
+        return buildString {
             append("```")
             append(SPEC_TASK_LANGUAGE)
             append('\n')
             append(renderTaskMetadata(task))
-            append("```\n\n")
+            append("```\n")
         }
     }
 

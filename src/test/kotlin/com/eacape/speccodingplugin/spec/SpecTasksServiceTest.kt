@@ -20,6 +20,7 @@ class SpecTasksServiceTest {
 
     private lateinit var project: Project
     private lateinit var artifactService: SpecArtifactService
+    private lateinit var storage: SpecStorage
     private lateinit var tasksService: SpecTasksService
 
     @BeforeEach
@@ -27,6 +28,7 @@ class SpecTasksServiceTest {
         project = mockk()
         every { project.basePath } returns tempDir.toString()
         artifactService = SpecArtifactService(project)
+        storage = SpecStorage.getInstance(project)
         tasksService = SpecTasksService(project)
     }
 
@@ -281,5 +283,132 @@ class SpecTasksServiceTest {
         }
 
         assertEquals("Task not found: T-999", error.message)
+    }
+
+    @Test
+    fun `transitionStatus should update only target spec-task block and append audit event`() {
+        val workflowId = "wf-tasks-transition"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: First task
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn:
+              - T-002
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] Keep this checklist.
+            #### Custom note
+            This note must stay untouched.
+
+            ### T-002: Second task
+            ```spec-task
+            status: IN_PROGRESS
+            priority: P1
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            Second task body.
+
+            ## Test Plan
+            - [ ] Verify task transitions.
+        """.trimIndent()
+        val expected = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: First task
+            ```spec-task
+            status: IN_PROGRESS
+            priority: P0
+            dependsOn:
+              - T-002
+            relatedFiles: []
+            verificationResult: null
+            ```
+            - [ ] Keep this checklist.
+            #### Custom note
+            This note must stay untouched.
+
+            ### T-002: Second task
+            ```spec-task
+            status: IN_PROGRESS
+            priority: P1
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            Second task body.
+
+            ## Test Plan
+            - [ ] Verify task transitions.
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+
+        tasksService.transitionStatus(
+            workflowId = workflowId,
+            taskId = "t-001",
+            to = TaskStatus.IN_PROGRESS,
+            reason = "  started work  ",
+        )
+
+        val persisted = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
+        val updatedTask = tasksService.parse(workflowId).first { task -> task.id == "T-001" }
+        val auditEvent = storage.listAuditEvents(workflowId).getOrThrow().last()
+
+        assertEquals("$expected\n", persisted)
+        assertEquals(TaskStatus.IN_PROGRESS, updatedTask.status)
+        assertEquals(SpecAuditEventType.TASK_STATUS_CHANGED, auditEvent.eventType)
+        assertEquals("T-001", auditEvent.details["taskId"])
+        assertEquals("First task", auditEvent.details["title"])
+        assertEquals("PENDING", auditEvent.details["fromStatus"])
+        assertEquals("IN_PROGRESS", auditEvent.details["toStatus"])
+        assertEquals("started work", auditEvent.details["reason"])
+    }
+
+    @Test
+    fun `transitionStatus should reject invalid task state changes without touching artifact or audit`() {
+        val workflowId = "wf-tasks-transition-invalid"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: First task
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            First task body.
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+        val originalPersisted = artifactService.readArtifact(workflowId, StageId.TASKS)
+
+        val error = assertThrows(InvalidTaskStateTransitionError::class.java) {
+            tasksService.transitionStatus(
+                workflowId = workflowId,
+                taskId = "T-001",
+                to = TaskStatus.COMPLETED,
+            )
+        }
+
+        assertEquals(
+            "Invalid task state transition for T-001: PENDING -> COMPLETED",
+            error.message,
+        )
+        assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))
+        assertTrue(storage.listAuditEvents(workflowId).getOrThrow().isEmpty())
     }
 }

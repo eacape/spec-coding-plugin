@@ -31,6 +31,7 @@ class SpecArchitectureContractTest {
         assertTrue(decisions.containsKey("verify-gate-rules"))
         assertTrue(decisions.containsKey("gate-aggregation"))
         assertTrue(decisions.containsKey("tasks-service"))
+        assertTrue(decisions.containsKey("task-status-transitions"))
         assertTrue(decisions.containsKey("workflow-id"))
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
@@ -107,6 +108,10 @@ class SpecArchitectureContractTest {
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("tasks-service").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("task-status-transitions").status,
         )
     }
 
