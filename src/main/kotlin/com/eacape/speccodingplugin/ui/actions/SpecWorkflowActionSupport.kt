@@ -4,6 +4,8 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.SpecArtifactService
+import com.eacape.speccodingplugin.spec.SpecTasksService
+import com.eacape.speccodingplugin.spec.SpecVerificationService
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageTransitionBlockedByGateError
@@ -270,6 +272,47 @@ internal object SpecWorkflowActionSupport {
             Messages.getQuestionIcon(),
         )
         return choice == 0
+    }
+
+    fun runVerificationWorkflow(
+        project: Project,
+        verificationService: SpecVerificationService,
+        tasksService: SpecTasksService,
+        workflowId: String,
+        onCompleted: ((VerifyRunResult) -> Unit)? = null,
+    ) {
+        runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.verify.preview"),
+            task = {
+                VerificationActionContext(
+                    plan = verificationService.preview(workflowId),
+                    scopeTasks = tasksService.parse(workflowId).sortedBy(StructuredTask::id),
+                )
+            },
+            onSuccess = { context ->
+                rememberWorkflow(project, workflowId)
+                if (!confirmVerificationPlan(project, context.plan, context.scopeTasks)) {
+                    return@runBackground
+                }
+                runBackground(
+                    project = project,
+                    title = SpecCodingBundle.message("spec.action.verify.executing"),
+                    task = {
+                        verificationService.run(
+                            workflowId = workflowId,
+                            planId = context.plan.planId,
+                            scopeTaskIds = context.scopeTasks.map(StructuredTask::id),
+                        )
+                    },
+                    onSuccess = { result ->
+                        rememberWorkflow(project, workflowId)
+                        showVerificationRunResult(project, result)
+                        onCompleted?.invoke(result)
+                    },
+                )
+            },
+        )
     }
 
     fun showVerificationRunResult(project: Project, result: VerifyRunResult) {
@@ -540,6 +583,11 @@ internal object SpecWorkflowActionSupport {
     private fun normalizePath(path: Path): String {
         return path.toString().replace('\\', '/')
     }
+
+    private data class VerificationActionContext(
+        val plan: VerifyPlan,
+        val scopeTasks: List<StructuredTask>,
+    )
 
     private fun openSpecTab(project: Project, afterOpen: () -> Unit) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID) ?: return

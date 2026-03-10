@@ -67,6 +67,8 @@ class SpecWorkflowPanel(
     private val specEngine = SpecEngine.getInstance(project)
     private val specDeltaService = SpecDeltaService.getInstance(project)
     private val specTasksService = SpecTasksService.getInstance(project)
+    private val specVerificationService = SpecVerificationService.getInstance(project)
+    private val artifactService = SpecArtifactService(project)
     private val codeGraphService = CodeGraphService.getInstance(project)
     private val worktreeManager = WorktreeManager.getInstance(project)
     private val llmRouter = LlmRouter.getInstance()
@@ -96,6 +98,12 @@ class SpecWorkflowPanel(
         onUpdateDependsOn = ::onTaskDependsOnUpdateRequested,
         onUpdateRelatedFiles = ::onTaskRelatedFilesUpdateRequested,
         onCompleteWithRelatedFiles = ::onTaskCompleteRequested,
+    )
+    private val verifyDeltaPanel = SpecWorkflowVerifyDeltaPanel(
+        onRunVerifyRequested = ::onRunVerificationRequested,
+        onOpenVerificationRequested = ::onOpenVerificationRequested,
+        onCompareBaselineRequested = ::onCompareDeltaBaselineRequested,
+        onPinBaselineRequested = ::onPinDeltaBaselineRequested,
     )
     private val gateDetailsPanel = SpecWorkflowGateDetailsPanel(project)
     private val statusLabel = JBLabel("")
@@ -250,13 +258,15 @@ class SpecWorkflowPanel(
         val rightPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = true
             background = DETAIL_COLUMN_BG
-            add(
-                createSectionContainer(
-                    overviewPanel,
-                    backgroundColor = DETAIL_SECTION_BG,
-                    borderColor = DETAIL_SECTION_BORDER,
-                ),
-                BorderLayout.NORTH,
+            val overviewSection = createSectionContainer(
+                overviewPanel,
+                backgroundColor = DETAIL_SECTION_BG,
+                borderColor = DETAIL_SECTION_BORDER,
+            )
+            val verifyDeltaSection = createSectionContainer(
+                verifyDeltaPanel,
+                backgroundColor = DETAIL_SECTION_BG,
+                borderColor = DETAIL_SECTION_BORDER,
             )
 
             val tasksAndGateSplit = JSplitPane(
@@ -325,8 +335,42 @@ class SpecWorkflowPanel(
                     }
                 },
             )
-            add(tasksGateAndDetailSplit, BorderLayout.CENTER)
             clampVerticalDividerLocation(tasksGateAndDetailSplit)
+
+            val verifyAndWorkSplit = JSplitPane(
+                JSplitPane.VERTICAL_SPLIT,
+                verifyDeltaSection,
+                tasksGateAndDetailSplit,
+            ).apply {
+                dividerLocation = JBUI.scale(220)
+                resizeWeight = 0.28
+                isContinuousLayout = true
+                border = JBUI.Borders.empty()
+                background = DETAIL_COLUMN_BG
+                SpecUiStyle.applyChatLikeSpecDivider(
+                    splitPane = this,
+                    dividerSize = JBUI.scale(4),
+                )
+            }
+            verifyAndWorkSplit.addComponentListener(
+                object : ComponentAdapter() {
+                    override fun componentResized(e: ComponentEvent?) {
+                        clampVerticalDividerLocation(
+                            split = verifyAndWorkSplit,
+                            minTop = JBUI.scale(150),
+                            minBottom = JBUI.scale(260),
+                        )
+                    }
+                },
+            )
+
+            add(overviewSection, BorderLayout.NORTH)
+            add(verifyAndWorkSplit, BorderLayout.CENTER)
+            clampVerticalDividerLocation(
+                split = verifyAndWorkSplit,
+                minTop = JBUI.scale(150),
+                minBottom = JBUI.scale(260),
+            )
         }
 
         val split = JSplitPane(
@@ -745,11 +789,12 @@ class SpecWorkflowPanel(
         val previousSelectedWorkflowId = selectedWorkflowId
         selectedWorkflowId = workflowId
         overviewPanel.showLoading()
+        verifyDeltaPanel.showLoading()
         tasksPanel.showLoading()
         gateDetailsPanel.showLoading()
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.reloadWorkflow(workflowId).getOrNull()
-            val overviewSnapshot = wf?.let(::buildOverviewSnapshot)
+            val uiSnapshot = wf?.let(::buildWorkflowUiSnapshot)
             val tasksResult = runCatching { specTasksService.parse(workflowId) }
             currentWorkflow = wf
             invokeLaterSafe {
@@ -759,8 +804,9 @@ class SpecWorkflowPanel(
                 if (wf != null) {
                     syncClarificationRetryFromWorkflow(wf)
                     phaseIndicator.updatePhase(wf)
-                    val snapshot = overviewSnapshot ?: buildOverviewSnapshot(wf)
+                    val snapshot = uiSnapshot ?: buildWorkflowUiSnapshot(wf)
                     overviewPanel.updateOverview(snapshot.overviewState)
+                    verifyDeltaPanel.updateState(snapshot.verifyDeltaState)
                     gateDetailsPanel.updateGateResult(
                         workflowId = workflowId,
                         gateResult = snapshot.gateResult,
@@ -792,6 +838,7 @@ class SpecWorkflowPanel(
                 } else {
                     phaseIndicator.reset()
                     overviewPanel.showEmpty()
+                    verifyDeltaPanel.showEmpty()
                     tasksPanel.showEmpty()
                     gateDetailsPanel.showEmpty()
                     detailPanel.showEmpty()
@@ -1760,17 +1807,7 @@ class SpecWorkflowPanel(
 
                     invokeLaterSafe {
                         result.onSuccess { delta ->
-                            SpecDeltaDialog(
-                                project = project,
-                                delta = delta,
-                                onOpenHistoryDiff = { phase ->
-                                    onShowHistoryDiffForWorkflow(
-                                        workflowId = targetWorkflow.id,
-                                        phase = phase,
-                                        currentDoc = targetWorkflow.documents[phase],
-                                    )
-                                },
-                            ).show()
+                            showDeltaDialog(targetWorkflow, delta)
                             setStatusText(SpecCodingBundle.message("spec.delta.generated"))
                         }.onFailure { error ->
                             setStatusText(SpecCodingBundle.message(
@@ -1782,6 +1819,115 @@ class SpecWorkflowPanel(
                 }
             }
         }
+    }
+
+    private fun onRunVerificationRequested(workflowId: String) {
+        SpecWorkflowActionSupport.runVerificationWorkflow(
+            project = project,
+            verificationService = specVerificationService,
+            tasksService = specTasksService,
+            workflowId = workflowId,
+            onCompleted = { result ->
+                reloadCurrentWorkflow()
+                setStatusText(result.summary)
+            },
+        )
+    }
+
+    private fun onOpenVerificationRequested(workflowId: String) {
+        val path = artifactService.locateArtifact(workflowId, StageId.VERIFY)
+        if (!Files.exists(path) || !SpecWorkflowActionSupport.openFile(project, path)) {
+            setStatusText(SpecCodingBundle.message("spec.action.verify.document.unavailable.title"))
+        }
+    }
+
+    private fun onCompareDeltaBaselineRequested(
+        workflowId: String,
+        choice: SpecWorkflowDeltaBaselineChoice,
+    ) {
+        val targetWorkflow = currentWorkflow?.takeIf { workflow -> workflow.id == workflowId } ?: return
+        scope.launch(Dispatchers.IO) {
+            val result = when (choice) {
+                is SpecWorkflowReferenceBaselineChoice -> specDeltaService.compareByWorkflowId(
+                    baselineWorkflowId = choice.workflowId,
+                    targetWorkflowId = workflowId,
+                )
+
+                is SpecWorkflowPinnedDeltaBaselineChoice -> specDeltaService.compareByDeltaBaseline(
+                    workflowId = workflowId,
+                    baselineId = choice.baseline.baselineId,
+                )
+            }
+            invokeLaterSafe {
+                result.onSuccess { delta ->
+                    showDeltaDialog(targetWorkflow, delta)
+                    setStatusText(SpecCodingBundle.message("spec.delta.generated"))
+                }.onFailure { error ->
+                    setStatusText(
+                        SpecCodingBundle.message(
+                            "spec.workflow.error",
+                            error.message ?: SpecCodingBundle.message("common.unknown"),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun onPinDeltaBaselineRequested(workflowId: String) {
+        scope.launch(Dispatchers.IO) {
+            val snapshot = specEngine.listWorkflowSnapshots(workflowId).firstOrNull()
+            if (snapshot == null) {
+                invokeLaterSafe {
+                    setStatusText(SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin.unavailable"))
+                }
+                return@launch
+            }
+            val label = SpecCodingBundle.message(
+                "spec.toolwindow.verifyDelta.pin.autoLabel",
+                snapshot.snapshotId,
+            )
+            val result = specEngine.pinDeltaBaseline(
+                workflowId = workflowId,
+                snapshotId = snapshot.snapshotId,
+                label = label,
+            )
+            invokeLaterSafe {
+                result.onSuccess { baseline ->
+                    reloadCurrentWorkflow()
+                    setStatusText(
+                        SpecCodingBundle.message(
+                            "spec.toolwindow.verifyDelta.pin.saved",
+                            baseline.label ?: baseline.baselineId,
+                        ),
+                    )
+                }.onFailure { error ->
+                    setStatusText(
+                        SpecCodingBundle.message(
+                            "spec.workflow.error",
+                            error.message ?: SpecCodingBundle.message("common.unknown"),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun showDeltaDialog(
+        targetWorkflow: SpecWorkflow,
+        delta: SpecWorkflowDelta,
+    ) {
+        SpecDeltaDialog(
+            project = project,
+            delta = delta,
+            onOpenHistoryDiff = { phase ->
+                onShowHistoryDiffForWorkflow(
+                    workflowId = targetWorkflow.id,
+                    phase = phase,
+                    currentDoc = targetWorkflow.documents[phase],
+                )
+            },
+        ).show()
     }
 
     private fun onArchiveWorkflow() {
@@ -2212,6 +2358,7 @@ class SpecWorkflowPanel(
         listPanel.refreshLocalizedTexts()
         detailPanel.refreshLocalizedTexts()
         overviewPanel.refreshLocalizedTexts()
+        verifyDeltaPanel.refreshLocalizedTexts()
         tasksPanel.refreshLocalizedTexts()
         gateDetailsPanel.refreshLocalizedTexts()
         applyToolbarButtonPresentation()
@@ -2383,20 +2530,22 @@ class SpecWorkflowPanel(
         val wfId = selectedWorkflowId ?: return
         invokeLaterSafe {
             overviewPanel.showLoading()
+            verifyDeltaPanel.showLoading()
             tasksPanel.showLoading()
             gateDetailsPanel.showLoading()
         }
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.reloadWorkflow(wfId).getOrNull()
-            val overviewSnapshot = wf?.let(::buildOverviewSnapshot)
+            val uiSnapshot = wf?.let(::buildWorkflowUiSnapshot)
             val tasksResult = runCatching { specTasksService.parse(wfId) }
             currentWorkflow = wf
             invokeLaterSafe {
                 if (wf != null) {
                     syncClarificationRetryFromWorkflow(wf)
                     phaseIndicator.updatePhase(wf)
-                    val snapshot = overviewSnapshot ?: buildOverviewSnapshot(wf)
+                    val snapshot = uiSnapshot ?: buildWorkflowUiSnapshot(wf)
                     overviewPanel.updateOverview(snapshot.overviewState)
+                    verifyDeltaPanel.updateState(snapshot.verifyDeltaState)
                     gateDetailsPanel.updateGateResult(
                         workflowId = wf.id,
                         gateResult = snapshot.gateResult,
@@ -2422,6 +2571,7 @@ class SpecWorkflowPanel(
                     onUpdated?.invoke(wf)
                 } else {
                     overviewPanel.showEmpty()
+                    verifyDeltaPanel.showEmpty()
                     tasksPanel.showEmpty()
                     gateDetailsPanel.showEmpty()
                     archiveButton.isEnabled = false
@@ -2430,13 +2580,14 @@ class SpecWorkflowPanel(
         }
     }
 
-    private data class OverviewSnapshot(
+    private data class WorkflowUiSnapshot(
         val overviewState: SpecWorkflowOverviewState,
+        val verifyDeltaState: SpecWorkflowVerifyDeltaState,
         val gateResult: GateResult?,
         val refreshedAtMillis: Long,
     )
 
-    private fun buildOverviewSnapshot(workflow: SpecWorkflow): OverviewSnapshot {
+    private fun buildWorkflowUiSnapshot(workflow: SpecWorkflow): WorkflowUiSnapshot {
         val refreshedAtMillis = System.currentTimeMillis()
         val gatePreview = if (workflow.status == WorkflowStatus.COMPLETED || workflow.currentStage == StageId.ARCHIVE) {
             null
@@ -2449,15 +2600,78 @@ class SpecWorkflowPanel(
                 null
             }
         }
-        return OverviewSnapshot(
+        return WorkflowUiSnapshot(
             overviewState = SpecWorkflowOverviewPresenter.buildState(
                 workflow = workflow,
                 gatePreview = gatePreview,
                 refreshedAtMillis = refreshedAtMillis,
             ),
+            verifyDeltaState = buildVerifyDeltaState(
+                workflow = workflow,
+                refreshedAtMillis = refreshedAtMillis,
+            ),
             gateResult = gatePreview?.gateResult,
             refreshedAtMillis = refreshedAtMillis,
         )
+    }
+
+    private fun buildVerifyDeltaState(
+        workflow: SpecWorkflow,
+        refreshedAtMillis: Long,
+    ): SpecWorkflowVerifyDeltaState {
+        val verificationHistory = runCatching {
+            specVerificationService.listRunHistory(workflow.id)
+        }.getOrElse { error ->
+            logger.debug("Unable to load verification history for workflow ${workflow.id}", error)
+            emptyList()
+        }
+        val baselineChoices = buildList {
+            workflow.baselineWorkflowId
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() && it != workflow.id }
+                ?.let { baselineWorkflowId ->
+                    val baselineTitle = specEngine.loadWorkflow(baselineWorkflowId).getOrNull()
+                        ?.title
+                        ?.ifBlank { baselineWorkflowId }
+                        ?: baselineWorkflowId
+                    add(
+                        SpecWorkflowReferenceBaselineChoice(
+                            workflowId = baselineWorkflowId,
+                            title = baselineTitle,
+                        ),
+                    )
+                }
+            addAll(
+                runCatching {
+                    specEngine.listDeltaBaselines(workflow.id)
+                }.getOrElse { error ->
+                    logger.debug("Unable to load delta baselines for workflow ${workflow.id}", error)
+                    emptyList()
+                }.map(::SpecWorkflowPinnedDeltaBaselineChoice),
+            )
+        }
+        val canPinBaseline = runCatching {
+            specEngine.listWorkflowSnapshots(workflow.id).isNotEmpty()
+        }.getOrElse { error ->
+            logger.debug("Unable to inspect workflow snapshots for ${workflow.id}", error)
+            false
+        }
+        return SpecWorkflowVerifyDeltaState(
+            workflowId = workflow.id,
+            verifyEnabled = workflow.verifyEnabled || workflow.stageStates[StageId.VERIFY]?.active == true,
+            verificationDocumentAvailable = hasVerificationArtifact(workflow.id),
+            verificationHistory = verificationHistory,
+            baselineChoices = baselineChoices,
+            preferredBaselineChoiceId = baselineChoices.firstOrNull()?.stableId,
+            canPinBaseline = canPinBaseline,
+            refreshedAtMillis = refreshedAtMillis,
+        )
+    }
+
+    private fun hasVerificationArtifact(workflowId: String): Boolean {
+        return runCatching {
+            Files.exists(artifactService.locateArtifact(workflowId, StageId.VERIFY))
+        }.getOrDefault(false)
     }
 
     private fun buildValidationFailureStatus(validation: ValidationResult): String {
@@ -2554,8 +2768,8 @@ class SpecWorkflowPanel(
         private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")
-        private val SPEC_DOCUMENT_FILE_NAMES = SpecPhase.entries
-            .map { it.outputFileName }
+        private val SPEC_DOCUMENT_FILE_NAMES = (SpecPhase.entries
+            .map { it.outputFileName } + listOfNotNull(StageId.VERIFY.artifactFileName))
             .toSet()
     }
 }

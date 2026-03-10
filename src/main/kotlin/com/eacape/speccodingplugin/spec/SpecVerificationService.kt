@@ -145,6 +145,15 @@ class SpecVerificationService(private val project: Project) {
         )
     }
 
+    fun listRunHistory(workflowId: String): List<VerifyRunHistoryEntry> {
+        return storage.listAuditEvents(workflowId).getOrThrow()
+            .asSequence()
+            .filter { event -> event.eventType == SpecAuditEventType.VERIFICATION_RUN_COMPLETED }
+            .mapNotNull(::parseRunHistoryEntry)
+            .sortedByDescending(VerifyRunHistoryEntry::occurredAtEpochMs)
+            .toList()
+    }
+
     internal fun resolvePlan(workflowId: String, planId: String): VerifyPlan {
         return resolvePendingPlan(workflowId, planId).plan
     }
@@ -250,6 +259,28 @@ class SpecVerificationService(private val project: Project) {
             throw MissingStructuredTaskError(normalizedTaskId)
         }
         return normalizedTaskId
+    }
+
+    private fun parseRunHistoryEntry(event: SpecAuditEvent): VerifyRunHistoryEntry? {
+        val runId = event.details["runId"]?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val planId = event.details["planId"]?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val stage = parseEnum<StageId>(event.details["currentStage"]) ?: return null
+        val conclusion = parseEnum<VerificationConclusion>(event.details["conclusion"]) ?: return null
+        val executedAt = event.details["executedAt"]?.trim()?.takeIf { it.isNotEmpty() } ?: event.occurredAt
+        return VerifyRunHistoryEntry(
+            runId = runId,
+            planId = planId,
+            executedAt = executedAt,
+            occurredAtEpochMs = event.occurredAtEpochMs,
+            currentStage = stage,
+            conclusion = conclusion,
+            summary = event.details["summary"]?.trim().orEmpty(),
+            commandCount = event.details["commandCount"]?.trim()?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+            scopeTaskIds = parseCsvList(event.details["scopeTaskIds"]),
+            failedCommandIds = parseCsvList(event.details["failedCommandIds"]),
+            truncatedCommandIds = parseCsvList(event.details["truncatedCommandIds"]),
+            redactedCommandIds = parseCsvList(event.details["redactedCommandIds"]),
+        )
     }
 
     private fun determineConclusion(commandResults: List<VerifyCommandExecutionResult>): VerificationConclusion {
@@ -463,6 +494,20 @@ class SpecVerificationService(private val project: Project) {
 
     private fun normalizePath(path: Path): String {
         return path.toString().replace('\\', '/')
+    }
+
+    private fun parseCsvList(raw: String?): List<String> {
+        return raw
+            ?.split(',')
+            ?.map(String::trim)
+            ?.filter(String::isNotEmpty)
+            ?.distinct()
+            ?: emptyList()
+    }
+
+    private inline fun <reified E : Enum<E>> parseEnum(raw: String?): E? {
+        val normalized = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return enumValues<E>().firstOrNull { candidate -> candidate.name == normalized }
     }
 
     private fun isVerifyEnabled(workflow: SpecWorkflow): Boolean {

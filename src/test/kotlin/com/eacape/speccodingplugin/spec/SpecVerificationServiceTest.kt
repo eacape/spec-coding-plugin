@@ -324,6 +324,57 @@ class SpecVerificationServiceTest {
         assertEquals("java-fail", runEvent.details["failedCommandIds"])
     }
 
+    @Test
+    fun `listRunHistory should parse verification audit events newest first`() {
+        val workflow = createWorkflow(workflowId = "wf-verify-history")
+        storage.appendAuditEvent(
+            workflowId = workflow.id,
+            eventType = SpecAuditEventType.VERIFICATION_RUN_COMPLETED,
+            details = mapOf(
+                "planId" to "verify-plan-001",
+                "runId" to "verify-run-001",
+                "executedAt" to "2026-03-10T09:00:00Z",
+                "currentStage" to "VERIFY",
+                "conclusion" to "PASS",
+                "commandCount" to "1",
+                "scopeTaskIds" to "T-001",
+                "failedCommandIds" to "",
+                "truncatedCommandIds" to "",
+                "redactedCommandIds" to "cmd-1",
+                "summary" to "Initial verification passed.",
+            ),
+        ).getOrThrow()
+        Thread.sleep(5)
+        storage.appendAuditEvent(
+            workflowId = workflow.id,
+            eventType = SpecAuditEventType.VERIFICATION_RUN_COMPLETED,
+            details = mapOf(
+                "planId" to "verify-plan-002",
+                "runId" to "verify-run-002",
+                "executedAt" to "2026-03-10T10:15:00Z",
+                "currentStage" to "VERIFY",
+                "conclusion" to "FAIL",
+                "commandCount" to "2",
+                "scopeTaskIds" to "T-001, T-003",
+                "failedCommandIds" to "cmd-2",
+                "truncatedCommandIds" to "cmd-1",
+                "redactedCommandIds" to "cmd-1, cmd-2",
+                "summary" to "Follow-up verification failed.",
+            ),
+        ).getOrThrow()
+
+        val history = verificationService.listRunHistory(workflow.id)
+
+        assertEquals(listOf("verify-run-002", "verify-run-001"), history.map(VerifyRunHistoryEntry::runId))
+        assertEquals(VerificationConclusion.FAIL, history.first().conclusion)
+        assertEquals(StageId.VERIFY, history.first().currentStage)
+        assertEquals(2, history.first().commandCount)
+        assertEquals(listOf("T-001", "T-003"), history.first().scopeTaskIds)
+        assertEquals(listOf("cmd-2"), history.first().failedCommandIds)
+        assertEquals(listOf("cmd-1"), history.first().truncatedCommandIds)
+        assertEquals(listOf("cmd-1", "cmd-2"), history.first().redactedCommandIds)
+    }
+
     private fun createWorkflow(
         workflowId: String,
         currentStage: StageId = StageId.VERIFY,

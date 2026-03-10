@@ -1,0 +1,605 @@
+package com.eacape.speccodingplugin.ui.spec
+
+import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.SpecDeltaBaselineRef
+import com.eacape.speccodingplugin.spec.VerificationConclusion
+import com.eacape.speccodingplugin.spec.VerifyRunHistoryEntry
+import com.intellij.ui.JBColor
+import com.intellij.ui.SimpleListCellRenderer
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBList
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextArea
+import com.intellij.util.ui.JBUI
+import java.awt.BorderLayout
+import java.awt.Color
+import java.awt.Component
+import java.awt.Dimension
+import java.awt.FlowLayout
+import java.awt.Font
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import javax.swing.BorderFactory
+import javax.swing.DefaultComboBoxModel
+import javax.swing.DefaultListModel
+import javax.swing.JButton
+import javax.swing.JComboBox
+import javax.swing.JPanel
+import javax.swing.JSplitPane
+import javax.swing.ScrollPaneConstants
+import javax.swing.SwingConstants
+
+internal sealed interface SpecWorkflowDeltaBaselineChoice {
+    val stableId: String
+}
+
+internal data class SpecWorkflowReferenceBaselineChoice(
+    val workflowId: String,
+    val title: String,
+) : SpecWorkflowDeltaBaselineChoice {
+    override val stableId: String = "workflow:$workflowId"
+}
+
+internal data class SpecWorkflowPinnedDeltaBaselineChoice(
+    val baseline: SpecDeltaBaselineRef,
+) : SpecWorkflowDeltaBaselineChoice {
+    override val stableId: String = "baseline:${baseline.baselineId}"
+}
+
+internal data class SpecWorkflowVerifyDeltaState(
+    val workflowId: String,
+    val verifyEnabled: Boolean,
+    val verificationDocumentAvailable: Boolean,
+    val verificationHistory: List<VerifyRunHistoryEntry>,
+    val baselineChoices: List<SpecWorkflowDeltaBaselineChoice>,
+    val preferredBaselineChoiceId: String?,
+    val canPinBaseline: Boolean,
+    val refreshedAtMillis: Long,
+)
+
+internal class SpecWorkflowVerifyDeltaPanel(
+    private val onRunVerifyRequested: (workflowId: String) -> Unit = {},
+    private val onOpenVerificationRequested: (workflowId: String) -> Unit = {},
+    private val onCompareBaselineRequested: (workflowId: String, choice: SpecWorkflowDeltaBaselineChoice) -> Unit = { _, _ -> },
+    private val onPinBaselineRequested: (workflowId: String) -> Unit = {},
+) : JPanel(BorderLayout(0, JBUI.scale(6))) {
+
+    private val headerTitleLabel = JBLabel().apply {
+        font = JBUI.Fonts.label().deriveFont(12.5f)
+        foreground = HEADER_FG
+    }
+    private val headerSummaryLabel = JBLabel().apply {
+        font = JBUI.Fonts.smallFont()
+        foreground = HEADER_SECONDARY_FG
+    }
+    private val headerRefreshedLabel = JBLabel().apply {
+        horizontalAlignment = SwingConstants.RIGHT
+        font = JBUI.Fonts.smallFont().deriveFont(10.5f)
+        foreground = HEADER_SECONDARY_FG
+    }
+    private val statusChipLabel = JBLabel().apply {
+        horizontalAlignment = SwingConstants.CENTER
+        border = BorderFactory.createEmptyBorder()
+        isOpaque = true
+        font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD, 10.5f)
+    }
+    private val baselineLabel = JBLabel().apply {
+        font = JBUI.Fonts.smallFont()
+        foreground = HEADER_SECONDARY_FG
+    }
+    private val baselineComboBox = JComboBox<SpecWorkflowDeltaBaselineChoice>().apply {
+        renderer = SimpleListCellRenderer.create { label, value, _ ->
+            label.text = baselineChoiceLabel(value)
+        }
+        isEnabled = false
+        preferredSize = Dimension(JBUI.scale(240), JBUI.scale(24))
+    }
+    private val runVerifyButton = JButton().apply {
+        isFocusable = false
+        isEnabled = false
+        SpecUiStyle.applyRoundRect(this, 14)
+        addActionListener { handleRunVerify() }
+    }
+    private val openVerificationButton = JButton().apply {
+        isFocusable = false
+        isEnabled = false
+        SpecUiStyle.applyRoundRect(this, 14)
+        addActionListener { handleOpenVerification() }
+    }
+    private val compareButton = JButton().apply {
+        isFocusable = false
+        isEnabled = false
+        SpecUiStyle.applyRoundRect(this, 14)
+        addActionListener { handleCompareBaseline() }
+    }
+    private val pinBaselineButton = JButton().apply {
+        isFocusable = false
+        isEnabled = false
+        SpecUiStyle.applyRoundRect(this, 14)
+        addActionListener { handlePinBaseline() }
+    }
+
+    private val historyListModel = DefaultListModel<VerifyRunHistoryEntry>()
+    private val historyList = JBList(historyListModel).apply {
+        cellRenderer = HistoryCellRenderer()
+        visibleRowCount = -1
+        fixedCellHeight = -1
+        isOpaque = false
+        border = JBUI.Borders.empty()
+        emptyText.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.empty")
+    }
+    private val detailArea = JBTextArea().apply {
+        isEditable = false
+        lineWrap = true
+        wrapStyleWord = true
+        border = JBUI.Borders.empty(6, 8)
+        background = DETAIL_BG
+        foreground = DETAIL_FG
+        font = JBUI.Fonts.smallFont()
+    }
+
+    private var currentState: SpecWorkflowVerifyDeltaState? = null
+    private var emptyMessageKey: String = "spec.toolwindow.verifyDelta.empty"
+    private var currentSelectionId: String? = null
+
+    init {
+        isOpaque = false
+        border = JBUI.Borders.empty(6, 4, 6, 4)
+        minimumSize = JBUI.size(220, 150)
+        add(buildHeader(), BorderLayout.NORTH)
+        add(buildContent(), BorderLayout.CENTER)
+
+        baselineComboBox.addActionListener {
+            updateControls()
+            updateDetail()
+        }
+        historyList.addListSelectionListener {
+            if (!it.valueIsAdjusting) {
+                currentSelectionId = historyList.selectedValue?.runId
+                updateControls()
+                updateDetail()
+            }
+        }
+        refreshLocalizedTexts()
+        showEmpty()
+    }
+
+    fun refreshLocalizedTexts() {
+        headerTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.title")
+        baselineLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.baseline.label")
+        runVerifyButton.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.run")
+        openVerificationButton.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.open")
+        compareButton.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare")
+        pinBaselineButton.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin")
+        updateHeader()
+        updateDetail()
+        baselineComboBox.repaint()
+    }
+
+    fun showEmpty() {
+        currentState = null
+        currentSelectionId = null
+        emptyMessageKey = "spec.toolwindow.verifyDelta.empty"
+        historyListModel.clear()
+        baselineComboBox.model = DefaultComboBoxModel<SpecWorkflowDeltaBaselineChoice>()
+        historyList.emptyText.text = SpecCodingBundle.message(emptyMessageKey)
+        updateHeader()
+        updateControls()
+        updateDetail()
+    }
+
+    fun showLoading() {
+        currentState = null
+        currentSelectionId = null
+        emptyMessageKey = "spec.toolwindow.verifyDelta.loading"
+        historyListModel.clear()
+        baselineComboBox.model = DefaultComboBoxModel<SpecWorkflowDeltaBaselineChoice>()
+        historyList.emptyText.text = SpecCodingBundle.message(emptyMessageKey)
+        updateHeader()
+        updateControls()
+        updateDetail()
+    }
+
+    fun updateState(state: SpecWorkflowVerifyDeltaState) {
+        currentState = state
+        val previousRunId = currentSelectionId
+        emptyMessageKey = "spec.toolwindow.verifyDelta.empty"
+
+        historyListModel.clear()
+        state.verificationHistory.forEach(historyListModel::addElement)
+        historyList.emptyText.text = if (state.verificationHistory.isEmpty()) {
+            SpecCodingBundle.message("spec.toolwindow.verifyDelta.history.empty")
+        } else {
+            ""
+        }
+
+        updateBaselineChoices(state)
+        if (state.verificationHistory.isNotEmpty()) {
+            val selectedIndex = state.verificationHistory.indexOfFirst { entry -> entry.runId == previousRunId }
+                .takeIf { it >= 0 }
+                ?: 0
+            historyList.selectedIndex = selectedIndex
+            historyList.ensureIndexIsVisible(selectedIndex)
+            currentSelectionId = historyList.selectedValue?.runId
+        } else {
+            historyList.clearSelection()
+            currentSelectionId = null
+        }
+
+        updateHeader()
+        updateControls()
+        updateDetail()
+    }
+
+    private fun buildHeader(): JPanel {
+        val titleRow = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(headerTitleLabel, BorderLayout.WEST)
+            add(headerRefreshedLabel, BorderLayout.EAST)
+        }
+        val controlsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            add(statusChipLabel)
+            add(runVerifyButton)
+            add(openVerificationButton)
+            add(baselineLabel)
+            add(baselineComboBox)
+            add(compareButton)
+            add(pinBaselineButton)
+        }
+        return JPanel(BorderLayout(0, JBUI.scale(2))).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(2, 2, 4, 2)
+            add(titleRow, BorderLayout.NORTH)
+            add(headerSummaryLabel, BorderLayout.CENTER)
+            add(controlsRow, BorderLayout.SOUTH)
+        }
+    }
+
+    private fun buildContent(): JPanel {
+        val split = JSplitPane(
+            JSplitPane.VERTICAL_SPLIT,
+            JBScrollPane(historyList).apply {
+                border = JBUI.Borders.empty()
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+                viewport.isOpaque = false
+                isOpaque = false
+            },
+            JBScrollPane(detailArea).apply {
+                border = JBUI.Borders.empty()
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+            },
+        ).apply {
+            resizeWeight = 0.6
+            dividerLocation = JBUI.scale(120)
+            isContinuousLayout = true
+            border = JBUI.Borders.empty()
+            background = DETAIL_BG
+            SpecUiStyle.applyChatLikeSpecDivider(this, dividerSize = JBUI.scale(4))
+        }
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(split, BorderLayout.CENTER)
+        }
+    }
+
+    private fun updateHeader() {
+        val state = currentState
+        val refreshedAtMillis = state?.refreshedAtMillis
+        headerRefreshedLabel.text = refreshedAtMillis?.let { millis ->
+            REFRESHED_AT_FORMATTER.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
+        }.orEmpty()
+        when {
+            state == null -> {
+                headerSummaryLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.summary.none")
+                headerSummaryLabel.toolTipText = null
+                statusChipLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.unavailable")
+                applyStatusChipStyle(null)
+            }
+
+            else -> {
+                val latest = state.verificationHistory.firstOrNull()
+                headerSummaryLabel.text = when {
+                    latest != null -> SpecCodingBundle.message(
+                        "spec.toolwindow.verifyDelta.summary",
+                        state.verificationHistory.size,
+                        conclusionText(latest.conclusion),
+                        state.baselineChoices.size,
+                    )
+                    state.verifyEnabled -> SpecCodingBundle.message(
+                        "spec.toolwindow.verifyDelta.summary.noRuns",
+                        state.baselineChoices.size,
+                    )
+                    else -> SpecCodingBundle.message(
+                        "spec.toolwindow.verifyDelta.summary.disabled",
+                        state.baselineChoices.size,
+                    )
+                }
+                headerSummaryLabel.toolTipText = latest?.summary?.takeIf { it.isNotBlank() }
+                statusChipLabel.text = when {
+                    latest != null -> conclusionText(latest.conclusion)
+                    state.verifyEnabled -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.pending")
+                    else -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.disabled")
+                }
+                applyStatusChipStyle(latest?.conclusion)
+            }
+        }
+    }
+
+    private fun updateBaselineChoices(state: SpecWorkflowVerifyDeltaState) {
+        val previousChoiceId = (baselineComboBox.selectedItem as? SpecWorkflowDeltaBaselineChoice)?.stableId
+        baselineComboBox.model = DefaultComboBoxModel(state.baselineChoices.toTypedArray())
+        val selectedChoice = state.baselineChoices.firstOrNull { choice ->
+            choice.stableId == previousChoiceId || choice.stableId == state.preferredBaselineChoiceId
+        } ?: state.baselineChoices.firstOrNull()
+        baselineComboBox.selectedItem = selectedChoice
+        baselineComboBox.isEnabled = state.baselineChoices.isNotEmpty()
+    }
+
+    private fun updateControls() {
+        val state = currentState
+        val workflowId = state?.workflowId
+        val selectedBaseline = baselineComboBox.selectedItem as? SpecWorkflowDeltaBaselineChoice
+        runVerifyButton.isEnabled = state?.verifyEnabled == true && !workflowId.isNullOrBlank()
+        openVerificationButton.isEnabled = state?.verificationDocumentAvailable == true && !workflowId.isNullOrBlank()
+        compareButton.isEnabled = !workflowId.isNullOrBlank() && selectedBaseline != null
+        pinBaselineButton.isEnabled = state?.canPinBaseline == true && !workflowId.isNullOrBlank()
+    }
+
+    private fun updateDetail() {
+        val selectedRun = historyList.selectedValue
+        val selectedBaseline = baselineComboBox.selectedItem as? SpecWorkflowDeltaBaselineChoice
+        detailArea.text = when {
+            selectedRun != null -> buildRunDetail(selectedRun)
+            currentState == null -> SpecCodingBundle.message(emptyMessageKey)
+            currentState?.verifyEnabled == true -> buildNoRunDetail(selectedBaseline)
+            else -> buildDisabledDetail(selectedBaseline)
+        }
+        detailArea.caretPosition = 0
+    }
+
+    private fun buildRunDetail(entry: VerifyRunHistoryEntry): String {
+        return buildString {
+            appendLine(SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.runId", entry.runId))
+            appendLine(SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.planId", entry.planId))
+            appendLine(SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.executedAt", entry.executedAt))
+            appendLine(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.verifyDelta.detail.stage",
+                    SpecWorkflowOverviewPresenter.stageLabel(entry.currentStage),
+                ),
+            )
+            appendLine(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.verifyDelta.detail.conclusion",
+                    conclusionText(entry.conclusion),
+                ),
+            )
+            appendLine(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.verifyDelta.detail.scope",
+                    formatList(entry.scopeTaskIds),
+                ),
+            )
+            appendLine(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.verifyDelta.detail.commands",
+                    entry.commandCount,
+                    formatList(entry.failedCommandIds),
+                    formatList(entry.truncatedCommandIds),
+                    formatList(entry.redactedCommandIds),
+                ),
+            )
+            appendLine()
+            appendLine(SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.summary"))
+            appendLine(entry.summary.ifBlank { SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.summary.empty") })
+        }
+    }
+
+    private fun buildNoRunDetail(selectedBaseline: SpecWorkflowDeltaBaselineChoice?): String {
+        return buildString {
+            appendLine(SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.noRuns"))
+            appendLine()
+            appendLine(SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.baseline"))
+            appendLine(selectedBaseline?.let(::baselineChoiceDetails) ?: SpecCodingBundle.message("spec.toolwindow.verifyDelta.baseline.none"))
+        }
+    }
+
+    private fun buildDisabledDetail(selectedBaseline: SpecWorkflowDeltaBaselineChoice?): String {
+        return buildString {
+            appendLine(SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.disabled"))
+            appendLine()
+            appendLine(SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.baseline"))
+            appendLine(selectedBaseline?.let(::baselineChoiceDetails) ?: SpecCodingBundle.message("spec.toolwindow.verifyDelta.baseline.none"))
+        }
+    }
+
+    private fun handleRunVerify() {
+        val workflowId = currentState?.workflowId ?: return
+        onRunVerifyRequested(workflowId)
+    }
+
+    private fun handleOpenVerification() {
+        val workflowId = currentState?.workflowId ?: return
+        onOpenVerificationRequested(workflowId)
+    }
+
+    private fun handleCompareBaseline() {
+        val workflowId = currentState?.workflowId ?: return
+        val selectedChoice = baselineComboBox.selectedItem as? SpecWorkflowDeltaBaselineChoice ?: return
+        onCompareBaselineRequested(workflowId, selectedChoice)
+    }
+
+    private fun handlePinBaseline() {
+        val workflowId = currentState?.workflowId ?: return
+        onPinBaselineRequested(workflowId)
+    }
+
+    private fun baselineChoiceLabel(choice: SpecWorkflowDeltaBaselineChoice?): String {
+        return when (choice) {
+            is SpecWorkflowReferenceBaselineChoice -> SpecCodingBundle.message(
+                "spec.toolwindow.verifyDelta.baseline.workflow",
+                choice.title,
+                choice.workflowId,
+            )
+
+            is SpecWorkflowPinnedDeltaBaselineChoice -> {
+                val label = choice.baseline.label ?: choice.baseline.baselineId
+                SpecCodingBundle.message("spec.toolwindow.verifyDelta.baseline.pinned", label)
+            }
+
+            null -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.baseline.none")
+        }
+    }
+
+    private fun baselineChoiceDetails(choice: SpecWorkflowDeltaBaselineChoice): String {
+        return when (choice) {
+            is SpecWorkflowReferenceBaselineChoice -> SpecCodingBundle.message(
+                "spec.toolwindow.verifyDelta.baseline.detail.workflow",
+                choice.title,
+                choice.workflowId,
+            )
+
+            is SpecWorkflowPinnedDeltaBaselineChoice -> {
+                val label = choice.baseline.label ?: choice.baseline.baselineId
+                val createdAt = REFRESHED_AT_FORMATTER.format(
+                    Instant.ofEpochMilli(choice.baseline.createdAt).atZone(ZoneId.systemDefault()),
+                )
+                SpecCodingBundle.message(
+                    "spec.toolwindow.verifyDelta.baseline.detail.pinned",
+                    label,
+                    choice.baseline.snapshotId,
+                    createdAt,
+                )
+            }
+        }
+    }
+
+    private fun conclusionText(conclusion: VerificationConclusion): String {
+        return when (conclusion) {
+            VerificationConclusion.PASS -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.pass")
+            VerificationConclusion.WARN -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.warn")
+            VerificationConclusion.FAIL -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.fail")
+        }
+    }
+
+    private fun applyStatusChipStyle(conclusion: VerificationConclusion?) {
+        val (background, foreground, border) = when (conclusion) {
+            VerificationConclusion.PASS -> Triple(PASS_BG, PASS_FG, PASS_BORDER)
+            VerificationConclusion.WARN -> Triple(WARN_BG, WARN_FG, WARN_BORDER)
+            VerificationConclusion.FAIL -> Triple(ERROR_BG, ERROR_FG, ERROR_BORDER)
+            null -> Triple(NEUTRAL_BG, NEUTRAL_FG, NEUTRAL_BORDER)
+        }
+        statusChipLabel.background = background
+        statusChipLabel.foreground = foreground
+        statusChipLabel.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(border, JBUI.scale(10)),
+            JBUI.Borders.empty(2, 8, 2, 8),
+        )
+    }
+
+    private fun formatList(items: List<String>): String {
+        return items.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: SpecCodingBundle.message("spec.toolwindow.verifyDelta.detail.none")
+    }
+
+    private class HistoryCellRenderer : javax.swing.ListCellRenderer<VerifyRunHistoryEntry> {
+        private val panel = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            border = JBUI.Borders.empty(8, 10)
+            isOpaque = true
+        }
+        private val summaryLabel = JBLabel().apply {
+            font = JBUI.Fonts.label().deriveFont(12f)
+            foreground = TITLE_FG
+        }
+        private val metaLabel = JBLabel().apply {
+            font = JBUI.Fonts.smallFont().deriveFont(10.5f)
+            foreground = META_FG
+        }
+        private val chipLabel = JBLabel().apply {
+            horizontalAlignment = SwingConstants.CENTER
+            border = BorderFactory.createEmptyBorder()
+            isOpaque = true
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD, 10.5f)
+        }
+
+        init {
+            panel.add(
+                JPanel(BorderLayout(0, JBUI.scale(2))).apply {
+                    isOpaque = false
+                    add(summaryLabel, BorderLayout.NORTH)
+                    add(metaLabel, BorderLayout.CENTER)
+                },
+                BorderLayout.CENTER,
+            )
+            panel.add(chipLabel, BorderLayout.EAST)
+        }
+
+        override fun getListCellRendererComponent(
+            list: javax.swing.JList<out VerifyRunHistoryEntry>,
+            value: VerifyRunHistoryEntry?,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean,
+        ): Component {
+            if (value == null) {
+                summaryLabel.text = ""
+                metaLabel.text = ""
+                chipLabel.text = ""
+                return panel
+            }
+            summaryLabel.text = value.summary.ifBlank { value.runId }
+            metaLabel.text = "${value.runId} · ${value.executedAt}"
+            chipLabel.text = value.conclusion.name
+            val palette = when (value.conclusion) {
+                VerificationConclusion.PASS -> ChipPalette(PASS_BG, PASS_FG, PASS_BORDER)
+                VerificationConclusion.WARN -> ChipPalette(WARN_BG, WARN_FG, WARN_BORDER)
+                VerificationConclusion.FAIL -> ChipPalette(ERROR_BG, ERROR_FG, ERROR_BORDER)
+            }
+            chipLabel.background = if (isSelected) palette.bg.darker() else palette.bg
+            chipLabel.foreground = palette.fg
+            chipLabel.border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(palette.border, JBUI.scale(10)),
+                BorderFactory.createEmptyBorder(2, 6, 2, 6),
+            )
+            panel.background = if (isSelected) SELECTED_BG else ROW_BG
+            return panel
+        }
+    }
+
+    private data class ChipPalette(
+        val bg: Color,
+        val fg: Color,
+        val border: Color,
+    )
+
+    companion object {
+        private val HEADER_FG = JBColor(Color(35, 40, 47), Color(222, 226, 232))
+        private val HEADER_SECONDARY_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
+        private val DETAIL_BG = JBColor(Color(253, 254, 255), Color(45, 50, 58))
+        private val DETAIL_FG = JBColor(Color(53, 60, 70), Color(212, 218, 228))
+        private val TITLE_FG = JBColor(Color(30, 36, 44), Color(225, 229, 235))
+        private val META_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
+        private val ROW_BG = JBColor(Color(255, 255, 255), Color(47, 51, 56))
+        private val SELECTED_BG = JBColor(Color(231, 241, 255), Color(59, 77, 92))
+        private val REFRESHED_AT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+
+        private val PASS_BG = JBColor(Color(233, 246, 237), Color(54, 85, 63))
+        private val PASS_FG = JBColor(Color(39, 94, 57), Color(194, 232, 204))
+        private val PASS_BORDER = JBColor(Color(154, 204, 170), Color(87, 134, 102))
+
+        private val WARN_BG = JBColor(Color(255, 244, 229), Color(97, 77, 42))
+        private val WARN_FG = JBColor(Color(150, 96, 0), Color(245, 212, 152))
+        private val WARN_BORDER = JBColor(Color(232, 191, 111), Color(138, 112, 63))
+
+        private val ERROR_BG = JBColor(Color(252, 235, 236), Color(97, 54, 58))
+        private val ERROR_FG = JBColor(Color(166, 53, 60), Color(250, 196, 200))
+        private val ERROR_BORDER = JBColor(Color(226, 140, 147), Color(145, 92, 98))
+
+        private val NEUTRAL_BG = JBColor(Color(241, 244, 248), Color(72, 77, 85))
+        private val NEUTRAL_FG = JBColor(Color(85, 94, 106), Color(192, 199, 208))
+        private val NEUTRAL_BORDER = JBColor(Color(201, 208, 217), Color(98, 108, 121))
+    }
+}

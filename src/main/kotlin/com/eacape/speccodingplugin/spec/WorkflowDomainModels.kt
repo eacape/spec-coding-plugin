@@ -636,6 +636,21 @@ data class VerifyRunResult(
     val updatedTasks: List<StructuredTask>,
 )
 
+data class VerifyRunHistoryEntry(
+    val runId: String,
+    val planId: String,
+    val executedAt: String,
+    val occurredAtEpochMs: Long,
+    val currentStage: StageId,
+    val conclusion: VerificationConclusion,
+    val summary: String,
+    val commandCount: Int,
+    val scopeTaskIds: List<String> = emptyList(),
+    val failedCommandIds: List<String> = emptyList(),
+    val truncatedCommandIds: List<String> = emptyList(),
+    val redactedCommandIds: List<String> = emptyList(),
+)
+
 data class StructuredTask(
     val id: String,
     val title: String,

@@ -105,6 +105,32 @@ class SpecArtifactService(
         }
     }
 
+    fun ensureMissingArtifacts(workflow: SpecWorkflow): List<SpecArtifactWriteResult> {
+        validateWorkflowId(workflow.id)
+        val requiredArtifacts = requiredArtifacts(workflow)
+        return lockManager.withWorkflowLock(workflow.id) {
+            val workflowDir = workspaceInitializer.initializeWorkflowWorkspace(workflow.id).workflowDir
+            requiredArtifacts.map { (stageId, fileName) ->
+                val path = workflowDir.resolve(fileName)
+                if (Files.exists(path)) {
+                    SpecArtifactWriteResult(
+                        stageId = stageId,
+                        path = path,
+                        created = false,
+                    )
+                } else {
+                    val content = defaultSkeletonFor(stageId)
+                    atomicFileIO.writeString(path, content, StandardCharsets.UTF_8)
+                    SpecArtifactWriteResult(
+                        stageId = stageId,
+                        path = path,
+                        created = true,
+                    )
+                }
+            }
+        }
+    }
+
     fun previewRequiredArtifacts(
         workflowId: String,
         template: WorkflowTemplate,
@@ -141,6 +167,36 @@ class SpecArtifactService(
         }
 
         stagePlan.gateArtifactStages.forEach { stageId ->
+            val fileName = stageId.artifactFileName ?: return@forEach
+            ordered.putIfAbsent(fileName, stageId)
+        }
+
+        return ordered.entries.map { (fileName, stageId) -> stageId to fileName }
+    }
+
+    private fun requiredArtifacts(workflow: SpecWorkflow): List<Pair<StageId, String>> {
+        val ordered = LinkedHashMap<String, StageId>()
+
+        if (workflow.template == WorkflowTemplate.DIRECT_IMPLEMENT) {
+            ordered[StageId.TASKS.artifactFileName!!] = StageId.TASKS
+        }
+
+        val activeArtifactStages = when {
+            workflow.stageStates.isNotEmpty() -> StageId.entries.filter { stageId ->
+                stageId.requiresArtifact() && workflow.stageStates[stageId]?.active == true
+            }
+
+            else -> WorkflowTemplates.definitionOf(workflow.template)
+                .buildStagePlan(
+                    StageActivationOptions.of(
+                        verifyEnabled = workflow.verifyEnabled,
+                        implementEnabled = null,
+                    ),
+                )
+                .gateArtifactStages
+        }
+
+        activeArtifactStages.forEach { stageId ->
             val fileName = stageId.artifactFileName ?: return@forEach
             ordered.putIfAbsent(fileName, stageId)
         }
