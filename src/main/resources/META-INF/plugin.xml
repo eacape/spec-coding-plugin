@@ -122,6 +122,20 @@
                 description="%toolbar.action.description">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
+        <action
+                id="SpecCoding.SpecWorkflow.Editor.GenerateMissingArtifacts"
+                class="com.eacape.speccodingplugin.ui.actions.GenerateMissingSpecArtifactsAction"
+                text="%spec.action.editor.fixArtifacts.text"
+                description="%spec.action.editor.fixArtifacts.description">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action
+                id="SpecCoding.SpecWorkflow.Editor.RepairTasksSyntax"
+                class="com.eacape.speccodingplugin.ui.actions.RepairSpecTasksSyntaxAction"
+                text="%spec.action.editor.fixTasks.text"
+                description="%spec.action.editor.fixTasks.description">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
         <group
                 id="SpecCoding.SpecWorkflowGroup"
                 popup="true"
