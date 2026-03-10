@@ -66,6 +66,7 @@ class SpecWorkflowPanel(
     private val logger = thisLogger()
     private val specEngine = SpecEngine.getInstance(project)
     private val specDeltaService = SpecDeltaService.getInstance(project)
+    private val specTasksService = SpecTasksService.getInstance(project)
     private val codeGraphService = CodeGraphService.getInstance(project)
     private val worktreeManager = WorktreeManager.getInstance(project)
     private val llmRouter = LlmRouter.getInstance()
@@ -89,6 +90,12 @@ class SpecWorkflowPanel(
         onAdvanceRequested = ::onAdvanceStageRequested,
         onJumpRequested = ::onJumpStageRequested,
         onRollbackRequested = ::onRollbackStageRequested,
+    )
+    private val tasksPanel = SpecWorkflowTasksPanel(
+        onTransitionStatus = ::onTaskStatusTransitionRequested,
+        onUpdateDependsOn = ::onTaskDependsOnUpdateRequested,
+        onUpdateRelatedFiles = ::onTaskRelatedFilesUpdateRequested,
+        onCompleteWithRelatedFiles = ::onTaskCompleteRequested,
     )
     private val statusLabel = JBLabel("")
     private val statusChipPanel = JPanel(BorderLayout())
@@ -250,14 +257,39 @@ class SpecWorkflowPanel(
                 ),
                 BorderLayout.NORTH,
             )
-            add(
+
+            val tasksAndDetailSplit = JSplitPane(
+                JSplitPane.VERTICAL_SPLIT,
+                createSectionContainer(
+                    tasksPanel,
+                    backgroundColor = DETAIL_SECTION_BG,
+                    borderColor = DETAIL_SECTION_BORDER,
+                ),
                 createSectionContainer(
                     detailPanel,
                     backgroundColor = DETAIL_SECTION_BG,
                     borderColor = DETAIL_SECTION_BORDER,
                 ),
-                BorderLayout.CENTER,
+            ).apply {
+                dividerLocation = JBUI.scale(260)
+                resizeWeight = 0.32
+                isContinuousLayout = true
+                border = JBUI.Borders.empty()
+                background = DETAIL_COLUMN_BG
+                SpecUiStyle.applyChatLikeSpecDivider(
+                    splitPane = this,
+                    dividerSize = JBUI.scale(4),
+                )
+            }
+            tasksAndDetailSplit.addComponentListener(
+                object : ComponentAdapter() {
+                    override fun componentResized(e: ComponentEvent?) {
+                        clampVerticalDividerLocation(tasksAndDetailSplit)
+                    }
+                },
             )
+            add(tasksAndDetailSplit, BorderLayout.CENTER)
+            clampVerticalDividerLocation(tasksAndDetailSplit)
         }
 
         val split = JSplitPane(
@@ -299,6 +331,19 @@ class SpecWorkflowPanel(
         val maxLeft = (total - minRight).coerceAtLeast(minLeft)
         val current = split.dividerLocation
         val clamped = current.coerceIn(minLeft, maxLeft)
+        if (clamped != current) {
+            split.dividerLocation = clamped
+        }
+    }
+
+    private fun clampVerticalDividerLocation(split: JSplitPane) {
+        val total = split.height - split.dividerSize
+        if (total <= 0) return
+        val minTop = JBUI.scale(140)
+        val minBottom = JBUI.scale(200)
+        val maxTop = (total - minBottom).coerceAtLeast(minTop)
+        val current = split.dividerLocation
+        val clamped = current.coerceIn(minTop, maxTop)
         if (clamped != current) {
             split.dividerLocation = clamped
         }
@@ -610,6 +655,7 @@ class SpecWorkflowPanel(
                     currentWorkflow = null
                     phaseIndicator.reset()
                     overviewPanel.showEmpty()
+                    tasksPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
@@ -620,6 +666,7 @@ class SpecWorkflowPanel(
                     currentWorkflow = null
                     phaseIndicator.reset()
                     overviewPanel.showEmpty()
+                    tasksPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
@@ -657,9 +704,11 @@ class SpecWorkflowPanel(
         val previousSelectedWorkflowId = selectedWorkflowId
         selectedWorkflowId = workflowId
         overviewPanel.showLoading()
+        tasksPanel.showLoading()
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.reloadWorkflow(workflowId).getOrNull()
             val overviewState = wf?.let(::buildOverviewState)
+            val tasksResult = runCatching { specTasksService.parse(workflowId) }
             currentWorkflow = wf
             invokeLaterSafe {
                 if (selectedWorkflowId != workflowId) {
@@ -670,6 +719,21 @@ class SpecWorkflowPanel(
                     phaseIndicator.updatePhase(wf)
                     overviewPanel.updateOverview(overviewState ?: buildOverviewState(wf))
                     detailPanel.updateWorkflow(wf)
+                    tasksResult.onSuccess { tasks ->
+                        tasksPanel.updateTasks(
+                            workflowId = workflowId,
+                            tasks = tasks,
+                            refreshedAtMillis = System.currentTimeMillis(),
+                        )
+                    }.onFailure { error ->
+                        tasksPanel.updateTasks(
+                            workflowId = workflowId,
+                            tasks = emptyList(),
+                            refreshedAtMillis = System.currentTimeMillis(),
+                        )
+                        val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                        setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                    }
                     if (previousSelectedWorkflowId != workflowId) {
                         restorePendingClarificationState(workflowId)
                     }
@@ -680,6 +744,7 @@ class SpecWorkflowPanel(
                 } else {
                     phaseIndicator.reset()
                     overviewPanel.showEmpty()
+                    tasksPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
@@ -776,6 +841,7 @@ class SpecWorkflowPanel(
                     selectedWorkflowId = null
                     currentWorkflow = null
                     phaseIndicator.reset()
+                    tasksPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
@@ -1688,6 +1754,7 @@ class SpecWorkflowPanel(
                         selectedWorkflowId = null
                         currentWorkflow = null
                         phaseIndicator.reset()
+                        tasksPanel.showEmpty()
                         detailPanel.showEmpty()
                         createWorktreeButton.isEnabled = false
                         mergeWorktreeButton.isEnabled = false
@@ -1704,6 +1771,87 @@ class SpecWorkflowPanel(
                 }
             }
         }
+    }
+
+    private fun onTaskStatusTransitionRequested(taskId: String, to: TaskStatus) {
+        val workflowId = selectedWorkflowId ?: return
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.toolwindow.tasks.status.progress"),
+            task = {
+                specTasksService.transitionStatus(
+                    workflowId = workflowId,
+                    taskId = taskId,
+                    to = to,
+                )
+            },
+            onSuccess = {
+                setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.status.updated", taskId, to.name))
+                reloadCurrentWorkflow()
+            },
+        )
+    }
+
+    private fun onTaskDependsOnUpdateRequested(taskId: String, dependsOn: List<String>) {
+        val workflowId = selectedWorkflowId ?: return
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.progress"),
+            task = {
+                specTasksService.updateDependsOn(
+                    workflowId = workflowId,
+                    taskId = taskId,
+                    dependsOn = dependsOn,
+                )
+            },
+            onSuccess = {
+                setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.updated", taskId))
+                reloadCurrentWorkflow()
+            },
+        )
+    }
+
+    private fun onTaskRelatedFilesUpdateRequested(taskId: String, files: List<String>) {
+        val workflowId = selectedWorkflowId ?: return
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.progress"),
+            task = {
+                specTasksService.updateRelatedFiles(
+                    workflowId = workflowId,
+                    taskId = taskId,
+                    files = files,
+                )
+            },
+            onSuccess = {
+                setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.updated", taskId))
+                reloadCurrentWorkflow()
+            },
+        )
+    }
+
+    private fun onTaskCompleteRequested(taskId: String, files: List<String>) {
+        val workflowId = selectedWorkflowId ?: return
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.toolwindow.tasks.complete.progress"),
+            task = {
+                specTasksService.updateRelatedFiles(
+                    workflowId = workflowId,
+                    taskId = taskId,
+                    files = files,
+                )
+                specTasksService.transitionStatus(
+                    workflowId = workflowId,
+                    taskId = taskId,
+                    to = TaskStatus.COMPLETED,
+                )
+            },
+            onSuccess = {
+                setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.complete.updated", taskId))
+                reloadCurrentWorkflow()
+            },
+        )
     }
 
     private fun onAdvanceStageRequested() {
@@ -2015,6 +2163,7 @@ class SpecWorkflowPanel(
         listPanel.refreshLocalizedTexts()
         detailPanel.refreshLocalizedTexts()
         overviewPanel.refreshLocalizedTexts()
+        tasksPanel.refreshLocalizedTexts()
         applyToolbarButtonPresentation()
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
         styleToolbarButton(refreshButton)
@@ -2184,10 +2333,12 @@ class SpecWorkflowPanel(
         val wfId = selectedWorkflowId ?: return
         invokeLaterSafe {
             overviewPanel.showLoading()
+            tasksPanel.showLoading()
         }
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.reloadWorkflow(wfId).getOrNull()
             val overviewState = wf?.let(::buildOverviewState)
+            val tasksResult = runCatching { specTasksService.parse(wfId) }
             currentWorkflow = wf
             invokeLaterSafe {
                 if (wf != null) {
@@ -2195,10 +2346,26 @@ class SpecWorkflowPanel(
                     phaseIndicator.updatePhase(wf)
                     overviewPanel.updateOverview(overviewState ?: buildOverviewState(wf))
                     detailPanel.updateWorkflow(wf, followCurrentPhase = followCurrentPhase)
+                    tasksResult.onSuccess { tasks ->
+                        tasksPanel.updateTasks(
+                            workflowId = wf.id,
+                            tasks = tasks,
+                            refreshedAtMillis = System.currentTimeMillis(),
+                        )
+                    }.onFailure { error ->
+                        tasksPanel.updateTasks(
+                            workflowId = wf.id,
+                            tasks = emptyList(),
+                            refreshedAtMillis = System.currentTimeMillis(),
+                        )
+                        val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                        setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                    }
                     archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
                     onUpdated?.invoke(wf)
                 } else {
                     overviewPanel.showEmpty()
+                    tasksPanel.showEmpty()
                     archiveButton.isEnabled = false
                 }
             }
