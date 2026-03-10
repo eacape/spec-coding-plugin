@@ -97,6 +97,7 @@ class SpecWorkflowPanel(
         onUpdateRelatedFiles = ::onTaskRelatedFilesUpdateRequested,
         onCompleteWithRelatedFiles = ::onTaskCompleteRequested,
     )
+    private val gateDetailsPanel = SpecWorkflowGateDetailsPanel(project)
     private val statusLabel = JBLabel("")
     private val statusChipPanel = JPanel(BorderLayout())
     private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))
@@ -258,7 +259,7 @@ class SpecWorkflowPanel(
                 BorderLayout.NORTH,
             )
 
-            val tasksAndDetailSplit = JSplitPane(
+            val tasksAndGateSplit = JSplitPane(
                 JSplitPane.VERTICAL_SPLIT,
                 createSectionContainer(
                     tasksPanel,
@@ -266,13 +267,13 @@ class SpecWorkflowPanel(
                     borderColor = DETAIL_SECTION_BORDER,
                 ),
                 createSectionContainer(
-                    detailPanel,
+                    gateDetailsPanel,
                     backgroundColor = DETAIL_SECTION_BG,
                     borderColor = DETAIL_SECTION_BORDER,
                 ),
             ).apply {
-                dividerLocation = JBUI.scale(260)
-                resizeWeight = 0.32
+                dividerLocation = JBUI.scale(250)
+                resizeWeight = 0.58
                 isContinuousLayout = true
                 border = JBUI.Borders.empty()
                 background = DETAIL_COLUMN_BG
@@ -281,15 +282,51 @@ class SpecWorkflowPanel(
                     dividerSize = JBUI.scale(4),
                 )
             }
-            tasksAndDetailSplit.addComponentListener(
+            tasksAndGateSplit.addComponentListener(
                 object : ComponentAdapter() {
                     override fun componentResized(e: ComponentEvent?) {
-                        clampVerticalDividerLocation(tasksAndDetailSplit)
+                        clampVerticalDividerLocation(
+                            split = tasksAndGateSplit,
+                            minTop = JBUI.scale(140),
+                            minBottom = JBUI.scale(120),
+                        )
                     }
                 },
             )
-            add(tasksAndDetailSplit, BorderLayout.CENTER)
-            clampVerticalDividerLocation(tasksAndDetailSplit)
+            clampVerticalDividerLocation(
+                split = tasksAndGateSplit,
+                minTop = JBUI.scale(140),
+                minBottom = JBUI.scale(120),
+            )
+
+            val tasksGateAndDetailSplit = JSplitPane(
+                JSplitPane.VERTICAL_SPLIT,
+                tasksAndGateSplit,
+                createSectionContainer(
+                    detailPanel,
+                    backgroundColor = DETAIL_SECTION_BG,
+                    borderColor = DETAIL_SECTION_BORDER,
+                ),
+            ).apply {
+                dividerLocation = JBUI.scale(420)
+                resizeWeight = 0.46
+                isContinuousLayout = true
+                border = JBUI.Borders.empty()
+                background = DETAIL_COLUMN_BG
+                SpecUiStyle.applyChatLikeSpecDivider(
+                    splitPane = this,
+                    dividerSize = JBUI.scale(4),
+                )
+            }
+            tasksGateAndDetailSplit.addComponentListener(
+                object : ComponentAdapter() {
+                    override fun componentResized(e: ComponentEvent?) {
+                        clampVerticalDividerLocation(tasksGateAndDetailSplit)
+                    }
+                },
+            )
+            add(tasksGateAndDetailSplit, BorderLayout.CENTER)
+            clampVerticalDividerLocation(tasksGateAndDetailSplit)
         }
 
         val split = JSplitPane(
@@ -336,11 +373,13 @@ class SpecWorkflowPanel(
         }
     }
 
-    private fun clampVerticalDividerLocation(split: JSplitPane) {
+    private fun clampVerticalDividerLocation(
+        split: JSplitPane,
+        minTop: Int = JBUI.scale(140),
+        minBottom: Int = JBUI.scale(200),
+    ) {
         val total = split.height - split.dividerSize
         if (total <= 0) return
-        val minTop = JBUI.scale(140)
-        val minBottom = JBUI.scale(200)
         val maxTop = (total - minBottom).coerceAtLeast(minTop)
         val current = split.dividerLocation
         val clamped = current.coerceIn(minTop, maxTop)
@@ -656,6 +695,7 @@ class SpecWorkflowPanel(
                     phaseIndicator.reset()
                     overviewPanel.showEmpty()
                     tasksPanel.showEmpty()
+                    gateDetailsPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
@@ -667,6 +707,7 @@ class SpecWorkflowPanel(
                     phaseIndicator.reset()
                     overviewPanel.showEmpty()
                     tasksPanel.showEmpty()
+                    gateDetailsPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
@@ -705,9 +746,10 @@ class SpecWorkflowPanel(
         selectedWorkflowId = workflowId
         overviewPanel.showLoading()
         tasksPanel.showLoading()
+        gateDetailsPanel.showLoading()
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.reloadWorkflow(workflowId).getOrNull()
-            val overviewState = wf?.let(::buildOverviewState)
+            val overviewSnapshot = wf?.let(::buildOverviewSnapshot)
             val tasksResult = runCatching { specTasksService.parse(workflowId) }
             currentWorkflow = wf
             invokeLaterSafe {
@@ -717,7 +759,13 @@ class SpecWorkflowPanel(
                 if (wf != null) {
                     syncClarificationRetryFromWorkflow(wf)
                     phaseIndicator.updatePhase(wf)
-                    overviewPanel.updateOverview(overviewState ?: buildOverviewState(wf))
+                    val snapshot = overviewSnapshot ?: buildOverviewSnapshot(wf)
+                    overviewPanel.updateOverview(snapshot.overviewState)
+                    gateDetailsPanel.updateGateResult(
+                        workflowId = workflowId,
+                        gateResult = snapshot.gateResult,
+                        refreshedAtMillis = snapshot.refreshedAtMillis,
+                    )
                     detailPanel.updateWorkflow(wf)
                     tasksResult.onSuccess { tasks ->
                         tasksPanel.updateTasks(
@@ -745,6 +793,7 @@ class SpecWorkflowPanel(
                     phaseIndicator.reset()
                     overviewPanel.showEmpty()
                     tasksPanel.showEmpty()
+                    gateDetailsPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
@@ -2164,6 +2213,7 @@ class SpecWorkflowPanel(
         detailPanel.refreshLocalizedTexts()
         overviewPanel.refreshLocalizedTexts()
         tasksPanel.refreshLocalizedTexts()
+        gateDetailsPanel.refreshLocalizedTexts()
         applyToolbarButtonPresentation()
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
         styleToolbarButton(refreshButton)
@@ -2334,17 +2384,24 @@ class SpecWorkflowPanel(
         invokeLaterSafe {
             overviewPanel.showLoading()
             tasksPanel.showLoading()
+            gateDetailsPanel.showLoading()
         }
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.reloadWorkflow(wfId).getOrNull()
-            val overviewState = wf?.let(::buildOverviewState)
+            val overviewSnapshot = wf?.let(::buildOverviewSnapshot)
             val tasksResult = runCatching { specTasksService.parse(wfId) }
             currentWorkflow = wf
             invokeLaterSafe {
                 if (wf != null) {
                     syncClarificationRetryFromWorkflow(wf)
                     phaseIndicator.updatePhase(wf)
-                    overviewPanel.updateOverview(overviewState ?: buildOverviewState(wf))
+                    val snapshot = overviewSnapshot ?: buildOverviewSnapshot(wf)
+                    overviewPanel.updateOverview(snapshot.overviewState)
+                    gateDetailsPanel.updateGateResult(
+                        workflowId = wf.id,
+                        gateResult = snapshot.gateResult,
+                        refreshedAtMillis = snapshot.refreshedAtMillis,
+                    )
                     detailPanel.updateWorkflow(wf, followCurrentPhase = followCurrentPhase)
                     tasksResult.onSuccess { tasks ->
                         tasksPanel.updateTasks(
@@ -2366,13 +2423,21 @@ class SpecWorkflowPanel(
                 } else {
                     overviewPanel.showEmpty()
                     tasksPanel.showEmpty()
+                    gateDetailsPanel.showEmpty()
                     archiveButton.isEnabled = false
                 }
             }
         }
     }
 
-    private fun buildOverviewState(workflow: SpecWorkflow): SpecWorkflowOverviewState {
+    private data class OverviewSnapshot(
+        val overviewState: SpecWorkflowOverviewState,
+        val gateResult: GateResult?,
+        val refreshedAtMillis: Long,
+    )
+
+    private fun buildOverviewSnapshot(workflow: SpecWorkflow): OverviewSnapshot {
+        val refreshedAtMillis = System.currentTimeMillis()
         val gatePreview = if (workflow.status == WorkflowStatus.COMPLETED || workflow.currentStage == StageId.ARCHIVE) {
             null
         } else {
@@ -2384,10 +2449,14 @@ class SpecWorkflowPanel(
                 null
             }
         }
-        return SpecWorkflowOverviewPresenter.buildState(
-            workflow = workflow,
-            gatePreview = gatePreview,
-            refreshedAtMillis = System.currentTimeMillis(),
+        return OverviewSnapshot(
+            overviewState = SpecWorkflowOverviewPresenter.buildState(
+                workflow = workflow,
+                gatePreview = gatePreview,
+                refreshedAtMillis = refreshedAtMillis,
+            ),
+            gateResult = gatePreview?.gateResult,
+            refreshedAtMillis = refreshedAtMillis,
         )
     }
 
