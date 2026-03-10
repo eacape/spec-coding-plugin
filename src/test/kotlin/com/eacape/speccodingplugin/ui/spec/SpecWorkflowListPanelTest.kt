@@ -7,6 +7,7 @@ import com.eacape.speccodingplugin.spec.WorkflowStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.awt.Component
 import java.awt.Container
@@ -164,6 +165,45 @@ class SpecWorkflowListPanelTest {
     }
 
     @Test
+    fun `renderer should prefer explicit current stage label`() {
+        val panel = runOnEdtResult {
+            SpecWorkflowListPanel(
+                onWorkflowSelected = {},
+                onCreateWorkflow = {},
+                onEditWorkflow = {},
+                onDeleteWorkflow = {},
+            )
+        }
+
+        runOnEdt {
+            panel.updateWorkflows(
+                listOf(
+                    SpecWorkflowListPanel.WorkflowListItem(
+                        workflowId = "wf-verify",
+                        title = "Verify Workflow",
+                        description = "",
+                        currentPhase = SpecPhase.IMPLEMENT,
+                        currentStageLabel = "Verify",
+                        status = WorkflowStatus.IN_PROGRESS,
+                        updatedAt = 1L,
+                    ),
+                ),
+            )
+
+            val list = extractWorkflowList(panel)
+            list.setSize(220, 100)
+            list.doLayout()
+
+            val cellBounds = list.getCellBounds(0, 0)
+            val rowComponent = rendererComponentFor(list, panel.itemsForTest().first(), cellBounds!!)
+            val phaseLabel = findLabelContaining(rowComponent, "verify")
+
+            assertNotNull(phaseLabel)
+            assertTrue(phaseLabel!!.text.contains("verify"))
+        }
+    }
+
+    @Test
     fun `single click on delete icon in unselected row should trigger delete callback`() {
         val deletedIds = mutableListOf<String>()
         val panel = runOnEdtResult {
@@ -281,6 +321,18 @@ class SpecWorkflowListPanelTest {
         }
         return component.components.asSequence()
             .mapNotNull { child -> findLabelByTooltip(child, tooltip) }
+            .firstOrNull()
+    }
+
+    private fun findLabelContaining(component: Component, text: String): JLabel? {
+        if (component is JLabel && component.text?.contains(text, ignoreCase = true) == true) {
+            return component
+        }
+        if (component !is Container) {
+            return null
+        }
+        return component.components.asSequence()
+            .mapNotNull { child -> findLabelContaining(child, text) }
             .firstOrNull()
     }
 

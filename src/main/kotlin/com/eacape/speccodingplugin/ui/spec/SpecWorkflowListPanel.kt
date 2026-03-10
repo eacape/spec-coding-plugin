@@ -46,6 +46,7 @@ class SpecWorkflowListPanel(
         val title: String,
         val description: String,
         val currentPhase: SpecPhase,
+        val currentStageLabel: String = currentPhase.displayName,
         val status: WorkflowStatus,
         val updatedAt: Long,
         val changeIntent: SpecChangeIntent = SpecChangeIntent.FULL,
@@ -363,7 +364,7 @@ class SpecWorkflowListPanel(
                 SpecChangeIntent.FULL -> SpecCodingBundle.message("spec.workflow.intent.full.short")
                 SpecChangeIntent.INCREMENTAL -> SpecCodingBundle.message("spec.workflow.intent.incremental.short")
             }
-            val fullPhaseText = "${value.currentPhase.displayName.lowercase()} · $intentLabelText"
+            val fullPhaseText = "${value.currentStageLabel.lowercase()} · $intentLabelText"
             val phaseText = truncateByPixel(
                 value = fullPhaseText,
                 fontMetrics = phaseLabel.getFontMetrics(phaseLabel.font),

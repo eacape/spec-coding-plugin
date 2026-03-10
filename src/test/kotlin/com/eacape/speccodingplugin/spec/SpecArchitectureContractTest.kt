@@ -143,6 +143,10 @@ class SpecArchitectureContractTest {
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("verify-action-entry").status,
         )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("toolwindow-overview-mvp").status,
+        )
     }
 
     @Test

@@ -235,6 +235,13 @@ object SpecArchitectureContract {
             rationale = "Task 33 requires a minimal but usable IDE entry point that previews VERIFY plans, keeps I/O off the EDT, and lets users jump straight to verification.md after execution.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "toolwindow-overview-mvp",
+            capability = "ToolWindow workflow overview with current stage, advance gate summary, and refresh-aware state rendering",
+            selection = "SpecWorkflowOverviewPresenter/Panel + SpecWorkflowPanel refresh hooks + advance gate preview via SpecEngine.previewStageTransition()",
+            rationale = "Task 34 requires the existing Specs ToolWindow to surface a minimal workflow dashboard without blocking the EDT, while staying aligned with the real stage metadata and Gate aggregation results.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(

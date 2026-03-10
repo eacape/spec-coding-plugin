@@ -84,6 +84,7 @@ class SpecWorkflowPanel(
     private val phaseIndicator = SpecPhaseIndicatorPanel()
     private val listPanel: SpecWorkflowListPanel
     private val detailPanel: SpecDetailPanel
+    private val overviewPanel = SpecWorkflowOverviewPanel()
     private val statusLabel = JBLabel("")
     private val statusChipPanel = JPanel(BorderLayout())
     private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))
@@ -236,6 +237,14 @@ class SpecWorkflowPanel(
         val rightPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = true
             background = DETAIL_COLUMN_BG
+            add(
+                createSectionContainer(
+                    overviewPanel,
+                    backgroundColor = DETAIL_SECTION_BG,
+                    borderColor = DETAIL_SECTION_BORDER,
+                ),
+                BorderLayout.NORTH,
+            )
             add(
                 createSectionContainer(
                     detailPanel,
@@ -575,6 +584,7 @@ class SpecWorkflowPanel(
                         title = wf.title.ifBlank { wf.id },
                         description = wf.description,
                         currentPhase = wf.currentPhase,
+                        currentStageLabel = SpecWorkflowOverviewPresenter.stageLabel(wf.currentStage),
                         status = wf.status,
                         updatedAt = wf.updatedAt,
                         changeIntent = wf.changeIntent,
@@ -594,6 +604,17 @@ class SpecWorkflowPanel(
                     selectedWorkflowId = null
                     currentWorkflow = null
                     phaseIndicator.reset()
+                    overviewPanel.showEmpty()
+                    detailPanel.showEmpty()
+                    createWorktreeButton.isEnabled = false
+                    mergeWorktreeButton.isEnabled = false
+                    deltaButton.isEnabled = false
+                    archiveButton.isEnabled = false
+                } else {
+                    selectedWorkflowId = null
+                    currentWorkflow = null
+                    phaseIndicator.reset()
+                    overviewPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
@@ -630,13 +651,19 @@ class SpecWorkflowPanel(
     private fun selectWorkflow(workflowId: String) {
         val previousSelectedWorkflowId = selectedWorkflowId
         selectedWorkflowId = workflowId
+        overviewPanel.showLoading()
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.reloadWorkflow(workflowId).getOrNull()
+            val overviewState = wf?.let(::buildOverviewState)
             currentWorkflow = wf
             invokeLaterSafe {
+                if (selectedWorkflowId != workflowId) {
+                    return@invokeLaterSafe
+                }
                 if (wf != null) {
                     syncClarificationRetryFromWorkflow(wf)
                     phaseIndicator.updatePhase(wf)
+                    overviewPanel.updateOverview(overviewState ?: buildOverviewState(wf))
                     detailPanel.updateWorkflow(wf)
                     if (previousSelectedWorkflowId != workflowId) {
                         restorePendingClarificationState(workflowId)
@@ -647,6 +674,7 @@ class SpecWorkflowPanel(
                     archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
                 } else {
                     phaseIndicator.reset()
+                    overviewPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
@@ -1830,6 +1858,7 @@ class SpecWorkflowPanel(
     private fun refreshLocalizedTexts() {
         listPanel.refreshLocalizedTexts()
         detailPanel.refreshLocalizedTexts()
+        overviewPanel.refreshLocalizedTexts()
         applyToolbarButtonPresentation()
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
         styleToolbarButton(refreshButton)
@@ -1997,21 +2026,46 @@ class SpecWorkflowPanel(
         onUpdated: ((SpecWorkflow) -> Unit)? = null,
     ) {
         val wfId = selectedWorkflowId ?: return
+        invokeLaterSafe {
+            overviewPanel.showLoading()
+        }
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.reloadWorkflow(wfId).getOrNull()
+            val overviewState = wf?.let(::buildOverviewState)
             currentWorkflow = wf
             invokeLaterSafe {
                 if (wf != null) {
                     syncClarificationRetryFromWorkflow(wf)
                     phaseIndicator.updatePhase(wf)
+                    overviewPanel.updateOverview(overviewState ?: buildOverviewState(wf))
                     detailPanel.updateWorkflow(wf, followCurrentPhase = followCurrentPhase)
                     archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
                     onUpdated?.invoke(wf)
                 } else {
+                    overviewPanel.showEmpty()
                     archiveButton.isEnabled = false
                 }
             }
         }
+    }
+
+    private fun buildOverviewState(workflow: SpecWorkflow): SpecWorkflowOverviewState {
+        val gatePreview = if (workflow.status == WorkflowStatus.COMPLETED || workflow.currentStage == StageId.ARCHIVE) {
+            null
+        } else {
+            specEngine.previewStageTransition(
+                workflowId = workflow.id,
+                transitionType = StageTransitionType.ADVANCE,
+            ).getOrElse { error ->
+                logger.debug("Unable to preview advance gate for workflow ${workflow.id}", error)
+                null
+            }
+        }
+        return SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = gatePreview,
+            refreshedAtMillis = System.currentTimeMillis(),
+        )
     }
 
     private fun buildValidationFailureStatus(validation: ValidationResult): String {
