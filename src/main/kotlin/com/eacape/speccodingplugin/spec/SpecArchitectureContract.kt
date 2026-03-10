@@ -242,6 +242,13 @@ object SpecArchitectureContract {
             rationale = "Task 34 requires the existing Specs ToolWindow to surface a minimal workflow dashboard without blocking the EDT, while staying aligned with the real stage metadata and Gate aggregation results.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "toolwindow-stage-stepper",
+            capability = "ToolWindow stage stepper with active/inactive stage visibility and in-place advance/jump/rollback controls",
+            selection = "SpecWorkflowOverviewPresenter stepper state + SpecWorkflowStageStepperPanel + SpecWorkflowPanel callbacks reusing SpecEngine transition previews/execution and existing Gate dialogs",
+            rationale = "Task 35 requires the ToolWindow to expose the real workflow stage plan, including inactive optional stages, while reusing the same transition and Gate semantics already established by the Actions flow.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(

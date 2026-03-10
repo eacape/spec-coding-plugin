@@ -14,6 +14,7 @@ import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.spec.*
 import com.eacape.speccodingplugin.ui.RefreshFeedback
+import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
@@ -84,7 +85,11 @@ class SpecWorkflowPanel(
     private val phaseIndicator = SpecPhaseIndicatorPanel()
     private val listPanel: SpecWorkflowListPanel
     private val detailPanel: SpecDetailPanel
-    private val overviewPanel = SpecWorkflowOverviewPanel()
+    private val overviewPanel = SpecWorkflowOverviewPanel(
+        onAdvanceRequested = ::onAdvanceStageRequested,
+        onJumpRequested = ::onJumpStageRequested,
+        onRollbackRequested = ::onRollbackStageRequested,
+    )
     private val statusLabel = JBLabel("")
     private val statusChipPanel = JPanel(BorderLayout())
     private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))
@@ -1699,6 +1704,157 @@ class SpecWorkflowPanel(
                 }
             }
         }
+    }
+
+    private fun onAdvanceStageRequested() {
+        val workflowId = selectedWorkflowId ?: return
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.advance.preview"),
+            task = {
+                specEngine.previewStageTransition(
+                    workflowId = workflowId,
+                    transitionType = StageTransitionType.ADVANCE,
+                ).getOrThrow()
+            },
+            onSuccess = { preview ->
+                when (preview.gateResult.status) {
+                    GateStatus.ERROR -> SpecWorkflowActionSupport.showGateBlocked(project, workflowId, preview.gateResult)
+                    GateStatus.WARNING -> {
+                        if (!SpecWorkflowActionSupport.confirmWarnings(project, workflowId, preview.gateResult)) {
+                            return@runBackground
+                        }
+                        executeAdvanceStage(workflowId)
+                    }
+
+                    GateStatus.PASS -> executeAdvanceStage(workflowId)
+                }
+            },
+        )
+    }
+
+    private fun onJumpStageRequested() {
+        val workflowMeta = currentWorkflow?.toWorkflowMeta() ?: return
+        val targets = SpecWorkflowActionSupport.jumpTargets(workflowMeta)
+        if (targets.isEmpty()) {
+            SpecWorkflowActionSupport.showInfo(
+                project,
+                SpecCodingBundle.message("spec.action.jump.none.title"),
+                SpecCodingBundle.message("spec.action.jump.none.message"),
+            )
+            return
+        }
+        SpecWorkflowActionSupport.chooseStage(
+            project = project,
+            stages = targets,
+            title = SpecCodingBundle.message("spec.action.jump.stage.popup.title"),
+            workflowMeta = workflowMeta,
+            onChosen = { targetStage -> previewAndJumpToStage(workflowMeta.workflowId, targetStage) },
+        )
+    }
+
+    private fun onRollbackStageRequested() {
+        val workflowMeta = currentWorkflow?.toWorkflowMeta() ?: return
+        val targets = SpecWorkflowActionSupport.rollbackTargets(workflowMeta)
+        if (targets.isEmpty()) {
+            SpecWorkflowActionSupport.showInfo(
+                project,
+                SpecCodingBundle.message("spec.action.rollback.none.title"),
+                SpecCodingBundle.message("spec.action.rollback.none.message"),
+            )
+            return
+        }
+        SpecWorkflowActionSupport.chooseStage(
+            project = project,
+            stages = targets,
+            title = SpecCodingBundle.message("spec.action.rollback.stage.popup.title"),
+            workflowMeta = workflowMeta,
+            onChosen = { targetStage -> executeRollbackStage(workflowMeta.workflowId, targetStage) },
+        )
+    }
+
+    private fun previewAndJumpToStage(workflowId: String, targetStage: StageId) {
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.jump.preview"),
+            task = {
+                specEngine.previewStageTransition(
+                    workflowId = workflowId,
+                    transitionType = StageTransitionType.JUMP,
+                    targetStage = targetStage,
+                ).getOrThrow()
+            },
+            onSuccess = { preview ->
+                when (preview.gateResult.status) {
+                    GateStatus.ERROR -> SpecWorkflowActionSupport.showGateBlocked(project, workflowId, preview.gateResult)
+                    GateStatus.WARNING -> {
+                        if (!SpecWorkflowActionSupport.confirmWarnings(project, workflowId, preview.gateResult)) {
+                            return@runBackground
+                        }
+                        executeJumpStage(workflowId, targetStage)
+                    }
+
+                    GateStatus.PASS -> executeJumpStage(workflowId, targetStage)
+                }
+            },
+        )
+    }
+
+    private fun executeAdvanceStage(workflowId: String) {
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.advance.executing"),
+            task = { specEngine.advanceWorkflow(workflowId) { true }.getOrThrow() },
+            onSuccess = { result ->
+                handleStageTransitionCompleted(
+                    workflowId = workflowId,
+                    successMessage = SpecCodingBundle.message(
+                        "spec.action.advance.success",
+                        SpecWorkflowActionSupport.stageLabel(result.targetStage),
+                    ),
+                )
+            },
+        )
+    }
+
+    private fun executeJumpStage(workflowId: String, targetStage: StageId) {
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.jump.executing"),
+            task = { specEngine.jumpToStage(workflowId, targetStage) { true }.getOrThrow() },
+            onSuccess = { result ->
+                handleStageTransitionCompleted(
+                    workflowId = workflowId,
+                    successMessage = SpecCodingBundle.message(
+                        "spec.action.jump.success",
+                        SpecWorkflowActionSupport.stageLabel(result.targetStage),
+                    ),
+                )
+            },
+        )
+    }
+
+    private fun executeRollbackStage(workflowId: String, targetStage: StageId) {
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.rollback.executing"),
+            task = { specEngine.rollbackToStage(workflowId, targetStage).getOrThrow() },
+            onSuccess = { meta ->
+                handleStageTransitionCompleted(
+                    workflowId = workflowId,
+                    successMessage = SpecCodingBundle.message(
+                        "spec.action.rollback.success",
+                        SpecWorkflowActionSupport.stageLabel(meta.currentStage),
+                    ),
+                )
+            },
+        )
+    }
+
+    private fun handleStageTransitionCompleted(workflowId: String, successMessage: String) {
+        SpecWorkflowActionSupport.notifySuccess(project, successMessage)
+        publishWorkflowSelection(workflowId)
+        refreshWorkflows(selectWorkflowId = workflowId)
     }
 
     private fun onShowCodeGraph() {

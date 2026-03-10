@@ -147,6 +147,10 @@ class SpecArchitectureContractTest {
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("toolwindow-overview-mvp").status,
         )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("toolwindow-stage-stepper").status,
+        )
     }
 
     @Test

@@ -20,7 +20,11 @@ import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 
-internal class SpecWorkflowOverviewPanel : JPanel(BorderLayout(JBUI.scale(8), JBUI.scale(8))) {
+internal class SpecWorkflowOverviewPanel(
+    onAdvanceRequested: () -> Unit = {},
+    onJumpRequested: () -> Unit = {},
+    onRollbackRequested: () -> Unit = {},
+) : JPanel(BorderLayout(JBUI.scale(8), JBUI.scale(8))) {
     private val emptyLabel = JBLabel().apply {
         horizontalAlignment = SwingConstants.LEFT
         verticalAlignment = SwingConstants.TOP
@@ -47,6 +51,11 @@ internal class SpecWorkflowOverviewPanel : JPanel(BorderLayout(JBUI.scale(8), JB
         isOpaque = true
         font = JBUI.Fonts.smallFont().deriveFont(10.5f)
     }
+    private val stageStepperPanel = SpecWorkflowStageStepperPanel(
+        onAdvanceRequested = onAdvanceRequested,
+        onJumpRequested = onJumpRequested,
+        onRollbackRequested = onRollbackRequested,
+    )
 
     private val workflowKeyLabel = createKeyLabel()
     private val statusKeyLabel = createKeyLabel()
@@ -54,6 +63,7 @@ internal class SpecWorkflowOverviewPanel : JPanel(BorderLayout(JBUI.scale(8), JB
     private val activeStagesKeyLabel = createKeyLabel()
     private val nextStageKeyLabel = createKeyLabel()
     private val advanceGateKeyLabel = createKeyLabel()
+    private val stageFlowKeyLabel = createKeyLabel()
     private val refreshedKeyLabel = createKeyLabel()
 
     private var currentState: SpecWorkflowOverviewState? = null
@@ -93,7 +103,9 @@ internal class SpecWorkflowOverviewPanel : JPanel(BorderLayout(JBUI.scale(8), JB
         activeStagesKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.activeStages")
         nextStageKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.nextStage")
         advanceGateKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.advanceGate")
+        stageFlowKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.stageFlow")
         refreshedKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.refreshed")
+        stageStepperPanel.refreshLocalizedTexts()
         if (currentState != null) {
             renderCurrentState()
         } else {
@@ -102,6 +114,7 @@ internal class SpecWorkflowOverviewPanel : JPanel(BorderLayout(JBUI.scale(8), JB
     }
 
     internal fun snapshotForTest(): Map<String, String> {
+        val stageStepperSnapshot = stageStepperPanel.snapshotForTest()
         return mapOf(
             "workflow" to workflowValueLabel.text.orEmpty(),
             "status" to statusValueLabel.text.orEmpty(),
@@ -110,9 +123,17 @@ internal class SpecWorkflowOverviewPanel : JPanel(BorderLayout(JBUI.scale(8), JB
             "nextStage" to nextStageValueLabel.text.orEmpty(),
             "gateStatus" to gateChipLabel.text.orEmpty(),
             "gateSummary" to gateSummaryValueLabel.text.orEmpty(),
+            "stageFlow" to stageStepperSnapshot.getValue("stages"),
+            "advanceEnabled" to stageStepperSnapshot.getValue("advanceEnabled"),
+            "jumpEnabled" to stageStepperSnapshot.getValue("jumpEnabled"),
+            "rollbackEnabled" to stageStepperSnapshot.getValue("rollbackEnabled"),
             "refreshed" to refreshedValueLabel.text.orEmpty(),
             "empty" to emptyLabel.text.orEmpty(),
         )
+    }
+
+    internal fun clickAdvanceForTest() {
+        stageStepperPanel.clickAdvanceForTest()
     }
 
     private fun buildContent() {
@@ -131,6 +152,7 @@ internal class SpecWorkflowOverviewPanel : JPanel(BorderLayout(JBUI.scale(8), JB
             },
         )
         row = addRow(row, createSpacerLabel(), gateSummaryValueLabel)
+        row = addRow(row, stageFlowKeyLabel, stageStepperPanel)
         addRow(row, refreshedKeyLabel, refreshedValueLabel, fillVertical = true)
     }
 
@@ -183,6 +205,7 @@ internal class SpecWorkflowOverviewPanel : JPanel(BorderLayout(JBUI.scale(8), JB
         applyGateChipStyle(state.gateStatus)
         gateSummaryValueLabel.text = state.gateSummary
             ?: SpecCodingBundle.message("spec.toolwindow.overview.advanceGate.unavailable")
+        stageStepperPanel.updateState(state.stageStepper)
         refreshedValueLabel.text = REFRESHED_AT_FORMATTER.format(
             Instant.ofEpochMilli(state.refreshedAtMillis).atZone(ZoneId.systemDefault()),
         )
@@ -194,6 +217,7 @@ internal class SpecWorkflowOverviewPanel : JPanel(BorderLayout(JBUI.scale(8), JB
         contentPanel.isVisible = false
         emptyLabel.isVisible = true
         emptyLabel.text = SpecCodingBundle.message(emptyMessageKey)
+        stageStepperPanel.clear()
         revalidate()
         repaint()
     }

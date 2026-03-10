@@ -51,6 +51,9 @@ class SpecWorkflowOverviewPresenterTest {
         assertEquals(StageId.IMPLEMENT, state.nextStage)
         assertEquals(GateStatus.WARNING, state.gateStatus)
         assertTrue(state.gateSummary.orEmpty().contains("warning", ignoreCase = true))
+        assertTrue(state.stageStepper.canAdvance)
+        assertEquals(listOf(StageId.IMPLEMENT, StageId.ARCHIVE), state.stageStepper.jumpTargets)
+        assertEquals(listOf(StageId.REQUIREMENTS, StageId.DESIGN), state.stageStepper.rollbackTargets)
     }
 
     @Test
@@ -79,6 +82,31 @@ class SpecWorkflowOverviewPresenterTest {
         )
 
         assertTrue(state.activeStages.contains(StageId.VERIFY))
+        assertTrue(state.stageStepper.stages.first { it.stageId == StageId.VERIFY }.active)
+    }
+
+    @Test
+    fun `buildState should keep inactive optional stages in stepper`() {
+        val workflow = workflow(verifyEnabled = false)
+
+        val state = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertEquals(
+            listOf(
+                StageId.REQUIREMENTS,
+                StageId.DESIGN,
+                StageId.TASKS,
+                StageId.IMPLEMENT,
+                StageId.VERIFY,
+                StageId.ARCHIVE,
+            ),
+            state.stageStepper.stages.map { it.stageId },
+        )
+        assertTrue(state.stageStepper.stages.first { it.stageId == StageId.VERIFY }.active.not())
     }
 
     private fun workflow(
