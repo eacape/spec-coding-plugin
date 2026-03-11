@@ -155,6 +155,10 @@ class SpecArchitectureContractTest {
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("delta-report-computation").status,
         )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("delta-report-export").status,
+        )
     }
 
     @Test

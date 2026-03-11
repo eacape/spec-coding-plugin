@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.spec
 
+import java.nio.file.Path
+
 enum class SpecDeltaStatus {
     ADDED,
     MODIFIED,
@@ -36,6 +38,34 @@ enum class SpecDeltaArtifact(
         fileName = "verification.md",
         phase = null,
         stageId = StageId.VERIFY,
+    ),
+}
+
+enum class SpecDeltaBaselineKind {
+    WORKFLOW,
+    SNAPSHOT,
+    PINNED_BASELINE,
+}
+
+data class SpecDeltaComparisonContext(
+    val baselineKind: SpecDeltaBaselineKind,
+    val baselineWorkflowId: String,
+    val targetWorkflowId: String,
+    val snapshotId: String? = null,
+    val baselineId: String? = null,
+)
+
+enum class SpecDeltaExportFormat(
+    val fileExtension: String,
+    val mediaType: String,
+) {
+    MARKDOWN(
+        fileExtension = "md",
+        mediaType = "text/markdown",
+    ),
+    HTML(
+        fileExtension = "html",
+        mediaType = "text/html",
     ),
 }
 
@@ -157,6 +187,7 @@ data class SpecWorkflowDelta(
     val taskSummary: SpecTaskDeltaSummary = SpecTaskDeltaSummary(),
     val relatedFilesSummary: SpecRelatedFilesDeltaSummary = SpecRelatedFilesDeltaSummary(),
     val verificationSummary: SpecVerificationDeltaSummary = SpecVerificationDeltaSummary(),
+    val comparisonContext: SpecDeltaComparisonContext? = null,
 ) {
     private val effectiveArtifactDeltas: List<SpecArtifactDelta>
         get() = if (artifactDeltas.isNotEmpty()) {
@@ -176,6 +207,13 @@ data class SpecWorkflowDelta(
             verificationSummary.hasChanges()
     }
 }
+
+data class SpecDeltaExportResult(
+    val workflowId: String,
+    val format: SpecDeltaExportFormat,
+    val fileName: String,
+    val filePath: Path,
+)
 
 private fun SpecPhaseDelta.toArtifactDelta(): SpecArtifactDelta {
     return SpecArtifactDelta(

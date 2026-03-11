@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Files
 import java.nio.file.Path
 
 class SpecDeltaServiceTest {
@@ -155,6 +156,141 @@ class SpecDeltaServiceTest {
         assertEquals("COMPARE", compareEvent.details["action"])
         assertEquals("PINNED_BASELINE", compareEvent.details["baselineKind"])
         assertEquals(baselineRef.baselineId, compareEvent.details["baselineId"])
+    }
+
+    @Test
+    fun `exportReport should generate stable markdown and html files with audit trail`() {
+        val baselineWorkflowId = "wf-export-base"
+        val targetWorkflowId = "wf-export-target"
+        storage.saveWorkflow(workflow(baselineWorkflowId)).getOrThrow()
+        storage.saveWorkflow(workflow(targetWorkflowId)).getOrThrow()
+
+        storage.saveDocument(
+            workflowId = baselineWorkflowId,
+            document = document(
+                phase = SpecPhase.IMPLEMENT,
+                content = tasksMarkdown(
+                    """
+                    ### T-001: Keep baseline stable
+                    ```spec-task
+                    status: IN_PROGRESS
+                    priority: P0
+                    dependsOn: []
+                    relatedFiles:
+                      - src/main/kotlin/Baseline.kt
+                    verificationResult:
+                      conclusion: PASS
+                      runId: verify-run-1
+                      summary: baseline pass
+                      at: "2026-03-10T09:00:00Z"
+                    ```
+                    """.trimIndent(),
+                ),
+            ),
+        ).getOrThrow()
+        storage.saveDocument(
+            workflowId = targetWorkflowId,
+            document = document(
+                phase = SpecPhase.IMPLEMENT,
+                content = tasksMarkdown(
+                    """
+                    ### T-001: Keep baseline stable
+                    ```spec-task
+                    status: COMPLETED
+                    priority: P0
+                    dependsOn: []
+                    relatedFiles:
+                      - src/main/kotlin/Baseline.kt
+                      - src/main/kotlin/Exported.kt
+                    verificationResult:
+                      conclusion: FAIL
+                      runId: verify-run-2
+                      summary: target failed
+                      at: "2026-03-11T10:00:00Z"
+                    ```
+
+                    ### T-002: Export delta report
+                    ```spec-task
+                    status: PENDING
+                    priority: P1
+                    dependsOn:
+                      - T-001
+                    relatedFiles:
+                      - src/test/kotlin/com/eacape/speccodingplugin/spec/SpecDeltaServiceTest.kt
+                    verificationResult: null
+                    ```
+                    """.trimIndent(),
+                ),
+            ),
+        ).getOrThrow()
+        artifactService.writeArtifact(
+            workflowId = baselineWorkflowId,
+            stageId = StageId.VERIFY,
+            content = verificationMarkdown(
+                conclusion = "PASS",
+                runId = "verify-run-1",
+                summary = "baseline pass",
+                executedAt = "2026-03-10T09:00:00Z",
+            ),
+        )
+        artifactService.writeArtifact(
+            workflowId = targetWorkflowId,
+            stageId = StageId.VERIFY,
+            content = verificationMarkdown(
+                conclusion = "FAIL",
+                runId = "verify-run-2",
+                summary = "target failed",
+                executedAt = "2026-03-11T10:00:00Z",
+            ),
+        )
+
+        val delta = deltaService.compareByWorkflowId(
+            baselineWorkflowId = baselineWorkflowId,
+            targetWorkflowId = targetWorkflowId,
+        ).getOrThrow()
+
+        val markdown = deltaService.exportMarkdown(delta)
+        val html = deltaService.exportHtml(delta)
+
+        assertTrue(markdown.startsWith("---\n"))
+        assertTrue(markdown.contains("reportType: spec-delta"))
+        assertTrue(markdown.contains("## Artifact Diffs"))
+        assertTrue(markdown.contains("```diff"))
+        assertTrue(markdown.contains("## Task Changes"))
+        assertTrue(markdown.contains("## Related Files Summary"))
+        assertTrue(markdown.contains("## Verification Summary"))
+        assertTrue(markdown.contains("+++ target/verification.md"))
+        assertEquals(markdown, deltaService.exportMarkdown(delta))
+
+        assertTrue(html.startsWith("<!DOCTYPE html>"))
+        assertTrue(html.contains("<h2>Replay Metadata</h2>"))
+        assertTrue(html.contains("<h2>Artifact Diffs</h2>"))
+        assertTrue(html.contains("&lt;!DOCTYPE html&gt;").not())
+        assertTrue(html.contains("+++ target/verification.md"))
+        assertEquals(html, deltaService.exportHtml(delta))
+
+        val markdownExport = deltaService.exportReport(delta, SpecDeltaExportFormat.MARKDOWN).getOrThrow()
+        val htmlExport = deltaService.exportReport(delta, SpecDeltaExportFormat.HTML).getOrThrow()
+
+        assertEquals(
+            "spec-delta-wf-export-target-workflow-wf-export-base.md",
+            markdownExport.fileName,
+        )
+        assertEquals(
+            "spec-delta-wf-export-target-workflow-wf-export-base.html",
+            htmlExport.fileName,
+        )
+        assertTrue(Files.exists(markdownExport.filePath))
+        assertTrue(Files.exists(htmlExport.filePath))
+        assertEquals(markdown, Files.readString(markdownExport.filePath))
+        assertEquals(html, Files.readString(htmlExport.filePath))
+
+        val exportEvents = storage.listAuditEvents(targetWorkflowId).getOrThrow()
+            .filter { event -> event.eventType == SpecAuditEventType.DELTA_EXPORTED }
+        assertEquals(2, exportEvents.size)
+        assertEquals("MARKDOWN", exportEvents.first().details["format"])
+        assertEquals("HTML", exportEvents.last().details["format"])
+        assertEquals(".spec-coding/exports/delta/spec-delta-wf-export-target-workflow-wf-export-base.html", exportEvents.last().details["file"])
     }
 
     private fun workflow(id: String): SpecWorkflow {

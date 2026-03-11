@@ -3,6 +3,9 @@ package com.eacape.speccodingplugin.spec
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
 
 @Service(Service.Level.PROJECT)
 class SpecDeltaService(private val project: Project) {
@@ -10,6 +13,7 @@ class SpecDeltaService(private val project: Project) {
     private var _storageOverride: SpecStorage? = null
     private var _artifactServiceOverride: SpecArtifactService? = null
     private var _workspaceCandidateFilesProviderOverride: (() -> List<String>)? = null
+    private var _atomicFileIOOverride: AtomicFileIO? = null
 
     private val specEngine: SpecEngine
         get() = _specEngineOverride ?: SpecEngine.getInstance(project)
@@ -20,6 +24,9 @@ class SpecDeltaService(private val project: Project) {
     private val artifactService: SpecArtifactService by lazy {
         _artifactServiceOverride ?: SpecArtifactService(project)
     }
+
+    private val atomicFileIO: AtomicFileIO
+        get() = _atomicFileIOOverride ?: AtomicFileIO()
 
     private val workspaceCandidateFilesProvider: () -> List<String>
         get() = _workspaceCandidateFilesProviderOverride ?: {
@@ -34,11 +41,13 @@ class SpecDeltaService(private val project: Project) {
         storage: SpecStorage,
         artifactService: SpecArtifactService = SpecArtifactService(project),
         workspaceCandidateFilesProvider: () -> List<String> = { emptyList() },
+        atomicFileIO: AtomicFileIO = AtomicFileIO(),
     ) : this(project) {
         _specEngineOverride = specEngine
         _storageOverride = storage
         _artifactServiceOverride = artifactService
         _workspaceCandidateFilesProviderOverride = workspaceCandidateFilesProvider
+        _atomicFileIOOverride = atomicFileIO
     }
 
     fun compareByWorkflowId(
@@ -54,6 +63,12 @@ class SpecDeltaService(private val project: Project) {
                 baselineVerificationContent = artifactService.readArtifact(baselineWorkflowId, StageId.VERIFY),
                 targetVerificationContent = artifactService.readArtifact(targetWorkflowId, StageId.VERIFY),
                 workspaceCandidateFiles = workspaceCandidateFilesProvider(),
+            ).withComparisonContext(
+                SpecDeltaComparisonContext(
+                    baselineKind = SpecDeltaBaselineKind.WORKFLOW,
+                    baselineWorkflowId = baselineWorkflowId,
+                    targetWorkflowId = targetWorkflowId,
+                ),
             )
             appendBaselineSelectionAudit(
                 targetWorkflowId = targetWorkflowId,
@@ -83,6 +98,13 @@ class SpecDeltaService(private val project: Project) {
                 ).getOrThrow(),
                 targetVerificationContent = artifactService.readArtifact(targetWorkflowId, StageId.VERIFY),
                 workspaceCandidateFiles = workspaceCandidateFilesProvider(),
+            ).withComparisonContext(
+                SpecDeltaComparisonContext(
+                    baselineKind = SpecDeltaBaselineKind.SNAPSHOT,
+                    baselineWorkflowId = workflowId,
+                    targetWorkflowId = targetWorkflowId,
+                    snapshotId = snapshotId,
+                ),
             )
             appendBaselineSelectionAudit(
                 targetWorkflowId = targetWorkflowId,
@@ -113,6 +135,13 @@ class SpecDeltaService(private val project: Project) {
                 ).getOrThrow(),
                 targetVerificationContent = artifactService.readArtifact(targetWorkflowId, StageId.VERIFY),
                 workspaceCandidateFiles = workspaceCandidateFilesProvider(),
+            ).withComparisonContext(
+                SpecDeltaComparisonContext(
+                    baselineKind = SpecDeltaBaselineKind.PINNED_BASELINE,
+                    baselineWorkflowId = workflowId,
+                    targetWorkflowId = targetWorkflowId,
+                    baselineId = baselineId,
+                ),
             )
             appendBaselineSelectionAudit(
                 targetWorkflowId = targetWorkflowId,
@@ -122,6 +151,40 @@ class SpecDeltaService(private val project: Project) {
                 delta = delta,
             )
             delta
+        }
+    }
+
+    fun exportMarkdown(report: SpecWorkflowDelta): String {
+        return SpecDeltaReportExporter.exportMarkdown(report)
+    }
+
+    fun exportHtml(report: SpecWorkflowDelta): String {
+        return SpecDeltaReportExporter.exportHtml(report)
+    }
+
+    fun exportReport(
+        report: SpecWorkflowDelta,
+        format: SpecDeltaExportFormat,
+    ): Result<SpecDeltaExportResult> {
+        return runCatching {
+            val basePath = project.basePath
+                ?: throw IllegalStateException("Project base path is not available")
+            val exportDir = Path.of(basePath, ".spec-coding", "exports", "delta")
+            Files.createDirectories(exportDir)
+            val fileName = buildExportFileName(report, format)
+            val target = exportDir.resolve(fileName)
+            val content = when (format) {
+                SpecDeltaExportFormat.MARKDOWN -> exportMarkdown(report)
+                SpecDeltaExportFormat.HTML -> exportHtml(report)
+            }
+            atomicFileIO.writeString(target, content, StandardCharsets.UTF_8)
+            appendDeltaExportAudit(report, format, target)
+            SpecDeltaExportResult(
+                workflowId = report.targetWorkflowId,
+                format = format,
+                fileName = fileName,
+                filePath = target,
+            )
         }
     }
 
@@ -156,8 +219,488 @@ class SpecDeltaService(private val project: Project) {
         ).getOrThrow()
     }
 
+    private fun appendDeltaExportAudit(
+        report: SpecWorkflowDelta,
+        format: SpecDeltaExportFormat,
+        target: Path,
+    ) {
+        val comparisonContext = report.effectiveComparisonContext()
+        val projectRoot = project.basePath?.let(Path::of)
+        val exportPath = projectRoot?.let { root ->
+            runCatching { root.relativize(target).toString().replace('\\', '/') }
+                .getOrElse { target.toString().replace('\\', '/') }
+        } ?: target.toString().replace('\\', '/')
+        val details = linkedMapOf(
+            "action" to "EXPORT",
+            "format" to format.name,
+            "mediaType" to format.mediaType,
+            "file" to exportPath,
+            "baselineKind" to comparisonContext.baselineKind.name,
+            "baselineWorkflowId" to comparisonContext.baselineWorkflowId,
+            "targetWorkflowId" to comparisonContext.targetWorkflowId,
+            "artifactChangeCount" to report.artifactDeltas.count { artifact -> artifact.status != SpecDeltaStatus.UNCHANGED }.toString(),
+            "taskChangeCount" to report.taskSummary.changes.size.toString(),
+            "relatedFileChangeCount" to report.relatedFilesSummary.files.count { file -> file.status != SpecDeltaStatus.UNCHANGED }.toString(),
+            "verificationChanged" to report.verificationSummary.hasChanges().toString(),
+        )
+        comparisonContext.snapshotId?.let { snapshotId ->
+            details["snapshotId"] = snapshotId
+        }
+        comparisonContext.baselineId?.let { baselineId ->
+            details["baselineId"] = baselineId
+        }
+        storage.appendAuditEvent(
+            workflowId = report.targetWorkflowId,
+            eventType = SpecAuditEventType.DELTA_EXPORTED,
+            details = details,
+        ).getOrThrow()
+    }
+
+    private fun buildExportFileName(
+        report: SpecWorkflowDelta,
+        format: SpecDeltaExportFormat,
+    ): String {
+        val context = report.effectiveComparisonContext()
+        val baselineToken = when (context.baselineKind) {
+            SpecDeltaBaselineKind.WORKFLOW -> "workflow-${context.baselineWorkflowId}"
+            SpecDeltaBaselineKind.SNAPSHOT -> "snapshot-${context.baselineWorkflowId}-${context.snapshotId ?: "unknown"}"
+            SpecDeltaBaselineKind.PINNED_BASELINE -> "baseline-${context.baselineWorkflowId}-${context.baselineId ?: "unknown"}"
+        }
+        return "spec-delta-${sanitizeExportToken(context.targetWorkflowId)}-${sanitizeExportToken(baselineToken)}.${format.fileExtension}"
+    }
+
+    private fun sanitizeExportToken(raw: String): String {
+        return raw.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+    }
+
     companion object {
         fun getInstance(project: Project): SpecDeltaService = project.service()
+    }
+}
+
+private fun SpecWorkflowDelta.withComparisonContext(
+    context: SpecDeltaComparisonContext,
+): SpecWorkflowDelta {
+    return copy(comparisonContext = context)
+}
+
+private fun SpecWorkflowDelta.effectiveComparisonContext(): SpecDeltaComparisonContext {
+    return comparisonContext ?: SpecDeltaComparisonContext(
+        baselineKind = SpecDeltaBaselineKind.WORKFLOW,
+        baselineWorkflowId = baselineWorkflowId,
+        targetWorkflowId = targetWorkflowId,
+    )
+}
+
+private object SpecDeltaReportExporter {
+    private const val REPORT_SCHEMA_VERSION = 1
+
+    fun exportMarkdown(report: SpecWorkflowDelta): String {
+        val metadata = SpecYamlCodec.encodeMap(buildReplayMetadata(report)).trimEnd()
+        val context = report.effectiveComparisonContext()
+        val changedArtifacts = report.artifactDeltas.filter { artifact -> artifact.status != SpecDeltaStatus.UNCHANGED }
+        val changedRelatedFiles = report.relatedFilesSummary.files.filter { file -> file.status != SpecDeltaStatus.UNCHANGED }
+        return buildString {
+            appendLine("---")
+            appendLine(metadata)
+            appendLine("---")
+            appendLine()
+            appendLine("# Spec Delta Report")
+            appendLine()
+            appendLine("## Summary")
+            appendLine("- Baseline: ${formatMarkdownComparisonContext(context)}")
+            appendLine("- Target workflow: `${report.targetWorkflowId}`")
+            appendLine("- Has changes: `${report.hasChanges()}`")
+            appendLine("- Artifact counts: `${formatArtifactCounts(report)}`")
+            appendLine("- Task changes: `${report.taskSummary.changes.size}`")
+            appendLine("- Related file changes: `${changedRelatedFiles.size}`")
+            appendLine("- Verification changed: `${report.verificationSummary.hasChanges()}`")
+            appendLine()
+            appendLine("## Artifact Summary")
+            appendLine("| Artifact | File | Status | + | - |")
+            appendLine("| --- | --- | --- | ---: | ---: |")
+            report.artifactDeltas.forEach { artifact ->
+                appendLine(
+                    "| ${escapeMarkdownCell(artifact.artifact.displayName)} | `${artifact.artifact.fileName}` | ${artifact.status.name} | ${artifact.addedLineCount} | ${artifact.removedLineCount} |",
+                )
+            }
+            appendLine()
+            appendLine("## Artifact Diffs")
+            if (changedArtifacts.isEmpty()) {
+                appendLine("No textual artifact changes detected.")
+            } else {
+                changedArtifacts.forEach { artifact ->
+                    appendLine("### `${artifact.artifact.fileName}` · ${artifact.status.name}")
+                    appendLine()
+                    appendLine("```diff")
+                    appendLine(buildUnifiedDiffText(artifact))
+                    appendLine("```")
+                    appendLine()
+                }
+            }
+            appendLine("## Task Changes")
+            appendLine("- Added: ${formatMarkdownList(report.taskSummary.addedTaskIds)}")
+            appendLine("- Removed: ${formatMarkdownList(report.taskSummary.removedTaskIds)}")
+            appendLine("- Completed: ${formatMarkdownList(report.taskSummary.completedTaskIds)}")
+            appendLine("- Cancelled: ${formatMarkdownList(report.taskSummary.cancelledTaskIds)}")
+            appendLine("- Status changed: ${formatMarkdownList(report.taskSummary.statusChangedTaskIds)}")
+            appendLine("- Metadata changed: ${formatMarkdownList(report.taskSummary.metadataChangedTaskIds)}")
+            if (!report.taskSummary.hasChanges()) {
+                appendLine()
+                appendLine("No task changes detected.")
+            } else {
+                appendLine()
+                report.taskSummary.changes.forEach { change ->
+                    appendLine("### `${change.taskId}` · ${change.status.name} · ${escapeMarkdownText(change.title)}")
+                    appendLine("- Changed fields: ${formatMarkdownList(change.changedFields)}")
+                    appendLine("- Baseline: ${escapeMarkdownText(formatTaskSnapshot(change.baselineTask))}")
+                    appendLine("- Target: ${escapeMarkdownText(formatTaskSnapshot(change.targetTask))}")
+                    appendLine()
+                }
+            }
+            appendLine("## Related Files Summary")
+            appendLine("- Workspace candidates: ${formatMarkdownList(report.relatedFilesSummary.workspaceCandidateFiles)}")
+            if (changedRelatedFiles.isEmpty()) {
+                appendLine()
+                appendLine("No related file changes detected.")
+            } else {
+                appendLine()
+                appendLine("| Path | Status | Baseline Tasks | Target Tasks | Workspace |")
+                appendLine("| --- | --- | --- | --- | --- |")
+                changedRelatedFiles.forEach { file ->
+                    appendLine(
+                        "| `${file.path}` | ${file.status.name} | ${escapeMarkdownCell(formatPlainList(file.baselineTaskIds))} | ${escapeMarkdownCell(formatPlainList(file.targetTaskIds))} | ${if (file.presentInWorkspace) "yes" else "no"} |",
+                    )
+                }
+            }
+            appendLine()
+            appendLine("## Verification Summary")
+            appendLine("- Baseline artifact: ${escapeMarkdownText(formatVerificationArtifactSummary(report.verificationSummary.baselineArtifact))}")
+            appendLine("- Target artifact: ${escapeMarkdownText(formatVerificationArtifactSummary(report.verificationSummary.targetArtifact))}")
+            appendLine("- Task verification result changes: `${report.verificationSummary.taskResultChanges.size}`")
+            if (report.verificationSummary.taskResultChanges.isEmpty()) {
+                appendLine()
+                appendLine("No task verification changes detected.")
+            } else {
+                appendLine()
+                appendLine("| Task | Status | Baseline | Target |")
+                appendLine("| --- | --- | --- | --- |")
+                report.verificationSummary.taskResultChanges.forEach { change ->
+                    appendLine(
+                        "| `${change.taskId}` | ${change.status.name} | ${escapeMarkdownCell(formatVerificationResult(change.baselineResult))} | ${escapeMarkdownCell(formatVerificationResult(change.targetResult))} |",
+                    )
+                }
+            }
+        }.trimEnd() + "\n"
+    }
+
+    fun exportHtml(report: SpecWorkflowDelta): String {
+        val context = report.effectiveComparisonContext()
+        val changedArtifacts = report.artifactDeltas.filter { artifact -> artifact.status != SpecDeltaStatus.UNCHANGED }
+        val changedRelatedFiles = report.relatedFilesSummary.files.filter { file -> file.status != SpecDeltaStatus.UNCHANGED }
+        val metadata = escapeHtml(SpecYamlCodec.encodeMap(buildReplayMetadata(report)).trimEnd())
+        return buildString {
+            appendLine("<!DOCTYPE html>")
+            appendLine("<html lang=\"en\">")
+            appendLine("<head>")
+            appendLine("  <meta charset=\"utf-8\">")
+            appendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+            appendLine("  <title>${escapeHtml("Spec Delta Report - ${report.targetWorkflowId}")}</title>")
+            appendLine("  <style>")
+            appendLine("    :root { color-scheme: light; --bg: #f7f4ee; --panel: #fffdf8; --ink: #1f252d; --muted: #5d6773; --border: #d8d0c2; --added: #2f7d32; --modified: #1b6db3; --removed: #b23a2b; --unchanged: #6b7280; }")
+            appendLine("    body { margin: 0; padding: 32px; background: linear-gradient(180deg, #efe8db 0%, #f7f4ee 100%); color: var(--ink); font: 14px/1.6 Georgia, 'Noto Serif', serif; }")
+            appendLine("    main { max-width: 1180px; margin: 0 auto; display: grid; gap: 24px; }")
+            appendLine("    section { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; box-shadow: 0 12px 30px rgba(31, 37, 45, 0.06); }")
+            appendLine("    h1, h2, h3 { margin: 0 0 12px; font-family: 'Segoe UI', 'PingFang SC', sans-serif; }")
+            appendLine("    h1 { font-size: 28px; }")
+            appendLine("    h2 { font-size: 18px; }")
+            appendLine("    h3 { font-size: 15px; }")
+            appendLine("    p, li { color: var(--muted); }")
+            appendLine("    ul { margin: 0; padding-left: 20px; }")
+            appendLine("    table { width: 100%; border-collapse: collapse; }")
+            appendLine("    th, td { border-bottom: 1px solid var(--border); padding: 10px 8px; text-align: left; vertical-align: top; }")
+            appendLine("    th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }")
+            appendLine("    code, pre { font-family: 'JetBrains Mono', 'Cascadia Code', monospace; }")
+            appendLine("    pre { margin: 0; background: #201a17; color: #f7f4ee; border-radius: 12px; padding: 14px 16px; overflow-x: auto; white-space: pre-wrap; }")
+            appendLine("    .status { display: inline-block; border-radius: 999px; padding: 2px 10px; font: 11px/1.8 'Segoe UI', sans-serif; letter-spacing: 0.08em; text-transform: uppercase; border: 1px solid currentColor; }")
+            appendLine("    .status-added { color: var(--added); }")
+            appendLine("    .status-modified { color: var(--modified); }")
+            appendLine("    .status-removed { color: var(--removed); }")
+            appendLine("    .status-unchanged { color: var(--unchanged); }")
+            appendLine("    .artifact-diff { display: grid; gap: 12px; }")
+            appendLine("    .meta { display: grid; gap: 8px; }")
+            appendLine("  </style>")
+            appendLine("</head>")
+            appendLine("<body>")
+            appendLine("  <main>")
+            appendLine("    <section>")
+            appendLine("      <h1>Spec Delta Report</h1>")
+            appendLine("      <div class=\"meta\">")
+            appendLine("        <p><strong>Baseline:</strong> ${escapeHtml(formatHtmlComparisonContext(context))}</p>")
+            appendLine("        <p><strong>Target workflow:</strong> <code>${escapeHtml(report.targetWorkflowId)}</code></p>")
+            appendLine("        <p><strong>Has changes:</strong> <code>${report.hasChanges()}</code></p>")
+            appendLine("      </div>")
+            appendLine("    </section>")
+            appendLine("    <section>")
+            appendLine("      <h2>Replay Metadata</h2>")
+            appendLine("      <pre>$metadata</pre>")
+            appendLine("    </section>")
+            appendLine("    <section>")
+            appendLine("      <h2>Summary</h2>")
+            appendLine("      <ul>")
+            appendLine("        <li>Artifact counts: <code>${escapeHtml(formatArtifactCounts(report))}</code></li>")
+            appendLine("        <li>Task changes: <code>${report.taskSummary.changes.size}</code></li>")
+            appendLine("        <li>Related file changes: <code>${changedRelatedFiles.size}</code></li>")
+            appendLine("        <li>Verification changed: <code>${report.verificationSummary.hasChanges()}</code></li>")
+            appendLine("      </ul>")
+            appendLine("    </section>")
+            appendLine("    <section>")
+            appendLine("      <h2>Artifact Summary</h2>")
+            appendLine("      <table>")
+            appendLine("        <thead><tr><th>Artifact</th><th>File</th><th>Status</th><th>Added</th><th>Removed</th></tr></thead>")
+            appendLine("        <tbody>")
+            report.artifactDeltas.forEach { artifact ->
+                appendLine(
+                    "          <tr><td>${escapeHtml(artifact.artifact.displayName)}</td><td><code>${escapeHtml(artifact.artifact.fileName)}</code></td><td>${statusBadge(artifact.status)}</td><td>${artifact.addedLineCount}</td><td>${artifact.removedLineCount}</td></tr>",
+                )
+            }
+            appendLine("        </tbody>")
+            appendLine("      </table>")
+            appendLine("    </section>")
+            appendLine("    <section>")
+            appendLine("      <h2>Artifact Diffs</h2>")
+            if (changedArtifacts.isEmpty()) {
+                appendLine("      <p>No textual artifact changes detected.</p>")
+            } else {
+                changedArtifacts.forEach { artifact ->
+                    appendLine("      <article class=\"artifact-diff\">")
+                    appendLine("        <h3><code>${escapeHtml(artifact.artifact.fileName)}</code> ${statusBadge(artifact.status)}</h3>")
+                    appendLine("        <pre>${escapeHtml(buildUnifiedDiffText(artifact))}</pre>")
+                    appendLine("      </article>")
+                }
+            }
+            appendLine("    </section>")
+            appendLine("    <section>")
+            appendLine("      <h2>Task Changes</h2>")
+            appendLine("      <ul>")
+            appendLine("        <li>Added: ${escapeHtml(formatPlainList(report.taskSummary.addedTaskIds))}</li>")
+            appendLine("        <li>Removed: ${escapeHtml(formatPlainList(report.taskSummary.removedTaskIds))}</li>")
+            appendLine("        <li>Completed: ${escapeHtml(formatPlainList(report.taskSummary.completedTaskIds))}</li>")
+            appendLine("        <li>Cancelled: ${escapeHtml(formatPlainList(report.taskSummary.cancelledTaskIds))}</li>")
+            appendLine("        <li>Status changed: ${escapeHtml(formatPlainList(report.taskSummary.statusChangedTaskIds))}</li>")
+            appendLine("        <li>Metadata changed: ${escapeHtml(formatPlainList(report.taskSummary.metadataChangedTaskIds))}</li>")
+            appendLine("      </ul>")
+            if (!report.taskSummary.hasChanges()) {
+                appendLine("      <p>No task changes detected.</p>")
+            } else {
+                report.taskSummary.changes.forEach { change ->
+                    appendLine("      <article>")
+                    appendLine("        <h3><code>${escapeHtml(change.taskId)}</code> ${statusBadge(change.status)} ${escapeHtml(change.title)}</h3>")
+                    appendLine("        <p><strong>Changed fields:</strong> ${escapeHtml(formatPlainList(change.changedFields))}</p>")
+                    appendLine("        <p><strong>Baseline:</strong> ${escapeHtml(formatTaskSnapshot(change.baselineTask))}</p>")
+                    appendLine("        <p><strong>Target:</strong> ${escapeHtml(formatTaskSnapshot(change.targetTask))}</p>")
+                    appendLine("      </article>")
+                }
+            }
+            appendLine("    </section>")
+            appendLine("    <section>")
+            appendLine("      <h2>Related Files Summary</h2>")
+            appendLine("      <p><strong>Workspace candidates:</strong> ${escapeHtml(formatPlainList(report.relatedFilesSummary.workspaceCandidateFiles))}</p>")
+            if (changedRelatedFiles.isEmpty()) {
+                appendLine("      <p>No related file changes detected.</p>")
+            } else {
+                appendLine("      <table>")
+                appendLine("        <thead><tr><th>Path</th><th>Status</th><th>Baseline tasks</th><th>Target tasks</th><th>Workspace</th></tr></thead>")
+                appendLine("        <tbody>")
+                changedRelatedFiles.forEach { file ->
+                    appendLine(
+                        "          <tr><td><code>${escapeHtml(file.path)}</code></td><td>${statusBadge(file.status)}</td><td>${escapeHtml(formatPlainList(file.baselineTaskIds))}</td><td>${escapeHtml(formatPlainList(file.targetTaskIds))}</td><td>${if (file.presentInWorkspace) "yes" else "no"}</td></tr>",
+                    )
+                }
+                appendLine("        </tbody>")
+                appendLine("      </table>")
+            }
+            appendLine("    </section>")
+            appendLine("    <section>")
+            appendLine("      <h2>Verification Summary</h2>")
+            appendLine("      <ul>")
+            appendLine("        <li>Baseline artifact: ${escapeHtml(formatVerificationArtifactSummary(report.verificationSummary.baselineArtifact))}</li>")
+            appendLine("        <li>Target artifact: ${escapeHtml(formatVerificationArtifactSummary(report.verificationSummary.targetArtifact))}</li>")
+            appendLine("        <li>Task verification result changes: <code>${report.verificationSummary.taskResultChanges.size}</code></li>")
+            appendLine("      </ul>")
+            if (report.verificationSummary.taskResultChanges.isEmpty()) {
+                appendLine("      <p>No task verification changes detected.</p>")
+            } else {
+                appendLine("      <table>")
+                appendLine("        <thead><tr><th>Task</th><th>Status</th><th>Baseline</th><th>Target</th></tr></thead>")
+                appendLine("        <tbody>")
+                report.verificationSummary.taskResultChanges.forEach { change ->
+                    appendLine(
+                        "          <tr><td><code>${escapeHtml(change.taskId)}</code></td><td>${statusBadge(change.status)}</td><td>${escapeHtml(formatVerificationResult(change.baselineResult))}</td><td>${escapeHtml(formatVerificationResult(change.targetResult))}</td></tr>",
+                    )
+                }
+                appendLine("        </tbody>")
+                appendLine("      </table>")
+            }
+            appendLine("    </section>")
+            appendLine("  </main>")
+            appendLine("</body>")
+            appendLine("</html>")
+        }.trimEnd() + "\n"
+    }
+
+    private fun buildReplayMetadata(report: SpecWorkflowDelta): Map<String, Any?> {
+        val context = report.effectiveComparisonContext()
+        val artifactCounts = linkedMapOf(
+            "added" to report.count(SpecDeltaStatus.ADDED),
+            "modified" to report.count(SpecDeltaStatus.MODIFIED),
+            "removed" to report.count(SpecDeltaStatus.REMOVED),
+            "unchanged" to report.count(SpecDeltaStatus.UNCHANGED),
+        )
+        val taskCounts = linkedMapOf(
+            "changed" to report.taskSummary.changes.size,
+            "added" to report.taskSummary.addedTaskIds.size,
+            "removed" to report.taskSummary.removedTaskIds.size,
+            "completed" to report.taskSummary.completedTaskIds.size,
+            "cancelled" to report.taskSummary.cancelledTaskIds.size,
+        )
+        val relatedFileCounts = linkedMapOf(
+            "changed" to report.relatedFilesSummary.files.count { file -> file.status != SpecDeltaStatus.UNCHANGED },
+            "workspaceCandidates" to report.relatedFilesSummary.workspaceCandidateFiles.size,
+        )
+        return linkedMapOf<String, Any?>(
+            "schemaVersion" to REPORT_SCHEMA_VERSION,
+            "reportType" to "spec-delta",
+            "baselineKind" to context.baselineKind.name,
+            "baselineWorkflowId" to context.baselineWorkflowId,
+            "targetWorkflowId" to context.targetWorkflowId,
+            "snapshotId" to context.snapshotId,
+            "baselineId" to context.baselineId,
+            "hasChanges" to report.hasChanges(),
+            "artifacts" to report.artifactDeltas.map { artifact -> artifact.artifact.fileName },
+            "artifactCounts" to artifactCounts,
+            "taskCounts" to taskCounts,
+            "relatedFileCounts" to relatedFileCounts,
+            "verificationChanged" to report.verificationSummary.hasChanges(),
+        )
+    }
+
+    private fun formatArtifactCounts(report: SpecWorkflowDelta): String {
+        return listOf(
+            "ADDED=${report.count(SpecDeltaStatus.ADDED)}",
+            "MODIFIED=${report.count(SpecDeltaStatus.MODIFIED)}",
+            "REMOVED=${report.count(SpecDeltaStatus.REMOVED)}",
+            "UNCHANGED=${report.count(SpecDeltaStatus.UNCHANGED)}",
+        ).joinToString(", ")
+    }
+
+    private fun formatMarkdownComparisonContext(context: SpecDeltaComparisonContext): String {
+        val suffix = when (context.baselineKind) {
+            SpecDeltaBaselineKind.WORKFLOW -> context.baselineKind.name
+            SpecDeltaBaselineKind.SNAPSHOT -> "${context.baselineKind.name} / snapshot=${context.snapshotId ?: "n/a"}"
+            SpecDeltaBaselineKind.PINNED_BASELINE -> "${context.baselineKind.name} / baseline=${context.baselineId ?: "n/a"}"
+        }
+        return "`${context.baselineWorkflowId}` ($suffix)"
+    }
+
+    private fun formatHtmlComparisonContext(context: SpecDeltaComparisonContext): String {
+        return formatMarkdownComparisonContext(context).replace("`", "")
+    }
+
+    private fun buildUnifiedDiffText(artifact: SpecArtifactDelta): String {
+        val header = listOf(
+            "--- baseline/${artifact.artifact.fileName}",
+            "+++ target/${artifact.artifact.fileName}",
+            "@@ added=${artifact.addedLineCount} removed=${artifact.removedLineCount} @@",
+        )
+        return (header + artifact.unifiedDiff.trimEnd().lines())
+            .filter { line -> line.isNotBlank() }
+            .joinToString("\n")
+    }
+
+    private fun formatTaskSnapshot(task: StructuredTask?): String {
+        if (task == null) {
+            return "missing"
+        }
+        return buildString {
+            append("status=${task.status}")
+            append(", priority=${task.priority}")
+            append(", dependsOn=${formatPlainList(task.dependsOn)}")
+            append(", relatedFiles=${formatPlainList(task.relatedFiles)}")
+            append(", verification=${formatVerificationResult(task.verificationResult)}")
+        }
+    }
+
+    private fun formatVerificationArtifactSummary(summary: SpecVerificationArtifactSummary): String {
+        if (!summary.documentAvailable) {
+            return "missing"
+        }
+        return listOfNotNull(
+            "conclusion=${summary.conclusion?.name ?: "n/a"}",
+            summary.runId?.let { runId -> "runId=$runId" },
+            summary.executedAt?.let { executedAt -> "at=$executedAt" },
+            summary.summary.takeIf { it.isNotBlank() }?.let { text -> "summary=$text" },
+        ).joinToString(", ")
+            .ifBlank { "document available" }
+    }
+
+    private fun formatVerificationResult(result: TaskVerificationResult?): String {
+        if (result == null) {
+            return "none"
+        }
+        return listOf(
+            result.conclusion.name,
+            result.runId,
+            result.at,
+            result.summary.ifBlank { "no summary" },
+        ).joinToString(" | ")
+    }
+
+    private fun formatMarkdownList(items: List<String>): String {
+        if (items.isEmpty()) {
+            return "`none`"
+        }
+        return items.joinToString(", ") { item -> "`${escapeMarkdownText(item)}`" }
+    }
+
+    private fun formatPlainList(items: List<String>): String {
+        return items.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "none"
+    }
+
+    private fun escapeMarkdownCell(raw: String): String {
+        return raw
+            .replace("|", "\\|")
+            .replace("\r\n", " ")
+            .replace('\n', ' ')
+    }
+
+    private fun escapeMarkdownText(raw: String): String {
+        return raw.replace('\r', ' ').replace('\n', ' ')
+    }
+
+    private fun escapeHtml(raw: String): String {
+        return buildString(raw.length) {
+            raw.forEach { char ->
+                when (char) {
+                    '&' -> append("&amp;")
+                    '<' -> append("&lt;")
+                    '>' -> append("&gt;")
+                    '"' -> append("&quot;")
+                    '\'' -> append("&#39;")
+                    else -> append(char)
+                }
+            }
+        }
+    }
+
+    private fun statusBadge(status: SpecDeltaStatus): String {
+        val className = when (status) {
+            SpecDeltaStatus.ADDED -> "status-added"
+            SpecDeltaStatus.MODIFIED -> "status-modified"
+            SpecDeltaStatus.REMOVED -> "status-removed"
+            SpecDeltaStatus.UNCHANGED -> "status-unchanged"
+        }
+        return "<span class=\"status $className\">${status.name}</span>"
     }
 }
 

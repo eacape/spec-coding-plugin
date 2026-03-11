@@ -256,6 +256,13 @@ object SpecArchitectureContract {
             rationale = "Task 43 requires repeatable delta reports derived from persisted artifacts, tasks metadata, and selected baselines without relying on transient UI state.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "delta-report-export",
+            capability = "offline delta report export in replayable markdown and html formats",
+            selection = "SpecDeltaService exportMarkdown/exportHtml/exportReport + deterministic YAML metadata + `.spec-coding/exports/delta` files + DELTA_EXPORTED audit",
+            rationale = "Task 44 requires stable offline review artifacts that can be regenerated from persisted baseline references and current workflow files.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(
