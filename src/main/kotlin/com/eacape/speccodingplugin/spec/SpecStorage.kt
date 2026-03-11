@@ -4,10 +4,12 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.PosixFilePermission
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -569,7 +571,8 @@ class SpecStorage(
 
                 val archiveRoot = getArchiveDirectory()
                 Files.createDirectories(archiveRoot)
-                val archiveId = "${workflow.id}-${System.currentTimeMillis()}"
+                val archivedAt = System.currentTimeMillis()
+                val archiveId = "${workflow.id}-$archivedAt"
                 val archivePath = archiveRoot.resolve(archiveId)
                 try {
                     Files.move(workflowDir, archivePath, StandardCopyOption.ATOMIC_MOVE)
@@ -577,26 +580,37 @@ class SpecStorage(
                     Files.move(workflowDir, archivePath)
                 }
                 val auditLogPath = getAuditLogPath(archivePath)
+                val readOnlySummaryBeforeAudit = applyArchiveReadOnlyPolicy(
+                    archivePath = archivePath,
+                    skipPaths = setOf(auditLogPath),
+                )
 
                 appendAuditEntry(
                     eventType = SpecAuditEventType.WORKFLOW_ARCHIVED,
                     workflowId = workflow.id,
                     details = mapOf(
                         "archiveId" to archiveId,
+                        "archivedAt" to archivedAt.toString(),
                         "status" to workflow.status.name,
                         "phase" to workflow.currentPhase.name,
                         "title" to workflow.title,
                         "changeIntent" to workflow.changeIntent.name,
                         "beforeSnapshotId" to beforeSnapshot.snapshotId,
+                        "readOnlyFiles" to readOnlySummaryBeforeAudit.filesMarkedReadOnly.toString(),
+                        "readOnlyFailures" to readOnlySummaryBeforeAudit.failures.toString(),
+                        "readOnlyPolicy" to "best-effort-file-attributes",
                     ),
                     auditLogPath = auditLogPath,
                 )
+                markPathReadOnly(auditLogPath)
 
                 SpecArchiveResult(
                     workflowId = workflow.id,
                     archiveId = archiveId,
                     archivePath = archivePath,
                     auditLogPath = auditLogPath,
+                    archivedAt = archivedAt,
+                    readOnlySummary = readOnlySummaryBeforeAudit,
                 )
             }
         }
@@ -1401,6 +1415,77 @@ class SpecStorage(
             if (!stream.findAny().isPresent) {
                 Files.delete(directory)
             }
+        }
+    }
+
+    private fun applyArchiveReadOnlyPolicy(
+        archivePath: Path,
+        skipPaths: Set<Path> = emptySet(),
+    ): SpecArchiveReadOnlySummary {
+        if (!Files.exists(archivePath)) {
+            return SpecArchiveReadOnlySummary(filesMarkedReadOnly = 0, failures = 0)
+        }
+        val normalizedSkipPaths = skipPaths
+            .map(Path::toAbsolutePath)
+            .map(Path::normalize)
+            .toSet()
+        var filesMarkedReadOnly = 0
+        var failures = 0
+        Files.walk(archivePath).use { stream ->
+            stream.forEach { path ->
+                if (!Files.isRegularFile(path)) {
+                    return@forEach
+                }
+                val normalizedPath = path.toAbsolutePath().normalize()
+                if (normalizedSkipPaths.contains(normalizedPath)) {
+                    return@forEach
+                }
+                if (markPathReadOnly(path)) {
+                    filesMarkedReadOnly += 1
+                } else {
+                    failures += 1
+                }
+            }
+        }
+        return SpecArchiveReadOnlySummary(
+            filesMarkedReadOnly = filesMarkedReadOnly,
+            failures = failures,
+        )
+    }
+
+    private fun markPathReadOnly(path: Path): Boolean {
+        if (!Files.exists(path)) {
+            return false
+        }
+        var applied = false
+        runCatching {
+            Files.setAttribute(path, "dos:readonly", true)
+            applied = true
+        }
+        if (FileSystems.getDefault().supportedFileAttributeViews().contains("posix")) {
+            runCatching {
+                val permissions = Files.getPosixFilePermissions(path).toMutableSet()
+                permissions.remove(PosixFilePermission.OWNER_WRITE)
+                permissions.remove(PosixFilePermission.GROUP_WRITE)
+                permissions.remove(PosixFilePermission.OTHERS_WRITE)
+                Files.setPosixFilePermissions(path, permissions)
+                applied = true
+            }
+        }
+        runCatching {
+            if (path.toFile().setWritable(false, false)) {
+                applied = true
+            }
+        }
+        runCatching {
+            if (path.toFile().setReadOnly()) {
+                applied = true
+            }
+        }
+        return if (applied) {
+            true
+        } else {
+            !Files.isWritable(path)
         }
     }
 

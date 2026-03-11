@@ -7,6 +7,13 @@ data class SpecArchiveResult(
     val archiveId: String,
     val archivePath: Path,
     val auditLogPath: Path,
+    val archivedAt: Long,
+    val readOnlySummary: SpecArchiveReadOnlySummary,
+)
+
+data class SpecArchiveReadOnlySummary(
+    val filesMarkedReadOnly: Int,
+    val failures: Int,
 )
 
 enum class SpecAuditEventType {

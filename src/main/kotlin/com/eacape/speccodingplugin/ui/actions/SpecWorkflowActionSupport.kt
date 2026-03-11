@@ -134,6 +134,17 @@ internal object SpecWorkflowActionSupport {
         )
     }
 
+    fun confirmArchive(project: Project, workflowLabel: String): Boolean {
+        return Messages.showOkCancelDialog(
+            project,
+            SpecCodingBundle.message("spec.action.archive.confirm.message", workflowLabel),
+            SpecCodingBundle.message("spec.action.archive.confirm.title"),
+            SpecCodingBundle.message("spec.action.archive.confirm.ok"),
+            CommonBundle.getCancelButtonText(),
+            Messages.getWarningIcon(),
+        ) == Messages.OK
+    }
+
     fun confirmWarnings(project: Project, workflowId: String, gateResult: GateResult): Boolean {
         while (true) {
             when (

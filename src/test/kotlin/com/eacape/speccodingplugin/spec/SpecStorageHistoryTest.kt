@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission
 
 class SpecStorageHistoryTest {
 
@@ -85,6 +86,9 @@ class SpecStorageHistoryTest {
         assertTrue(Files.exists(archived.archivePath.resolve("workflow.yaml")))
         assertTrue(Files.exists(archived.archivePath.resolve(SpecPhase.IMPLEMENT.outputFileName)))
         assertTrue(Files.exists(archived.auditLogPath))
+        assertTrue(archived.archivedAt > 0L)
+        assertTrue(archived.readOnlySummary.filesMarkedReadOnly > 0)
+        assertTrue(archived.readOnlySummary.failures >= 0)
         assertEquals(
             archived.archivePath.resolve(".history").resolve("audit.yaml"),
             archived.auditLogPath,
@@ -103,9 +107,15 @@ class SpecStorageHistoryTest {
             events.any { event ->
                 event.workflowId == workflowId &&
                     event.eventType == SpecAuditEventType.WORKFLOW_ARCHIVED &&
-                    event.details["archiveId"] == archived.archiveId
+                    event.details["archiveId"] == archived.archiveId &&
+                    event.details["readOnlyPolicy"] == "best-effort-file-attributes" &&
+                    event.details["readOnlyFiles"] == archived.readOnlySummary.filesMarkedReadOnly.toString() &&
+                    event.details["readOnlyFailures"] == archived.readOnlySummary.failures.toString()
             }
         )
+        assertReadOnly(archived.archivePath.resolve("workflow.yaml"))
+        assertReadOnly(archived.archivePath.resolve(SpecPhase.IMPLEMENT.outputFileName))
+        assertReadOnly(archived.auditLogPath)
     }
 
     @Test
@@ -148,5 +158,27 @@ class SpecStorageHistoryTest {
             title = "workflow-$id",
             description = "archive-test",
         )
+    }
+
+    private fun assertReadOnly(path: Path) {
+        val supportedViews = path.fileSystem.supportedFileAttributeViews()
+        when {
+            supportedViews.contains("dos") -> {
+                val readOnly = Files.getAttribute(path, "dos:readonly") as Boolean
+                assertTrue(readOnly, "Expected DOS readonly attribute for $path")
+            }
+
+            supportedViews.contains("posix") -> {
+                val permissions = Files.getPosixFilePermissions(path)
+                assertFalse(
+                    permissions.contains(PosixFilePermission.OWNER_WRITE),
+                    "Expected OWNER_WRITE to be removed for $path",
+                )
+            }
+
+            else -> {
+                assertFalse(path.toFile().canWrite(), "Expected $path to be non-writable")
+            }
+        }
     }
 }

@@ -182,6 +182,12 @@
                     class="com.eacape.speccodingplugin.ui.actions.RunSpecWorkflowVerificationAction"
                     text="%spec.action.verify.text"
                     description="%spec.action.verify.description"/>
+            <separator/>
+            <action
+                    id="SpecCoding.SpecWorkflow.Archive"
+                    class="com.eacape.speccodingplugin.ui.actions.ArchiveSpecWorkflowAction"
+                    text="%spec.action.archive.text"
+                    description="%spec.action.archive.description"/>
         </group>
     </actions>
 </idea-plugin>

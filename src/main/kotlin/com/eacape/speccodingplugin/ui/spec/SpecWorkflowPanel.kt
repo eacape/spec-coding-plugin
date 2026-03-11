@@ -1952,6 +1952,9 @@ class SpecWorkflowPanel(
             setStatusText(SpecCodingBundle.message("spec.workflow.archive.onlyCompleted"))
             return
         }
+        if (!SpecWorkflowActionSupport.confirmArchive(project, workflow.id)) {
+            return
+        }
 
         scope.launch(Dispatchers.IO) {
             val result = specEngine.archiveWorkflow(workflow.id)
