@@ -75,6 +75,32 @@ class SpecArtifactService(
         }
     }
 
+    fun writeArtifactIfMissing(workflowId: String, stageId: StageId, content: String): SpecArtifactWriteResult {
+        val fileName = stageId.artifactFileName
+            ?: throw IllegalArgumentException("Stage $stageId has no artifact file.")
+        validateWorkflowId(workflowId)
+        val normalizedFileName = validateArtifactFileName(fileName)
+        val normalizedContent = normalizeContent(content)
+        return lockManager.withWorkflowLock(workflowId) {
+            val workflowDir = workspaceInitializer.initializeWorkflowWorkspace(workflowId).workflowDir
+            val path = workflowDir.resolve(normalizedFileName)
+            if (Files.exists(path)) {
+                SpecArtifactWriteResult(
+                    stageId = stageId,
+                    path = path,
+                    created = false,
+                )
+            } else {
+                atomicFileIO.writeString(path, normalizedContent, StandardCharsets.UTF_8)
+                SpecArtifactWriteResult(
+                    stageId = stageId,
+                    path = path,
+                    created = true,
+                )
+            }
+        }
+    }
+
     fun ensureMissingArtifacts(
         workflowId: String,
         template: WorkflowTemplate,
