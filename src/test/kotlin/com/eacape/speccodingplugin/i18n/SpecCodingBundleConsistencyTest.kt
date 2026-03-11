@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import java.nio.file.Paths
 import java.util.Properties
@@ -12,8 +14,13 @@ class SpecCodingBundleConsistencyTest {
 
     @Test
     fun `english and zhCN bundle keys should match`() {
-        val en = loadProperties("src/main/resources/messages/SpecCodingBundle.properties")
-        val zh = loadProperties("src/main/resources/messages/SpecCodingBundle_zh_CN.properties")
+        val englishPath = "src/main/resources/messages/SpecCodingBundle.properties"
+        val zhPath = "src/main/resources/messages/SpecCodingBundle_zh_CN.properties"
+        assertStrictUtf8WithoutReplacement(englishPath)
+        assertStrictUtf8WithoutReplacement(zhPath)
+
+        val en = loadProperties(englishPath)
+        val zh = loadProperties(zhPath)
 
         assertTrue(en.containsKey("toolwindow.title"), "English bundle must contain key 'toolwindow.title'")
         assertTrue(zh.containsKey("toolwindow.title"), "zhCN bundle must contain key 'toolwindow.title'")
@@ -42,5 +49,19 @@ class SpecCodingBundleConsistencyTest {
             }
         }
         return properties
+    }
+
+    private fun assertStrictUtf8WithoutReplacement(relativePath: String) {
+        val path = Paths.get(relativePath)
+        val bytes = path.toFile().readBytes()
+        val decoder = StandardCharsets.UTF_8.newDecoder().apply {
+            onMalformedInput(CodingErrorAction.REPORT)
+            onUnmappableCharacter(CodingErrorAction.REPORT)
+        }
+        val text = decoder.decode(ByteBuffer.wrap(bytes)).toString()
+        assertFalse(
+            text.contains('\uFFFD'),
+            "Bundle contains replacement character U+FFFD; likely caused by a broken encoding conversion: $relativePath",
+        )
     }
 }

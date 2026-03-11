@@ -151,6 +151,10 @@ class SpecArchitectureContractTest {
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("toolwindow-stage-stepper").status,
         )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("delta-report-computation").status,
+        )
     }
 
     @Test

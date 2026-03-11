@@ -39,13 +39,22 @@ class SpecRelatedFilesService(
         existingRelatedFiles.forEach { rawPath ->
             normalizeToProjectRelativePath(rawPath, projectRoot)?.let(candidates::add)
         }
+        snapshotWorkspaceCandidatePaths().forEach(candidates::add)
+
+        return candidates
+            .filterNot(::isExcludedPath)
+            .take(MAX_SUGGESTIONS)
+    }
+
+    fun snapshotWorkspaceCandidatePaths(): List<String> {
+        val projectRoot = resolveProjectRoot() ?: return emptyList()
+        val candidates = linkedSetOf<String>()
         vcsSource.snapshotProjectRelativePaths().forEach { rawPath ->
             normalizeToProjectRelativePath(rawPath, projectRoot)?.let(candidates::add)
         }
         fileEventSource.snapshotProjectRelativePaths().forEach { rawPath ->
             normalizeToProjectRelativePath(rawPath, projectRoot)?.let(candidates::add)
         }
-
         return candidates
             .filterNot(::isExcludedPath)
             .take(MAX_SUGGESTIONS)

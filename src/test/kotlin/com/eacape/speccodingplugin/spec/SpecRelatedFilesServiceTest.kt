@@ -66,6 +66,28 @@ class SpecRelatedFilesServiceTest {
     }
 
     @Test
+    fun `snapshotWorkspaceCandidatePaths should merge vcs and file events without existing task paths`() {
+        val service = SpecRelatedFilesService(
+            project = project,
+            vcsSource = object : RelatedFilesCandidateSource {
+                override fun snapshotProjectRelativePaths(): List<String> {
+                    return listOf("src/main/kotlin/A.kt", "build/generated/ignore.kt")
+                }
+            },
+            fileEventSource = object : RelatedFilesCandidateSource {
+                override fun snapshotProjectRelativePaths(): List<String> {
+                    return listOf("src/test/kotlin/BTest.kt", "src/main/kotlin/A.kt")
+                }
+            },
+        )
+
+        assertEquals(
+            listOf("src/main/kotlin/A.kt", "src/test/kotlin/BTest.kt"),
+            service.snapshotWorkspaceCandidatePaths(),
+        )
+    }
+
+    @Test
     fun `git status candidate source should report modified and untracked files`() {
         Git.init().setDirectory(tempDir.toFile()).call().use { git ->
             val srcDir = tempDir.resolve("src")
@@ -90,4 +112,3 @@ class SpecRelatedFilesServiceTest {
         assertTrue(candidates.contains("src/Bar.kt"), "Expected untracked file Bar.kt to be suggested, got: $candidates")
     }
 }
-

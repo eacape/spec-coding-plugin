@@ -249,6 +249,13 @@ object SpecArchitectureContract {
             rationale = "Task 35 requires the ToolWindow to expose the real workflow stage plan, including inactive optional stages, while reusing the same transition and Gate semantics already established by the Actions flow.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "delta-report-computation",
+            capability = "baseline-aware delta computation with artifact diff, task summary, relatedFiles summary, verification summary, and auditable baseline selection",
+            selection = "SpecDeltaService + SpecDeltaCalculator + workflow snapshot/baseline artifact loading for verification.md + task metadata comparison",
+            rationale = "Task 43 requires repeatable delta reports derived from persisted artifacts, tasks metadata, and selected baselines without relying on transient UI state.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(
@@ -266,6 +273,10 @@ object SpecArchitectureContract {
             fileName = "SpecArchitectureContract.kt",
             layer = Layer.DOMAIN,
             blockedImportPrefixes = domainBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecArtifactQuickFixService.kt",
+            layer = Layer.APPLICATION,
         ),
         SourceRule(
             fileName = "SpecArtifactService.kt",
@@ -334,6 +345,11 @@ object SpecArchitectureContract {
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
         ),
         SourceRule(
+            fileName = "SpecRelatedFilesService.kt",
+            layer = Layer.INFRASTRUCTURE,
+            blockedImportPrefixes = infrastructureBlockedImportPrefixes,
+        ),
+        SourceRule(
             fileName = "SpecStorage.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
@@ -345,6 +361,14 @@ object SpecArchitectureContract {
         ),
         SourceRule(
             fileName = "SpecTasksService.kt",
+            layer = Layer.APPLICATION,
+        ),
+        SourceRule(
+            fileName = "SpecTasksQuickFixService.kt",
+            layer = Layer.APPLICATION,
+        ),
+        SourceRule(
+            fileName = "SpecVerificationQuickFixService.kt",
             layer = Layer.APPLICATION,
         ),
         SourceRule(

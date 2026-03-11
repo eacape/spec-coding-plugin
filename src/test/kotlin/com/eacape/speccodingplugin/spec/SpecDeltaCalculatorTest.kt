@@ -71,6 +71,144 @@ class SpecDeltaCalculatorTest {
     }
 
     @Test
+    fun `compareWorkflows should include verification artifact task summary and related files summary`() {
+        val baseline = SpecWorkflow(
+            id = "wf-baseline",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = tasksMarkdown(
+                        """
+                        ### T-001: Keep API stable
+                        ```spec-task
+                        status: IN_PROGRESS
+                        priority: P0
+                        dependsOn: []
+                        relatedFiles:
+                          - src/main/kotlin/A.kt
+                        verificationResult:
+                          conclusion: PASS
+                          runId: verify-run-1
+                          summary: baseline pass
+                          at: "2026-03-10T09:00:00Z"
+                        ```
+
+                        ### T-002: Remove legacy code
+                        ```spec-task
+                        status: PENDING
+                        priority: P1
+                        dependsOn:
+                          - T-001
+                        relatedFiles:
+                          - src/main/kotlin/Legacy.kt
+                        verificationResult: null
+                        ```
+                        """.trimIndent(),
+                    ),
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "baseline",
+            description = "baseline",
+            verifyEnabled = true,
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        val target = SpecWorkflow(
+            id = "wf-target",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = tasksMarkdown(
+                        """
+                        ### T-001: Keep API stable
+                        ```spec-task
+                        status: COMPLETED
+                        priority: P0
+                        dependsOn: []
+                        relatedFiles:
+                          - src/main/kotlin/A.kt
+                          - src/main/kotlin/B.kt
+                        verificationResult:
+                          conclusion: FAIL
+                          runId: verify-run-2
+                          summary: target failed
+                          at: "2026-03-11T10:00:00Z"
+                        ```
+
+                        ### T-003: Add new flow
+                        ```spec-task
+                        status: PENDING
+                        priority: P1
+                        dependsOn:
+                          - T-001
+                        relatedFiles:
+                          - src/main/kotlin/NewFlow.kt
+                        verificationResult: null
+                        ```
+                        """.trimIndent(),
+                    ),
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "target",
+            description = "target",
+            verifyEnabled = true,
+            createdAt = 3L,
+            updatedAt = 4L,
+        )
+
+        val delta = SpecDeltaCalculator.compareWorkflows(
+            baselineWorkflow = baseline,
+            targetWorkflow = target,
+            baselineVerificationContent = verificationMarkdown(
+                conclusion = "PASS",
+                runId = "verify-run-1",
+                summary = "baseline pass",
+                executedAt = "2026-03-10T09:00:00Z",
+            ),
+            targetVerificationContent = verificationMarkdown(
+                conclusion = "FAIL",
+                runId = "verify-run-2",
+                summary = "target failed",
+                executedAt = "2026-03-11T10:00:00Z",
+            ),
+            workspaceCandidateFiles = listOf(
+                "src/main/kotlin/B.kt",
+                "src/test/kotlin/SpecDeltaCalculatorTest.kt",
+            ),
+        )
+        val verificationArtifact = delta.artifactDeltas.first { artifact ->
+            artifact.artifact == SpecDeltaArtifact.VERIFICATION
+        }
+        assertEquals(SpecDeltaStatus.MODIFIED, verificationArtifact.status)
+        assertTrue(verificationArtifact.unifiedDiff.contains("+ conclusion: FAIL"))
+
+        assertEquals(listOf("T-003"), delta.taskSummary.addedTaskIds)
+        assertEquals(listOf("T-002"), delta.taskSummary.removedTaskIds)
+        assertEquals(listOf("T-001"), delta.taskSummary.completedTaskIds)
+        assertEquals(listOf("T-001"), delta.taskSummary.statusChangedTaskIds)
+        assertEquals(listOf("T-001"), delta.taskSummary.metadataChangedTaskIds)
+
+        val relatedA = delta.relatedFilesSummary.files.first { file -> file.path == "src/main/kotlin/A.kt" }
+        val relatedB = delta.relatedFilesSummary.files.first { file -> file.path == "src/main/kotlin/B.kt" }
+        val relatedLegacy = delta.relatedFilesSummary.files.first { file -> file.path == "src/main/kotlin/Legacy.kt" }
+        assertEquals(SpecDeltaStatus.UNCHANGED, relatedA.status)
+        assertEquals(SpecDeltaStatus.ADDED, relatedB.status)
+        assertEquals(SpecDeltaStatus.REMOVED, relatedLegacy.status)
+        assertTrue(delta.relatedFilesSummary.workspaceCandidateFiles.contains("src/test/kotlin/SpecDeltaCalculatorTest.kt"))
+
+        assertEquals(VerificationConclusion.PASS, delta.verificationSummary.baselineArtifact.conclusion)
+        assertEquals(VerificationConclusion.FAIL, delta.verificationSummary.targetArtifact.conclusion)
+        assertEquals("verify-run-2", delta.verificationSummary.targetArtifact.runId)
+        assertEquals(1, delta.verificationSummary.taskResultChanges.size)
+        assertEquals("T-001", delta.verificationSummary.taskResultChanges.first().taskId)
+    }
+
+    @Test
     fun `compareWorkflows should treat normalized content as unchanged`() {
         val baseline = SpecWorkflow(
             id = "wf-a",
@@ -133,5 +271,29 @@ class SpecDeltaCalculatorTest {
             ),
             validationResult = ValidationResult(valid = true),
         )
+    }
+
+    private fun tasksMarkdown(content: String): String {
+        return "# Implement Document\n\n$content\n"
+    }
+
+    private fun verificationMarkdown(
+        conclusion: String,
+        runId: String,
+        summary: String,
+        executedAt: String,
+    ): String {
+        return """
+            # Verification Document
+
+            ## Verification Scope
+            - Workflow: `wf`
+
+            ## Result
+            conclusion: $conclusion
+            runId: $runId
+            at: "$executedAt"
+            summary: $summary
+        """.trimIndent()
     }
 }

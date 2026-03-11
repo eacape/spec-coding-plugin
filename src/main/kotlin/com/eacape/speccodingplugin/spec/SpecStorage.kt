@@ -215,6 +215,27 @@ class SpecStorage(
         }
     }
 
+    fun loadWorkflowSnapshotArtifact(
+        workflowId: String,
+        snapshotId: String,
+        stageId: StageId,
+    ): Result<String?> {
+        return runCatching {
+            val fileName = stageId.artifactFileName
+                ?: throw IllegalArgumentException("Stage $stageId has no artifact file.")
+            val snapshotPath = getSnapshotDirectory(workflowId, snapshotId)
+            if (!Files.exists(snapshotPath)) {
+                throw IllegalStateException("Workflow snapshot not found: $snapshotPath")
+            }
+            val artifactPath = snapshotPath.resolve(fileName)
+            if (!Files.isRegularFile(artifactPath)) {
+                null
+            } else {
+                Files.readString(artifactPath, StandardCharsets.UTF_8)
+            }
+        }
+    }
+
     fun pinDeltaBaseline(
         workflowId: String,
         snapshotId: String,
@@ -286,6 +307,22 @@ class SpecStorage(
             val baseline = loadDeltaBaseline(baselinePath, workflowId)
                 ?: throw IllegalStateException("Invalid delta baseline metadata: $baselinePath")
             loadWorkflowSnapshot(baseline.workflowId, baseline.snapshotId).getOrThrow()
+        }
+    }
+
+    fun loadDeltaBaselineArtifact(
+        workflowId: String,
+        baselineId: String,
+        stageId: StageId,
+    ): Result<String?> {
+        return runCatching {
+            val baselinePath = getDeltaBaselinesDirectory(workflowId).resolve("$baselineId.yaml")
+            if (!Files.exists(baselinePath)) {
+                throw IllegalStateException("Delta baseline not found: $baselinePath")
+            }
+            val baseline = loadDeltaBaseline(baselinePath, workflowId)
+                ?: throw IllegalStateException("Invalid delta baseline metadata: $baselinePath")
+            loadWorkflowSnapshotArtifact(baseline.workflowId, baseline.snapshotId, stageId).getOrThrow()
         }
     }
 
@@ -1499,7 +1536,9 @@ class SpecStorage(
         private const val BASELINE_RANDOM_SUFFIX_LENGTH = 8
         private val SNAPSHOT_CAPTURE_FILE_NAMES = buildSet {
             add(WORKFLOW_METADATA_FILE_NAME)
-            SpecPhase.entries.forEach { phase -> add(phase.outputFileName) }
+            StageId.entries
+                .mapNotNull(StageId::artifactFileName)
+                .forEach(::add)
         }.toList()
         private val CONFIG_PIN_HASH_PATTERN = Regex("^[a-f0-9]{64}$")
 

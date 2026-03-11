@@ -108,6 +108,54 @@ class SpecStorageSnapshotTest {
         )
     }
 
+    @Test
+    fun `workflow snapshots should capture verification artifact and allow baseline reads`() {
+        val workflowId = "wf-verify-snapshot"
+        val artifactService = SpecArtifactService(project)
+
+        storage.saveWorkflow(workflow(workflowId)).getOrThrow()
+        artifactService.writeArtifact(
+            workflowId = workflowId,
+            stageId = StageId.VERIFY,
+            content = """
+                # Verification Document
+
+                ## Result
+                conclusion: PASS
+                runId: verify-run-1
+                at: 2026-03-11T09:00:00Z
+                summary: captured
+            """.trimIndent(),
+        )
+        storage.saveWorkflow(
+            storage.loadWorkflow(workflowId).getOrThrow().copy(updatedAt = 10L),
+        ).getOrThrow()
+
+        val snapshot = storage.listWorkflowSnapshots(workflowId)
+            .first { it.trigger == SpecSnapshotTrigger.WORKFLOW_SAVE_AFTER && it.files.contains("verification.md") }
+        assertTrue(snapshot.files.contains("verification.md"))
+
+        val snapshotContent = storage.loadWorkflowSnapshotArtifact(
+            workflowId = workflowId,
+            snapshotId = snapshot.snapshotId,
+            stageId = StageId.VERIFY,
+        ).getOrThrow()
+        assertNotNull(snapshotContent)
+        assertTrue(snapshotContent!!.contains("runId: verify-run-1"))
+
+        val baseline = storage.pinDeltaBaseline(
+            workflowId = workflowId,
+            snapshotId = snapshot.snapshotId,
+            label = "with-verify",
+        ).getOrThrow()
+        val baselineContent = storage.loadDeltaBaselineArtifact(
+            workflowId = workflowId,
+            baselineId = baseline.baselineId,
+            stageId = StageId.VERIFY,
+        ).getOrThrow()
+        assertEquals(snapshotContent, baselineContent)
+    }
+
     private fun workflow(id: String): SpecWorkflow {
         return SpecWorkflow(
             id = id,

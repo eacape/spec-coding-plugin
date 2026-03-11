@@ -1,9 +1,9 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.SpecArtifactDelta
 import com.eacape.speccodingplugin.spec.SpecDeltaStatus
 import com.eacape.speccodingplugin.spec.SpecPhase
-import com.eacape.speccodingplugin.spec.SpecPhaseDelta
 import com.eacape.speccodingplugin.spec.SpecWorkflowDelta
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.ui.DialogWrapper
@@ -59,7 +59,7 @@ class SpecDeltaDialog(
         }
     }
 
-    private val tableModel = DeltaTableModel(delta.phaseDeltas)
+    private val tableModel = DeltaTableModel(delta.artifactDeltas)
     private val deltaTable = JTable(tableModel)
     private val tableSorter = TableRowSorter(tableModel)
     private val summaryLabel = JBLabel(buildSummaryText(delta))
@@ -182,10 +182,10 @@ class SpecDeltaDialog(
 
     private fun onHistoryDiffClicked() {
         val selected = selectedDelta() ?: return
-        if (selected.targetDocument == null) {
+        if (selected.artifact.phase == null || selected.targetDocument == null) {
             return
         }
-        onOpenHistoryDiff?.invoke(selected.phase)
+        onOpenHistoryDiff?.invoke(selected.artifact.phase)
     }
 
     private fun updateActionState() {
@@ -193,7 +193,7 @@ class SpecDeltaDialog(
         historyDiffButton.isEnabled = selected?.targetDocument != null
     }
 
-    private fun selectedDelta(): SpecPhaseDelta? {
+    private fun selectedDelta(): SpecArtifactDelta? {
         val viewRow = deltaTable.selectedRow
         if (viewRow < 0 || viewRow >= deltaTable.rowCount) {
             return null
@@ -235,16 +235,21 @@ class SpecDeltaDialog(
         )
     }
 
-    private fun buildDetailText(delta: SpecPhaseDelta): String {
+    private fun buildDetailText(delta: SpecArtifactDelta): String {
         return buildString {
-            appendLine(SpecCodingBundle.message("spec.delta.detail.phase", delta.phase.displayName))
+            appendLine(SpecCodingBundle.message("spec.delta.detail.phase", delta.artifact.displayName))
             appendLine(SpecCodingBundle.message("spec.delta.detail.status", localizeStatus(delta.status)))
             appendLine()
             appendLine(SpecCodingBundle.message("spec.delta.detail.baseline"))
-            appendLine(snippet(delta.baselineDocument?.content))
+            appendLine(snippet(delta.baselineContent))
             appendLine()
             appendLine(SpecCodingBundle.message("spec.delta.detail.target"))
-            appendLine(snippet(delta.targetDocument?.content))
+            appendLine(snippet(delta.targetContent))
+            if (delta.unifiedDiff.isNotBlank()) {
+                appendLine()
+                appendLine("Diff:")
+                appendLine(delta.unifiedDiff)
+            }
         }
     }
 
@@ -270,7 +275,7 @@ class SpecDeltaDialog(
     }
 
     private class DeltaTableModel(
-        private val items: List<SpecPhaseDelta>,
+        private val items: List<SpecArtifactDelta>,
     ) : AbstractTableModel() {
         override fun getRowCount(): Int = items.size
 
@@ -288,7 +293,7 @@ class SpecDeltaDialog(
         override fun getValueAt(rowIndex: Int, columnIndex: Int): Any {
             val item = items[rowIndex]
             return when (columnIndex) {
-                0 -> item.phase.displayName
+                0 -> item.artifact.displayName
                 1 -> when (item.status) {
                     SpecDeltaStatus.ADDED -> SpecCodingBundle.message("spec.delta.status.added")
                     SpecDeltaStatus.MODIFIED -> SpecCodingBundle.message("spec.delta.status.modified")
@@ -296,12 +301,17 @@ class SpecDeltaDialog(
                     SpecDeltaStatus.UNCHANGED -> SpecCodingBundle.message("spec.delta.status.unchanged")
                 }
 
-                2 -> item.baselineDocument?.metadata?.title ?: SpecCodingBundle.message("spec.delta.column.placeholder")
-                else -> item.targetDocument?.metadata?.title ?: SpecCodingBundle.message("spec.delta.column.placeholder")
+                2 -> item.baselineDocument?.metadata?.title
+                    ?: item.artifact.fileName.takeIf { item.baselineContent != null }
+                    ?: SpecCodingBundle.message("spec.delta.column.placeholder")
+
+                else -> item.targetDocument?.metadata?.title
+                    ?: item.artifact.fileName.takeIf { item.targetContent != null }
+                    ?: SpecCodingBundle.message("spec.delta.column.placeholder")
             }
         }
 
-        fun deltaAt(row: Int): SpecPhaseDelta = items[row]
+        fun deltaAt(row: Int): SpecArtifactDelta = items[row]
     }
 
     companion object {
