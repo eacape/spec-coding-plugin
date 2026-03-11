@@ -819,6 +819,7 @@ class SpecStorage(
      */
     private fun formatWorkflowMetadata(workflow: SpecWorkflow): String {
         val metadata = linkedMapOf<String, Any?>(
+            "schemaVersion" to SpecSchemaVersioning.CURRENT_WORKFLOW_METADATA_SCHEMA_VERSION,
             "id" to workflow.id,
             "title" to workflow.title,
             "description" to workflow.description.replace("\n", " "),
@@ -857,33 +858,77 @@ class SpecStorage(
      * 解析工作流元数据
      */
     private fun parseWorkflowMetadata(workflowId: String, metadata: String): SpecWorkflow {
-        val root = yamlCodec.decodeMap(metadata)
-        val currentPhase = parseEnumValue(root["currentPhase"], SpecPhase.SPECIFY, SpecPhase.entries)
-        val status = parseEnumValue(root["status"], WorkflowStatus.IN_PROGRESS, WorkflowStatus.entries)
-        val changeIntent = parseEnumValue(root["changeIntent"], SpecChangeIntent.FULL, SpecChangeIntent.entries)
-        val template = parseEnumValue(root["template"], WorkflowTemplate.FULL_SPEC, WorkflowTemplate.entries)
-        val title = root["title"]?.toString()?.trim()?.ifBlank { workflowId } ?: workflowId
-        val description = root["description"]?.toString()?.trim().orEmpty()
-        val baselineWorkflowId = root["baselineWorkflowId"]?.toString()?.trim()?.takeIf { it.isNotBlank() }
-        val configPinHash = root["configPinHash"]?.toString()?.trim()?.takeIf { it.isNotBlank() }
-        val clarificationRetryState = root["clarificationRetryState"]
+        val parsed = parsePersistedWorkflowMetadata(
+            workflowId = workflowId,
+            root = yamlCodec.decodeMap(metadata),
+        )
+
+        // 加载已有文档
+        val documents = mutableMapOf<SpecPhase, SpecDocument>()
+        for (phase in SpecPhase.entries) {
+            loadDocument(workflowId, phase).getOrNull()?.let {
+                documents[phase] = it
+            }
+        }
+
+        return SpecWorkflow(
+            id = workflowId,
+            currentPhase = parsed.currentPhase,
+            documents = documents,
+            status = parsed.status,
+            title = parsed.title,
+            description = parsed.description,
+            changeIntent = parsed.changeIntent,
+            template = parsed.template,
+            stageStates = parsed.stageStates,
+            currentStage = parsed.currentStage,
+            verifyEnabled = parsed.verifyEnabled,
+            baselineWorkflowId = parsed.baselineWorkflowId,
+            configPinHash = parsed.configPinHash,
+            clarificationRetryState = parsed.clarificationRetryState,
+            createdAt = parsed.createdAt,
+            updatedAt = parsed.updatedAt
+        )
+    }
+
+    private fun parsePersistedWorkflowMetadata(
+        workflowId: String,
+        root: Map<String, Any?>,
+    ): ParsedWorkflowMetadata {
+        val migrated = SpecSchemaVersioning.upgradeWorkflowMetadata(
+            workflowId = workflowId,
+            document = root,
+        ).document
+        val now = System.currentTimeMillis()
+        val currentPhase = parseEnumValue(migrated["currentPhase"], SpecPhase.SPECIFY, SpecPhase.entries)
+        val status = parseEnumValue(migrated["status"], WorkflowStatus.IN_PROGRESS, WorkflowStatus.entries)
+        val changeIntent = parseEnumValue(migrated["changeIntent"], SpecChangeIntent.FULL, SpecChangeIntent.entries)
+        val template = parseEnumValue(migrated["template"], WorkflowTemplate.FULL_SPEC, WorkflowTemplate.entries)
+        val title = migrated["title"]?.toString()?.trim()?.ifBlank { workflowId } ?: workflowId
+        val description = migrated["description"]?.toString()?.trim().orEmpty()
+        val baselineWorkflowId = migrated["baselineWorkflowId"]?.toString()?.trim()?.takeIf { it.isNotBlank() }
+        val configPinHash = migrated["configPinHash"]?.toString()?.trim()?.takeIf { it.isNotBlank() }
+        val clarificationRetryState = migrated["clarificationRetryState"]
             ?.toString()
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?.let(::decodeClarificationRetryState)
-        val now = System.currentTimeMillis()
-        val createdAt = parseLong(root["createdAt"], now)
-        val updatedAt = parseLong(root["updatedAt"], now)
+        val createdAt = parseLong(migrated["createdAt"], now)
+        val updatedAt = parseLong(migrated["updatedAt"], now)
         val createdAtIso = Instant.ofEpochMilli(createdAt).toString()
         val updatedAtIso = Instant.ofEpochMilli(updatedAt).toString()
-        val verifyEnabled = parseBoolean(root["verifyEnabled"], fallback = false)
-        val fallbackCurrentStage = currentPhase.toStageId()
+        val verifyEnabled = parseBoolean(migrated["verifyEnabled"], fallback = false)
+        val fallbackCurrentStage = SpecSchemaVersioning.inferLegacyCurrentStage(
+            template = template,
+            currentPhase = currentPhase,
+            verifyEnabled = verifyEnabled,
+        )
         val requestedCurrentStage = parseEnumValue(
-            raw = root["currentStage"],
+            raw = migrated["currentStage"],
             fallback = fallbackCurrentStage,
             candidates = StageId.entries,
         )
-        val parsedStageStates = parseStageStates(root["stageStates"])
+        val parsedStageStates = parseStageStates(migrated["stageStates"])
         val stageStates = if (parsedStageStates.isNotEmpty()) {
             parsedStageStates
         } else {
@@ -899,39 +944,45 @@ class SpecStorage(
             requested = requestedCurrentStage,
             stageStates = stageStates,
         )
-        val normalizedStageStates = normalizeStageStates(
-            stageStates = stageStates,
-            currentStage = currentStage,
-            fallbackEnteredAt = updatedAtIso,
-        )
 
-        // 加载已有文档
-        val documents = mutableMapOf<SpecPhase, SpecDocument>()
-        for (phase in SpecPhase.entries) {
-            loadDocument(workflowId, phase).getOrNull()?.let {
-                documents[phase] = it
-            }
-        }
-
-        return SpecWorkflow(
-            id = workflowId,
+        return ParsedWorkflowMetadata(
             currentPhase = currentPhase,
-            documents = documents,
             status = status,
-            title = title,
-            description = description,
             changeIntent = changeIntent,
             template = template,
-            stageStates = normalizedStageStates,
-            currentStage = currentStage,
-            verifyEnabled = verifyEnabled,
+            title = title,
+            description = description,
             baselineWorkflowId = baselineWorkflowId,
             configPinHash = configPinHash,
             clarificationRetryState = clarificationRetryState,
             createdAt = createdAt,
-            updatedAt = updatedAt
+            updatedAt = updatedAt,
+            verifyEnabled = verifyEnabled,
+            currentStage = currentStage,
+            stageStates = normalizeStageStates(
+                stageStates = stageStates,
+                currentStage = currentStage,
+                fallbackEnteredAt = updatedAtIso,
+            ),
         )
     }
+
+    private data class ParsedWorkflowMetadata(
+        val currentPhase: SpecPhase,
+        val status: WorkflowStatus,
+        val changeIntent: SpecChangeIntent,
+        val template: WorkflowTemplate,
+        val title: String,
+        val description: String,
+        val baselineWorkflowId: String?,
+        val configPinHash: String?,
+        val clarificationRetryState: ClarificationRetryState?,
+        val createdAt: Long,
+        val updatedAt: Long,
+        val verifyEnabled: Boolean,
+        val currentStage: StageId,
+        val stageStates: Map<StageId, StageState>,
+    )
 
     private fun parseLong(raw: Any?, fallback: Long): Long {
         return when (raw) {
@@ -1166,86 +1217,28 @@ class SpecStorage(
         } else {
             emptyMap()
         }
-
-        val currentPhase = parseEnumValue(
-            raw = metadata["currentPhase"],
-            fallback = SpecPhase.SPECIFY,
-            candidates = SpecPhase.entries,
+        val parsed = parsePersistedWorkflowMetadata(
+            workflowId = workflowId,
+            root = metadata,
         )
-        val status = parseEnumValue(
-            raw = metadata["status"],
-            fallback = WorkflowStatus.IN_PROGRESS,
-            candidates = WorkflowStatus.entries,
-        )
-        val changeIntent = parseEnumValue(
-            raw = metadata["changeIntent"],
-            fallback = SpecChangeIntent.FULL,
-            candidates = SpecChangeIntent.entries,
-        )
-        val template = parseEnumValue(
-            raw = metadata["template"],
-            fallback = WorkflowTemplate.FULL_SPEC,
-            candidates = WorkflowTemplate.entries,
-        )
-        val createdAt = parseLong(metadata["createdAt"], 0L)
-        val updatedAt = parseLong(metadata["updatedAt"], createdAt)
-        val verifyEnabled = parseBoolean(metadata["verifyEnabled"], fallback = false)
-        val createdAtIso = Instant.ofEpochMilli(createdAt).toString()
-        val updatedAtIso = Instant.ofEpochMilli(updatedAt).toString()
-        val fallbackCurrentStage = currentPhase.toStageId()
-        val requestedCurrentStage = parseEnumValue(
-            raw = metadata["currentStage"],
-            fallback = fallbackCurrentStage,
-            candidates = StageId.entries,
-        )
-        val parsedStageStates = parseStageStates(metadata["stageStates"])
-        val stageStates = if (parsedStageStates.isNotEmpty()) {
-            parsedStageStates
-        } else {
-            buildLegacyStageStates(
-                template = template,
-                verifyEnabled = verifyEnabled,
-                currentPhase = currentPhase,
-                createdAtIso = createdAtIso,
-                updatedAtIso = updatedAtIso,
-            )
-        }
-        val currentStage = resolveCurrentStage(
-            requested = requestedCurrentStage,
-            stageStates = stageStates,
-        )
-        val normalizedStageStates = normalizeStageStates(
-            stageStates = stageStates,
-            currentStage = currentStage,
-            fallbackEnteredAt = updatedAtIso,
-        )
-        val title = metadata["title"]?.toString()?.trim()?.takeIf { it.isNotBlank() } ?: workflowId
-        val description = metadata["description"]?.toString()?.trim().orEmpty()
-        val baselineWorkflowId = metadata["baselineWorkflowId"]
-            ?.toString()
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-        val configPinHash = metadata["configPinHash"]
-            ?.toString()
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
         val snapshotWorkflowId = "$workflowId@snapshot:$snapshotId"
         return SpecWorkflow(
             id = snapshotWorkflowId,
-            currentPhase = currentPhase,
+            currentPhase = parsed.currentPhase,
             documents = documents,
-            status = status,
-            title = title,
-            description = description,
-            changeIntent = changeIntent,
-            template = template,
-            stageStates = normalizedStageStates,
-            currentStage = currentStage,
-            verifyEnabled = verifyEnabled,
-            baselineWorkflowId = baselineWorkflowId,
-            configPinHash = configPinHash,
-            createdAt = createdAt,
-            updatedAt = updatedAt,
+            status = parsed.status,
+            title = parsed.title,
+            description = parsed.description,
+            changeIntent = parsed.changeIntent,
+            template = parsed.template,
+            stageStates = parsed.stageStates,
+            currentStage = parsed.currentStage,
+            verifyEnabled = parsed.verifyEnabled,
+            baselineWorkflowId = parsed.baselineWorkflowId,
+            configPinHash = parsed.configPinHash,
+            clarificationRetryState = parsed.clarificationRetryState,
+            createdAt = parsed.createdAt,
+            updatedAt = parsed.updatedAt,
         )
     }
 
@@ -1372,11 +1365,11 @@ class SpecStorage(
             verifyEnabled = verifyEnabled,
             implementEnabled = null,
         ).toSet()
-        val trail = when (currentPhase) {
-            SpecPhase.SPECIFY -> listOf(StageId.REQUIREMENTS)
-            SpecPhase.DESIGN -> listOf(StageId.REQUIREMENTS, StageId.DESIGN)
-            SpecPhase.IMPLEMENT -> listOf(StageId.REQUIREMENTS, StageId.DESIGN, StageId.TASKS)
-        }
+        val trail = SpecSchemaVersioning.buildLegacyStageTrail(
+            template = template,
+            currentPhase = currentPhase,
+            verifyEnabled = verifyEnabled,
+        )
         val currentStage = trail.last()
         val states = linkedMapOf<StageId, StageState>()
 

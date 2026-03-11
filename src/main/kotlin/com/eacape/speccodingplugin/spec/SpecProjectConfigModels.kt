@@ -11,7 +11,9 @@ data class SpecProjectConfig(
     fun policyFor(template: WorkflowTemplate): SpecTemplatePolicy = templates.getValue(template)
 
     companion object {
-        const val SUPPORTED_SCHEMA_VERSION: Int = 1
+        const val CURRENT_SCHEMA_VERSION: Int = 1
+        const val MIN_SUPPORTED_SCHEMA_VERSION: Int = 0
+        const val SUPPORTED_SCHEMA_VERSION: Int = CURRENT_SCHEMA_VERSION
     }
 }
 

@@ -144,6 +144,25 @@ class SpecProjectConfigServiceTest {
     }
 
     @Test
+    fun `load should upgrade legacy config without schemaVersion`() {
+        writeConfig(
+            """
+            defaultTemplate: QUICK_TASK
+            gate:
+              allowWarningAdvance: false
+            """.trimIndent(),
+        )
+
+        val config = service.load()
+        val pin = service.createConfigPin(config)
+
+        assertEquals(SpecProjectConfig.CURRENT_SCHEMA_VERSION, config.schemaVersion)
+        assertEquals(WorkflowTemplate.QUICK_TASK, config.defaultTemplate)
+        assertFalse(config.gate.allowWarningAdvance)
+        assertTrue(pin.snapshotYaml.contains("schemaVersion: 1"))
+    }
+
+    @Test
     fun `load should reject invalid template stage plan`() {
         writeConfig(
             """

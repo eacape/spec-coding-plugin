@@ -64,6 +64,7 @@ class SpecStorageWorkflowMetadataTest {
             .resolve(workflowId)
             .resolve("workflow.yaml")
         val yamlContent = Files.readString(yamlPath)
+        assertTrue(yamlContent.contains("schemaVersion: 1"))
         assertTrue(yamlContent.contains("title: $workflowTitle"))
         assertTrue(yamlContent.contains("title: $documentTitle"))
 
@@ -205,6 +206,41 @@ class SpecStorageWorkflowMetadataTest {
         assertEquals(StageProgress.DONE, loaded.stageStates.getValue(StageId.REQUIREMENTS).status)
         assertEquals(StageProgress.IN_PROGRESS, loaded.stageStates.getValue(StageId.DESIGN).status)
         assertFalse(loaded.stageStates.getValue(StageId.VERIFY).active)
+    }
+
+    @Test
+    fun `loadWorkflow should upgrade legacy metadata without schemaVersion or currentStage`() {
+        val workflowId = "wf-legacy-quick-task"
+        val workflowDir = tempDir
+            .resolve(".spec-coding")
+            .resolve("specs")
+            .resolve(workflowId)
+        Files.createDirectories(workflowDir)
+        Files.writeString(
+            workflowDir.resolve("workflow.yaml"),
+            """
+            id: $workflowId
+            title: Legacy quick task
+            description: missing schema version
+            template: QUICK_TASK
+            currentPhase: IMPLEMENT
+            status: IN_PROGRESS
+            verifyEnabled: true
+            createdAt: 1700000000000
+            updatedAt: 1700000005000
+            documents: []
+            """.trimIndent() + "\n",
+        )
+
+        val loaded = storage.loadWorkflow(workflowId).getOrThrow()
+
+        assertEquals(WorkflowTemplate.QUICK_TASK, loaded.template)
+        assertEquals(StageId.TASKS, loaded.currentStage)
+        assertEquals(StageProgress.IN_PROGRESS, loaded.stageStates.getValue(StageId.TASKS).status)
+        assertEquals(StageProgress.NOT_STARTED, loaded.stageStates.getValue(StageId.IMPLEMENT).status)
+        assertTrue(loaded.stageStates.getValue(StageId.VERIFY).active)
+        assertFalse(loaded.stageStates.getValue(StageId.REQUIREMENTS).active)
+        assertFalse(loaded.stageStates.getValue(StageId.DESIGN).active)
     }
 
     @Test

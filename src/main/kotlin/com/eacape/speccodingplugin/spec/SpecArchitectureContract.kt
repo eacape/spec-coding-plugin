@@ -117,6 +117,13 @@ object SpecArchitectureContract {
             status = AdoptionStatus.ADOPTED,
         ),
         DependencyDecision(
+            key = "schema-evolution",
+            capability = "versioned config/workflow metadata parsing with bounded compatibility and explicit upgrade hooks",
+            selection = "SpecSchemaVersioning registry + config/workflow metadata upgrade steps wired into SpecProjectConfigService and SpecStorage",
+            rationale = "Task 50 requires schemaVersion evolution to stay non-destructive for older `.spec-coding` data while keeping current writes explicit and testable.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
             key = "stage-plan",
             capability = "template-aware ordered stage planning with optional-stage activation and gate scoping",
             selection = "domain `WorkflowStagePlan` + `StageActivationOptions` derived from template definitions and persisted stage states",
@@ -369,6 +376,11 @@ object SpecArchitectureContract {
             fileName = "SpecRelatedFilesService.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecSchemaVersioning.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
         ),
         SourceRule(
             fileName = "SpecStorage.kt",

@@ -26,8 +26,8 @@ class SpecProjectConfigService(
     }
 
     fun parseSnapshotYaml(raw: String): SpecProjectConfig {
-        val root = SpecYamlCodec.decodeMap(raw)
-        return parseConfig(root)
+        val upgraded = SpecSchemaVersioning.upgradeProjectConfig(SpecYamlCodec.decodeMap(raw))
+        return parseConfig(upgraded.document)
     }
 
     fun configPath(): Path {
@@ -61,7 +61,7 @@ class SpecProjectConfigService(
 
     private fun defaultConfig(): SpecProjectConfig {
         return SpecProjectConfig(
-            schemaVersion = SpecProjectConfig.SUPPORTED_SCHEMA_VERSION,
+            schemaVersion = SpecProjectConfig.CURRENT_SCHEMA_VERSION,
             defaultTemplate = WorkflowTemplate.FULL_SPEC,
             templates = defaultTemplatePolicies(),
             gate = SpecGatePolicy(),
@@ -158,12 +158,11 @@ class SpecProjectConfigService(
     }
 
     private fun parseSchemaVersion(raw: Any?): Int {
-        val version = parseInt(raw, "schemaVersion") ?: SpecProjectConfig.SUPPORTED_SCHEMA_VERSION
-        require(version > 0) {
-            "schemaVersion must be greater than 0."
-        }
-        require(version == SpecProjectConfig.SUPPORTED_SCHEMA_VERSION) {
-            "Unsupported config schemaVersion: $version (supported: ${SpecProjectConfig.SUPPORTED_SCHEMA_VERSION})."
+        val version = parseInt(raw, "schemaVersion") ?: SpecProjectConfig.CURRENT_SCHEMA_VERSION
+        require(version == SpecProjectConfig.CURRENT_SCHEMA_VERSION) {
+            "Unsupported config schemaVersion: $version " +
+                "(supported: ${SpecProjectConfig.MIN_SUPPORTED_SCHEMA_VERSION}.." +
+                "${SpecProjectConfig.CURRENT_SCHEMA_VERSION})."
         }
         return version
     }
