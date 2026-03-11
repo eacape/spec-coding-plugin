@@ -98,6 +98,9 @@
                 class="com.eacape.speccodingplugin.window.WindowRegistryProjectManagerListener"
                 topic="com.intellij.openapi.project.ProjectManagerListener"/>
         <listener
+                class="com.eacape.speccodingplugin.spec.SpecWorkspaceRecoveryProjectManagerListener"
+                topic="com.intellij.openapi.project.ProjectManagerListener"/>
+        <listener
                 class="com.eacape.speccodingplugin.hook.HookProjectManagerListener"
                 topic="com.intellij.openapi.project.ProjectManagerListener"/>
     </projectListeners>

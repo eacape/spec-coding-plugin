@@ -156,6 +156,36 @@ class SpecStorageSnapshotTest {
         assertEquals(snapshotContent, baselineContent)
     }
 
+    @Test
+    fun `checkWorkflowSnapshotConsistency should report missing referenced artifact`() {
+        val workflowId = "wf-snapshot-consistency"
+        storage.saveWorkflow(workflow(workflowId)).getOrThrow()
+        storage.saveDocument(
+            workflowId = workflowId,
+            document = document(
+                phase = SpecPhase.SPECIFY,
+                content = "snapshot-consistency",
+            ),
+        ).getOrThrow()
+
+        val snapshot = storage.listWorkflowSnapshots(workflowId)
+            .first { it.trigger == SpecSnapshotTrigger.DOCUMENT_SAVE_AFTER }
+        val artifactPath = tempDir
+            .resolve(".spec-coding")
+            .resolve("specs")
+            .resolve(workflowId)
+            .resolve(".history")
+            .resolve("snapshots")
+            .resolve(snapshot.snapshotId)
+            .resolve("requirements.md")
+        java.nio.file.Files.delete(artifactPath)
+
+        val issues = storage.checkWorkflowSnapshotConsistency(workflowId)
+        assertEquals(1, issues.size)
+        assertEquals(SpecSnapshotConsistencyIssueKind.MISSING_ARTIFACT, issues.single().kind)
+        assertEquals("requirements.md", issues.single().artifactFileName)
+    }
+
     private fun workflow(id: String): SpecWorkflow {
         return SpecWorkflow(
             id = id,

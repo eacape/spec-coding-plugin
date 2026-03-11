@@ -38,6 +38,7 @@ class SpecArchitectureContractTest {
         assertTrue(decisions.containsKey("verify-plan-preview"))
         assertTrue(decisions.containsKey("verify-run-execution"))
         assertTrue(decisions.containsKey("verify-action-entry"))
+        assertTrue(decisions.containsKey("workspace-recovery"))
         assertTrue(decisions.containsKey("workflow-id"))
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
@@ -158,6 +159,10 @@ class SpecArchitectureContractTest {
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("delta-report-export").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("workspace-recovery").status,
         )
     }
 

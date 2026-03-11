@@ -14,7 +14,23 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Base64
+import java.util.Comparator
 import java.util.UUID
+
+enum class SpecSnapshotConsistencyIssueKind {
+    MISSING_METADATA,
+    INVALID_METADATA,
+    MISSING_ARTIFACT,
+}
+
+data class SpecSnapshotConsistencyIssue(
+    val workflowId: String,
+    val snapshotId: String,
+    val snapshotPath: Path,
+    val kind: SpecSnapshotConsistencyIssueKind,
+    val artifactFileName: String? = null,
+    val detail: String? = null,
+)
 
 /**
  * Spec 文档存储管理器
@@ -201,6 +217,63 @@ class SpecStorage(
                 loadSnapshotEntry(path, workflowId)?.let { snapshots += it }
             }
             snapshots.sortedByDescending { it.createdAt }
+        }
+    }
+
+    fun checkWorkflowSnapshotConsistency(workflowId: String): List<SpecSnapshotConsistencyIssue> {
+        val snapshotRoot = getWorkflowDirectory(workflowId)
+            .resolve(".history")
+            .resolve("snapshots")
+        if (!Files.isDirectory(snapshotRoot)) {
+            return emptyList()
+        }
+
+        return Files.list(snapshotRoot).use { stream ->
+            val issues = mutableListOf<SpecSnapshotConsistencyIssue>()
+            stream
+                .filter { Files.isDirectory(it) }
+                .sorted(Comparator.comparing<Path, String> { it.fileName.toString() })
+                .forEach { snapshotDir ->
+                    val snapshotId = snapshotDir.fileName.toString()
+                    val metadataPath = snapshotDir.resolve(SNAPSHOT_METADATA_FILE_NAME)
+                    if (!Files.isRegularFile(metadataPath)) {
+                        issues += SpecSnapshotConsistencyIssue(
+                            workflowId = workflowId,
+                            snapshotId = snapshotId,
+                            snapshotPath = snapshotDir,
+                            kind = SpecSnapshotConsistencyIssueKind.MISSING_METADATA,
+                        )
+                        return@forEach
+                    }
+
+                    val metadata = runCatching {
+                        yamlCodec.decodeMap(Files.readString(metadataPath, StandardCharsets.UTF_8))
+                    }.getOrElse { error ->
+                        issues += SpecSnapshotConsistencyIssue(
+                            workflowId = workflowId,
+                            snapshotId = snapshotId,
+                            snapshotPath = snapshotDir,
+                            kind = SpecSnapshotConsistencyIssueKind.INVALID_METADATA,
+                            detail = error.message,
+                        )
+                        return@forEach
+                    }
+
+                    parseStringList(metadata["files"])
+                        .sorted()
+                        .forEach { fileName ->
+                            if (!Files.isRegularFile(snapshotDir.resolve(fileName))) {
+                                issues += SpecSnapshotConsistencyIssue(
+                                    workflowId = workflowId,
+                                    snapshotId = snapshotId,
+                                    snapshotPath = snapshotDir,
+                                    kind = SpecSnapshotConsistencyIssueKind.MISSING_ARTIFACT,
+                                    artifactFileName = fileName,
+                                )
+                            }
+                        }
+                }
+            issues
         }
     }
 

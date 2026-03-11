@@ -7,6 +7,15 @@ import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.util.UUID
 
+data class SpecLockInspection(
+    val lockPath: Path,
+    val resourceKey: String,
+    val ownerToken: String?,
+    val createdAtEpochMs: Long?,
+    val ageMs: Long?,
+    val stale: Boolean,
+)
+
 data class SpecFileLockPolicy(
     val acquireTimeoutMs: Long = 5_000,
     val staleLockAgeMs: Long = 120_000,
@@ -57,6 +66,38 @@ class SpecFileLockManager(
         } finally {
             releaseLock(handle)
         }
+    }
+
+    fun inspectLocks(): List<SpecLockInspection> {
+        val locksDir = existingLocksDirectory() ?: return emptyList()
+        return Files.list(locksDir).use { stream ->
+            val inspections = mutableListOf<SpecLockInspection>()
+            stream.forEach { path ->
+                if (!Files.isRegularFile(path) || !path.fileName.toString().endsWith(LOCK_FILE_SUFFIX)) {
+                    return@forEach
+                }
+                inspectLock(path)?.let(inspections::add)
+            }
+            inspections.sortedBy { it.lockPath.fileName.toString() }
+        }
+    }
+
+    fun recoverStaleLocks(): List<Path> {
+        val recovered = mutableListOf<Path>()
+        inspectLocks()
+            .filter { it.stale }
+            .forEach { inspection ->
+                if (!Files.exists(inspection.lockPath)) {
+                    return@forEach
+                }
+                if (!isStaleLock(inspection.lockPath)) {
+                    return@forEach
+                }
+                if (Files.deleteIfExists(inspection.lockPath)) {
+                    recovered.add(inspection.lockPath)
+                }
+            }
+        return recovered.sortedBy { it.fileName.toString() }
     }
 
     private fun acquireLock(resourceKey: String): LockHandle {
@@ -151,9 +192,32 @@ class SpecFileLockManager(
         }.getOrNull()
     }
 
+    private fun inspectLock(lockPath: Path): SpecLockInspection? {
+        val createdAtEpochMs = readLockField(lockPath, CREATED_AT_KEY)?.toLongOrNull()
+            ?: runCatching { Files.getLastModifiedTime(lockPath).toMillis() }.getOrNull()
+        val ageMs = createdAtEpochMs?.let { createdAt ->
+            (nowProvider() - createdAt).coerceAtLeast(0L)
+        }
+        return SpecLockInspection(
+            lockPath = lockPath,
+            resourceKey = readLockField(lockPath, RESOURCE_KEY)
+                ?: lockPath.fileName.toString().removeSuffix(LOCK_FILE_SUFFIX),
+            ownerToken = readLockField(lockPath, OWNER_TOKEN_KEY),
+            createdAtEpochMs = createdAtEpochMs,
+            ageMs = ageMs,
+            stale = isStaleLock(lockPath),
+        )
+    }
+
     private fun lockPathFor(resourceKey: String): Path {
         val locksDir = workspaceInitializer.initializeProjectWorkspace().locksDir
         return locksDir.resolve("${sanitizeResourceKey(resourceKey)}.lock")
+    }
+
+    private fun existingLocksDirectory(): Path? {
+        val rootDir = workspaceInitializer.specCodingDirectory()
+        val locksDir = rootDir.resolve(LOCKS_DIR_NAME)
+        return locksDir.takeIf { Files.isDirectory(it) }
     }
 
     private fun sanitizeResourceKey(resourceKey: String): String {
@@ -177,6 +241,8 @@ class SpecFileLockManager(
         private const val OWNER_TOKEN_KEY = "ownerToken"
         private const val RESOURCE_KEY = "resourceKey"
         private const val CREATED_AT_KEY = "createdAtEpochMs"
+        private const val LOCK_FILE_SUFFIX = ".lock"
+        private const val LOCKS_DIR_NAME = ".locks"
 
         private fun defaultOwnerToken(): String {
             val pid = runCatching { ProcessHandle.current().pid().toString() }.getOrDefault("unknown")

@@ -263,6 +263,13 @@ object SpecArchitectureContract {
             rationale = "Task 44 requires stable offline review artifacts that can be regenerated from persisted baseline references and current workflow files.",
             status = AdoptionStatus.ADOPTED,
         ),
+        DependencyDecision(
+            key = "workspace-recovery",
+            capability = "startup crash recovery and workspace self-check for orphan temp files, stale locks, and snapshot consistency",
+            selection = "SpecWorkspaceRecoveryService + startup ProjectManagerListener + SpecFileLockManager/SpecStorage inspections",
+            rationale = "Task 48 requires a bounded startup recovery pass that does not rewrite user artifacts, but surfaces stale locks and corrupted snapshots before they block later spec operations.",
+            status = AdoptionStatus.ADOPTED,
+        ),
     )
 
     val sourceRules: List<SourceRule> = listOf(
@@ -391,6 +398,10 @@ object SpecArchitectureContract {
             fileName = "SpecWorkspaceInitializer.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecWorkspaceRecoveryService.kt",
+            layer = Layer.APPLICATION,
         ),
         SourceRule(
             fileName = "SpecYamlCodec.kt",

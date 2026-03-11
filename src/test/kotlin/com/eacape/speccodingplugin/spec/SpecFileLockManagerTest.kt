@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -106,5 +107,47 @@ class SpecFileLockManagerTest {
             assertFalse(lockContent.contains("ownerToken=stale-owner"))
         }
         assertFalse(Files.exists(lockPath))
+    }
+
+    @Test
+    fun `inspectLocks and recoverStaleLocks should report and delete stale lock files only`() {
+        val locksDir = initializer.initializeProjectWorkspace().locksDir
+        val staleLockPath = locksDir.resolve("workflow-wf-stale.lock")
+        val activeLockPath = locksDir.resolve("workflow-wf-active.lock")
+        Files.writeString(
+            staleLockPath,
+            """
+            ownerToken=stale-owner
+            resourceKey=workflow-wf-stale
+            createdAtEpochMs=1
+            """.trimIndent() + "\n",
+        )
+        Files.writeString(
+            activeLockPath,
+            """
+            ownerToken=active-owner
+            resourceKey=workflow-wf-active
+            createdAtEpochMs=4950
+            """.trimIndent() + "\n",
+        )
+
+        val manager = SpecFileLockManager(
+            workspaceInitializer = initializer,
+            policy = SpecFileLockPolicy(
+                acquireTimeoutMs = 200,
+                staleLockAgeMs = 1_000,
+                retryIntervalMs = 10,
+            ),
+            nowProvider = { 5_000L },
+        )
+
+        val inspections = manager.inspectLocks().associateBy { it.resourceKey }
+        assertEquals(true, inspections.getValue("workflow-wf-stale").stale)
+        assertEquals(false, inspections.getValue("workflow-wf-active").stale)
+
+        val recovered = manager.recoverStaleLocks()
+        assertEquals(listOf(staleLockPath), recovered)
+        assertFalse(Files.exists(staleLockPath))
+        assertTrue(Files.exists(activeLockPath))
     }
 }

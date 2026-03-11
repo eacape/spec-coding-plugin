@@ -82,6 +82,13 @@ class AtomicFileIO(
         private const val TEMP_SUFFIX = ".tmp"
         private const val MIN_TEMP_PREFIX_LENGTH = 3
 
+        fun isManagedTempFile(path: Path): Boolean {
+            val fileName = path.fileName?.toString().orEmpty()
+            return fileName.startsWith(".") &&
+                fileName.endsWith(TEMP_SUFFIX) &&
+                fileName.length > TEMP_SUFFIX.length + 2
+        }
+
         private fun moveReplacingAtomically(source: Path, target: Path) {
             try {
                 Files.move(
