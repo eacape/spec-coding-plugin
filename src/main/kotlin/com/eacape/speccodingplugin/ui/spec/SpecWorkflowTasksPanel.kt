@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.StructuredTask
 import com.eacape.speccodingplugin.spec.TaskStatus
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
@@ -14,6 +15,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Cursor
 import java.awt.FlowLayout
 import java.time.Instant
 import java.time.ZoneId
@@ -33,6 +35,7 @@ internal class SpecWorkflowTasksPanel(
     private val onUpdateDependsOn: (taskId: String, dependsOn: List<String>) -> Unit = { _, _ -> },
     private val onUpdateRelatedFiles: (taskId: String, files: List<String>) -> Unit = { _, _ -> },
     private val onCompleteWithRelatedFiles: (taskId: String, files: List<String>) -> Unit = { _, _ -> },
+    private val suggestRelatedFiles: (taskId: String, existingRelatedFiles: List<String>) -> List<String> = { _, existing -> existing },
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
     private val headerTitleLabel = JBLabel().apply {
@@ -286,18 +289,40 @@ internal class SpecWorkflowTasksPanel(
             return
         }
         if (targetStatus == TaskStatus.COMPLETED) {
-            val dialog = ListEditDialog(
-                title = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.confirm.title", selectedTask.id),
-                hintText = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.confirm.hint"),
-                initialLines = selectedTask.relatedFiles,
-                okText = SpecCodingBundle.message("spec.toolwindow.tasks.complete.ok"),
-            )
-            if (!dialog.showAndGet()) {
-                return
-            }
-            onCompleteWithRelatedFiles(selectedTask.id, dialog.resultLines)
+            requestCompletionWithRelatedFiles(selectedTask)
         } else {
             onTransitionStatus(selectedTask.id, targetStatus)
+        }
+    }
+
+    private fun requestCompletionWithRelatedFiles(selectedTask: StructuredTask) {
+        val taskId = selectedTask.id
+        val existing = selectedTask.relatedFiles
+        val previousCursor = cursor
+        cursor = Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR)
+        applyStatusButton.isEnabled = false
+        statusComboBox.isEnabled = false
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val suggestedRelatedFiles = runCatching {
+                suggestRelatedFiles(taskId, existing)
+            }.getOrDefault(existing)
+
+            ApplicationManager.getApplication().invokeLater {
+                cursor = previousCursor
+                updateControlsForSelection()
+
+                val dialog = ListEditDialog(
+                    title = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.confirm.title", taskId),
+                    hintText = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.confirm.hint"),
+                    initialLines = suggestedRelatedFiles,
+                    okText = SpecCodingBundle.message("spec.toolwindow.tasks.complete.ok"),
+                )
+                if (!dialog.showAndGet()) {
+                    return@invokeLater
+                }
+                onCompleteWithRelatedFiles(taskId, dialog.resultLines)
+            }
         }
     }
 

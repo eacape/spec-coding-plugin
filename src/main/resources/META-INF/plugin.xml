@@ -44,6 +44,7 @@
         <projectService serviceImplementation="com.eacape.speccodingplugin.skill.SkillExecutor"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.spec.SpecEngine"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.spec.SpecDeltaService"/>
+        <projectService serviceImplementation="com.eacape.speccodingplugin.spec.SpecRelatedFilesService"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.session.SessionManager"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.mcp.McpHub"/>
         <projectService serviceImplementation="com.eacape.speccodingplugin.mcp.McpConfigStore"/>

@@ -67,6 +67,7 @@ class SpecWorkflowPanel(
     private val specEngine = SpecEngine.getInstance(project)
     private val specDeltaService = SpecDeltaService.getInstance(project)
     private val specTasksService = SpecTasksService.getInstance(project)
+    private val specRelatedFilesService = SpecRelatedFilesService.getInstance(project)
     private val specVerificationService = SpecVerificationService.getInstance(project)
     private val artifactService = SpecArtifactService(project)
     private val codeGraphService = CodeGraphService.getInstance(project)
@@ -98,6 +99,9 @@ class SpecWorkflowPanel(
         onUpdateDependsOn = ::onTaskDependsOnUpdateRequested,
         onUpdateRelatedFiles = ::onTaskRelatedFilesUpdateRequested,
         onCompleteWithRelatedFiles = ::onTaskCompleteRequested,
+        suggestRelatedFiles = { taskId, existingRelatedFiles ->
+            specRelatedFilesService.suggestRelatedFiles(taskId, existingRelatedFiles)
+        },
     )
     private val verifyDeltaPanel = SpecWorkflowVerifyDeltaPanel(
         onRunVerifyRequested = ::onRunVerificationRequested,
