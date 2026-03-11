@@ -2,10 +2,17 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecArtifactDelta
+import com.eacape.speccodingplugin.spec.SpecDeltaExportFormat
+import com.eacape.speccodingplugin.spec.SpecDeltaExportResult
 import com.eacape.speccodingplugin.spec.SpecDeltaStatus
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflowDelta
+import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
+import com.intellij.diff.DiffManager
+import com.intellij.diff.DiffContentFactory
+import com.intellij.diff.requests.SimpleDiffRequest
 import com.intellij.ide.util.PropertiesComponent
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
@@ -19,6 +26,8 @@ import java.awt.Color
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
@@ -31,8 +40,10 @@ import javax.swing.table.TableRowSorter
 
 class SpecDeltaDialog(
     private val project: Project,
-    delta: SpecWorkflowDelta,
+    private val delta: SpecWorkflowDelta,
     private val onOpenHistoryDiff: ((phase: SpecPhase) -> Unit)? = null,
+    private val onExportReport: ((format: SpecDeltaExportFormat) -> Result<SpecDeltaExportResult>)? = null,
+    private val onReportExported: ((result: SpecDeltaExportResult) -> Unit)? = null,
 ) : DialogWrapper(true) {
 
     internal enum class StatusFilterOption(
@@ -66,14 +77,20 @@ class SpecDeltaDialog(
     private val statusFilterLabel = JBLabel(SpecCodingBundle.message("spec.delta.filter.status.label"))
     private val statusFilterCombo = JComboBox(StatusFilterOption.entries.toTypedArray())
     private val showChangesOnlyCheckBox = JBCheckBox(SpecCodingBundle.message("spec.delta.filter.changedOnly"), false)
+    private val previewDiffButton = JButton(SpecCodingBundle.message("spec.delta.preview"))
     private val historyDiffButton = JButton(SpecCodingBundle.message("spec.detail.historyDiff"))
+    private val exportMarkdownButton = JButton(SpecCodingBundle.message("spec.delta.export.markdown"))
+    private val exportHtmlButton = JButton(SpecCodingBundle.message("spec.delta.export.html"))
+    private val exportStatusLabel = JBLabel(SpecCodingBundle.message("spec.delta.export.status.idle"))
     private val detailArea = JBTextArea()
+    private var exportInProgress = false
 
     init {
         title = SpecCodingBundle.message("spec.delta.dialog.title")
         restoreFilterState()
         setupTable()
         setupDetailArea()
+        setupActions()
         init()
     }
 
@@ -88,9 +105,15 @@ class SpecDeltaDialog(
         header.add(statusFilterLabel)
         header.add(statusFilterCombo)
         header.add(showChangesOnlyCheckBox)
+        previewDiffButton.addActionListener { onPreviewDiffClicked() }
+        header.add(previewDiffButton)
         historyDiffButton.isVisible = onOpenHistoryDiff != null
         historyDiffButton.addActionListener { onHistoryDiffClicked() }
         header.add(historyDiffButton)
+        exportMarkdownButton.addActionListener { onExportClicked(SpecDeltaExportFormat.MARKDOWN) }
+        exportHtmlButton.addActionListener { onExportClicked(SpecDeltaExportFormat.HTML) }
+        header.add(exportMarkdownButton)
+        header.add(exportHtmlButton)
         panel.add(header, BorderLayout.NORTH)
 
         val centerSplit = javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT)
@@ -98,6 +121,14 @@ class SpecDeltaDialog(
         centerSplit.topComponent = JBScrollPane(deltaTable)
         centerSplit.bottomComponent = JBScrollPane(detailArea)
         panel.add(centerSplit, BorderLayout.CENTER)
+        panel.add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyTop(8)
+                add(exportStatusLabel, BorderLayout.WEST)
+            },
+            BorderLayout.SOUTH,
+        )
 
         applyFilters()
 
@@ -139,6 +170,15 @@ class SpecDeltaDialog(
                 updateActionState()
             }
         }
+        deltaTable.addMouseListener(
+            object : MouseAdapter() {
+                override fun mouseClicked(event: MouseEvent) {
+                    if (event.clickCount == 2 && event.button == MouseEvent.BUTTON1) {
+                        onPreviewDiffClicked()
+                    }
+                }
+            },
+        )
         showChangesOnlyCheckBox.addActionListener { applyFilters() }
         statusFilterCombo.addActionListener { applyFilters() }
         updateActionState()
@@ -148,6 +188,10 @@ class SpecDeltaDialog(
         detailArea.isEditable = false
         detailArea.lineWrap = true
         detailArea.wrapStyleWord = true
+    }
+
+    private fun setupActions() {
+        exportStatusLabel.font = JBUI.Fonts.smallFont()
     }
 
     private fun updateDetailByViewRow(viewRow: Int) {
@@ -188,9 +232,51 @@ class SpecDeltaDialog(
         onOpenHistoryDiff?.invoke(selected.artifact.phase)
     }
 
+    private fun onPreviewDiffClicked() {
+        val selected = selectedDelta()?.takeIf(::canPreviewDiff) ?: return
+        val factory = DiffContentFactory.getInstance()
+        val request = SimpleDiffRequest(
+            buildPreviewTitle(selected),
+            factory.create(contentForDiff(selected.baselineContent)),
+            factory.create(contentForDiff(selected.targetContent)),
+            SpecCodingBundle.message("spec.delta.preview.side.baseline", buildSideLabel(selected, baseline = true)),
+            SpecCodingBundle.message("spec.delta.preview.side.target", buildSideLabel(selected, baseline = false)),
+        )
+        DiffManager.getInstance().showDiff(project, request)
+    }
+
+    private fun onExportClicked(format: SpecDeltaExportFormat) {
+        if (exportInProgress) {
+            return
+        }
+        setExportInProgress(true, format)
+        val exportAction = onExportReport ?: { requestedFormat ->
+            com.eacape.speccodingplugin.spec.SpecDeltaService.getInstance(project).exportReport(delta, requestedFormat)
+        }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = exportAction(format)
+            ApplicationManager.getApplication().invokeLater {
+                setExportInProgress(false, format)
+                result.onSuccess { export ->
+                    exportStatusLabel.text = SpecCodingBundle.message("spec.delta.export.success", export.fileName)
+                    SpecWorkflowActionSupport.openFile(project, export.filePath)
+                    onReportExported?.invoke(export)
+                }.onFailure { error ->
+                    exportStatusLabel.text = SpecCodingBundle.message(
+                        "spec.delta.export.failed",
+                        error.message ?: SpecCodingBundle.message("common.unknown"),
+                    )
+                }
+            }
+        }
+    }
+
     private fun updateActionState() {
         val selected = selectedDelta()
-        historyDiffButton.isEnabled = selected?.targetDocument != null
+        previewDiffButton.isEnabled = selected?.let(::canPreviewDiff) == true
+        historyDiffButton.isEnabled = selected?.targetDocument != null && selected.artifact.phase != null
+        exportMarkdownButton.isEnabled = !exportInProgress
+        exportHtmlButton.isEnabled = !exportInProgress
     }
 
     private fun selectedDelta(): SpecArtifactDelta? {
@@ -274,6 +360,42 @@ class SpecDeltaDialog(
         }
     }
 
+    private fun buildPreviewTitle(delta: SpecArtifactDelta): String {
+        return SpecCodingBundle.message(
+            "spec.delta.preview.title",
+            delta.artifact.displayName,
+            this.delta.baselineWorkflowId,
+            this.delta.targetWorkflowId,
+        )
+    }
+
+    private fun buildSideLabel(
+        delta: SpecArtifactDelta,
+        baseline: Boolean,
+    ): String {
+        val documentTitle = if (baseline) {
+            delta.baselineDocument?.metadata?.title
+        } else {
+            delta.targetDocument?.metadata?.title
+        }?.takeIf { it.isNotBlank() }
+        return documentTitle ?: delta.artifact.fileName
+    }
+
+    private fun setExportInProgress(
+        inProgress: Boolean,
+        format: SpecDeltaExportFormat,
+    ) {
+        exportInProgress = inProgress
+        exportStatusLabel.text = if (inProgress) {
+            SpecCodingBundle.message("spec.delta.export.progress", format.name)
+        } else if (exportStatusLabel.text.isNullOrBlank()) {
+            SpecCodingBundle.message("spec.delta.export.status.idle")
+        } else {
+            exportStatusLabel.text
+        }
+        updateActionState()
+    }
+
     private class DeltaTableModel(
         private val items: List<SpecArtifactDelta>,
     ) : AbstractTableModel() {
@@ -338,6 +460,17 @@ class SpecDeltaDialog(
                 return false
             }
             return !changedOnly || shouldShowInChangedOnly(status)
+        }
+
+        internal fun canPreviewDiff(delta: SpecArtifactDelta): Boolean {
+            return !delta.baselineContent.isNullOrBlank() || !delta.targetContent.isNullOrBlank()
+        }
+
+        internal fun contentForDiff(content: String?): String {
+            return content
+                ?.replace("\r\n", "\n")
+                ?.replace('\r', '\n')
+                .orEmpty()
         }
 
         private fun statusColor(status: SpecDeltaStatus): Color {

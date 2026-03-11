@@ -1931,6 +1931,10 @@ class SpecWorkflowPanel(
                     currentDoc = targetWorkflow.documents[phase],
                 )
             },
+            onExportReport = { format -> specDeltaService.exportReport(delta, format) },
+            onReportExported = { export ->
+                setStatusText(SpecCodingBundle.message("spec.delta.export.done", export.fileName))
+            },
         ).show()
     }
 

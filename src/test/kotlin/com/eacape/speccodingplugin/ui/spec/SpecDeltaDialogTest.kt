@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.spec.SpecArtifactDelta
+import com.eacape.speccodingplugin.spec.SpecDeltaArtifact
 import com.eacape.speccodingplugin.spec.SpecDeltaStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -73,5 +75,25 @@ class SpecDeltaDialogTest {
                 changedOnly = true,
             )
         )
+    }
+
+    @Test
+    fun `canPreviewDiff should require at least one non blank side`() {
+        val emptyDelta = SpecArtifactDelta(
+            artifact = SpecDeltaArtifact.REQUIREMENTS,
+            status = SpecDeltaStatus.UNCHANGED,
+            baselineContent = null,
+            targetContent = "   ",
+        )
+        val changedDelta = emptyDelta.copy(targetContent = "# Updated")
+
+        assertFalse(SpecDeltaDialog.canPreviewDiff(emptyDelta))
+        assertTrue(SpecDeltaDialog.canPreviewDiff(changedDelta))
+    }
+
+    @Test
+    fun `contentForDiff should normalize null and windows newlines`() {
+        assertEquals("", SpecDeltaDialog.contentForDiff(null))
+        assertEquals("a\nb\nc", SpecDeltaDialog.contentForDiff("a\r\nb\rc"))
     }
 }
