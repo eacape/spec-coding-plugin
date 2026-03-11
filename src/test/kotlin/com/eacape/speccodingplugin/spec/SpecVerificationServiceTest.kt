@@ -277,6 +277,59 @@ class SpecVerificationServiceTest {
     }
 
     @Test
+    fun `run should redact persisted command preview and append security audit fields`() {
+        writeVerifyConfig(
+            commandId = "java-echo-secret-arg",
+            command = javaCommand(
+                tempDir,
+                "echo",
+                "Authorization: Bearer ghp_super-secret",
+                "{\"apiKey\":\"sk-live-secret\"}",
+            ),
+            outputLimitChars = 4_096,
+        )
+        val workflow = createWorkflow(workflowId = "wf-verify-run-security-audit")
+        writeTasks(
+            workflow.id,
+            """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Verify secure command audit
+            ```spec-task
+            status: COMPLETED
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+            """.trimIndent(),
+        )
+
+        val plan = verificationService.preview(workflow.id)
+        verificationService.run(workflow.id, plan.planId, listOf("T-001"))
+
+        val verificationDocument = artifactService.readArtifact(workflow.id, StageId.VERIFY).orEmpty()
+        val runEvent = storage.listAuditEvents(workflow.id).getOrThrow()
+            .last { event -> event.eventType == SpecAuditEventType.VERIFICATION_RUN_COMPLETED }
+        val expectedExecutable = javaExecutable().fileName.toString()
+
+        assertTrue(verificationDocument.contains("Command preview redacted: `yes`"))
+        assertTrue(verificationDocument.contains("Authorization: Bearer <redacted>"))
+        assertTrue(verificationDocument.contains("{\"apiKey\":\"<redacted>\"}"))
+        assertFalse(verificationDocument.contains("ghp_super-secret"))
+        assertFalse(verificationDocument.contains("sk-live-secret"))
+        assertEquals("java-echo-secret-arg=$expectedExecutable", runEvent.details["commandExecutables"])
+        assertEquals("java-echo-secret-arg=.", runEvent.details["commandWorkingDirectories"])
+        assertEquals("java-echo-secret-arg", runEvent.details["commandPreviewRedactedIds"])
+        assertEquals("java-echo-secret-arg=7", runEvent.details["commandRedactionRuleCounts"])
+        val digestEntry = runEvent.details["commandSecurityDigests"].orEmpty()
+        assertTrue(digestEntry.startsWith("java-echo-secret-arg="))
+        assertEquals(64, digestEntry.substringAfter('=').length)
+    }
+
+    @Test
     fun `run should record failure conclusion when command exits non-zero`() {
         writeVerifyConfig(
             commandId = "java-fail",

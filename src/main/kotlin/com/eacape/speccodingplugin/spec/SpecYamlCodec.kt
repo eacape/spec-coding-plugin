@@ -6,12 +6,14 @@ import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.constructor.SafeConstructor
 import org.yaml.snakeyaml.events.AliasEvent
 import org.yaml.snakeyaml.events.CollectionStartEvent
+import org.yaml.snakeyaml.events.DocumentStartEvent
 import org.yaml.snakeyaml.events.MappingEndEvent
 import org.yaml.snakeyaml.events.MappingStartEvent
 import org.yaml.snakeyaml.events.NodeEvent
 import org.yaml.snakeyaml.events.ScalarEvent
 import org.yaml.snakeyaml.events.SequenceEndEvent
 import org.yaml.snakeyaml.events.SequenceStartEvent
+import org.yaml.snakeyaml.error.YAMLException
 import org.yaml.snakeyaml.parser.ParserImpl
 import org.yaml.snakeyaml.reader.StreamReader
 import java.io.StringWriter
@@ -74,7 +76,11 @@ internal object SpecYamlCodec {
             return null
         }
         validateBlockedFeatures(raw)
-        val loaded = loadYaml.load<Any?>(raw)
+        val loaded = try {
+            loadYaml.load<Any?>(raw)
+        } catch (error: YAMLException) {
+            throw IllegalArgumentException(error.message ?: "Invalid YAML content.", error)
+        }
         validateNodeValue(loaded, "$")
         return normalizeNode(loaded)
     }
@@ -90,6 +96,7 @@ internal object SpecYamlCodec {
     private fun validateBlockedFeatures(raw: String) {
         val parser = ParserImpl(StreamReader(raw), parseLoaderOptions)
         val stack = ArrayDeque<ContainerState>()
+        var documentCount = 0
 
         fun consumeNodeInParent() {
             val parent = stack.peekLast() ?: return
@@ -110,6 +117,13 @@ internal object SpecYamlCodec {
             }
 
             when (event) {
+                is DocumentStartEvent -> {
+                    documentCount += 1
+                    if (documentCount > 1) {
+                        throw IllegalArgumentException("YAML multi-document streams are not allowed.")
+                    }
+                }
+
                 is ScalarEvent -> {
                     if (event.tag != null) {
                         throw IllegalArgumentException("YAML type tags are not allowed.")

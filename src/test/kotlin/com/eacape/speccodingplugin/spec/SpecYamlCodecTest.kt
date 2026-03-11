@@ -68,6 +68,37 @@ class SpecYamlCodecTest {
     }
 
     @Test
+    fun `decodeMap should reject duplicate keys`() {
+        val raw = """
+            verify:
+              timeoutMs: 1000
+              timeoutMs: 2000
+        """.trimIndent()
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            SpecYamlCodec.decodeMap(raw)
+        }
+
+        assertTrue(error.message.orEmpty().contains("duplicate", ignoreCase = true))
+    }
+
+    @Test
+    fun `decodeMap should reject multi document streams`() {
+        val raw = """
+            schemaVersion: 1
+            ---
+            verify:
+              commands: []
+        """.trimIndent()
+
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            SpecYamlCodec.decodeMap(raw)
+        }
+
+        assertTrue(error.message.orEmpty().contains("multi-document", ignoreCase = true))
+    }
+
+    @Test
     fun `encodeMap should be stable across insertion order`() {
         val first = linkedMapOf<String, Any?>(
             "z" to 3,

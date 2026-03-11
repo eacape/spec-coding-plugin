@@ -504,7 +504,15 @@ class SpecTasksService(private val project: Project) {
     }
 
     private fun normalizeRelatedFile(taskId: String, rawPath: String, projectRoot: Path): String {
-        val unifiedPath = rawPath.trim().replace('\\', '/')
+        val trimmedPath = rawPath.trim()
+        if (trimmedPath.any { character -> character == '\u0000' || character == '\r' || character == '\n' }) {
+            throw InvalidTaskRelatedFileError(
+                taskId,
+                rawPath,
+                "path must not contain line breaks or NUL characters",
+            )
+        }
+        val unifiedPath = trimmedPath.replace('\\', '/')
         val resolvedPath = try {
             val candidate = if (isAbsolutePath(unifiedPath)) {
                 Path.of(unifiedPath)

@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.spec
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.time.Instant
 
@@ -357,6 +358,7 @@ class SpecVerificationService(private val project: Project) {
         val redactedCommandIds = commandResults
             .filter(VerifyCommandExecutionResult::redacted)
             .map(VerifyCommandExecutionResult::commandId)
+        val commandSecurityAudits = plan.commands.map(::buildCommandSecurityAudit)
         return linkedMapOf(
             "planId" to plan.planId,
             "runId" to runId,
@@ -369,6 +371,21 @@ class SpecVerificationService(private val project: Project) {
             "failedCommandIds" to failedCommandIds.joinToString(", "),
             "truncatedCommandIds" to truncatedCommandIds.joinToString(", "),
             "redactedCommandIds" to redactedCommandIds.joinToString(", "),
+            "commandExecutables" to commandSecurityAudits.joinToString(", ") { audit ->
+                "${audit.commandId}=${audit.executable}"
+            },
+            "commandWorkingDirectories" to commandSecurityAudits.joinToString(", ") { audit ->
+                "${audit.commandId}=${audit.workingDirectory}"
+            },
+            "commandSecurityDigests" to commandSecurityAudits.joinToString(", ") { audit ->
+                "${audit.commandId}=${audit.digest}"
+            },
+            "commandRedactionRuleCounts" to commandSecurityAudits.joinToString(", ") { audit ->
+                "${audit.commandId}=${audit.redactionRuleCount}"
+            },
+            "commandPreviewRedactedIds" to commandSecurityAudits
+                .filter(CommandSecurityAudit::previewRedacted)
+                .joinToString(", ") { audit -> audit.commandId },
             "verificationFile" to verificationDocumentPath.fileName.toString(),
             "summary" to summary,
         )
@@ -418,6 +435,11 @@ class SpecVerificationService(private val project: Project) {
             } else {
                 commandResults.forEach { commandResult ->
                     val planCommand = commandsById.getValue(commandResult.commandId)
+                    val sanitizedCommand = processRunner.sanitizeCommandForDisplay(
+                        commandId = planCommand.commandId,
+                        command = planCommand.command,
+                        customPatterns = planCommand.redactionPatterns,
+                    )
                     append("\n### ${planCommand.commandId}: ${planCommand.displayName ?: planCommand.commandId}\n")
                     append("- Working directory: `${normalizePath(planCommand.workingDirectory)}`\n")
                     append("- Timeout: `${planCommand.timeoutMs} ms`\n")
@@ -426,7 +448,8 @@ class SpecVerificationService(private val project: Project) {
                     append("- Duration: `${commandResult.durationMs} ms`\n")
                     append("- Redacted: `${if (commandResult.redacted) "yes" else "no"}`\n")
                     append("- Truncated: `${if (commandResult.truncated) "yes" else "no"}`\n\n")
-                    append(renderCodeBlock("bash", renderCommand(planCommand.command)))
+                    append("- Command preview redacted: `${if (sanitizedCommand.redacted) "yes" else "no"}`\n\n")
+                    append(renderCodeBlock("bash", sanitizedCommand.text))
                     if (commandResult.stdout.isNotBlank()) {
                         append("\n#### stdout\n\n")
                         append(renderCodeBlock("text", commandResult.stdout))
@@ -452,6 +475,22 @@ class SpecVerificationService(private val project: Project) {
         }
     }
 
+    private fun buildCommandSecurityAudit(command: VerifyPlanCommand): CommandSecurityAudit {
+        val sanitizedPreview = processRunner.sanitizeCommandForDisplay(
+            commandId = command.commandId,
+            command = command.command,
+            customPatterns = command.redactionPatterns,
+        )
+        return CommandSecurityAudit(
+            commandId = command.commandId,
+            executable = executableName(command.command),
+            workingDirectory = normalizeAuditWorkingDirectory(command.workingDirectory),
+            digest = processRunner.commandFingerprint(command.command),
+            redactionRuleCount = processRunner.effectiveRedactionRuleCount(command.redactionPatterns),
+            previewRedacted = sanitizedPreview.redacted,
+        )
+    }
+
     private fun formatOutcome(commandResult: VerifyCommandExecutionResult): String {
         return when {
             commandResult.timedOut -> "TIMEOUT"
@@ -460,13 +499,12 @@ class SpecVerificationService(private val project: Project) {
         }
     }
 
-    private fun renderCommand(command: List<String>): String {
-        return command.joinToString(" ") { token ->
-            if (token.any(Char::isWhitespace)) {
-                "\"${token.replace("\"", "\\\"")}\""
-            } else {
-                token
-            }
+    private fun executableName(command: List<String>): String {
+        val executable = command.firstOrNull().orEmpty()
+        return try {
+            Path.of(executable).fileName?.toString().orEmpty().ifBlank { executable }
+        } catch (_: InvalidPathException) {
+            executable
         }
     }
 
@@ -494,6 +532,17 @@ class SpecVerificationService(private val project: Project) {
 
     private fun normalizePath(path: Path): String {
         return path.toString().replace('\\', '/')
+    }
+
+    private fun normalizeAuditWorkingDirectory(path: Path): String {
+        val projectRoot = resolveProjectRoot()
+        if (!path.startsWith(projectRoot)) {
+            return normalizePath(path)
+        }
+        val relative = projectRoot.relativize(path)
+            .joinToString(separator = "/") { segment -> segment.toString() }
+            .trim()
+        return if (relative.isEmpty()) "." else relative
     }
 
     private fun parseCsvList(raw: String?): List<String> {
@@ -530,6 +579,15 @@ class SpecVerificationService(private val project: Project) {
         val currentStage: StageId,
         val verifyEnabled: Boolean,
         val configPinHash: String?,
+    )
+
+    private data class CommandSecurityAudit(
+        val commandId: String,
+        val executable: String,
+        val workingDirectory: String,
+        val digest: String,
+        val redactionRuleCount: Int,
+        val previewRedacted: Boolean,
     )
 
     companion object {

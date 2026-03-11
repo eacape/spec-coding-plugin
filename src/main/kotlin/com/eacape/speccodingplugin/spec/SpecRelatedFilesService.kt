@@ -92,6 +92,9 @@ class SpecRelatedFilesService : Disposable {
         if (trimmed.isEmpty()) {
             return null
         }
+        if (trimmed.any { character -> character == '\u0000' || character == '\r' || character == '\n' }) {
+            return null
+        }
         val unifiedPath = trimmed.replace('\\', '/')
         val resolvedPath = try {
             val candidate = if (isAbsolutePath(unifiedPath)) {

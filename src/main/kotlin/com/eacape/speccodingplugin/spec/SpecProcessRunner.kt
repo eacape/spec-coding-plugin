@@ -6,10 +6,16 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 class SpecProcessRunner {
+
+    data class SanitizedDisplayCommand(
+        val text: String,
+        val redacted: Boolean,
+    )
 
     fun prepare(
         projectRoot: Path,
@@ -20,10 +26,9 @@ class SpecProcessRunner {
         val commandId = command.id.trim()
             .takeIf(String::isNotEmpty)
             ?: throw InvalidVerifyCommandError(null, "id must be a non-blank string")
+        requireSafeInlineText(commandId, "id", commandId)
         val normalizedCommand = command.command.mapIndexed { index, token ->
-            token.trim()
-                .takeIf(String::isNotEmpty)
-                ?: throw InvalidVerifyCommandError(commandId, "command[$index] must be a non-blank string")
+            normalizeCommandToken(commandId, index, token)
         }
         if (normalizedCommand.isEmpty()) {
             throw InvalidVerifyCommandError(commandId, "command must contain at least one token")
@@ -46,7 +51,7 @@ class SpecProcessRunner {
 
         return VerifyCommandExecutionRequest(
             commandId = commandId,
-            displayName = command.displayName?.trim()?.takeIf(String::isNotEmpty),
+            displayName = normalizeDisplayName(commandId, command.displayName),
             command = normalizedCommand,
             workingDirectory = workingDirectory,
             timeoutMs = timeoutMs,
@@ -110,13 +115,15 @@ class SpecProcessRunner {
         if (request.commandId.isBlank()) {
             throw InvalidVerifyCommandError(null, "commandId must be a non-blank string")
         }
+        requireSafeInlineText(request.commandId, "commandId", request.commandId)
         if (request.command.isEmpty()) {
             throw InvalidVerifyCommandError(request.commandId, "command must contain at least one token")
         }
         request.command.forEachIndexed { index, token ->
-            if (token.isBlank()) {
-                throw InvalidVerifyCommandError(request.commandId, "command[$index] must be a non-blank string")
-            }
+            normalizeCommandToken(request.commandId, index, token)
+        }
+        request.displayName?.let { displayName ->
+            normalizeDisplayName(request.commandId, displayName)
         }
         requirePositive(request.commandId, "timeoutMs", request.timeoutMs)
         requirePositive(request.commandId, "outputLimitChars", request.outputLimitChars)
@@ -139,6 +146,7 @@ class SpecProcessRunner {
         val normalizedWorkingDirectory = workingDirectory.trim()
             .takeIf(String::isNotEmpty)
             ?: throw InvalidVerifyCommandError(commandId, "workingDirectory must be a non-blank string")
+        requireSafeInlineText(commandId, "workingDirectory", normalizedWorkingDirectory)
         val resolvedPath = try {
             val candidate = Path.of(normalizedWorkingDirectory)
             if (candidate.isAbsolute) {
@@ -168,6 +176,33 @@ class SpecProcessRunner {
         }
     }
 
+    internal fun sanitizeCommandForDisplay(
+        commandId: String,
+        command: List<String>,
+        customPatterns: List<String>,
+    ): SanitizedDisplayCommand {
+        val renderedCommand = command.joinToString(" ") { token -> quoteCommandToken(token) }
+        val redactedCommand = redact(renderedCommand, compileRedactionRules(commandId, customPatterns))
+        return SanitizedDisplayCommand(
+            text = redactedCommand.text,
+            redacted = redactedCommand.redacted,
+        )
+    }
+
+    internal fun commandFingerprint(command: List<String>): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(command.joinToString(separator = "\u0000").toByteArray(StandardCharsets.UTF_8))
+        return digest.joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
+    internal fun effectiveRedactionRuleCount(customPatterns: List<String>): Int {
+        return DEFAULT_REDACTION_RULES.size + customPatterns
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .size
+    }
+
     private fun validateRedactionPatterns(commandId: String, patterns: List<String>) {
         compileCustomRedactionRules(commandId, patterns)
     }
@@ -186,6 +221,36 @@ class SpecProcessRunner {
                     "redaction pattern '$pattern' is invalid: ${error.message ?: pattern}",
                 )
             }
+        }
+    }
+
+    private fun normalizeCommandToken(
+        commandId: String,
+        index: Int,
+        token: String,
+    ): String {
+        val normalizedToken = token.trim()
+            .takeIf(String::isNotEmpty)
+            ?: throw InvalidVerifyCommandError(commandId, "command[$index] must be a non-blank string")
+        requireSafeInlineText(commandId, "command[$index]", normalizedToken)
+        return normalizedToken
+    }
+
+    private fun normalizeDisplayName(
+        commandId: String,
+        displayName: String?,
+    ): String? {
+        val normalizedDisplayName = displayName?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        requireSafeInlineText(commandId, "displayName", normalizedDisplayName)
+        return normalizedDisplayName
+    }
+
+    private fun requireSafeInlineText(commandId: String, fieldName: String, value: String) {
+        if (value.any { character -> character == '\u0000' || character == '\r' || character == '\n' }) {
+            throw InvalidVerifyCommandError(
+                commandId,
+                "$fieldName must not contain line breaks or NUL characters",
+            )
         }
     }
 
@@ -231,6 +296,14 @@ class SpecProcessRunner {
             text = updatedText,
             redacted = redacted,
         )
+    }
+
+    private fun quoteCommandToken(token: String): String {
+        return if (token.any(Char::isWhitespace)) {
+            "\"${token.replace("\"", "\\\"")}\""
+        } else {
+            token
+        }
     }
 
     private data class OutputCapture(
@@ -293,12 +366,32 @@ class SpecProcessRunner {
                 replacement = "${'$'}1$REDACTED_VALUE",
             ),
             RedactionRule(
+                pattern = Regex("(?i)(authorization\\s*[:=]\\s*basic\\s+)([^\\s]+)"),
+                replacement = "${'$'}1$REDACTED_VALUE",
+            ),
+            RedactionRule(
                 pattern = Regex("(?i)(bearer\\s+)([A-Za-z0-9._-]+)"),
                 replacement = "${'$'}1$REDACTED_VALUE",
             ),
             RedactionRule(
-                pattern = Regex("(?i)\\b(api[_-]?key|token|secret|password|passwd|pwd)\\b(\\s*[:=]\\s*)([^\\s]+)"),
+                pattern = Regex(
+                    "(?i)\\b(api[_-]?key|x-api-key|token|access[_-]?token|refresh[_-]?token|session(?:[_-]?id)?|secret|password|passwd|pwd)\\b(\\s*[:=]\\s*)([^\\s,;&]+)",
+                ),
                 replacement = "${'$'}1${'$'}2$REDACTED_VALUE",
+            ),
+            RedactionRule(
+                pattern = Regex(
+                    "(?i)([\"'](?:api[_-]?key|access[_-]?token|refresh[_-]?token|session(?:[_-]?id)?|token|secret|password|passwd|pwd)[\"']\\s*:\\s*[\"'])([^\"']+)([\"'])",
+                ),
+                replacement = "${'$'}1$REDACTED_VALUE${'$'}3",
+            ),
+            RedactionRule(
+                pattern = Regex("(?i)((?:https?|ssh)://[^\\s/@:]+:)([^@\\s/]+)(@)"),
+                replacement = "${'$'}1$REDACTED_VALUE${'$'}3",
+            ),
+            RedactionRule(
+                pattern = Regex("\\b(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|glpat-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]+)\\b"),
+                replacement = REDACTED_VALUE,
             ),
         )
     }

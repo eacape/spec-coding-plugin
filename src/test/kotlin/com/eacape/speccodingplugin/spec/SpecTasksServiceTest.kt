@@ -584,6 +584,40 @@ class SpecTasksServiceTest {
     }
 
     @Test
+    fun `updateRelatedFiles should reject paths with line breaks without touching artifact or audit`() {
+        val workflowId = "wf-tasks-related-files-line-break"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: First task
+            ```spec-task
+            status: IN_PROGRESS
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+        val originalPersisted = artifactService.readArtifact(workflowId, StageId.TASKS)
+
+        val error = assertThrows(InvalidTaskRelatedFileError::class.java) {
+            tasksService.updateRelatedFiles(
+                workflowId = workflowId,
+                taskId = "T-001",
+                files = listOf("src/main/kotlin/App.kt\nmalicious.yaml"),
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("line breaks or NUL"))
+        assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))
+        assertTrue(storage.listAuditEvents(workflowId).getOrThrow().isEmpty())
+    }
+
+    @Test
     fun `updateVerificationResult should serialize deterministically and append audit event`() {
         val workflowId = "wf-tasks-verification-result-update"
         val markdown = """

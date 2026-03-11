@@ -88,6 +88,33 @@ class SpecRelatedFilesServiceTest {
     }
 
     @Test
+    fun `suggestRelatedFiles should ignore candidates with line breaks or escaped roots`() {
+        val service = SpecRelatedFilesService(
+            project = project,
+            vcsSource = object : RelatedFilesCandidateSource {
+                override fun snapshotProjectRelativePaths(): List<String> {
+                    return listOf(
+                        "src/main/kotlin/Safe.kt",
+                        "src/main/kotlin/Bad.kt\nmalicious.yaml",
+                    )
+                }
+            },
+            fileEventSource = object : RelatedFilesCandidateSource {
+                override fun snapshotProjectRelativePaths(): List<String> {
+                    return listOf("../outside.txt")
+                }
+            },
+        )
+
+        val suggestions = service.suggestRelatedFiles(
+            taskId = "T-001",
+            existingRelatedFiles = listOf("src/test/kotlin/ExistingTest.kt\r\nnext"),
+        )
+
+        assertEquals(listOf("src/main/kotlin/Safe.kt"), suggestions)
+    }
+
+    @Test
     fun `git status candidate source should report modified and untracked files`() {
         Git.init().setDirectory(tempDir.toFile()).call().use { git ->
             val srcDir = tempDir.resolve("src")

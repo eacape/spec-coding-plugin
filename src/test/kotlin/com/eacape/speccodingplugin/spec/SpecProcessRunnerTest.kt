@@ -64,6 +64,24 @@ class SpecProcessRunnerTest {
     }
 
     @Test
+    fun `prepare should reject command tokens with line breaks`() {
+        val projectRoot = Files.createDirectories(tempDir.resolve("project"))
+
+        val error = assertThrows(InvalidVerifyCommandError::class.java) {
+            runner.prepare(
+                projectRoot = projectRoot,
+                verifyConfig = SpecVerifyConfig(),
+                command = SpecVerifyCommand(
+                    id = "bad-command",
+                    command = listOf("gradle", "test\n--offline"),
+                ),
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("line breaks or NUL", ignoreCase = true))
+    }
+
+    @Test
     fun `execute should redact sensitive output and truncate long streams`() {
         val projectRoot = Files.createDirectories(tempDir.resolve("project"))
 
@@ -89,6 +107,58 @@ class SpecProcessRunnerTest {
         assertFalse(result.stderr.contains("hunter2"))
         assertTrue(result.stdoutTruncated)
         assertTrue(result.stdout.contains("[truncated"))
+    }
+
+    @Test
+    fun `execute should redact extended secret formats`() {
+        val projectRoot = Files.createDirectories(tempDir.resolve("project"))
+
+        val request = runner.prepare(
+            projectRoot = projectRoot,
+            verifyConfig = SpecVerifyConfig(
+                defaultOutputLimitChars = 4_096,
+            ),
+            command = SpecVerifyCommand(
+                id = "echo-extended",
+                command = javaCommand(projectRoot, "echo-extended"),
+            ),
+        )
+
+        val result = runner.execute(request)
+
+        assertEquals(0, result.exitCode)
+        assertTrue(result.redacted)
+        assertTrue(result.stdout.contains("Authorization: Basic <redacted>"))
+        assertTrue(result.stdout.contains("{\"apiKey\":\"<redacted>\",\"access_token\":\"<redacted>\"}"))
+        assertTrue(result.stdout.contains("https://user:<redacted>@example.com/resource"))
+        assertFalse(result.stdout.contains("dXNlcjpwYXNz"))
+        assertFalse(result.stdout.contains("sk-live-secret"))
+        assertFalse(result.stdout.contains("ghp_secretToken"))
+        assertFalse(result.stdout.contains("super-secret"))
+    }
+
+    @Test
+    fun `sanitizeCommandForDisplay should redact inline command arguments`() {
+        val sanitized = runner.sanitizeCommandForDisplay(
+            commandId = "curl",
+            command = listOf(
+                "curl",
+                "-H",
+                "Authorization: Bearer ghp_super-secret",
+                "--data",
+                "{\"apiKey\":\"sk-live-secret\"}",
+                "https://user:super-secret@example.com/resource",
+            ),
+            customPatterns = emptyList(),
+        )
+
+        assertTrue(sanitized.redacted)
+        assertTrue(sanitized.text.contains("Authorization: Bearer <redacted>"))
+        assertTrue(sanitized.text.contains("{\"apiKey\":\"<redacted>\"}"))
+        assertTrue(sanitized.text.contains("https://user:<redacted>@example.com/resource"))
+        assertFalse(sanitized.text.contains("ghp_super-secret"))
+        assertFalse(sanitized.text.contains("sk-live-secret"))
+        assertFalse(sanitized.text.contains("super-secret@example.com"))
     }
 
     @Test
@@ -137,6 +207,12 @@ class SpecProcessRunnerTest {
                         System.out.println("token=super-secret-token");
                         System.out.println("payload=" + "A".repeat(256));
                         System.err.println("password=hunter2");
+                        return;
+                    }
+                    if ("echo-extended".equals(mode)) {
+                        System.out.println("Authorization: Basic dXNlcjpwYXNz");
+                        System.out.println("{\"apiKey\":\"sk-live-secret\",\"access_token\":\"ghp_secretToken\"}");
+                        System.out.println("https://user:super-secret@example.com/resource");
                         return;
                     }
                     if ("sleep".equals(mode)) {

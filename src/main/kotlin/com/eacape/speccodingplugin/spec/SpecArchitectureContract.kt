@@ -91,8 +91,8 @@ object SpecArchitectureContract {
         DependencyDecision(
             key = "security",
             capability = "storage and audit security hardening",
-            selection = "atomic writes + lock manager + append-only YAML audit stream",
-            rationale = "Task 04/05/08 establish baseline hardening; Task 51 extends rule coverage.",
+            selection = "atomic writes + lock manager + append-only YAML audit stream + project-root-safe path normalization + sanitized verify command auditing",
+            rationale = "Task 04/05/08 establish baseline hardening; Task 51 extends it with relatedFiles path input guards, non-secret verify audit metadata, broader redaction coverage, and stricter YAML stream restrictions.",
             status = AdoptionStatus.ADOPTED,
         ),
         DependencyDecision(
