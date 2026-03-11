@@ -40,6 +40,8 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
         private val CHANGES_TITLE_ICON =
             IconLoader.getIcon("/icons/toolwindow-changes.svg", ChatToolWindowFactory::class.java)
 
+        internal fun isPrimaryContent(content: Content?): Boolean = isChatContent(content) || isSpecContent(content)
+
         internal fun isChatContent(content: Content?): Boolean = content?.getUserData(CHAT_CONTENT_KEY) == true
 
         internal fun isSpecContent(content: Content?): Boolean = content?.getUserData(SPEC_CONTENT_KEY) == true
@@ -87,6 +89,8 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
                 matcher = ::isSpecContent,
                 create = { createSpecContent(project) },
             )
+            chatContent.displayName = SpecCodingBundle.message("toolwindow.tab.chat")
+            specContent.displayName = SpecCodingBundle.message("spec.tab.title")
             return PrimaryContents(
                 chatContent = chatContent,
                 specContent = specContent,
@@ -240,6 +244,16 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
 
         val contentManager = toolWindow.contentManager
         contentManager.addContentManagerListener(object : ContentManagerListener {
+            override fun contentRemoved(event: ContentManagerEvent) {
+                if (!isPrimaryContent(event.content)) {
+                    return
+                }
+                SwingUtilities.invokeLater {
+                    if (project.isDisposed) return@invokeLater
+                    ensurePrimaryContents(project, toolWindow)
+                }
+            }
+
             override fun selectionChanged(event: ContentManagerEvent) {
                 val selectedContent = event.content ?: return
                 val selectedTabTitle = selectedContent.displayName
@@ -289,6 +303,7 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
             restoredTabTitle == SpecCodingBundle.message("toolwindow.tab.chat") -> selectChatContent(toolWindow, project)
             else -> contentManager.contents.firstOrNull { it.displayName == restoredTabTitle }
                 ?.let(contentManager::setSelectedContent)
+                ?: selectChatContent(toolWindow, project)
         }
     }
 

@@ -16,14 +16,27 @@ import java.nio.file.Path
 import java.time.Duration
 
 @Service(Service.Level.PROJECT)
-class SpecRelatedFilesService(
-    private val project: Project,
-    private val vcsSource: RelatedFilesCandidateSource = GitStatusCandidateSource(project),
-    private val fileEventSource: RelatedFilesCandidateSource = VfsEventCandidateSource(project),
-) : Disposable {
+class SpecRelatedFilesService : Disposable {
+    private val project: Project
+    private val vcsSource: RelatedFilesCandidateSource
+    private val fileEventSource: RelatedFilesCandidateSource
     private val logger = thisLogger()
 
-    init {
+    constructor(project: Project) : this(
+        project = project,
+        vcsSource = GitStatusCandidateSource(project),
+        fileEventSource = VfsEventCandidateSource(project),
+    )
+
+    internal constructor(
+        project: Project,
+        vcsSource: RelatedFilesCandidateSource,
+        fileEventSource: RelatedFilesCandidateSource,
+    ) {
+        this.project = project
+        this.vcsSource = vcsSource
+        this.fileEventSource = fileEventSource
+
         if (fileEventSource is Disposable) {
             Disposer.register(this, fileEventSource)
         }

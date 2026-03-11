@@ -614,12 +614,7 @@ internal object SpecWorkflowActionSupport {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID) ?: return
         toolWindow.show {
             ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
-            if (!ChatToolWindowFactory.selectSpecContent(toolWindow, project)) {
-                val specTitle = SpecCodingBundle.message("spec.tab.title")
-                toolWindow.contentManager.contents
-                    .firstOrNull { it.displayName == specTitle }
-                    ?.let(toolWindow.contentManager::setSelectedContent)
-            }
+            ChatToolWindowFactory.selectSpecContent(toolWindow, project)
             toolWindow.activate(null)
             ApplicationManager.getApplication().invokeLater(afterOpen)
         }

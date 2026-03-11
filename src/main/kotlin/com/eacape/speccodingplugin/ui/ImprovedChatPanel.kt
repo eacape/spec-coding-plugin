@@ -2800,13 +2800,7 @@ class ImprovedChatPanel(
                 ?: return@invokeLater
             toolWindow.activate(null)
             ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
-            if (ChatToolWindowFactory.selectSpecContent(toolWindow, project)) {
-                return@invokeLater
-            }
-            val specTabTitle = SpecCodingBundle.message("spec.tab.title")
-            toolWindow.contentManager.contents
-                .firstOrNull { it.displayName == specTabTitle }
-                ?.let(toolWindow.contentManager::setSelectedContent)
+            ChatToolWindowFactory.selectSpecContent(toolWindow, project)
         }
     }
 

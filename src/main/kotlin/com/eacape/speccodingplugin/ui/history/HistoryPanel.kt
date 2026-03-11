@@ -225,13 +225,7 @@ class HistoryPanel(
             val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ChatToolWindowFactory.TOOL_WINDOW_ID)
                 ?: return
             ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
-            if (!ChatToolWindowFactory.selectChatContent(toolWindow, project)) {
-                val chatTitle = SpecCodingBundle.message("toolwindow.tab.chat")
-                val chatContent = toolWindow.contentManager.contents.firstOrNull {
-                    it.displayName == chatTitle
-                } ?: return
-                toolWindow.contentManager.setSelectedContent(chatContent, true)
-            }
+            if (!ChatToolWindowFactory.selectChatContent(toolWindow, project)) return
             toolWindow.activate(null)
         }
     }
