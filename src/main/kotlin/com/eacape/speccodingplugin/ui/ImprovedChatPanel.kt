@@ -2796,13 +2796,17 @@ class ImprovedChatPanel(
                 return@invokeLater
             }
 
-            val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Spec Code") ?: return@invokeLater
+            val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ChatToolWindowFactory.TOOL_WINDOW_ID)
+                ?: return@invokeLater
             toolWindow.activate(null)
-            val specTabTitle = SpecCodingBundle.message("spec.tab.title")
-            val target = toolWindow.contentManager.contents.firstOrNull { it.displayName == specTabTitle }
-            if (target != null) {
-                toolWindow.contentManager.setSelectedContent(target)
+            ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
+            if (ChatToolWindowFactory.selectSpecContent(toolWindow, project)) {
+                return@invokeLater
             }
+            val specTabTitle = SpecCodingBundle.message("spec.tab.title")
+            toolWindow.contentManager.contents
+                .firstOrNull { it.displayName == specTabTitle }
+                ?.let(toolWindow.contentManager::setSelectedContent)
         }
     }
 

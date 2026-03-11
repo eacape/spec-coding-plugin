@@ -32,17 +32,23 @@ class HookFileSaveListener(
                 ?.let { toRelativePath(it, basePath) }
                 ?: return@forEach
 
-            runCatching {
-                hookManagerProvider(project).trigger(
-                    event = HookEvent.FILE_SAVED,
-                    triggerContext = HookTriggerContext(
-                        filePath = projectRelativePath,
-                        metadata = mapOf(
-                            "absolutePath" to filePath,
-                            "projectName" to project.name,
-                        ),
-                    ),
-                )
+            val triggerContext = HookTriggerContext(
+                filePath = projectRelativePath,
+                metadata = mapOf(
+                    "absolutePath" to filePath,
+                    "projectName" to project.name,
+                ),
+            )
+            application.executeOnPooledThread {
+                if (project.isDisposed) {
+                    return@executeOnPooledThread
+                }
+                runCatching {
+                    hookManagerProvider(project).trigger(
+                        event = HookEvent.FILE_SAVED,
+                        triggerContext = triggerContext,
+                    )
+                }
             }
         }
     }

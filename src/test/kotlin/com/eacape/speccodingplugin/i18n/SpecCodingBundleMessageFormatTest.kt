@@ -28,4 +28,17 @@ class SpecCodingBundleMessageFormatTest {
         assertFalse(text.startsWith("!"))
         assertFalse(text.endsWith("!"))
     }
+
+    @Test
+    fun `spec entry labels should resolve to visible text`() {
+        val specTabTitle = SpecCodingBundle.message("spec.tab.title")
+        val openSpecLabel = SpecCodingBundle.message("toolwindow.spec.quick.open")
+
+        assertTrue(specTabTitle.isNotBlank())
+        assertFalse(specTabTitle.startsWith("!"))
+        assertFalse(specTabTitle.endsWith("!"))
+        assertTrue(openSpecLabel.isNotBlank())
+        assertFalse(openSpecLabel.startsWith("!"))
+        assertFalse(openSpecLabel.endsWith("!"))
+    }
 }

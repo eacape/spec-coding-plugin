@@ -8,42 +8,148 @@ import com.eacape.speccodingplugin.ui.worktree.WorktreePanel
 import com.eacape.speccodingplugin.window.WindowStateStore
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
-import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.DumbAwareAction
-import com.intellij.openapi.util.Key
-import com.intellij.openapi.util.IconLoader
-import com.intellij.openapi.wm.ToolWindow
-import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.util.IconLoader
+import com.intellij.openapi.util.Key
+import com.intellij.openapi.wm.ToolWindow
+import com.intellij.openapi.wm.ToolWindowContentUiType
+import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.openapi.wm.ex.ToolWindowEx
+import com.intellij.ui.content.Content
 import com.intellij.ui.content.ContentFactory
+import com.intellij.ui.content.ContentManager
 import com.intellij.ui.content.ContentManagerEvent
 import com.intellij.ui.content.ContentManagerListener
 import javax.swing.SwingUtilities
 
 class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
     companion object {
+        internal const val TOOL_WINDOW_ID = "Spec Code"
+        private val CHAT_CONTENT_KEY = Key.create<Boolean>("SpecCoding.ChatContent")
+        private val SPEC_CONTENT_KEY = Key.create<Boolean>("SpecCoding.SpecContent")
         private val CHANGES_CONTENT_KEY = Key.create<Boolean>("SpecCoding.ChangesContent")
         private val WORKTREE_CONTENT_KEY = Key.create<Boolean>("SpecCoding.WorktreeContent")
-        private val CHANGES_TITLE_ICON = IconLoader.getIcon("/icons/toolwindow-changes.svg", ChatToolWindowFactory::class.java)
+        private val CHANGES_TITLE_ICON =
+            IconLoader.getIcon("/icons/toolwindow-changes.svg", ChatToolWindowFactory::class.java)
+
+        internal fun isChatContent(content: Content?): Boolean = content?.getUserData(CHAT_CONTENT_KEY) == true
+
+        internal fun isSpecContent(content: Content?): Boolean = content?.getUserData(SPEC_CONTENT_KEY) == true
+
+        internal fun selectChatContent(toolWindow: ToolWindow, project: Project? = null): Boolean {
+            return selectContent(
+                toolWindow = toolWindow,
+                matcher = ::isChatContent,
+                ensureContent = project?.let { { ensurePrimaryContents(it, toolWindow).chatContent } },
+            )
+        }
+
+        internal fun selectSpecContent(toolWindow: ToolWindow, project: Project? = null): Boolean {
+            return selectContent(
+                toolWindow = toolWindow,
+                matcher = ::isSpecContent,
+                ensureContent = project?.let { { ensurePrimaryContents(it, toolWindow).specContent } },
+            )
+        }
+
+        internal fun selectContent(
+            toolWindow: ToolWindow,
+            matcher: (Content?) -> Boolean,
+            ensureContent: (() -> Content?)? = null,
+        ): Boolean {
+            ensureTabbedContentUi(toolWindow)
+            val contentManager = toolWindow.contentManager
+            val content = contentManager.contents.firstOrNull(matcher)
+                ?: ensureContent?.invoke()
+                ?: return false
+            contentManager.setSelectedContent(content)
+            return true
+        }
+
+        internal fun ensurePrimaryContents(project: Project, toolWindow: ToolWindow): PrimaryContents {
+            ensureTabbedContentUi(toolWindow)
+            val contentManager = toolWindow.contentManager
+            val chatContent = ensureContent(
+                contentManager = contentManager,
+                matcher = ::isChatContent,
+                create = { createChatContent(project) },
+            )
+            val specContent = ensureContent(
+                contentManager = contentManager,
+                matcher = ::isSpecContent,
+                create = { createSpecContent(project) },
+            )
+            return PrimaryContents(
+                chatContent = chatContent,
+                specContent = specContent,
+            )
+        }
+
+        internal fun ensureTabbedContentUi(toolWindow: ToolWindow) {
+            toolWindow.setDefaultContentUiType(ToolWindowContentUiType.TABBED)
+            if (toolWindow.contentUiType == ToolWindowContentUiType.TABBED) {
+                return
+            }
+            toolWindow.setContentUiType(ToolWindowContentUiType.TABBED, null)
+            (toolWindow as? ToolWindowEx)?.updateContentUi()
+        }
+
+        internal fun ensureContent(
+            contentManager: ContentManager,
+            matcher: (Content) -> Boolean,
+            create: () -> Content,
+        ): Content {
+            val existing = contentManager.contents.firstOrNull(matcher)
+            if (existing != null) {
+                return existing
+            }
+            return create().also(contentManager::addContent)
+        }
+
+        private fun createChatContent(project: Project): Content {
+            val chatPanel = ImprovedChatPanel(project)
+            return ContentFactory.getInstance()
+                .createContent(chatPanel, SpecCodingBundle.message("toolwindow.tab.chat"), false)
+                .also { content ->
+                    content.putUserData(CHAT_CONTENT_KEY, true)
+                    Disposer.register(content, chatPanel)
+                }
+        }
+
+        private fun createSpecContent(project: Project): Content {
+            val specPanel = SpecWorkflowPanel(project)
+            return ContentFactory.getInstance()
+                .createContent(specPanel, SpecCodingBundle.message("spec.tab.title"), false)
+                .also { content ->
+                    content.putUserData(SPEC_CONTENT_KEY, true)
+                    Disposer.register(content, specPanel)
+                }
+        }
     }
+
+    internal data class PrimaryContents(
+        val chatContent: Content,
+        val specContent: Content,
+    )
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         toolWindow.title = SpecCodingBundle.message("toolwindow.title")
+        ensureTabbedContentUi(toolWindow)
         val windowStateStore = WindowStateStore.getInstance(project)
-        lateinit var chatPanel: ImprovedChatPanel
 
-        // Tool Window 标题栏图标（从左到右：新建会话、历史会话、变更、worktree、设置）
         val newSessionTitleAction = object : DumbAwareAction() {
             override fun actionPerformed(e: AnActionEvent) {
                 if (project.isDisposed) return
-                focusChatTab(toolWindow)
-                chatPanel.requestNewSessionFromTitleAction()
+                focusChatTab(toolWindow, project)
+                currentChatPanel(toolWindow)?.requestNewSessionFromTitleAction()
             }
 
             override fun update(e: AnActionEvent) {
@@ -60,7 +166,7 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
         val openHistoryTitleAction = object : DumbAwareAction() {
             override fun actionPerformed(e: AnActionEvent) {
                 if (project.isDisposed) return
-                chatPanel.requestOpenHistoryFromTitleAction()
+                currentChatPanel(toolWindow)?.requestOpenHistoryFromTitleAction()
             }
 
             override fun update(e: AnActionEvent) {
@@ -130,27 +236,22 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
         }
         toolWindow.setTitleActions(titleActions)
 
-        val contentFactory = ContentFactory.getInstance()
-
-        // Chat 标签页
-        chatPanel = ImprovedChatPanel(project)
-        val chatContent = contentFactory.createContent(chatPanel, SpecCodingBundle.message("toolwindow.tab.chat"), false)
-        Disposer.register(chatContent, chatPanel)
-        toolWindow.contentManager.addContent(chatContent)
-
-        // Specs 标签页（Spec 工作流）
-        val specPanel = SpecWorkflowPanel(project)
-        val specContent = contentFactory.createContent(specPanel, SpecCodingBundle.message("spec.tab.title"), false)
-        Disposer.register(specContent, specPanel)
-        toolWindow.contentManager.addContent(specContent)
+        ensurePrimaryContents(project, toolWindow)
 
         val contentManager = toolWindow.contentManager
         contentManager.addContentManagerListener(object : ContentManagerListener {
             override fun selectionChanged(event: ContentManagerEvent) {
-                val selectedTabTitle = event.content?.displayName ?: return
+                val selectedContent = event.content ?: return
+                val selectedTabTitle = selectedContent.displayName
+                    .takeIf { it.isNotBlank() }
+                    ?: when {
+                        isChatContent(selectedContent) -> SpecCodingBundle.message("toolwindow.tab.chat")
+                        isSpecContent(selectedContent) -> SpecCodingBundle.message("spec.tab.title")
+                        else -> null
+                    }
                 windowStateStore.updateSelectedTabTitle(selectedTabTitle)
-                if (selectedTabTitle == SpecCodingBundle.message("spec.tab.title")) {
-                    specPanel.refreshWorkflows()
+                if (isSpecContent(selectedContent)) {
+                    (selectedContent.component as? SpecWorkflowPanel)?.refreshWorkflows()
                 }
             }
         })
@@ -163,8 +264,10 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
                         if (project.isDisposed) return@invokeLater
 
                         toolWindow.title = SpecCodingBundle.message("toolwindow.title")
-                        chatContent.displayName = SpecCodingBundle.message("toolwindow.tab.chat")
-                        specContent.displayName = SpecCodingBundle.message("spec.tab.title")
+                        ensurePrimaryContents(project, toolWindow).also { contents ->
+                            contents.chatContent.displayName = SpecCodingBundle.message("toolwindow.tab.chat")
+                            contents.specContent.displayName = SpecCodingBundle.message("spec.tab.title")
+                        }
                         updateTransientContentDisplayName(
                             toolWindow = toolWindow,
                             contentKey = CHANGES_CONTENT_KEY,
@@ -181,20 +284,27 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
         )
 
         val restoredTabTitle = windowStateStore.snapshot().selectedTabTitle
-        contentManager.contents.firstOrNull { it.displayName == restoredTabTitle }
-            ?.let(contentManager::setSelectedContent)
+        when {
+            restoredTabTitle == SpecCodingBundle.message("spec.tab.title") -> selectSpecContent(toolWindow, project)
+            restoredTabTitle == SpecCodingBundle.message("toolwindow.tab.chat") -> selectChatContent(toolWindow, project)
+            else -> contentManager.contents.firstOrNull { it.displayName == restoredTabTitle }
+                ?.let(contentManager::setSelectedContent)
+        }
     }
 
     override fun shouldBeAvailable(project: Project): Boolean {
         return true
     }
 
-    private fun focusChatTab(toolWindow: ToolWindow) {
-        val chatTitle = SpecCodingBundle.message("toolwindow.tab.chat")
-        toolWindow.contentManager.contents
-            .firstOrNull { it.displayName == chatTitle }
-            ?.let(toolWindow.contentManager::setSelectedContent)
+    private fun focusChatTab(toolWindow: ToolWindow, project: Project) {
+        selectChatContent(toolWindow, project)
         toolWindow.activate(null)
+    }
+
+    private fun currentChatPanel(toolWindow: ToolWindow): ImprovedChatPanel? {
+        return toolWindow.contentManager.contents
+            .firstOrNull(::isChatContent)
+            ?.component as? ImprovedChatPanel
     }
 
     private fun openOrSelectTransientContent(

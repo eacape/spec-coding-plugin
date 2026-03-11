@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.actions
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.ui.ChatToolWindowFactory
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -12,7 +13,10 @@ class OpenSpecCodingToolWindowAction : AnAction() {
         // ToolWindow lookup must use stable id from plugin.xml, not localized title.
         val toolWindowId = TOOL_WINDOW_ID
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(toolWindowId)
-        toolWindow?.show()
+        toolWindow?.show {
+            ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
+            toolWindow.activate(null)
+        }
     }
 
     override fun update(e: AnActionEvent) {
@@ -25,6 +29,6 @@ class OpenSpecCodingToolWindowAction : AnAction() {
     override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     companion object {
-        private const val TOOL_WINDOW_ID = "Spec Code"
+        private const val TOOL_WINDOW_ID = ChatToolWindowFactory.TOOL_WINDOW_ID
     }
 }

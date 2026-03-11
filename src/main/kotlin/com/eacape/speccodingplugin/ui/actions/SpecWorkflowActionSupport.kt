@@ -17,6 +17,7 @@ import com.eacape.speccodingplugin.spec.VerifyPlan
 import com.eacape.speccodingplugin.spec.VerifyPlanConfigSource
 import com.eacape.speccodingplugin.spec.VerifyRunResult
 import com.eacape.speccodingplugin.spec.WorkflowMeta
+import com.eacape.speccodingplugin.ui.ChatToolWindowFactory
 import com.eacape.speccodingplugin.ui.spec.SpecToolWindowControlListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedEvent
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedListener
@@ -41,7 +42,7 @@ import java.nio.file.Path
 import java.util.Locale
 
 internal object SpecWorkflowActionSupport {
-    private const val TOOL_WINDOW_ID = "Spec Code"
+    private const val TOOL_WINDOW_ID = ChatToolWindowFactory.TOOL_WINDOW_ID
     private const val MAX_GATE_VIOLATIONS = 5
     private const val MAX_VERIFY_COMMANDS = 5
     private const val MAX_VERIFY_TASKS = 5
@@ -612,10 +613,13 @@ internal object SpecWorkflowActionSupport {
     private fun openSpecTab(project: Project, afterOpen: () -> Unit) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID) ?: return
         toolWindow.show {
-            val specTitle = SpecCodingBundle.message("spec.tab.title")
-            toolWindow.contentManager.contents
-                .firstOrNull { it.displayName == specTitle }
-                ?.let(toolWindow.contentManager::setSelectedContent)
+            ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
+            if (!ChatToolWindowFactory.selectSpecContent(toolWindow, project)) {
+                val specTitle = SpecCodingBundle.message("spec.tab.title")
+                toolWindow.contentManager.contents
+                    .firstOrNull { it.displayName == specTitle }
+                    ?.let(toolWindow.contentManager::setSelectedContent)
+            }
             toolWindow.activate(null)
             ApplicationManager.getApplication().invokeLater(afterOpen)
         }

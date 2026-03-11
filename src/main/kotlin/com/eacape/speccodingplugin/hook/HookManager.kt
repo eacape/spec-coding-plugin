@@ -26,6 +26,7 @@ class HookManager internal constructor(
 
     private val executionLogs = CopyOnWriteArrayList<HookExecutionLog>()
     private val filePatternCache = ConcurrentHashMap<String, java.nio.file.PathMatcher>()
+    private val inFlightExecutionKeys = ConcurrentHashMap.newKeySet<String>()
 
     constructor(project: Project) : this(
         project = project,
@@ -60,9 +61,18 @@ class HookManager internal constructor(
 
         val executor = executorProvider()
         matchedHooks.forEach { hook ->
+            val executionKey = buildExecutionKey(hook, event, triggerContext)
+            if (!inFlightExecutionKeys.add(executionKey)) {
+                logger.debug("Skipping duplicate in-flight hook execution: ${hook.id} ($executionKey)")
+                return@forEach
+            }
             scope.launch {
-                val log = executor.execute(hook, triggerContext)
-                appendLog(log)
+                try {
+                    val log = executor.execute(hook, triggerContext)
+                    appendLog(log)
+                } finally {
+                    inFlightExecutionKeys.remove(executionKey)
+                }
             }
         }
     }
@@ -119,6 +129,19 @@ class HookManager internal constructor(
         } else {
             logger.warn("Hook execution failed: ${log.hookId} - ${log.message}")
         }
+    }
+
+    private fun buildExecutionKey(
+        hook: HookDefinition,
+        event: HookEvent,
+        triggerContext: HookTriggerContext,
+    ): String {
+        return listOf(
+            hook.id,
+            event.name,
+            triggerContext.filePath.orEmpty(),
+            triggerContext.specStage.orEmpty(),
+        ).joinToString("|")
     }
 
     override fun dispose() {

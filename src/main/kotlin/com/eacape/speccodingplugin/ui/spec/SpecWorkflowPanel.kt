@@ -128,6 +128,7 @@ class SpecWorkflowPanel(
     private val pendingClarificationRetryByWorkflowId = mutableMapOf<String, ClarificationRetryPayload>()
     private var activeGenerationJob: Job? = null
     private var activeGenerationRequest: ActiveGenerationRequest? = null
+    private var pendingDocumentReloadJob: Job? = null
 
     private var selectedWorkflowId: String? = null
     private var currentWorkflow: SpecWorkflow? = null
@@ -2547,10 +2548,21 @@ class SpecWorkflowPanel(
                     if (!containsCurrentWorkflowDocumentChange(events, basePath, workflowId)) {
                         return
                     }
-                    reloadCurrentWorkflow()
+                    scheduleDocumentReload(workflowId)
                 }
             },
         )
+    }
+
+    private fun scheduleDocumentReload(workflowId: String) {
+        pendingDocumentReloadJob?.cancel()
+        pendingDocumentReloadJob = scope.launch {
+            delay(DOCUMENT_RELOAD_DEBOUNCE_MILLIS)
+            if (_isDisposed || project.isDisposed || selectedWorkflowId != workflowId) {
+                return@launch
+            }
+            reloadCurrentWorkflow()
+        }
     }
 
     private fun containsCurrentWorkflowDocumentChange(
@@ -2959,6 +2971,7 @@ class SpecWorkflowPanel(
 
     override fun dispose() {
         _isDisposed = true
+        pendingDocumentReloadJob?.cancel()
         CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
         cancelActiveGenerationRequest("Spec workflow panel disposed")
         scope.cancel()
@@ -2998,6 +3011,7 @@ class SpecWorkflowPanel(
         private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")
+        private const val DOCUMENT_RELOAD_DEBOUNCE_MILLIS = 300L
         private val SPEC_DOCUMENT_FILE_NAMES = (SpecPhase.entries
             .map { it.outputFileName } + listOfNotNull(StageId.VERIFY.artifactFileName))
             .toSet()
