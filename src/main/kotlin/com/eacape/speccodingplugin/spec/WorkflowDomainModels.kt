@@ -527,6 +527,18 @@ data class TemplateSwitchRollbackResult(
     val afterSnapshotId: String? = null,
 )
 
+data class TemplateSwitchHistoryEntry(
+    val switchId: String,
+    val previewId: String? = null,
+    val fromTemplate: WorkflowTemplate,
+    val toTemplate: WorkflowTemplate,
+    val occurredAt: String,
+    val occurredAtEpochMs: Long,
+    val beforeSnapshotId: String? = null,
+    val generatedArtifacts: List<String> = emptyList(),
+    val rolledBack: Boolean = false,
+)
+
 enum class TaskPriority {
     P0,
     P1,

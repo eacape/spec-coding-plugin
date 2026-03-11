@@ -2,8 +2,12 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateStatus
+import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
 import com.eacape.speccodingplugin.spec.WorkflowStatus
+import com.eacape.speccodingplugin.spec.WorkflowTemplate
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.JBColor
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
@@ -16,6 +20,8 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import javax.swing.BorderFactory
+import javax.swing.BoxLayout
+import javax.swing.JButton
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingConstants
@@ -24,6 +30,8 @@ internal class SpecWorkflowOverviewPanel(
     onAdvanceRequested: () -> Unit = {},
     onJumpRequested: () -> Unit = {},
     onRollbackRequested: () -> Unit = {},
+    onTemplateSwitchRequested: (WorkflowTemplate) -> Unit = {},
+    onTemplateRollbackRequested: (TemplateSwitchHistoryEntry) -> Unit = {},
 ) : JPanel(BorderLayout(JBUI.scale(8), JBUI.scale(8))) {
     private val emptyLabel = JBLabel().apply {
         horizontalAlignment = SwingConstants.LEFT
@@ -40,6 +48,8 @@ internal class SpecWorkflowOverviewPanel(
 
     private val workflowValueLabel = createValueLabel()
     private val statusValueLabel = createValueLabel()
+    private val templateValueLabel = createValueLabel()
+    private val templateHistoryValueLabel = createValueLabel()
     private val currentStageValueLabel = createValueLabel()
     private val activeStagesValueLabel = createValueLabel()
     private val nextStageValueLabel = createValueLabel()
@@ -51,6 +61,42 @@ internal class SpecWorkflowOverviewPanel(
         isOpaque = true
         font = JBUI.Fonts.smallFont().deriveFont(10.5f)
     }
+    private val templateTargetComboBox = ComboBox<WorkflowTemplate>().apply {
+        isFocusable = false
+        renderer = SimpleListCellRenderer.create<WorkflowTemplate> { label, value, _ ->
+            label.text = value?.let(SpecWorkflowOverviewPresenter::templateLabel)
+                ?: SpecCodingBundle.message("spec.toolwindow.overview.template.target.none")
+        }
+    }
+    private val templateSwitchButton = createActionButton {
+        val targetTemplate = templateTargetComboBox.selectedItem as? WorkflowTemplate ?: return@createActionButton
+        onTemplateSwitchRequested(targetTemplate)
+    }
+    private val templateRollbackButton = createActionButton {
+        val historyEntry = currentState?.latestTemplateSwitch ?: return@createActionButton
+        onTemplateRollbackRequested(historyEntry)
+    }
+    private val templateValuePanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+        isOpaque = false
+        add(
+            JPanel().apply {
+                isOpaque = false
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                add(templateValueLabel)
+                add(templateHistoryValueLabel)
+            },
+            BorderLayout.NORTH,
+        )
+        add(
+            JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+                isOpaque = false
+                add(templateTargetComboBox)
+                add(templateSwitchButton)
+                add(templateRollbackButton)
+            },
+            BorderLayout.CENTER,
+        )
+    }
     private val stageStepperPanel = SpecWorkflowStageStepperPanel(
         onAdvanceRequested = onAdvanceRequested,
         onJumpRequested = onJumpRequested,
@@ -59,6 +105,7 @@ internal class SpecWorkflowOverviewPanel(
 
     private val workflowKeyLabel = createKeyLabel()
     private val statusKeyLabel = createKeyLabel()
+    private val templateKeyLabel = createKeyLabel()
     private val currentStageKeyLabel = createKeyLabel()
     private val activeStagesKeyLabel = createKeyLabel()
     private val nextStageKeyLabel = createKeyLabel()
@@ -99,12 +146,15 @@ internal class SpecWorkflowOverviewPanel(
     fun refreshLocalizedTexts() {
         workflowKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.workflow")
         statusKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.status")
+        templateKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.template")
         currentStageKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.currentStage")
         activeStagesKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.activeStages")
         nextStageKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.nextStage")
         advanceGateKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.advanceGate")
         stageFlowKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.stageFlow")
         refreshedKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.refreshed")
+        templateSwitchButton.text = SpecCodingBundle.message("spec.toolwindow.overview.template.switch")
+        templateRollbackButton.text = SpecCodingBundle.message("spec.toolwindow.overview.template.rollback")
         stageStepperPanel.refreshLocalizedTexts()
         if (currentState != null) {
             renderCurrentState()
@@ -118,6 +168,10 @@ internal class SpecWorkflowOverviewPanel(
         return mapOf(
             "workflow" to workflowValueLabel.text.orEmpty(),
             "status" to statusValueLabel.text.orEmpty(),
+            "template" to templateValueLabel.text.orEmpty(),
+            "templateHistory" to templateHistoryValueLabel.text.orEmpty(),
+            "templateSwitchEnabled" to templateSwitchButton.isEnabled.toString(),
+            "templateRollbackEnabled" to templateRollbackButton.isEnabled.toString(),
             "currentStage" to currentStageValueLabel.text.orEmpty(),
             "activeStages" to activeStagesValueLabel.text.orEmpty(),
             "nextStage" to nextStageValueLabel.text.orEmpty(),
@@ -140,6 +194,7 @@ internal class SpecWorkflowOverviewPanel(
         var row = 0
         row = addRow(row, workflowKeyLabel, workflowValueLabel)
         row = addRow(row, statusKeyLabel, statusValueLabel)
+        row = addRow(row, templateKeyLabel, templateValuePanel)
         row = addRow(row, currentStageKeyLabel, currentStageValueLabel)
         row = addRow(row, activeStagesKeyLabel, activeStagesValueLabel)
         row = addRow(row, nextStageKeyLabel, nextStageValueLabel)
@@ -192,11 +247,29 @@ internal class SpecWorkflowOverviewPanel(
         contentPanel.isVisible = true
 
         workflowValueLabel.text = state.title.takeIf { it.isNotBlank() }?.let { title ->
-            if (title == state.workflowId) state.workflowId else "$title · ${state.workflowId}"
+            if (title == state.workflowId) {
+                state.workflowId
+            } else {
+                "$title | ${state.workflowId}"
+            }
         } ?: state.workflowId
         statusValueLabel.text = workflowStatusText(state.status)
+        templateValueLabel.text = SpecCodingBundle.message(
+            "spec.toolwindow.overview.template.current",
+            SpecWorkflowOverviewPresenter.templateLabel(state.template),
+        )
+        templateHistoryValueLabel.text = state.latestTemplateSwitch?.let { latestSwitch ->
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.template.history.last",
+                SpecWorkflowOverviewPresenter.templateLabel(latestSwitch.fromTemplate),
+                SpecWorkflowOverviewPresenter.templateLabel(latestSwitch.toTemplate),
+            )
+        } ?: SpecCodingBundle.message("spec.toolwindow.overview.template.history.none")
+        updateTemplateTargets(state.switchableTemplates)
+        templateSwitchButton.isEnabled = state.switchableTemplates.isNotEmpty()
+        templateRollbackButton.isEnabled = state.latestTemplateSwitch != null
         currentStageValueLabel.text = SpecWorkflowOverviewPresenter.stageLabel(state.currentStage)
-        activeStagesValueLabel.text = state.activeStages.joinToString(" → ") { stage ->
+        activeStagesValueLabel.text = state.activeStages.joinToString(" -> ") { stage ->
             SpecWorkflowOverviewPresenter.stageLabel(stage)
         }
         nextStageValueLabel.text = state.nextStage?.let(SpecWorkflowOverviewPresenter::stageLabel)
@@ -217,9 +290,26 @@ internal class SpecWorkflowOverviewPanel(
         contentPanel.isVisible = false
         emptyLabel.isVisible = true
         emptyLabel.text = SpecCodingBundle.message(emptyMessageKey)
+        templateValueLabel.text = ""
+        templateHistoryValueLabel.text = ""
+        updateTemplateTargets(emptyList())
+        templateSwitchButton.isEnabled = false
+        templateRollbackButton.isEnabled = false
         stageStepperPanel.clear()
         revalidate()
         repaint()
+    }
+
+    private fun updateTemplateTargets(templates: List<WorkflowTemplate>) {
+        val previousSelection = templateTargetComboBox.selectedItem as? WorkflowTemplate
+        templateTargetComboBox.removeAllItems()
+        templates.forEach(templateTargetComboBox::addItem)
+        if (templates.isEmpty()) {
+            templateTargetComboBox.isEnabled = false
+            return
+        }
+        templateTargetComboBox.selectedItem = previousSelection?.takeIf { templates.contains(it) } ?: templates.first()
+        templateTargetComboBox.isEnabled = true
     }
 
     private fun createKeyLabel(): JBLabel {
@@ -239,6 +329,21 @@ internal class SpecWorkflowOverviewPanel(
             font = JBUI.Fonts.smallFont()
             foreground = VALUE_TEXT_FG
             verticalAlignment = SwingConstants.TOP
+        }
+    }
+
+    private fun createActionButton(onClick: () -> Unit): JButton {
+        return JButton().apply {
+            isFocusable = false
+            addActionListener { onClick() }
+            font = JBUI.Fonts.smallFont()
+            foreground = ACTION_FG
+            background = ACTION_BG
+            border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(ACTION_BORDER, JBUI.scale(12)),
+                JBUI.Borders.empty(2, 8, 2, 8),
+            )
+            SpecUiStyle.applyRoundRect(this, 12)
         }
     }
 
@@ -282,6 +387,9 @@ internal class SpecWorkflowOverviewPanel(
         private val KEY_TEXT_FG = JBColor(Color(110, 118, 131), Color(140, 149, 163))
         private val VALUE_TEXT_FG = JBColor(Color(35, 39, 47), Color(216, 222, 233))
         private val EMPTY_TEXT_FG = JBColor(Color(120, 127, 138), Color(132, 141, 153))
+        private val ACTION_BG = JBColor(Color(241, 247, 255), Color(69, 76, 88))
+        private val ACTION_FG = JBColor(Color(45, 71, 111), Color(206, 218, 239))
+        private val ACTION_BORDER = JBColor(Color(180, 199, 226), Color(101, 116, 138))
 
         private val PASS_BG = JBColor(Color(233, 246, 237), Color(54, 85, 63))
         private val PASS_FG = JBColor(Color(39, 94, 57), Color(194, 232, 204))

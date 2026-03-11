@@ -20,11 +20,13 @@ import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
 import com.eacape.speccodingplugin.worktree.WorktreeStatus
 import com.intellij.icons.AllIcons
+import com.intellij.CommonBundle
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -93,6 +95,8 @@ class SpecWorkflowPanel(
         onAdvanceRequested = ::onAdvanceStageRequested,
         onJumpRequested = ::onJumpStageRequested,
         onRollbackRequested = ::onRollbackStageRequested,
+        onTemplateSwitchRequested = ::onTemplateSwitchRequested,
+        onTemplateRollbackRequested = ::onTemplateSwitchRollbackRequested,
     )
     private val tasksPanel = SpecWorkflowTasksPanel(
         onTransitionStatus = ::onTaskStatusTransitionRequested,
@@ -2124,6 +2128,71 @@ class SpecWorkflowPanel(
         )
     }
 
+    private fun onTemplateSwitchRequested(targetTemplate: WorkflowTemplate) {
+        val workflow = currentWorkflow ?: return
+        if (workflow.template == targetTemplate) {
+            return
+        }
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.template.switch.preview"),
+            task = {
+                specEngine.previewTemplateSwitch(
+                    workflowId = workflow.id,
+                    toTemplate = targetTemplate,
+                ).getOrThrow()
+            },
+            onSuccess = { preview ->
+                val summary = buildTemplateSwitchPreviewSummary(workflow, preview)
+                val hasBlockingImpact = preview.artifactImpacts.any { impact ->
+                    impact.strategy == TemplateSwitchArtifactStrategy.BLOCK_SWITCH
+                }
+                if (hasBlockingImpact) {
+                    Messages.showErrorDialog(
+                        project,
+                        summary,
+                        SpecCodingBundle.message("spec.action.template.switch.confirm.title"),
+                    )
+                    return@runBackground
+                }
+                val choice = Messages.showDialog(
+                    project,
+                    summary,
+                    SpecCodingBundle.message("spec.action.template.switch.confirm.title"),
+                    arrayOf(
+                        SpecCodingBundle.message("spec.action.template.switch.confirm.apply"),
+                        CommonBundle.getCancelButtonText(),
+                    ),
+                    0,
+                    Messages.getQuestionIcon(),
+                )
+                if (choice != 0) {
+                    return@runBackground
+                }
+                executeTemplateSwitch(workflow.id, preview.previewId, preview.toTemplate)
+            },
+        )
+    }
+
+    private fun onTemplateSwitchRollbackRequested(historyEntry: TemplateSwitchHistoryEntry) {
+        val workflowId = selectedWorkflowId ?: return
+        val choice = Messages.showDialog(
+            project,
+            buildTemplateSwitchRollbackSummary(historyEntry),
+            SpecCodingBundle.message("spec.action.template.rollback.confirm.title"),
+            arrayOf(
+                SpecCodingBundle.message("spec.action.template.rollback.confirm.rollback"),
+                CommonBundle.getCancelButtonText(),
+            ),
+            0,
+            Messages.getWarningIcon(),
+        )
+        if (choice != 0) {
+            return
+        }
+        executeTemplateSwitchRollback(workflowId, historyEntry.switchId)
+    }
+
     private fun previewAndJumpToStage(workflowId: String, targetStage: StageId) {
         SpecWorkflowActionSupport.runBackground(
             project = project,
@@ -2202,10 +2271,152 @@ class SpecWorkflowPanel(
         )
     }
 
+    private fun executeTemplateSwitch(
+        workflowId: String,
+        previewId: String,
+        targetTemplate: WorkflowTemplate,
+    ) {
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.template.switch.executing"),
+            task = { specEngine.applyTemplateSwitch(workflowId, previewId).getOrThrow() },
+            onSuccess = { result ->
+                SpecWorkflowActionSupport.notifySuccess(
+                    project,
+                    SpecCodingBundle.message(
+                        "spec.action.template.switch.success",
+                        SpecWorkflowOverviewPresenter.templateLabel(targetTemplate),
+                    ),
+                )
+                publishWorkflowSelection(workflowId)
+                refreshWorkflows(selectWorkflowId = workflowId)
+            },
+        )
+    }
+
+    private fun executeTemplateSwitchRollback(
+        workflowId: String,
+        switchId: String,
+    ) {
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.template.rollback.executing"),
+            task = { specEngine.rollbackTemplateSwitch(workflowId, switchId).getOrThrow() },
+            onSuccess = { result ->
+                SpecWorkflowActionSupport.notifySuccess(
+                    project,
+                    SpecCodingBundle.message(
+                        "spec.action.template.rollback.success",
+                        SpecWorkflowOverviewPresenter.templateLabel(result.workflow.template),
+                    ),
+                )
+                publishWorkflowSelection(workflowId)
+                refreshWorkflows(selectWorkflowId = workflowId)
+            },
+        )
+    }
+
     private fun handleStageTransitionCompleted(workflowId: String, successMessage: String) {
         SpecWorkflowActionSupport.notifySuccess(project, successMessage)
         publishWorkflowSelection(workflowId)
         refreshWorkflows(selectWorkflowId = workflowId)
+    }
+
+    private fun buildTemplateSwitchPreviewSummary(
+        workflow: SpecWorkflow,
+        preview: TemplateSwitchPreview,
+    ): String {
+        val lines = mutableListOf<String>()
+        lines += SpecCodingBundle.message("spec.action.template.switch.summary.workflow", workflow.id)
+        lines += SpecCodingBundle.message(
+            "spec.action.template.switch.summary.templates",
+            SpecWorkflowOverviewPresenter.templateLabel(preview.fromTemplate),
+            SpecWorkflowOverviewPresenter.templateLabel(preview.toTemplate),
+        )
+        lines += SpecCodingBundle.message(
+            "spec.action.template.switch.summary.stage",
+            SpecWorkflowActionSupport.stageLabel(preview.currentStage),
+            SpecWorkflowActionSupport.stageLabel(preview.resultingStage),
+        )
+        if (preview.currentStageChanged) {
+            lines += SpecCodingBundle.message("spec.action.template.switch.summary.stageChanged")
+        }
+        lines += ""
+        lines += SpecCodingBundle.message(
+            "spec.action.template.switch.summary.addedStages",
+            formatStageList(preview.addedActiveStages),
+        )
+        lines += SpecCodingBundle.message(
+            "spec.action.template.switch.summary.deactivatedStages",
+            formatStageList(preview.deactivatedStages),
+        )
+        lines += SpecCodingBundle.message(
+            "spec.action.template.switch.summary.gateAddedStages",
+            formatStageList(preview.gateAddedStages),
+        )
+        lines += SpecCodingBundle.message(
+            "spec.action.template.switch.summary.gateRemovedStages",
+            formatStageList(preview.gateRemovedStages),
+        )
+        lines += ""
+        lines += SpecCodingBundle.message("spec.action.template.switch.summary.artifacts")
+        preview.artifactImpacts.forEach { impact ->
+            lines += SpecCodingBundle.message(
+                "spec.action.template.switch.summary.artifact",
+                impact.fileName,
+                SpecWorkflowActionSupport.stageLabel(impact.stageId),
+                templateSwitchStrategyLabel(impact.strategy),
+            )
+        }
+        if (preview.artifactImpacts.any { impact -> impact.strategy == TemplateSwitchArtifactStrategy.BLOCK_SWITCH }) {
+            lines += ""
+            lines += SpecCodingBundle.message("spec.action.template.switch.summary.blocked")
+        }
+        return lines.joinToString("\n")
+    }
+
+    private fun buildTemplateSwitchRollbackSummary(historyEntry: TemplateSwitchHistoryEntry): String {
+        return listOf(
+            SpecCodingBundle.message(
+                "spec.action.template.rollback.summary.templates",
+                SpecWorkflowOverviewPresenter.templateLabel(historyEntry.fromTemplate),
+                SpecWorkflowOverviewPresenter.templateLabel(historyEntry.toTemplate),
+            ),
+            SpecCodingBundle.message(
+                "spec.action.template.rollback.summary.occurredAt",
+                historyEntry.occurredAt,
+            ),
+            historyEntry.generatedArtifacts
+                .takeIf { artifacts -> artifacts.isNotEmpty() }
+                ?.joinToString(", ")
+                ?.let { generatedArtifacts ->
+                    SpecCodingBundle.message(
+                        "spec.action.template.rollback.summary.generatedArtifacts",
+                        generatedArtifacts,
+                    )
+                },
+            SpecCodingBundle.message("spec.action.template.rollback.summary.note"),
+        ).filterNotNull().joinToString("\n")
+    }
+
+    private fun formatStageList(stages: List<StageId>): String {
+        if (stages.isEmpty()) {
+            return SpecCodingBundle.message("spec.action.template.switch.summary.none")
+        }
+        return stages.joinToString(", ") { stage ->
+            SpecWorkflowActionSupport.stageLabel(stage)
+        }
+    }
+
+    private fun templateSwitchStrategyLabel(strategy: TemplateSwitchArtifactStrategy): String {
+        return when (strategy) {
+            TemplateSwitchArtifactStrategy.REUSE_EXISTING ->
+                SpecCodingBundle.message("spec.action.template.switch.strategy.reuse")
+            TemplateSwitchArtifactStrategy.GENERATE_SKELETON ->
+                SpecCodingBundle.message("spec.action.template.switch.strategy.generate")
+            TemplateSwitchArtifactStrategy.BLOCK_SWITCH ->
+                SpecCodingBundle.message("spec.action.template.switch.strategy.block")
+        }
     }
 
     private fun onShowCodeGraph() {
@@ -2608,10 +2819,18 @@ class SpecWorkflowPanel(
                 null
             }
         }
+        val latestTemplateSwitch = runCatching {
+            specEngine.listTemplateSwitchHistory(workflow.id).getOrThrow()
+                .firstOrNull { entry -> !entry.rolledBack }
+        }.getOrElse { error ->
+            logger.debug("Unable to load template switch history for workflow ${workflow.id}", error)
+            null
+        }
         return WorkflowUiSnapshot(
             overviewState = SpecWorkflowOverviewPresenter.buildState(
                 workflow = workflow,
                 gatePreview = gatePreview,
+                latestTemplateSwitch = latestTemplateSwitch,
                 refreshedAtMillis = refreshedAtMillis,
             ),
             verifyDeltaState = buildVerifyDeltaState(

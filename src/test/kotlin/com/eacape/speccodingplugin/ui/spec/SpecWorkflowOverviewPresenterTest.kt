@@ -9,6 +9,7 @@ import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageState
 import com.eacape.speccodingplugin.spec.StageTransitionGatePreview
 import com.eacape.speccodingplugin.spec.StageTransitionType
+import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
 import com.eacape.speccodingplugin.spec.Violation
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
@@ -44,6 +45,7 @@ class SpecWorkflowOverviewPresenterTest {
         val state = SpecWorkflowOverviewPresenter.buildState(
             workflow = workflow,
             gatePreview = gatePreview,
+            latestTemplateSwitch = null,
             refreshedAtMillis = 1_710_000_000_000,
         )
 
@@ -63,6 +65,7 @@ class SpecWorkflowOverviewPresenterTest {
         val state = SpecWorkflowOverviewPresenter.buildState(
             workflow = workflow,
             gatePreview = null,
+            latestTemplateSwitch = null,
             refreshedAtMillis = 1_710_000_000_000,
         )
 
@@ -78,6 +81,7 @@ class SpecWorkflowOverviewPresenterTest {
         val state = SpecWorkflowOverviewPresenter.buildState(
             workflow = workflow,
             gatePreview = null,
+            latestTemplateSwitch = null,
             refreshedAtMillis = 1_710_000_000_000,
         )
 
@@ -92,6 +96,7 @@ class SpecWorkflowOverviewPresenterTest {
         val state = SpecWorkflowOverviewPresenter.buildState(
             workflow = workflow,
             gatePreview = null,
+            latestTemplateSwitch = null,
             refreshedAtMillis = 1_710_000_000_000,
         )
 
@@ -107,6 +112,37 @@ class SpecWorkflowOverviewPresenterTest {
             state.stageStepper.stages.map { it.stageId },
         )
         assertTrue(state.stageStepper.stages.first { it.stageId == StageId.VERIFY }.active.not())
+    }
+
+    @Test
+    fun `buildState should expose switchable templates and latest template switch`() {
+        val workflow = workflow()
+        val latestSwitch = TemplateSwitchHistoryEntry(
+            switchId = "switch-1",
+            fromTemplate = WorkflowTemplate.FULL_SPEC,
+            toTemplate = WorkflowTemplate.QUICK_TASK,
+            occurredAt = "2026-03-11T10:00:00Z",
+            occurredAtEpochMs = 1_710_152_400_000,
+            rolledBack = false,
+        )
+
+        val state = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            latestTemplateSwitch = latestSwitch,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertEquals(WorkflowTemplate.FULL_SPEC, state.template)
+        assertEquals(
+            listOf(
+                WorkflowTemplate.QUICK_TASK,
+                WorkflowTemplate.DESIGN_REVIEW,
+                WorkflowTemplate.DIRECT_IMPLEMENT,
+            ),
+            state.switchableTemplates,
+        )
+        assertEquals(latestSwitch, state.latestTemplateSwitch)
     }
 
     private fun workflow(

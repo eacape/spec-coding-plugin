@@ -428,6 +428,31 @@ class SpecEngine(private val project: Project) {
         }
     }
 
+    fun listTemplateSwitchHistory(workflowId: String): Result<List<TemplateSwitchHistoryEntry>> {
+        return runCatching {
+            val events = storageDelegate.listAuditEvents(workflowId).getOrThrow()
+            val rolledBackSwitchIds = events
+                .asSequence()
+                .filter { event -> event.eventType == SpecAuditEventType.TEMPLATE_SWITCH_ROLLED_BACK }
+                .mapNotNull { event ->
+                    event.details["switchId"]
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                }
+                .toSet()
+
+            events
+                .asSequence()
+                .filter { event -> event.eventType == SpecAuditEventType.TEMPLATE_SWITCHED }
+                .mapNotNull(::parseTemplateSwitchHistoryEntry)
+                .map { entry ->
+                    entry.copy(rolledBack = rolledBackSwitchIds.contains(entry.switchId))
+                }
+                .sortedByDescending(TemplateSwitchHistoryEntry::occurredAtEpochMs)
+                .toList()
+        }
+    }
+
     fun listDocumentHistory(
         workflowId: String,
         phase: SpecPhase,
@@ -1434,6 +1459,48 @@ class SpecEngine(private val project: Project) {
             details["previewId"] = previewId
         }
         return details
+    }
+
+    private fun parseTemplateSwitchHistoryEntry(event: SpecAuditEvent): TemplateSwitchHistoryEntry? {
+        val switchId = event.details["switchId"]
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return null
+        val fromTemplate = parseTemplateSwitchHistoryTemplate(event.details["fromTemplate"]) ?: return null
+        val toTemplate = parseTemplateSwitchHistoryTemplate(event.details["toTemplate"]) ?: return null
+        return TemplateSwitchHistoryEntry(
+            switchId = switchId,
+            previewId = event.details["previewId"]
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() },
+            fromTemplate = fromTemplate,
+            toTemplate = toTemplate,
+            occurredAt = event.occurredAt,
+            occurredAtEpochMs = event.occurredAtEpochMs,
+            beforeSnapshotId = event.details["beforeSnapshotId"]
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() },
+            generatedArtifacts = parseTemplateSwitchHistoryList(event.details["generatedArtifacts"]),
+        )
+    }
+
+    private fun parseTemplateSwitchHistoryTemplate(raw: String?): WorkflowTemplate? {
+        val normalized = raw
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: return null
+        return WorkflowTemplate.entries.firstOrNull { template -> template.name == normalized }
+    }
+
+    private fun parseTemplateSwitchHistoryList(raw: String?): List<String> {
+        return raw
+            ?.split(',')
+            ?.mapNotNull { item ->
+                item.trim()
+                    .takeIf { it.isNotEmpty() }
+            }
+            ?.distinct()
+            ?: emptyList()
     }
 
     private fun clearTemplateSwitchPreviews(workflowId: String) {

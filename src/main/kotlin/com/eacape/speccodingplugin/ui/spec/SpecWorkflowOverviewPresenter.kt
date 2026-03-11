@@ -6,7 +6,9 @@ import com.eacape.speccodingplugin.spec.StageActivationOptions
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageTransitionGatePreview
+import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
 import com.eacape.speccodingplugin.spec.WorkflowStatus
+import com.eacape.speccodingplugin.spec.WorkflowTemplate
 import com.eacape.speccodingplugin.spec.WorkflowTemplates
 
 internal data class SpecWorkflowStageStepState(
@@ -27,6 +29,9 @@ internal data class SpecWorkflowOverviewState(
     val workflowId: String,
     val title: String,
     val status: WorkflowStatus,
+    val template: WorkflowTemplate,
+    val switchableTemplates: List<WorkflowTemplate>,
+    val latestTemplateSwitch: TemplateSwitchHistoryEntry?,
     val currentStage: StageId,
     val activeStages: List<StageId>,
     val nextStage: StageId?,
@@ -40,6 +45,7 @@ internal object SpecWorkflowOverviewPresenter {
     fun buildState(
         workflow: SpecWorkflow,
         gatePreview: StageTransitionGatePreview?,
+        latestTemplateSwitch: TemplateSwitchHistoryEntry?,
         refreshedAtMillis: Long,
     ): SpecWorkflowOverviewState {
         val stageOverrides = workflow.stageStates
@@ -62,6 +68,9 @@ internal object SpecWorkflowOverviewPresenter {
             workflowId = workflow.id,
             title = workflow.title,
             status = workflow.status,
+            template = workflow.template,
+            switchableTemplates = WorkflowTemplate.entries.filterNot { template -> template == workflow.template },
+            latestTemplateSwitch = latestTemplateSwitch,
             currentStage = workflow.currentStage,
             activeStages = activeStages,
             nextStage = nextStage,
@@ -96,6 +105,13 @@ internal object SpecWorkflowOverviewPresenter {
 
     fun stageLabel(stageId: StageId): String {
         return stageId.name
+            .lowercase()
+            .split('_')
+            .joinToString(" ") { token -> token.replaceFirstChar(Char::titlecase) }
+    }
+
+    fun templateLabel(template: WorkflowTemplate): String {
+        return template.name
             .lowercase()
             .split('_')
             .joinToString(" ") { token -> token.replaceFirstChar(Char::titlecase) }
