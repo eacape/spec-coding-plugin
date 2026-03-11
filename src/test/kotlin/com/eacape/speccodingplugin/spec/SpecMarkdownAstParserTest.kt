@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.spec
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 
 class SpecMarkdownAstParserTest {
@@ -99,5 +100,15 @@ class SpecMarkdownAstParserTest {
         assertNull(fence.contentLocation)
         assertEquals(1, fence.location.startLine)
         assertEquals(2, fence.location.endLine)
+    }
+
+    @Test
+    fun `parse should reuse cached parsed document for identical normalized markdown`() {
+        val markdown = "## Tasks\r\n\r\n```spec-task\r\nstatus: PENDING\r\n```"
+
+        val first = SpecMarkdownAstParser.parse(markdown)
+        val second = SpecMarkdownAstParser.parse(markdown.replace("\r\n", "\n"))
+
+        assertSame(first, second)
     }
 }

@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.spec
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -91,5 +92,26 @@ class SpecTaskMarkdownParserTest {
 
         assertTrue(parsed.issues.isEmpty())
         assertEquals(listOf("T-001"), parsed.tasks.map { task -> task.id })
+    }
+    @Test
+    fun `parse should reuse cached parsed task document for identical markdown`() {
+        val markdown = """
+            ## Task List
+
+            ### T-001: Cache hit
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+
+        val parsedMarkdown = SpecMarkdownAstParser.parse(markdown)
+        val first = SpecTaskMarkdownParser.parse(parsedMarkdown)
+        val second = SpecTaskMarkdownParser.parse(markdown)
+
+        assertSame(first, second)
     }
 }

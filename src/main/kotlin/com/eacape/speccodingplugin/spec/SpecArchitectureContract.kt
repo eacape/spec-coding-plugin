@@ -264,6 +264,13 @@ object SpecArchitectureContract {
             status = AdoptionStatus.ADOPTED,
         ),
         DependencyDecision(
+            key = "performance-caching",
+            capability = "content-addressed markdown/task parsing cache, incremental gate reuse, and cancellable long-running background work",
+            selection = "small LRU caches in SpecMarkdownAstParser/SpecTaskMarkdownParser/SpecTasksService + rule fingerprint reuse in SpecGateRuleEngine + cancellable SpecWorkflowActionSupport background tasks",
+            rationale = "Task 49 requires keeping 200-task workflows responsive by avoiding repeat parsing, reusing unchanged gate rule results, and letting users cancel long-running background spec actions.",
+            status = AdoptionStatus.ADOPTED,
+        ),
+        DependencyDecision(
             key = "workspace-recovery",
             capability = "startup crash recovery and workspace self-check for orphan temp files, stale locks, and snapshot consistency",
             selection = "SpecWorkspaceRecoveryService + startup ProjectManagerListener + SpecFileLockManager/SpecStorage inspections",

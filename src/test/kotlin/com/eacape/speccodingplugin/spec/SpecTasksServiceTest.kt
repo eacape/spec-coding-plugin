@@ -6,6 +6,7 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -734,5 +735,28 @@ class SpecTasksServiceTest {
         )
         assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))
         assertTrue(storage.listAuditEvents(workflowId).getOrThrow().isEmpty())
+    }
+
+    @Test
+    fun `parseDocument should reuse cached parsed tasks document for identical markdown`() {
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Cache hit
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+
+        val first = tasksService.parseDocument(markdown)
+        val second = tasksService.parseDocument(markdown.replace("\n", "\r\n"))
+
+        assertSame(first, second)
     }
 }

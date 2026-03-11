@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.spec
 
+import com.intellij.openapi.progress.ProgressIndicatorProvider
+import com.intellij.openapi.progress.ProgressManager
 import org.intellij.markdown.IElementType
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
@@ -39,15 +41,25 @@ internal object SpecMarkdownAstParser {
 
     fun parse(markdown: String): ParsedDocument {
         val normalizedMarkdown = normalizeLineEndings(markdown)
+        synchronized(parseCache) {
+            parseCache[normalizedMarkdown]?.let { cached ->
+                return cached
+            }
+        }
+        ProgressIndicatorProvider.getGlobalProgressIndicator()?.text2 = "Parsing markdown structure"
         val root = MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(normalizedMarkdown)
         val lineIndex = LineIndex(normalizedMarkdown)
         val codeFences = collectCodeFences(root, normalizedMarkdown, lineIndex)
-        return ParsedDocument(
+        val parsedDocument = ParsedDocument(
             normalizedMarkdown = normalizedMarkdown,
             root = root,
             codeFences = codeFences,
             lineIndex = lineIndex,
         )
+        synchronized(parseCache) {
+            parseCache[normalizedMarkdown] = parsedDocument
+        }
+        return parsedDocument
     }
 
     private fun collectCodeFences(
@@ -63,6 +75,7 @@ internal object SpecMarkdownAstParser {
     }
 
     private fun collectNodesByType(node: ASTNode, type: IElementType, sink: MutableList<ASTNode>) {
+        ProgressManager.checkCanceled()
         if (node.type == type) {
             sink += node
         }
@@ -206,6 +219,14 @@ internal object SpecMarkdownAstParser {
                 }
             }
             return starts.toIntArray()
+        }
+    }
+
+    private const val MAX_CACHE_ENTRIES = 32
+
+    private val parseCache = object : LinkedHashMap<String, ParsedDocument>(MAX_CACHE_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ParsedDocument>?): Boolean {
+            return size > MAX_CACHE_ENTRIES
         }
     }
 }

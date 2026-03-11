@@ -402,7 +402,48 @@ class SpecGateRuleEngineTest {
         assertEquals(GateStatus.ERROR, violation.originalSeverity)
     }
 
-    private fun stageRequest(workflowId: String = "spec-test-rule-framework"): StageTransitionRequest {
+    @Test
+    fun `evaluate should reuse cached rule evaluations when fingerprints are unchanged`() {
+        val rule = CountingRule(id = "custom-cache", severity = GateStatus.ERROR)
+        val engine = SpecGateRuleEngine(artifactService, listOf(rule))
+        val request = stageRequest(workflowId = "spec-test-rule-cache")
+        val config = configService.load()
+
+        val first = engine.evaluate(request = request, projectConfig = config)
+        val second = engine.evaluate(request = request, projectConfig = config)
+
+        assertEquals(first, second)
+        assertEquals(1, rule.evaluationCount)
+    }
+
+    @Test
+    fun `evaluate should invalidate cached rule evaluations when document fingerprint changes`() {
+        val rule = CountingRule(id = "custom-cache-invalidate", severity = GateStatus.ERROR)
+        val engine = SpecGateRuleEngine(artifactService, listOf(rule))
+        val config = configService.load()
+
+        engine.evaluate(
+            request = stageRequest(
+                workflowId = "spec-test-rule-cache-invalidate",
+                requirementsContent = "## Requirements\n- first snapshot",
+            ),
+            projectConfig = config,
+        )
+        engine.evaluate(
+            request = stageRequest(
+                workflowId = "spec-test-rule-cache-invalidate",
+                requirementsContent = "## Requirements\n- updated snapshot",
+            ),
+            projectConfig = config,
+        )
+
+        assertEquals(2, rule.evaluationCount)
+    }
+
+    private fun stageRequest(
+        workflowId: String = "spec-test-rule-framework",
+        requirementsContent: String = "## Requirements\n- details\n\n## Non-Functional Requirements\n- stability\n\n## User Stories\nAs a user, I want traceable rules.",
+    ): StageTransitionRequest {
         val workflow = SpecWorkflow(
             id = workflowId,
             currentPhase = SpecPhase.SPECIFY,
@@ -410,7 +451,7 @@ class SpecGateRuleEngineTest {
                 SpecPhase.SPECIFY to SpecDocument(
                     id = "requirements-doc",
                     phase = SpecPhase.SPECIFY,
-                    content = "## 功能需求\n- details\n\n## 非功能需求\n- stability\n\n## 用户故事\nAs a user, I want traceable rules.",
+                    content = requirementsContent,
                     metadata = SpecMetadata(
                         title = "Requirements",
                         description = "rule test",
@@ -530,6 +571,32 @@ class SpecGateRuleEngineTest {
                     ),
                 )
             }
+        }
+    }
+
+    private class CountingRule(
+        override val id: String,
+        private val severity: GateStatus,
+    ) : Rule {
+        override val description: String = "Counting rule $id"
+        override val defaultSeverity: GateStatus = severity
+        override val remediationHint: String = "Fix $id"
+        var evaluationCount: Int = 0
+            private set
+
+        override fun appliesTo(stage: StageId): Boolean = stage == StageId.REQUIREMENTS
+
+        override fun evaluate(ctx: RuleContext): List<Violation> {
+            evaluationCount += 1
+            return listOf(
+                Violation(
+                    ruleId = id,
+                    severity = severity,
+                    fileName = "requirements.md",
+                    line = 1,
+                    message = "Synthetic violation for $id",
+                ),
+            )
         }
     }
 }

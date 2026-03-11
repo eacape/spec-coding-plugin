@@ -2,6 +2,8 @@ package com.eacape.speccodingplugin.spec
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.progress.ProgressIndicatorProvider
+import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -56,15 +58,25 @@ class SpecTasksService(private val project: Project) {
 
     fun parseDocument(markdown: String): ParsedTasksDocument {
         val parsedMarkdown = SpecMarkdownAstParser.parse(markdown)
-        val parsedTasks = SpecTaskMarkdownParser.parse(parsedMarkdown.normalizedMarkdown)
+        synchronized(parsedDocumentCache) {
+            parsedDocumentCache[parsedMarkdown.normalizedMarkdown]?.let { cached ->
+                return cached
+            }
+        }
+        ProgressIndicatorProvider.getGlobalProgressIndicator()?.text2 = "Resolving structured tasks"
+        val parsedTasks = SpecTaskMarkdownParser.parse(parsedMarkdown)
         if (parsedTasks.tasks.isEmpty()) {
-            return ParsedTasksDocument(
+            val parsedDocument = ParsedTasksDocument(
                 normalizedMarkdown = parsedMarkdown.normalizedMarkdown,
                 preambleMarkdown = parsedMarkdown.normalizedMarkdown,
                 taskSectionsInSourceOrder = emptyList(),
                 trailingMarkdown = "",
                 issues = parsedTasks.issues,
             )
+            synchronized(parsedDocumentCache) {
+                parsedDocumentCache[parsedMarkdown.normalizedMarkdown] = parsedDocument
+            }
+            return parsedDocument
         }
 
         val lineTable = buildLineTable(parsedMarkdown.normalizedMarkdown)
@@ -82,6 +94,12 @@ class SpecTasksService(private val project: Project) {
             .associateBy { fence -> fence.location.startLine }
 
         val taskSectionsInSourceOrder = parsedTasks.tasks.mapIndexed { sourceOrder, taskEntry ->
+            ProgressManager.checkCanceled()
+            reportProgress(
+                detail = "Building structured task sections",
+                completed = sourceOrder,
+                total = parsedTasks.tasks.size.coerceAtLeast(1),
+            )
             val startOffset = lineTable.startOffsets.getOrElse(taskEntry.headingLine - 1) { 0 }
             val endOffsetExclusive = nextSectionStartOffset(
                 taskEntry = taskEntry,
@@ -126,13 +144,17 @@ class SpecTasksService(private val project: Project) {
             )
         }
 
-        return ParsedTasksDocument(
+        val parsedDocument = ParsedTasksDocument(
             normalizedMarkdown = parsedMarkdown.normalizedMarkdown,
             preambleMarkdown = parsedMarkdown.normalizedMarkdown.substring(0, taskSectionsInSourceOrder.first().startOffset),
             taskSectionsInSourceOrder = taskSectionsInSourceOrder,
             trailingMarkdown = parsedMarkdown.normalizedMarkdown.substring(taskSectionsInSourceOrder.last().endOffsetExclusive),
             issues = parsedTasks.issues,
         )
+        synchronized(parsedDocumentCache) {
+            parsedDocumentCache[parsedMarkdown.normalizedMarkdown] = parsedDocument
+        }
+        return parsedDocument
     }
 
     fun readTasksDocument(workflowId: String): ParsedTasksDocument? {
@@ -757,6 +779,7 @@ class SpecTasksService(private val project: Project) {
         private const val TASK_ID_PREFIX = "T-"
         private const val MAX_TASK_SEQUENCE = 999
         private const val MAX_EDIT_ISSUES_TO_REPORT = 3
+        private const val MAX_PARSED_DOCUMENT_CACHE_ENTRIES = 24
         private const val EMPTY_TASKS_DOCUMENT = "# Implement Document\n\n## Task List\n"
         private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+.*$""")
         private val CANONICAL_TASK_HEADING_REGEX = Regex("""^\s{0,3}###\s+T-\d{3}:\s+.+$""")
@@ -765,5 +788,21 @@ class SpecTasksService(private val project: Project) {
         private val WINDOWS_ABSOLUTE_PATH_REGEX = Regex("""^[A-Za-z]:/.*$""")
 
         fun getInstance(project: Project): SpecTasksService = project.service()
+    }
+
+    private val parsedDocumentCache =
+        object : LinkedHashMap<String, ParsedTasksDocument>(MAX_PARSED_DOCUMENT_CACHE_ENTRIES, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ParsedTasksDocument>?): Boolean {
+                return size > MAX_PARSED_DOCUMENT_CACHE_ENTRIES
+            }
+        }
+
+    private fun reportProgress(detail: String, completed: Int, total: Int) {
+        val indicator = ProgressIndicatorProvider.getGlobalProgressIndicator() ?: return
+        if (completed == 0 || completed == total - 1 || completed % 10 == 0) {
+            indicator.isIndeterminate = false
+            indicator.text2 = detail
+            indicator.fraction = completed.toDouble() / total.toDouble()
+        }
     }
 }

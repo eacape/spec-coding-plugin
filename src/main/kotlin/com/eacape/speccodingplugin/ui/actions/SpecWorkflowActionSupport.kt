@@ -29,6 +29,7 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.ui.popup.PopupStep
@@ -75,6 +76,7 @@ internal object SpecWorkflowActionSupport {
     fun <T> runBackground(
         project: Project,
         title: String,
+        cancellable: Boolean = true,
         task: () -> T,
         onSuccess: (T) -> Unit,
         onFailure: (Throwable) -> Unit = { error ->
@@ -86,12 +88,19 @@ internal object SpecWorkflowActionSupport {
         },
     ) {
         ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, title, false) {
+            object : Task.Backgroundable(project, title, cancellable) {
                 private var outcome: Result<T>? = null
 
                 override fun run(indicator: ProgressIndicator) {
                     indicator.isIndeterminate = true
-                    outcome = runCatching(task)
+                    indicator.text = title
+                    outcome = try {
+                        Result.success(task())
+                    } catch (cancel: ProcessCanceledException) {
+                        throw cancel
+                    } catch (error: Throwable) {
+                        Result.failure(error)
+                    }
                 }
 
                 override fun onSuccess() {

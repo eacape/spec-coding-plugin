@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.spec
 
+import com.intellij.openapi.progress.ProgressIndicatorProvider
+import com.intellij.openapi.progress.ProgressManager
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -13,14 +15,32 @@ data class RuleArtifactContext(
     val aliasPaths: List<Path>,
     val phase: SpecPhase?,
     val document: SpecDocument?,
+    val contentFingerprint: String?,
 ) {
     fun hasNamingMismatch(): Boolean = caseMismatch || aliasPaths.isNotEmpty()
+
+    fun fingerprint(): String {
+        return buildString {
+            append(stageId.name)
+            append('|')
+            append(fileName.orEmpty())
+            append('|')
+            append(exists)
+            append('|')
+            append(caseMismatch)
+            append('|')
+            append(aliasPaths.joinToString(",") { path -> path.fileName.toString().lowercase() })
+            append('|')
+            append(contentFingerprint.orEmpty())
+        }
+    }
 }
 
 data class RuleTasksContext(
     val fileName: String,
     val path: Path?,
     val parsedDocument: SpecTaskMarkdownParser.ParsedTaskDocument,
+    val contentFingerprint: String,
 )
 
 data class RuleContext(
@@ -40,6 +60,21 @@ data class RuleContext(
     fun applicableStages(rule: Rule): List<StageId> = evaluatedStages.filter(rule::appliesTo)
 
     fun rulePolicy(ruleId: String): SpecRulePolicy? = projectConfig.rules[ruleId]
+
+    fun defaultFingerprintFor(rule: Rule): String {
+        val stages = applicableStages(rule)
+        return buildString {
+            append(stages.joinToString(",") { it.name })
+            stages.forEach { stageId ->
+                append("|artifact=")
+                append(artifacts[stageId]?.fingerprint() ?: "${stageId.name}|missing")
+            }
+            if (rule.requiresTasksDocument) {
+                append("|tasks=")
+                append(tasksDocument?.contentFingerprint ?: "missing")
+            }
+        }
+    }
 }
 
 interface Rule {
@@ -47,8 +82,12 @@ interface Rule {
     val description: String
     val defaultSeverity: GateStatus
     val remediationHint: String?
+    val requiresTasksDocument: Boolean
+        get() = false
 
     fun appliesTo(stage: StageId): Boolean
+
+    fun fingerprint(ctx: RuleContext): String = ctx.defaultFingerprintFor(this)
 
     fun evaluate(ctx: RuleContext): List<Violation>
 }
@@ -69,20 +108,52 @@ class SpecGateRuleEngine(
     private val artifactService: SpecArtifactService,
     private val rules: List<Rule>,
 ) {
+    private val evaluationCache =
+        object : LinkedHashMap<String, CachedGateEvaluation>(MAX_EVALUATION_CACHE_ENTRIES, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedGateEvaluation>?): Boolean {
+                return size > MAX_EVALUATION_CACHE_ENTRIES
+            }
+        }
+
     fun evaluate(
         request: StageTransitionRequest,
         projectConfig: SpecProjectConfig,
     ): GateResult {
         val artifacts = buildArtifacts(request)
+        val requestCacheKey = buildRequestCacheKey(request)
         val context = RuleContext(
             request = request,
             projectConfig = projectConfig,
             artifacts = artifacts,
             tasksDocument = buildTasksContext(request, artifacts),
         )
-        val evaluations = rules
-            .sortedBy(Rule::id)
-            .map { rule -> evaluateRule(rule, context) }
+        val cachedEvaluation = synchronized(evaluationCache) { evaluationCache[requestCacheKey] }
+        val sortedRules = rules.sortedBy(Rule::id)
+        val indicator = ProgressIndicatorProvider.getGlobalProgressIndicator()
+        val cachedRules = linkedMapOf<String, CachedRuleEvaluation>()
+        val evaluations = sortedRules.mapIndexed { index, rule ->
+            ProgressManager.checkCanceled()
+            reportProgress(
+                indicator = indicator,
+                detail = "Evaluating gate rule ${index + 1}/${sortedRules.size}: ${rule.id}",
+                completed = index,
+                total = sortedRules.size.coerceAtLeast(1),
+            )
+            val fingerprint = buildRuleEvaluationFingerprint(rule, context)
+            val evaluation = cachedEvaluation?.rules?.get(rule.id)
+                ?.takeIf { cached -> cached.fingerprint == fingerprint }
+                ?.result
+                ?: evaluateRule(rule, context)
+            cachedRules[rule.id] = CachedRuleEvaluation(
+                fingerprint = fingerprint,
+                result = evaluation,
+            )
+            evaluation
+        }
+        synchronized(evaluationCache) {
+            evaluationCache[requestCacheKey] = CachedGateEvaluation(cachedRules)
+        }
+        indicator?.fraction = 1.0
         return GateResult.fromRuleResults(evaluations)
     }
 
@@ -90,6 +161,9 @@ class SpecGateRuleEngine(
         request: StageTransitionRequest,
         artifacts: Map<StageId, RuleArtifactContext>,
     ): RuleTasksContext? {
+        if (!shouldBuildTasksContext(request)) {
+            return null
+        }
         val taskArtifact = artifacts[StageId.TASKS] ?: RuleArtifactContext(
             stageId = StageId.TASKS,
             fileName = StageId.TASKS.artifactFileName,
@@ -100,6 +174,7 @@ class SpecGateRuleEngine(
             aliasPaths = emptyList(),
             phase = SpecPhase.IMPLEMENT,
             document = request.workflow.getDocument(SpecPhase.IMPLEMENT),
+            contentFingerprint = request.workflow.getDocument(SpecPhase.IMPLEMENT)?.content?.let(::fingerprintText),
         )
         val contentPath = sequenceOf(taskArtifact.actualPath, taskArtifact.path)
             .filterNotNull()
@@ -113,6 +188,7 @@ class SpecGateRuleEngine(
             fileName = contentPath?.fileName?.toString() ?: taskArtifact.fileName ?: StageId.TASKS.artifactFileName.orEmpty(),
             path = contentPath,
             parsedDocument = SpecTaskMarkdownParser.parse(content),
+            contentFingerprint = fingerprintText(content),
         )
     }
 
@@ -143,8 +219,82 @@ class SpecGateRuleEngine(
                     } ?: emptyList(),
                     phase = phase,
                     document = phase?.let(request.workflow::getDocument),
+                    contentFingerprint = phase
+                        ?.let(request.workflow::getDocument)
+                        ?.content
+                        ?.let(::fingerprintText)
+                        ?: fileFingerprint(actualPath ?: path),
                 )
             }
+    }
+
+    private fun shouldBuildTasksContext(request: StageTransitionRequest): Boolean {
+        val evaluatedStages = request.evaluatedStages.distinct()
+        return rules.any { rule ->
+            rule.requiresTasksDocument && evaluatedStages.any(rule::appliesTo)
+        }
+    }
+
+    private fun buildRequestCacheKey(request: StageTransitionRequest): String {
+        return buildString {
+            append(request.workflowId)
+            append('|')
+            append(request.transitionType.name)
+            append('|')
+            append(request.fromStage.name)
+            append('|')
+            append(request.targetStage.name)
+            append('|')
+            append(request.stagePlan.template.name)
+            append('|')
+            append(request.stagePlan.activeStages.joinToString(",") { it.name })
+            append('|')
+            append(request.evaluatedStages.distinct().joinToString(",") { it.name })
+        }
+    }
+
+    private fun buildRuleEvaluationFingerprint(rule: Rule, ctx: RuleContext): String {
+        val policy = ctx.rulePolicy(rule.id)
+        val enabled = policy?.enabled ?: true
+        val appliedStages = ctx.applicableStages(rule)
+        val effectiveSeverity = policy?.severityOverride ?: rule.defaultSeverity
+        return buildString {
+            append(enabled)
+            append('|')
+            append(effectiveSeverity.name)
+            append('|')
+            append(policy?.severityOverride?.name.orEmpty())
+            append('|')
+            append(appliedStages.joinToString(",") { it.name })
+            append('|')
+            append(rule.fingerprint(ctx))
+        }
+    }
+
+    private fun reportProgress(
+        indicator: com.intellij.openapi.progress.ProgressIndicator?,
+        detail: String,
+        completed: Int,
+        total: Int,
+    ) {
+        indicator ?: return
+        indicator.isIndeterminate = false
+        indicator.text2 = detail
+        indicator.fraction = completed.toDouble() / total.toDouble()
+    }
+
+    private fun fileFingerprint(path: Path?): String? {
+        path ?: return null
+        if (!Files.exists(path)) {
+            return null
+        }
+        return runCatching {
+            "${Files.size(path)}:${Files.getLastModifiedTime(path).toMillis()}"
+        }.getOrNull()
+    }
+
+    private fun fingerprintText(content: String): String {
+        return "${content.length}:${content.hashCode()}"
     }
 
     private fun evaluateRule(rule: Rule, ctx: RuleContext): RuleEvaluationResult {
@@ -212,6 +362,19 @@ class SpecGateRuleEngine(
             violations = violations,
         )
     }
+
+    private data class CachedRuleEvaluation(
+        val fingerprint: String,
+        val result: RuleEvaluationResult,
+    )
+
+    private data class CachedGateEvaluation(
+        val rules: Map<String, CachedRuleEvaluation>,
+    )
+
+    private companion object {
+        private const val MAX_EVALUATION_CACHE_ENTRIES = 32
+    }
 }
 
 class RequiredArtifactRule : Rule {
@@ -227,6 +390,7 @@ class RequiredArtifactRule : Rule {
         ctx.applicableStages(this)
             .filter(ctx.request.stagePlan::participatesInGate)
             .forEach { stageId ->
+                ProgressManager.checkCanceled()
                 val artifact = ctx.artifact(stageId) ?: return@forEach
                 val fileName = artifact.fileName ?: return@forEach
                 if (!artifact.exists && !artifact.hasNamingMismatch()) {
@@ -257,6 +421,7 @@ class FixedArtifactNamingRule : Rule {
         ctx.applicableStages(this)
             .filter(ctx.request.stagePlan::participatesInGate)
             .forEach { stageId ->
+                ProgressManager.checkCanceled()
                 val artifact = ctx.artifact(stageId) ?: return@forEach
                 val expectedFileName = artifact.fileName ?: return@forEach
 
@@ -303,6 +468,7 @@ class DocumentValidationRule : Rule {
     override fun evaluate(ctx: RuleContext): List<Violation> {
         val violations = mutableListOf<Violation>()
         ctx.applicableStages(this).forEach { stageId ->
+            ProgressManager.checkCanceled()
             val artifact = ctx.artifact(stageId) ?: return@forEach
             val phase = artifact.phase ?: return@forEach
             val document = artifact.document ?: return@forEach
@@ -326,6 +492,7 @@ class TasksSyntaxRule : Rule {
     override val description: String = "Require tasks.md to use canonical task headings and spec-task YAML blocks."
     override val defaultSeverity: GateStatus = GateStatus.ERROR
     override val remediationHint: String = "Fix tasks.md headings and spec-task YAML blocks before continuing."
+    override val requiresTasksDocument: Boolean = true
 
     override fun appliesTo(stage: StageId): Boolean = stage == StageId.TASKS
 
@@ -352,6 +519,7 @@ class TaskUniqueIdRule : Rule {
     override val description: String = "Require every structured task id in tasks.md to be unique."
     override val defaultSeverity: GateStatus = GateStatus.ERROR
     override val remediationHint: String = "Rename duplicate task ids so each task has a unique T-XXX id."
+    override val requiresTasksDocument: Boolean = true
 
     override fun appliesTo(stage: StageId): Boolean = stage == StageId.TASKS
 
@@ -365,6 +533,7 @@ class TaskUniqueIdRule : Rule {
             .filterValues { it.size > 1 }
             .toSortedMap()
             .flatMap { (taskId, duplicates) ->
+                ProgressManager.checkCanceled()
                 val firstHeadingLine = duplicates.first().headingLine
                 duplicates.drop(1).map { duplicate ->
                     Violation(
@@ -385,6 +554,7 @@ class TaskDependencyExistsRule : Rule {
     override val description: String = "Require task dependencies to reference existing task ids in the same workflow."
     override val defaultSeverity: GateStatus = GateStatus.ERROR
     override val remediationHint: String = "Fix dependsOn so it only references existing task ids."
+    override val requiresTasksDocument: Boolean = true
 
     override fun appliesTo(stage: StageId): Boolean = stage == StageId.TASKS
 
@@ -395,6 +565,7 @@ class TaskDependencyExistsRule : Rule {
         val tasksDocument = ctx.tasksDocument ?: return emptyList()
         val taskIds = tasksDocument.parsedDocument.tasks.map { it.id }.toSet()
         return tasksDocument.parsedDocument.tasks.flatMap { task ->
+            ProgressManager.checkCanceled()
             task.dependsOn.distinct().sorted().mapNotNull { dependencyId ->
                 when {
                     dependencyId == task.id -> Violation(
@@ -427,6 +598,7 @@ class TaskStateConsistencyRule : Rule {
     override val description: String = "Require task status progression to remain consistent with dependency completion."
     override val defaultSeverity: GateStatus = GateStatus.ERROR
     override val remediationHint: String = "Complete dependencies before starting, blocking, or completing dependent tasks."
+    override val requiresTasksDocument: Boolean = true
 
     override fun appliesTo(stage: StageId): Boolean = stage == StageId.TASKS
 
@@ -437,6 +609,7 @@ class TaskStateConsistencyRule : Rule {
         val tasksDocument = ctx.tasksDocument ?: return emptyList()
         val tasksById = tasksDocument.parsedDocument.tasks.associateBy { it.id }
         return tasksDocument.parsedDocument.tasks.flatMap { task ->
+            ProgressManager.checkCanceled()
             val currentStatus = task.status ?: return@flatMap emptyList()
             if (currentStatus !in ENFORCED_DEPENDENCY_STATUSES) {
                 return@flatMap emptyList()
@@ -474,6 +647,7 @@ class VerifyConclusionRule : Rule {
     override val description: String = "Map task verification conclusions into VERIFY gate outcomes."
     override val defaultSeverity: GateStatus = GateStatus.ERROR
     override val remediationHint: String = "Update task verification results or rerun verification before archiving."
+    override val requiresTasksDocument: Boolean = true
 
     override fun appliesTo(stage: StageId): Boolean = stage == StageId.VERIFY
 
@@ -483,6 +657,7 @@ class VerifyConclusionRule : Rule {
         }
         val tasksDocument = ctx.tasksDocument ?: return emptyList()
         return tasksDocument.parsedDocument.tasks.mapNotNull { task ->
+            ProgressManager.checkCanceled()
             val verificationResult = task.verificationResult ?: return@mapNotNull null
             when (verificationResult.conclusion) {
                 VerificationConclusion.PASS -> null

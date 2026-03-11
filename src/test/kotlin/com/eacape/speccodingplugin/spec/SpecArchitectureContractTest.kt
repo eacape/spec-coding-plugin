@@ -38,6 +38,7 @@ class SpecArchitectureContractTest {
         assertTrue(decisions.containsKey("verify-plan-preview"))
         assertTrue(decisions.containsKey("verify-run-execution"))
         assertTrue(decisions.containsKey("verify-action-entry"))
+        assertTrue(decisions.containsKey("performance-caching"))
         assertTrue(decisions.containsKey("workspace-recovery"))
         assertTrue(decisions.containsKey("workflow-id"))
         assertEquals(
@@ -143,6 +144,10 @@ class SpecArchitectureContractTest {
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,
             decisions.getValue("verify-action-entry").status,
+        )
+        assertEquals(
+            SpecArchitectureContract.AdoptionStatus.ADOPTED,
+            decisions.getValue("performance-caching").status,
         )
         assertEquals(
             SpecArchitectureContract.AdoptionStatus.ADOPTED,

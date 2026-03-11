@@ -1,5 +1,8 @@
 package com.eacape.speccodingplugin.spec
 
+import com.intellij.openapi.progress.ProgressIndicatorProvider
+import com.intellij.openapi.progress.ProgressManager
+
 object SpecTaskMarkdownParser {
 
     data class TaskMetadataLocation(
@@ -51,7 +54,16 @@ object SpecTaskMarkdownParser {
     )
 
     fun parse(markdown: String): ParsedTaskDocument {
-        val parsed = SpecMarkdownAstParser.parse(markdown)
+        return parse(SpecMarkdownAstParser.parse(markdown))
+    }
+
+    internal fun parse(parsed: SpecMarkdownAstParser.ParsedDocument): ParsedTaskDocument {
+        synchronized(parseCache) {
+            parseCache[parsed.normalizedMarkdown]?.let { cached ->
+                return cached
+            }
+        }
+        ProgressIndicatorProvider.getGlobalProgressIndicator()?.text2 = "Parsing tasks.md structure"
         val lines = if (parsed.normalizedMarkdown.isEmpty()) {
             emptyList()
         } else {
@@ -66,6 +78,12 @@ object SpecTaskMarkdownParser {
         val tasks = mutableListOf<ParsedTaskEntry>()
 
         lines.forEachIndexed { index, rawLine ->
+            ProgressManager.checkCanceled()
+            reportProgress(
+                detail = "Scanning tasks.md headings",
+                completed = index,
+                total = lines.size.coerceAtLeast(1),
+            )
             val lineNumber = index + 1
             if (!TASK_HEADING_PREFIX.matches(rawLine)) {
                 return@forEachIndexed
@@ -115,10 +133,14 @@ object SpecTaskMarkdownParser {
                 )
             }
 
-        return ParsedTaskDocument(
+        val parsedDocument = ParsedTaskDocument(
             tasks = tasks,
             issues = issues.sortedBy(ParseIssue::line),
         )
+        synchronized(parseCache) {
+            parseCache[parsed.normalizedMarkdown] = parsedDocument
+        }
+        return parsedDocument
     }
 
     private fun parseTaskEntry(
@@ -236,6 +258,7 @@ object SpecTaskMarkdownParser {
         return fence.content
             .lineSequence()
             .mapIndexedNotNull { index, rawLine ->
+                ProgressManager.checkCanceled()
                 val match = YAML_KEY_REGEX.matchEntire(rawLine) ?: return@mapIndexedNotNull null
                 match.groupValues[1] to (firstLine + index)
             }
@@ -418,4 +441,21 @@ object SpecTaskMarkdownParser {
         "at",
     )
     private val REQUIRED_VERIFICATION_KEYS = ALLOWED_VERIFICATION_KEYS
+
+    private const val MAX_CACHE_ENTRIES = 32
+
+    private val parseCache = object : LinkedHashMap<String, ParsedTaskDocument>(MAX_CACHE_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ParsedTaskDocument>?): Boolean {
+            return size > MAX_CACHE_ENTRIES
+        }
+    }
+
+    private fun reportProgress(detail: String, completed: Int, total: Int) {
+        val indicator = ProgressIndicatorProvider.getGlobalProgressIndicator() ?: return
+        if (completed == 0 || completed == total - 1 || completed % 20 == 0) {
+            indicator.isIndeterminate = false
+            indicator.text2 = detail
+            indicator.fraction = completed.toDouble() / total.toDouble()
+        }
+    }
 }
