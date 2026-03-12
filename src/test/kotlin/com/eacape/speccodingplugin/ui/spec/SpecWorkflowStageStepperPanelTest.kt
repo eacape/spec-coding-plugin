@@ -38,7 +38,19 @@ class SpecWorkflowStageStepperPanelTest {
         assertEquals(
             true,
             snapshot.getValue("stages").contains(
-                "Implement:${SpecCodingBundle.message("spec.toolwindow.stage.state.inactive")}",
+                "${SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT)}:${SpecCodingBundle.message("spec.toolwindow.stage.state.inactive")}",
+            ),
+        )
+        assertEquals(
+            true,
+            snapshot.getValue("stages").contains(
+                "${SpecWorkflowOverviewPresenter.stageLabel(StageId.DESIGN)}:${SpecCodingBundle.message("spec.action.stage.state.inProgress")}",
+            ),
+        )
+        assertEquals(
+            true,
+            snapshot.getValue("stages").contains(
+                "${SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS)}:${SpecCodingBundle.message("spec.action.stage.state.pending")}",
             ),
         )
 
