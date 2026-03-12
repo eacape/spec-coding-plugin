@@ -84,7 +84,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 stageStatus = focusedStep.progress,
             ),
             primaryAction = buildPrimaryAction(overviewState, resolvedFocusedStage),
-            overflowActions = buildOverflowActions(overviewState),
+            overflowActions = buildOverflowActions(overviewState, resolvedFocusedStage),
             blockers = buildBlockers(overviewState, resolvedFocusedStage),
             artifactBinding = buildArtifactBinding(workflow, resolvedFocusedStage),
             visibleSections = SpecWorkflowWorkspaceLayout.visibleSections(
@@ -98,29 +98,20 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         overviewState: SpecWorkflowOverviewState,
         focusedStage: StageId,
     ): SpecWorkflowWorkbenchAction? {
-        if (overviewState.status == WorkflowStatus.COMPLETED && focusedStage == StageId.ARCHIVE) {
+        if (overviewState.currentStage == StageId.ARCHIVE || overviewState.status == WorkflowStatus.COMPLETED) {
             return null
         }
         return when {
             focusedStage == overviewState.currentStage -> SpecWorkflowWorkbenchAction(
                 kind = SpecWorkflowWorkbenchActionKind.ADVANCE,
-                label = SpecCodingBundle.message("spec.action.advance.text"),
+                label = overviewState.nextStage?.let { nextStage ->
+                    SpecCodingBundle.message(
+                        "spec.toolwindow.overview.primary.advance",
+                        SpecWorkflowOverviewPresenter.stageLabel(nextStage),
+                    )
+                } ?: SpecCodingBundle.message("spec.action.advance.text"),
                 enabled = overviewState.stageStepper.canAdvance,
                 targetStage = overviewState.nextStage,
-            )
-
-            focusedStage in overviewState.stageStepper.jumpTargets -> SpecWorkflowWorkbenchAction(
-                kind = SpecWorkflowWorkbenchActionKind.JUMP,
-                label = SpecCodingBundle.message("spec.action.jump.text"),
-                enabled = true,
-                targetStage = focusedStage,
-            )
-
-            focusedStage in overviewState.stageStepper.rollbackTargets -> SpecWorkflowWorkbenchAction(
-                kind = SpecWorkflowWorkbenchActionKind.ROLLBACK,
-                label = SpecCodingBundle.message("spec.action.rollback.text"),
-                enabled = true,
-                targetStage = focusedStage,
             )
 
             else -> null
@@ -129,14 +120,23 @@ internal object SpecWorkflowStageWorkbenchBuilder {
 
     private fun buildOverflowActions(
         overviewState: SpecWorkflowOverviewState,
+        focusedStage: StageId,
     ): List<SpecWorkflowWorkbenchAction> {
+        val jumpTarget = focusedStage.takeIf { stageId -> stageId in overviewState.stageStepper.jumpTargets }
+        val rollbackTarget = focusedStage.takeIf { stageId -> stageId in overviewState.stageStepper.rollbackTargets }
         return buildList {
             if (overviewState.stageStepper.jumpTargets.isNotEmpty()) {
                 add(
                     SpecWorkflowWorkbenchAction(
                         kind = SpecWorkflowWorkbenchActionKind.JUMP,
-                        label = SpecCodingBundle.message("spec.action.jump.text"),
+                        label = jumpTarget?.let { target ->
+                            SpecCodingBundle.message(
+                                "spec.toolwindow.overview.more.jumpTo",
+                                SpecWorkflowOverviewPresenter.stageLabel(target),
+                            )
+                        } ?: SpecCodingBundle.message("spec.action.jump.text"),
                         enabled = true,
+                        targetStage = jumpTarget,
                     ),
                 )
             }
@@ -144,8 +144,14 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 add(
                     SpecWorkflowWorkbenchAction(
                         kind = SpecWorkflowWorkbenchActionKind.ROLLBACK,
-                        label = SpecCodingBundle.message("spec.action.rollback.text"),
+                        label = rollbackTarget?.let { target ->
+                            SpecCodingBundle.message(
+                                "spec.toolwindow.overview.more.rollbackTo",
+                                SpecWorkflowOverviewPresenter.stageLabel(target),
+                            )
+                        } ?: SpecCodingBundle.message("spec.action.rollback.text"),
                         enabled = true,
+                        targetStage = rollbackTarget,
                     ),
                 )
             }

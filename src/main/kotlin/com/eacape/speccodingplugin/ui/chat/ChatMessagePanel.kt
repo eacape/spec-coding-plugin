@@ -2104,13 +2104,15 @@ open class ChatMessagePanel(
         if (nonBlankLines.isEmpty()) return rawDetail
 
         val keyLines = selectKeyOutputLines(nonBlankLines)
+        val filteredCount = (nonBlankLines.size - keyLines.size).coerceAtLeast(0)
         if (keyLines.isEmpty()) {
-            return nonBlankLines
-                .take(OUTPUT_FILTER_FALLBACK_LINES)
-                .joinToString("\n")
+            return if (filteredCount > 0) {
+                SpecCodingBundle.message("chat.timeline.output.filtered.more", filteredCount)
+            } else {
+                ""
+            }
         }
 
-        val filteredCount = (nonBlankLines.size - keyLines.size).coerceAtLeast(0)
         val body = keyLines.joinToString("\n")
         if (filteredCount <= 0) return body
 
@@ -2122,25 +2124,25 @@ open class ChatMessagePanel(
     }
 
     private fun shouldBypassOutputFilter(rawDetail: String): Boolean {
-        return looksLikeMarkdown(rawDetail, scanLimit = Int.MAX_VALUE) ||
-            containsLoosePipeTableRows(rawDetail, minConsecutiveRows = OUTPUT_FILTER_TABLE_BYPASS_MIN_ROWS)
+        return containsLoosePipeTableRows(rawDetail, minConsecutiveRows = OUTPUT_FILTER_TABLE_BYPASS_MIN_ROWS)
     }
 
     private fun selectKeyOutputLines(lines: List<String>): List<String> {
         val kept = mutableListOf<String>()
-        lines.forEachIndexed { index, line ->
+        lines.forEach { line ->
+            if (looksLikeRawCodeOrPatchLine(line)) {
+                return@forEach
+            }
             val lowered = line.lowercase()
             val keywordMatch = OUTPUT_KEYWORDS.any { lowered.contains(it) } ||
                 OUTPUT_KEYWORDS_ZH.any { line.contains(it) }
             val keyValueMatch = OUTPUT_KEY_VALUE_REGEX.containsMatchIn(line)
             val structureMatch = line.startsWith("[") ||
                 line.startsWith("#") ||
-                line.startsWith("$ ") ||
                 line.startsWith("> ")
+            val narrativeMatch = looksLikeNarrativeOutputLine(line)
 
-            if (keywordMatch || keyValueMatch || structureMatch) {
-                kept += line
-            } else if (index < OUTPUT_FILTER_CONTEXT_HEAD_LINES && kept.size < OUTPUT_FILTER_MIN_LINES) {
+            if (keywordMatch || keyValueMatch || structureMatch || narrativeMatch) {
                 kept += line
             }
         }
@@ -2151,8 +2153,52 @@ open class ChatMessagePanel(
         }
 
         return lines
+            .filterNot(::looksLikeRawCodeOrPatchLine)
+            .filter(::looksLikeNarrativeOutputLine)
             .take(OUTPUT_FILTER_FALLBACK_LINES)
             .distinct()
+    }
+
+    private fun looksLikeNarrativeOutputLine(line: String): Boolean {
+        val trimmed = line.trim()
+        if (trimmed.isBlank() || trimmed.startsWith("|")) return false
+        if (OUTPUT_SHORT_STATUS_REGEX.matches(trimmed)) return true
+
+        val cjkCount = OUTPUT_CJK_CHAR_REGEX.findAll(trimmed).count()
+        if (cjkCount >= OUTPUT_NARRATIVE_MIN_CJK_CHARS) return true
+
+        val wordCount = OUTPUT_LATIN_WORD_REGEX.findAll(trimmed).count()
+        if (wordCount >= OUTPUT_NARRATIVE_MIN_WORDS) return true
+
+        val hasSentenceHint = trimmed.any { it in OUTPUT_NARRATIVE_HINT_PUNCTUATION }
+        return hasSentenceHint && (
+            wordCount >= OUTPUT_NARRATIVE_MIN_SENTENCE_WORDS ||
+                cjkCount >= OUTPUT_NARRATIVE_MIN_SENTENCE_CJK_CHARS ||
+                trimmed.length >= OUTPUT_NARRATIVE_MIN_CHARS
+            )
+    }
+
+    private fun looksLikeRawCodeOrPatchLine(line: String): Boolean {
+        val trimmed = line.trim()
+        if (trimmed.isBlank()) return false
+        if (trimmed.startsWith("```")) return true
+        if (OUTPUT_DIFF_CONTROL_PREFIXES.any { trimmed.startsWith(it) }) return true
+        if (OUTPUT_COMMAND_LINE_REGEX.matches(trimmed)) return true
+        if (OUTPUT_FILE_PATH_LINE_REGEX.matches(trimmed)) return true
+        if (OUTPUT_CODE_DECLARATION_REGEX.matches(trimmed)) return true
+        if (OUTPUT_CODE_BLOCK_ONLY_LINE_REGEX.matches(trimmed)) return true
+        if (looksLikeSymbolDenseCodeLine(trimmed)) return true
+        return false
+    }
+
+    private fun looksLikeSymbolDenseCodeLine(line: String): Boolean {
+        val symbolCount = line.count { it in OUTPUT_CODE_SYMBOL_HINTS }
+        if (symbolCount < OUTPUT_CODE_SYMBOL_MIN_COUNT) return false
+        if (line.contains("->") || line.contains("::") || line.contains("=>")) return true
+        if (line.contains('(') && line.contains(')') && (line.contains('=') || line.contains('{') || line.contains('}'))) {
+            return true
+        }
+        return line.endsWith("{") || line.endsWith(");") || line.endsWith("},")
     }
 
     private fun outputFilterLabel(level: OutputFilterLevel): String {
@@ -2792,10 +2838,14 @@ open class ChatMessagePanel(
         private const val LOOSE_PIPE_TABLE_DETECTION_MIN_ROWS = 2
         private const val OUTPUT_FILTER_TABLE_BYPASS_MIN_ROWS = 2
         private const val COMMAND_ACTION_TABLE_BLOCK_MIN_ROWS = 2
-        private const val OUTPUT_FILTER_MIN_LINES = 2
         private const val OUTPUT_FILTER_MAX_LINES = 24
         private const val OUTPUT_FILTER_FALLBACK_LINES = 6
-        private const val OUTPUT_FILTER_CONTEXT_HEAD_LINES = 6
+        private const val OUTPUT_NARRATIVE_MIN_CHARS = 18
+        private const val OUTPUT_NARRATIVE_MIN_WORDS = 4
+        private const val OUTPUT_NARRATIVE_MIN_CJK_CHARS = 4
+        private const val OUTPUT_NARRATIVE_MIN_SENTENCE_WORDS = 2
+        private const val OUTPUT_NARRATIVE_MIN_SENTENCE_CJK_CHARS = 2
+        private const val OUTPUT_CODE_SYMBOL_MIN_COUNT = 3
         private const val COPY_FEEDBACK_DURATION_MS = 1000
         private const val COPY_FEEDBACK_TIMER_KEY = "spec.copy.feedback.timer"
         private const val TEXT_PANE_LINK_HANDLERS_KEY = "spec.textPane.linkHandlersInstalled"
@@ -2855,6 +2905,39 @@ open class ChatMessagePanel(
         private val EXCESSIVE_EMPTY_LINES_REGEX = Regex("""\n{3,}""")
         private val ASSISTANT_ACK_SENTENCE_END_REGEX = Regex("[。！？!?]")
         private val ASSISTANT_ACK_COMMA_REGEX = Regex("[，,]")
+        private val OUTPUT_NARRATIVE_HINT_PUNCTUATION = setOf('。', '！', '？', '，', '.', '!', '?', ':', '：')
+        private val OUTPUT_CJK_CHAR_REGEX = Regex("""\p{IsHan}""")
+        private val OUTPUT_LATIN_WORD_REGEX = Regex("""[A-Za-z]+(?:['-][A-Za-z0-9]+)?""")
+        private val OUTPUT_SHORT_STATUS_REGEX = Regex(
+            """^(?:(?:ok|okay|done|ready|complete(?:d)?|success(?:ful(?:ly)?)?|warning|note|summary|result|next(?:\s+step)?|updated|created|changed|fixed|verified|passed|failed|error)\b.*|(?:已完成|完成|成功|失败|错误|警告|注意|总结|结果|下一步|已更新|已创建|已修改|已验证).*)$""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val OUTPUT_DIFF_CONTROL_PREFIXES = listOf(
+            "diff --git ",
+            "index ",
+            "--- ",
+            "+++ ",
+            "@@ ",
+            "*** Begin Patch",
+            "*** End Patch",
+            "*** Update File:",
+            "*** Add File:",
+            "*** Delete File:",
+            "*** Move to:",
+        )
+        private val OUTPUT_COMMAND_LINE_REGEX = Regex(
+            """^(?:PS\s+[^>]+>\s+.+|[$#]\s+.+|(?:git|rg|ls|cat|npm|pnpm|yarn|gradle|\.\/gradlew(?:\.bat)?|powershell(?:\.exe)?|python(?:3)?|node|cargo|go|java|javac|mvn|pytest|uv|specify|openspec)\b.*)$""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val OUTPUT_FILE_PATH_LINE_REGEX = Regex(
+            """^(?!https?://)(?:(?:[A-Za-z]:)?[\\/])?(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+(?:\.[A-Za-z0-9]+)?(?::\d+(?::\d+)?)?$""",
+        )
+        private val OUTPUT_CODE_DECLARATION_REGEX = Regex(
+            """^(?:[+\-])?\s*(?:@[\w.]+(?:\([^)]*\))?\s*)*(?:(?:private|public|protected|internal|override|open|abstract|sealed|data|final|const|inline|suspend|lateinit|export)\s+)*(?:class|interface|object|enum|fun|val|var|package|import|def|function|const|let|type|return|throw|catch|try|if|else|for|while|switch|case|when)\b.*$""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val OUTPUT_CODE_BLOCK_ONLY_LINE_REGEX = Regex("""^[{}\[\](),;]+$""")
+        private val OUTPUT_CODE_SYMBOL_HINTS = setOf('{', '}', '(', ')', '[', ']', ';', '=', '<', '>')
         private val ASSISTANT_ACK_PREFIXES_ZH = listOf(
             "好的",
             "收到",

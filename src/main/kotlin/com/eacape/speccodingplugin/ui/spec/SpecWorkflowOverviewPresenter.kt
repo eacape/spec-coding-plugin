@@ -126,4 +126,12 @@ internal object SpecWorkflowOverviewPresenter {
             fallback,
         )
     }
+
+    fun progressLabel(progress: StageProgress): String {
+        return when (progress) {
+            StageProgress.DONE -> SpecCodingBundle.message("spec.action.stage.state.done")
+            StageProgress.IN_PROGRESS -> SpecCodingBundle.message("spec.action.stage.state.inProgress")
+            StageProgress.NOT_STARTED -> SpecCodingBundle.message("spec.action.stage.state.pending")
+        }
+    }
 }

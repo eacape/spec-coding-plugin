@@ -140,6 +140,16 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             ),
             panel.visibleWorkspaceSectionIdsForTest(),
         )
+        assertTrue(
+            panel.workspaceSummarySnapshotForTest().getValue("stageValue").contains(
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+            ),
+        )
+        assertTrue(
+            panel.workspaceSummarySnapshotForTest().getValue("focusTitle").contains(
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+            ),
+        )
         assertEquals("IMPLEMENT", panel.selectedDocumentPhaseForTest())
     }
 

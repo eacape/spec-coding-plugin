@@ -879,7 +879,7 @@ class ChatMessagePanelTraceStreamingTest {
         assertFalse(filteredText.contains("final-noise-tail"))
         assertTrue(
             filteredText.contains(
-                SpecCodingBundle.message("chat.timeline.output.filtered.more", 6)
+                SpecCodingBundle.message("chat.timeline.output.filtered.more", 7)
             )
         )
 
@@ -901,7 +901,7 @@ class ChatMessagePanelTraceStreamingTest {
         assertTrue(allText.contains("final-noise-tail"))
         assertFalse(
             allText.contains(
-                SpecCodingBundle.message("chat.timeline.output.filtered.more", 6)
+                SpecCodingBundle.message("chat.timeline.output.filtered.more", 7)
             )
         )
     }
@@ -1263,3 +1263,4 @@ class ChatMessagePanelTraceStreamingTest {
         return method.invoke(panel, content) as String
     }
 }
+

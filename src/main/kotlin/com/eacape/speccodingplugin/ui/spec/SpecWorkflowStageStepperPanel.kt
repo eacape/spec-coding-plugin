@@ -1,184 +1,150 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
-import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Cursor
 import java.awt.FlowLayout
+import java.awt.Font
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
-import javax.swing.JButton
-import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 
 internal class SpecWorkflowStageStepperPanel(
-    private val onAdvanceRequested: () -> Unit = {},
-    private val onJumpRequested: () -> Unit = {},
-    private val onRollbackRequested: () -> Unit = {},
+    private val onStageSelected: (StageId) -> Unit = {},
 ) : JPanel(BorderLayout(0, JBUI.scale(8))) {
     private val stagesPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
         isOpaque = false
     }
-    private val advanceButton = JButton().apply {
-        isFocusable = false
-        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 14)
-        addActionListener { onAdvanceRequested() }
-    }
-    private val jumpButton = JButton().apply {
-        isFocusable = false
-        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 14)
-        addActionListener { onJumpRequested() }
-    }
-    private val rollbackButton = JButton().apply {
-        isFocusable = false
-        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 14)
-        addActionListener { onRollbackRequested() }
-    }
-    private val controlsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-        isOpaque = false
-        add(advanceButton)
-        add(jumpButton)
-        add(rollbackButton)
-    }
 
     private var currentState: SpecWorkflowStageStepperState? = null
+    private var currentFocusedStage: StageId? = null
+    private val stageChips = linkedMapOf<StageId, JPanel>()
 
     init {
         isOpaque = false
-        add(stagesPanel, BorderLayout.NORTH)
-        add(controlsPanel, BorderLayout.SOUTH)
-        refreshLocalizedTexts()
+        add(stagesPanel, BorderLayout.CENTER)
         clear()
     }
 
-    fun updateState(state: SpecWorkflowStageStepperState) {
+    fun updateState(
+        state: SpecWorkflowStageStepperState,
+        focusedStage: StageId? = null,
+    ) {
         currentState = state
+        currentFocusedStage = focusedStage
+            ?: state.stages.firstOrNull { it.current }?.stageId
+            ?: state.stages.firstOrNull()?.stageId
         render()
     }
 
     fun clear() {
         currentState = null
+        currentFocusedStage = null
         render()
     }
 
     fun refreshLocalizedTexts() {
-        applyActionButtonPresentation()
         render()
     }
 
     internal fun snapshotForTest(): Map<String, String> {
-        val firstStageChip = stagesPanel.components.filterIsInstance<JPanel>().firstOrNull()
+        val firstStageChip = stageChips.values.firstOrNull()
         return mapOf(
             "stages" to currentState
                 ?.stages
                 ?.joinToString(" | ") { stage ->
-                    "${SpecWorkflowOverviewPresenter.stageLabel(stage.stageId)}:${statusText(stage)}"
+                    buildString {
+                        append(SpecWorkflowOverviewPresenter.stageLabel(stage.stageId))
+                        append(':')
+                        append(statusText(stage))
+                        append(':')
+                        append(if (stage.current) "current" else "not-current")
+                        append(':')
+                        append(if (stage.stageId == currentFocusedStage) "focused" else "not-focused")
+                    }
                 }
                 .orEmpty(),
+            "focusedStage" to currentFocusedStage?.name.orEmpty(),
             "stageChipOpaque" to firstStageChip?.isOpaque?.toString().orEmpty(),
             "stageChipInsets" to firstStageChip?.border?.getBorderInsets(firstStageChip)?.let { insets ->
                 "${insets.top},${insets.left},${insets.bottom},${insets.right}"
             }.orEmpty(),
-            "advanceText" to advanceButton.text.orEmpty(),
-            "advanceTooltip" to advanceButton.toolTipText.orEmpty(),
-            "advanceHasIcon" to (advanceButton.icon != null).toString(),
-            "advanceRolloverEnabled" to advanceButton.isRolloverEnabled.toString(),
-            "jumpText" to jumpButton.text.orEmpty(),
-            "jumpTooltip" to jumpButton.toolTipText.orEmpty(),
-            "jumpHasIcon" to (jumpButton.icon != null).toString(),
-            "jumpRolloverEnabled" to jumpButton.isRolloverEnabled.toString(),
-            "rollbackText" to rollbackButton.text.orEmpty(),
-            "rollbackTooltip" to rollbackButton.toolTipText.orEmpty(),
-            "rollbackHasIcon" to (rollbackButton.icon != null).toString(),
-            "rollbackRolloverEnabled" to rollbackButton.isRolloverEnabled.toString(),
-            "advanceEnabled" to advanceButton.isEnabled.toString(),
-            "jumpEnabled" to jumpButton.isEnabled.toString(),
-            "rollbackEnabled" to rollbackButton.isEnabled.toString(),
         )
     }
 
-    internal fun clickAdvanceForTest() {
-        advanceButton.doClick()
-    }
-
-    internal fun clickJumpForTest() {
-        jumpButton.doClick()
-    }
-
-    internal fun clickRollbackForTest() {
-        rollbackButton.doClick()
+    internal fun clickStageForTest(stageId: StageId) {
+        if (stageChips.containsKey(stageId)) {
+            onStageSelected(stageId)
+        }
     }
 
     private fun render() {
         stagesPanel.removeAll()
+        stageChips.clear()
         val state = currentState
         if (state == null) {
-            advanceButton.isEnabled = false
-            jumpButton.isEnabled = false
-            rollbackButton.isEnabled = false
             revalidate()
             repaint()
             return
         }
 
         state.stages.forEachIndexed { index, stage ->
-            stagesPanel.add(createStageChip(stage))
+            val chip = createStageChip(stage, focused = stage.stageId == currentFocusedStage)
+            stageChips[stage.stageId] = chip
+            stagesPanel.add(chip)
             if (index < state.stages.lastIndex) {
                 stagesPanel.add(
-                    JBLabel("→").apply {
+                    JBLabel(ARROW_TEXT).apply {
                         foreground = CONNECTOR_FG
-                        border = JBUI.Borders.empty(0, 0, 0, 0)
+                        border = JBUI.Borders.empty()
                     },
                 )
             }
         }
-        advanceButton.isEnabled = state.canAdvance
-        jumpButton.isEnabled = state.jumpTargets.isNotEmpty()
-        rollbackButton.isEnabled = state.rollbackTargets.isNotEmpty()
         revalidate()
         repaint()
     }
 
-    private fun applyActionButtonPresentation() {
-        SpecUiStyle.configureIconActionButton(
-            button = advanceButton,
-            icon = ADVANCE_ICON,
-            tooltip = SpecCodingBundle.message("spec.action.advance.text"),
-        )
-        SpecUiStyle.configureIconActionButton(
-            button = jumpButton,
-            icon = JUMP_ICON,
-            tooltip = SpecCodingBundle.message("spec.action.jump.text"),
-        )
-        SpecUiStyle.configureIconActionButton(
-            button = rollbackButton,
-            icon = ROLLBACK_ICON,
-            tooltip = SpecCodingBundle.message("spec.action.rollback.text"),
-        )
-    }
-
-    private fun createStageChip(stage: SpecWorkflowStageStepState): JPanel {
-        val palette = chipPalette(stage)
+    private fun createStageChip(
+        stage: SpecWorkflowStageStepState,
+        focused: Boolean,
+    ): JPanel {
+        val palette = chipPalette(stage, focused)
         return JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = true
             background = palette.background
             border = BorderFactory.createCompoundBorder(
-                SpecUiStyle.roundedLineBorder(palette.border, JBUI.scale(14)),
+                SpecUiStyle.roundedLineBorder(palette.border, JBUI.scale(14), thickness = palette.borderThickness),
                 JBUI.Borders.empty(6, 10, 6, 10),
+            )
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            toolTipText = SpecWorkflowOverviewPresenter.stageLabel(stage.stageId)
+            addMouseListener(
+                object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent?) {
+                        onStageSelected(stage.stageId)
+                    }
+                },
             )
             add(
                 JBLabel(SpecWorkflowOverviewPresenter.stageLabel(stage.stageId)).apply {
                     foreground = palette.titleForeground
                     horizontalAlignment = SwingConstants.LEFT
                     alignmentX = LEFT_ALIGNMENT
-                    font = JBUI.Fonts.smallFont().deriveFont(if (stage.current) java.awt.Font.BOLD else java.awt.Font.PLAIN)
+                    font = JBUI.Fonts.smallFont().deriveFont(
+                        if (stage.current || focused) Font.BOLD else Font.PLAIN,
+                    )
                 },
             )
             add(Box.createVerticalStrut(JBUI.scale(2)))
@@ -203,13 +169,25 @@ internal class SpecWorkflowStageStepperPanel(
         }
     }
 
-    private fun chipPalette(stage: SpecWorkflowStageStepState): ChipPalette {
+    private fun chipPalette(
+        stage: SpecWorkflowStageStepState,
+        focused: Boolean,
+    ): ChipPalette {
         return when {
             stage.current -> ChipPalette(
                 background = CURRENT_BG,
                 border = CURRENT_BORDER,
                 titleForeground = CURRENT_FG,
                 statusForeground = CURRENT_FG,
+                borderThickness = 2,
+            )
+
+            focused -> ChipPalette(
+                background = FOCUSED_BG,
+                border = FOCUSED_BORDER,
+                titleForeground = FOCUSED_FG,
+                statusForeground = FOCUSED_FG,
+                borderThickness = 2,
             )
 
             !stage.active -> ChipPalette(
@@ -217,6 +195,7 @@ internal class SpecWorkflowStageStepperPanel(
                 border = INACTIVE_BORDER,
                 titleForeground = INACTIVE_FG,
                 statusForeground = INACTIVE_FG,
+                borderThickness = 1,
             )
 
             stage.progress == StageProgress.DONE -> ChipPalette(
@@ -224,6 +203,7 @@ internal class SpecWorkflowStageStepperPanel(
                 border = DONE_BORDER,
                 titleForeground = DONE_FG,
                 statusForeground = DONE_FG,
+                borderThickness = 1,
             )
 
             else -> ChipPalette(
@@ -231,6 +211,7 @@ internal class SpecWorkflowStageStepperPanel(
                 border = ACTIVE_BORDER,
                 titleForeground = ACTIVE_FG,
                 statusForeground = ACTIVE_FG,
+                borderThickness = 1,
             )
         }
     }
@@ -240,20 +221,21 @@ internal class SpecWorkflowStageStepperPanel(
         val border: Color,
         val titleForeground: Color,
         val statusForeground: Color,
+        val borderThickness: Int,
     )
 
     companion object {
-        private val ADVANCE_ICON: Icon =
-            IconLoader.getIcon("/icons/spec-workflow-advance.svg", SpecWorkflowStageStepperPanel::class.java)
-        private val JUMP_ICON: Icon =
-            IconLoader.getIcon("/icons/spec-workflow-jump.svg", SpecWorkflowStageStepperPanel::class.java)
-        private val ROLLBACK_ICON: Icon =
-            IconLoader.getIcon("/icons/spec-workflow-stage-rollback.svg", SpecWorkflowStageStepperPanel::class.java)
+        private const val ARROW_TEXT = "→"
+
         private val CONNECTOR_FG = JBColor(Color(132, 141, 153), Color(122, 130, 142))
 
         private val CURRENT_BG = JBColor(Color(241, 246, 255), Color(53, 71, 109))
         private val CURRENT_FG = JBColor(Color(33, 72, 153), Color(212, 224, 255))
         private val CURRENT_BORDER = JBColor(Color(160, 185, 238), Color(109, 130, 176))
+
+        private val FOCUSED_BG = JBColor(Color(245, 249, 255), Color(62, 71, 86))
+        private val FOCUSED_FG = JBColor(Color(52, 84, 148), Color(216, 227, 244))
+        private val FOCUSED_BORDER = JBColor(Color(123, 164, 230), Color(132, 164, 211))
 
         private val DONE_BG = JBColor(Color(239, 248, 242), Color(49, 74, 57))
         private val DONE_FG = JBColor(Color(39, 94, 57), Color(200, 234, 208))

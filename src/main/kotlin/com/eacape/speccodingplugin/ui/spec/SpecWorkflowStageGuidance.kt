@@ -49,7 +49,11 @@ internal object SpecWorkflowStageGuidanceBuilder {
     ): SpecWorkflowStageGuidance {
         val stageLabel = SpecWorkflowOverviewPresenter.stageLabel(workbenchState.focusedStage)
         return SpecWorkflowStageGuidance(
-            headline = SpecCodingBundle.message("spec.toolwindow.overview.focus.title", stageLabel),
+            headline = if (workbenchState.focusedStage == state.currentStage) {
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.title.current", stageLabel)
+            } else {
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.title.focused", stageLabel)
+            },
             summary = buildSummary(state, workbenchState),
             checklist = buildChecklist(state, workbenchState),
         )

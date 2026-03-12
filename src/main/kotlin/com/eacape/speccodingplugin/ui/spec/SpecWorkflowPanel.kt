@@ -97,9 +97,8 @@ class SpecWorkflowPanel(
     private val listPanel: SpecWorkflowListPanel
     private val detailPanel: SpecDetailPanel
     private val overviewPanel = SpecWorkflowOverviewPanel(
-        onAdvanceRequested = ::onAdvanceStageRequested,
-        onJumpRequested = ::onJumpStageRequested,
-        onRollbackRequested = ::onRollbackStageRequested,
+        onStageSelected = ::onOverviewStageSelected,
+        onWorkbenchActionRequested = ::onWorkbenchActionRequested,
         onTemplateSwitchRequested = ::onTemplateSwitchRequested,
         onTemplateRollbackRequested = ::onTemplateSwitchRollbackRequested,
     )
@@ -1014,6 +1013,10 @@ class SpecWorkflowPanel(
         currentStructuredTasks = tasks
 
         showWorkspaceContent()
+        overviewPanel.updateOverview(
+            state = overviewState,
+            workbenchState = workbenchState,
+        )
         val guidance = SpecWorkflowStageGuidanceBuilder.build(
             state = overviewState,
             workbenchState = workbenchState,
@@ -1040,8 +1043,12 @@ class SpecWorkflowPanel(
 
         updateWorkspaceMetric(
             metric = workspaceStageMetric,
-            title = SpecCodingBundle.message("spec.toolwindow.overview.currentStage"),
-            value = buildStageChipText(workflow),
+            title = if (workbenchState.focusedStage == workbenchState.currentStage) {
+                SpecCodingBundle.message("spec.toolwindow.overview.currentStage")
+            } else {
+                SpecCodingBundle.message("spec.toolwindow.overview.secondary.focus")
+            },
+            value = buildStageChipText(workbenchState),
             tone = when (workflow.status) {
                 WorkflowStatus.COMPLETED -> WorkspaceChipTone.SUCCESS
                 WorkflowStatus.PAUSED -> WorkspaceChipTone.WARNING
@@ -1083,13 +1090,13 @@ class SpecWorkflowPanel(
         )
 
         overviewSection.setSummary(
-            buildOverviewSectionSummary(overviewState, nextStageText),
+            buildOverviewSectionSummary(overviewState, workbenchState, nextStageText),
         )
         tasksSection.setSummary(buildTasksSectionSummary(tasks))
         gateSection.setSummary(buildGateSectionSummary(gateResult))
         verifySection.setSummary(buildVerifySectionSummary(verifyDeltaState))
         documentsSection.setSummary(
-            buildDocumentsSectionSummary(workflow),
+            buildDocumentsSectionSummary(workbenchState),
         )
         detailPanel.updateWorkbenchState(
             state = workbenchState,
@@ -1147,8 +1154,15 @@ class SpecWorkflowPanel(
         )
     }
 
-    private fun buildStageChipText(workflow: SpecWorkflow): String {
-        return "${SpecWorkflowOverviewPresenter.stageLabel(workflow.currentStage)} / ${workspaceWorkflowStatusText(workflow.status)}"
+    private fun buildStageChipText(workbenchState: SpecWorkflowStageWorkbenchState): String {
+        val stageLabel = SpecWorkflowOverviewPresenter.stageLabel(workbenchState.focusedStage)
+        val progressText = "${workbenchState.progress.stepIndex}/${workbenchState.progress.totalSteps}"
+        val stageStatus = SpecWorkflowOverviewPresenter.progressLabel(workbenchState.progress.stageStatus)
+        return if (workbenchState.focusedStage == workbenchState.currentStage) {
+            "$stageLabel / $progressText / $stageStatus"
+        } else {
+            "$stageLabel / $progressText"
+        }
     }
 
     private fun buildGateChipText(gateResult: GateResult?): String {
@@ -1170,10 +1184,15 @@ class SpecWorkflowPanel(
 
     private fun buildOverviewSectionSummary(
         overviewState: SpecWorkflowOverviewState,
+        workbenchState: SpecWorkflowStageWorkbenchState,
         nextStageText: String,
     ): String {
         return buildString {
-            append(SpecWorkflowOverviewPresenter.stageLabel(overviewState.currentStage))
+            append(SpecWorkflowOverviewPresenter.stageLabel(workbenchState.focusedStage))
+            append(" | ")
+            append(workbenchState.progress.stepIndex)
+            append("/")
+            append(workbenchState.progress.totalSteps)
             append(" | ")
             append(SpecCodingBundle.message("spec.toolwindow.overview.secondary.next"))
             append(": ")
@@ -1235,11 +1254,11 @@ class SpecWorkflowPanel(
         }
     }
 
-    private fun buildDocumentsSectionSummary(workflow: SpecWorkflow): String {
+    private fun buildDocumentsSectionSummary(workbenchState: SpecWorkflowStageWorkbenchState): String {
         return buildString {
-            append(phaseLabel(workflow.currentPhase))
+            append(SpecWorkflowOverviewPresenter.stageLabel(workbenchState.focusedStage))
             append(" | ")
-            append(workflow.currentPhase.outputFileName)
+            append(workbenchState.artifactBinding.fileName ?: workbenchState.artifactBinding.title)
         }
     }
 
@@ -3628,7 +3647,7 @@ class SpecWorkflowPanel(
             .toCollection(linkedSetOf())
     }
 
-    internal fun focusStageForTest(stageId: StageId) {
+    private fun focusStage(stageId: StageId) {
         focusedStage = stageId
         val workflow = currentWorkflow ?: return
         val overviewState = currentOverviewState ?: buildWorkflowUiSnapshot(workflow).overviewState
@@ -3645,6 +3664,39 @@ class SpecWorkflowPanel(
         )
     }
 
+    internal fun focusStageForTest(stageId: StageId) {
+        focusStage(stageId)
+    }
+
+    private fun onOverviewStageSelected(stageId: StageId) {
+        focusStage(stageId)
+    }
+
+    private fun onWorkbenchActionRequested(action: SpecWorkflowWorkbenchAction) {
+        when (action.kind) {
+            SpecWorkflowWorkbenchActionKind.ADVANCE -> onAdvanceStageRequested()
+            SpecWorkflowWorkbenchActionKind.JUMP -> {
+                val workflowId = currentWorkflow?.id
+                val targetStage = action.targetStage
+                if (workflowId != null && targetStage != null) {
+                    previewAndJumpToStage(workflowId, targetStage)
+                } else {
+                    onJumpStageRequested()
+                }
+            }
+
+            SpecWorkflowWorkbenchActionKind.ROLLBACK -> {
+                val workflowId = currentWorkflow?.id
+                val targetStage = action.targetStage
+                if (workflowId != null && targetStage != null) {
+                    executeRollbackStage(workflowId, targetStage)
+                } else {
+                    onRollbackStageRequested()
+                }
+            }
+        }
+    }
+
     internal fun focusedStageForTest(): StageId? = currentWorkbenchState?.focusedStage
 
     internal fun selectedDocumentPhaseForTest(): String? = detailPanel.selectedPhaseNameForTest()
@@ -3659,6 +3711,8 @@ class SpecWorkflowPanel(
             "tasksValue" to workspaceTasksMetric.valueLabel.text.orEmpty(),
             "verifyTitle" to workspaceVerifyMetric.titleLabel.text.orEmpty(),
             "verifyValue" to workspaceVerifyMetric.valueLabel.text.orEmpty(),
+            "focusTitle" to workspaceSummaryFocusLabel.text.orEmpty(),
+            "focusHint" to workspaceSummaryHintLabel.text.orEmpty(),
         )
     }
 

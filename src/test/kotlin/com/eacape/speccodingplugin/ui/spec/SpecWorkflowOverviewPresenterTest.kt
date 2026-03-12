@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.SpecPhase
@@ -164,7 +165,15 @@ class SpecWorkflowOverviewPresenterTest {
         assertEquals(3, workbenchState.progress.stepIndex)
         assertEquals(5, workbenchState.progress.totalSteps)
         assertEquals(SpecWorkflowWorkbenchActionKind.ADVANCE, workbenchState.primaryAction?.kind)
+        assertEquals(
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.primary.advance",
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+            ),
+            workbenchState.primaryAction?.label,
+        )
         assertEquals(StageId.IMPLEMENT, workbenchState.primaryAction?.targetStage)
+        assertEquals(2, workbenchState.overflowActions.size)
         assertEquals("tasks.md", workbenchState.artifactBinding.fileName)
         assertEquals("IMPLEMENT", workbenchState.artifactBinding.documentPhase?.name)
         assertEquals(
@@ -196,8 +205,16 @@ class SpecWorkflowOverviewPresenterTest {
 
         assertEquals(StageId.TASKS, workbenchState.currentStage)
         assertEquals(StageId.IMPLEMENT, workbenchState.focusedStage)
-        assertEquals(SpecWorkflowWorkbenchActionKind.JUMP, workbenchState.primaryAction?.kind)
-        assertEquals(StageId.IMPLEMENT, workbenchState.primaryAction?.targetStage)
+        assertNull(workbenchState.primaryAction)
+        assertEquals(SpecWorkflowWorkbenchActionKind.JUMP, workbenchState.overflowActions.first().kind)
+        assertEquals(StageId.IMPLEMENT, workbenchState.overflowActions.first().targetStage)
+        assertEquals(
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.more.jumpTo",
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+            ),
+            workbenchState.overflowActions.first().label,
+        )
         assertEquals("tasks.md", workbenchState.artifactBinding.fileName)
         assertEquals("IMPLEMENT", workbenchState.artifactBinding.documentPhase?.name)
         assertEquals(

@@ -5,19 +5,20 @@ import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class SpecWorkflowStageStepperPanelTest {
 
     @Test
-    fun `updateState should expose active inactive stages and enabled controls`() {
-        var jumpClicks = 0
+    fun `updateState should expose current and focused stages and allow selection`() {
+        var selectedStage: StageId? = null
         val panel = SpecWorkflowStageStepperPanel(
-            onJumpRequested = { jumpClicks += 1 },
+            onStageSelected = { selectedStage = it },
         )
 
         panel.updateState(
-            SpecWorkflowStageStepperState(
+            state = SpecWorkflowStageStepperState(
                 stages = listOf(
                     SpecWorkflowStageStepState(StageId.REQUIREMENTS, active = true, current = false, progress = StageProgress.DONE),
                     SpecWorkflowStageStepState(StageId.DESIGN, active = true, current = true, progress = StageProgress.IN_PROGRESS),
@@ -30,46 +31,30 @@ class SpecWorkflowStageStepperPanelTest {
                 jumpTargets = listOf(StageId.TASKS, StageId.ARCHIVE),
                 rollbackTargets = listOf(StageId.REQUIREMENTS),
             ),
+            focusedStage = StageId.TASKS,
         )
 
         val snapshot = panel.snapshotForTest()
-        assertEquals("true", snapshot.getValue("advanceEnabled"))
-        assertEquals("true", snapshot.getValue("jumpEnabled"))
-        assertEquals("true", snapshot.getValue("rollbackEnabled"))
-        assertEquals("", snapshot.getValue("advanceText"))
-        assertEquals(SpecCodingBundle.message("spec.action.advance.text"), snapshot.getValue("advanceTooltip"))
-        assertEquals("true", snapshot.getValue("advanceHasIcon"))
-        assertEquals("true", snapshot.getValue("advanceRolloverEnabled"))
-        assertEquals("", snapshot.getValue("jumpText"))
-        assertEquals(SpecCodingBundle.message("spec.action.jump.text"), snapshot.getValue("jumpTooltip"))
-        assertEquals("true", snapshot.getValue("jumpHasIcon"))
-        assertEquals("true", snapshot.getValue("jumpRolloverEnabled"))
-        assertEquals("", snapshot.getValue("rollbackText"))
-        assertEquals(SpecCodingBundle.message("spec.action.rollback.text"), snapshot.getValue("rollbackTooltip"))
-        assertEquals("true", snapshot.getValue("rollbackHasIcon"))
-        assertEquals("true", snapshot.getValue("rollbackRolloverEnabled"))
+        assertEquals(StageId.TASKS.name, snapshot.getValue("focusedStage"))
         assertEquals("true", snapshot.getValue("stageChipOpaque"))
         assertNotEquals("0,0,0,0", snapshot.getValue("stageChipInsets"))
-        assertEquals(
-            true,
+        assertTrue(
+            snapshot.getValue("stages").contains(
+                "${SpecWorkflowOverviewPresenter.stageLabel(StageId.DESIGN)}:${SpecCodingBundle.message("spec.action.stage.state.inProgress")}:current:not-focused",
+            ),
+        )
+        assertTrue(
+            snapshot.getValue("stages").contains(
+                "${SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS)}:${SpecCodingBundle.message("spec.action.stage.state.pending")}:not-current:focused",
+            ),
+        )
+        assertTrue(
             snapshot.getValue("stages").contains(
                 "${SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT)}:${SpecCodingBundle.message("spec.toolwindow.stage.state.inactive")}",
             ),
         )
-        assertEquals(
-            true,
-            snapshot.getValue("stages").contains(
-                "${SpecWorkflowOverviewPresenter.stageLabel(StageId.DESIGN)}:${SpecCodingBundle.message("spec.action.stage.state.inProgress")}",
-            ),
-        )
-        assertEquals(
-            true,
-            snapshot.getValue("stages").contains(
-                "${SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS)}:${SpecCodingBundle.message("spec.action.stage.state.pending")}",
-            ),
-        )
 
-        panel.clickJumpForTest()
-        assertEquals(1, jumpClicks)
+        panel.clickStageForTest(StageId.ARCHIVE)
+        assertEquals(StageId.ARCHIVE, selectedStage)
     }
 }
