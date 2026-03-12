@@ -110,6 +110,7 @@ class SpecWorkflowPanel(
         suggestRelatedFiles = { taskId, existingRelatedFiles ->
             specRelatedFilesService.suggestRelatedFiles(taskId, existingRelatedFiles)
         },
+        showHeader = false,
     )
     private val verifyDeltaPanel = SpecWorkflowVerifyDeltaPanel(
         onRunVerifyRequested = ::onRunVerificationRequested,
@@ -128,6 +129,7 @@ class SpecWorkflowPanel(
     private val deltaButton = JButton()
     private val codeGraphButton = JButton()
     private val archiveButton = JButton()
+    private val backToListButton = JButton()
     private val refreshButton = JButton()
     private lateinit var centerContentPanel: JPanel
     private lateinit var listSectionContainer: JPanel
@@ -209,11 +211,20 @@ class SpecWorkflowPanel(
         deltaButton.isEnabled = false
         codeGraphButton.isEnabled = true
         archiveButton.isEnabled = false
+        backToListButton.isEnabled = false
         createWorktreeButton.addActionListener { onCreateWorktree() }
         mergeWorktreeButton.addActionListener { onMergeWorktree() }
         deltaButton.addActionListener { onShowDelta() }
         codeGraphButton.addActionListener { onShowCodeGraph() }
         archiveButton.addActionListener { onArchiveWorkflow() }
+        backToListButton.addActionListener { onBackToWorkflowListRequested() }
+
+        configureToolbarIconButton(
+            button = backToListButton,
+            icon = AllIcons.Actions.Back,
+            tooltipKey = "spec.workflow.backToList",
+        )
+        styleToolbarButton(backToListButton)
 
         applyToolbarButtonPresentation()
         styleToolbarButton(refreshButton)
@@ -363,18 +374,7 @@ class SpecWorkflowPanel(
 
     private fun showWorkflowWorkspaceMode() {
         isWorkspaceMode = true
-        detachFromParent(listSectionContainer)
-        detachFromParent(workspacePanelContainer)
-        if (mainSplitPane.leftComponent !== listSectionContainer) {
-            mainSplitPane.leftComponent = listSectionContainer
-        }
-        if (mainSplitPane.rightComponent !== workspacePanelContainer) {
-            mainSplitPane.rightComponent = workspacePanelContainer
-        }
-        reparentToCenter(mainSplitPane)
-        val targetDividerLocation = detailDividerLocation.takeIf { it > 0 } ?: JBUI.scale(210)
-        mainSplitPane.dividerLocation = targetDividerLocation
-        clampDividerLocation(mainSplitPane)
+        reparentToCenter(workspacePanelContainer)
     }
 
     private fun reparentToCenter(component: Component) {
@@ -520,6 +520,22 @@ class SpecWorkflowPanel(
         workspaceSummaryMetaLabel.font = JBUI.Fonts.smallFont()
         workspaceSummaryMetaLabel.foreground = WORKSPACE_SUMMARY_META_FG
 
+        val titleStack = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+            isOpaque = false
+            add(workspaceSummaryTitleLabel, BorderLayout.NORTH)
+            add(workspaceSummaryMetaLabel, BorderLayout.CENTER)
+        }
+        val headerRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            add(
+                JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+                    isOpaque = false
+                    add(backToListButton)
+                },
+                BorderLayout.WEST,
+            )
+            add(titleStack, BorderLayout.CENTER)
+        }
         val chipRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
             add(workspaceStageChipLabel)
@@ -543,8 +559,7 @@ class SpecWorkflowPanel(
             add(
                 JPanel(BorderLayout(0, JBUI.scale(4))).apply {
                     isOpaque = false
-                    add(workspaceSummaryTitleLabel, BorderLayout.NORTH)
-                    add(workspaceSummaryMetaLabel, BorderLayout.CENTER)
+                    add(headerRow, BorderLayout.NORTH)
                     add(chipRow, BorderLayout.SOUTH)
                 },
                 BorderLayout.CENTER,
@@ -596,6 +611,7 @@ class SpecWorkflowPanel(
 
     private fun showWorkspaceEmptyState() {
         showWorkflowListOnlyMode()
+        backToListButton.isEnabled = false
         workspaceCardLayout.show(workspaceCardPanel, WORKSPACE_CARD_EMPTY)
         workspaceSectionOverrides.clear()
         workspaceSectionPresetToken = null
@@ -619,6 +635,7 @@ class SpecWorkflowPanel(
 
     private fun showWorkspaceContent() {
         showWorkflowWorkspaceMode()
+        backToListButton.isEnabled = true
         workspaceCardLayout.show(workspaceCardPanel, WORKSPACE_CARD_CONTENT)
     }
 
@@ -1202,6 +1219,10 @@ class SpecWorkflowPanel(
         highlightedWorkflowId = workflowId
         selectWorkflow(workflowId)
         publishWorkflowSelection(workflowId)
+    }
+
+    private fun onBackToWorkflowListRequested() {
+        clearOpenedWorkflowUi(resetHighlight = false)
     }
 
     private fun publishWorkflowSelection(workflowId: String) {
@@ -3415,6 +3436,36 @@ class SpecWorkflowPanel(
         ApplicationManager.getApplication().invokeLater {
             if (!_isDisposed && !project.isDisposed) action()
         }
+    }
+
+    internal fun isListModeForTest(): Boolean {
+        return centerContentPanel.componentCount == 1 && centerContentPanel.getComponent(0) === listSectionContainer
+    }
+
+    internal fun isDetailModeForTest(): Boolean {
+        return centerContentPanel.componentCount == 1 && centerContentPanel.getComponent(0) === workspacePanelContainer
+    }
+
+    internal fun selectedWorkflowIdForTest(): String? = selectedWorkflowId
+
+    internal fun highlightedWorkflowIdForTest(): String? = highlightedWorkflowId
+
+    internal fun workflowIdsForTest(): List<String> {
+        return listPanel.itemsForTest().map { it.workflowId }
+    }
+
+    internal fun openWorkflowForTest(workflowId: String) {
+        highlightedWorkflowId = workflowId
+        listPanel.setSelectedWorkflow(workflowId)
+        onWorkflowOpenedByUser(workflowId)
+    }
+
+    internal fun clickBackToListForTest() {
+        backToListButton.doClick()
+    }
+
+    internal fun isBackButtonInlineForTest(): Boolean {
+        return javax.swing.SwingUtilities.isDescendingFrom(backToListButton, workspaceCardPanel)
     }
 
     override fun dispose() {

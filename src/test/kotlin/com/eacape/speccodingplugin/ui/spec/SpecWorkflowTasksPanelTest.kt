@@ -78,5 +78,26 @@ class SpecWorkflowTasksPanelTest {
 
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.loading"), panel.snapshotForTest().getValue("emptyText"))
     }
-}
 
+    @Test
+    fun `embedded tasks panel should hide duplicated header block`() {
+        val panel = SpecWorkflowTasksPanel(showHeader = false)
+
+        panel.updateTasks(
+            workflowId = "wf-1",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "First",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val snapshot = panel.snapshotForTest()
+        assertEquals("false", snapshot.getValue("headerVisible"))
+        assertTrue(snapshot.getValue("tasks").contains("T-001:PENDING:P0"))
+    }
+}

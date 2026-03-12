@@ -153,6 +153,8 @@ abstract class CliEngine(
         try {
             writeRequestInput(process, request)
             var emittedChunk = false
+            var sawStdoutData = false
+            var terminatedAfterStreamDrain = false
             val frames: BlockingQueue<StreamFrame> = LinkedBlockingQueue()
             val stdoutDone = AtomicBoolean(false)
             val stderrDone = AtomicBoolean(false)
@@ -185,6 +187,7 @@ abstract class CliEngine(
                         StreamSource.STDERR -> parseProgressLine(frame.line)
                     }
                     if (frame.source == StreamSource.STDOUT && frame.line.isNotBlank()) {
+                        sawStdoutData = true
                         appendDiagnostic(stdoutText, frame.line)
                     }
                     if (parsed != null) {
@@ -194,7 +197,10 @@ abstract class CliEngine(
                 }
 
                 val streamDrained = stdoutDone.get() && stderrDone.get() && frames.isEmpty()
-                if (streamDrained && !process.isAlive) {
+                if (streamDrained) {
+                    if (process.isAlive) {
+                        terminatedAfterStreamDrain = terminateProcessAfterStreamDrain(process, requestId)
+                    }
                     break
                 }
             }
@@ -203,9 +209,16 @@ abstract class CliEngine(
             stderrPump.join(STREAM_PUMP_JOIN_MILLIS)
 
             currentCoroutineContext().ensureActive()
-            val exitCode = process.waitFor()
             val stderr = sanitizeProcessError(stderrText.toString())
             val stdout = sanitizeProcessError(stdoutText.toString())
+            val exitCode = runCatching {
+                if (process.isAlive) {
+                    null
+                } else {
+                    process.exitValue()
+                }
+            }.getOrNull()
+            val tolerateTerminatedExitCode = terminatedAfterStreamDrain && sawStdoutData
             if (timedOut.get()) {
                 val resolvedTimeoutMessage = resolveProcessFailureMessage(
                     stderr = stderr,
@@ -214,7 +227,16 @@ abstract class CliEngine(
                 )
                 throw RuntimeException(resolvedTimeoutMessage)
             }
-            if (exitCode != 0) {
+            if (exitCode == null && !tolerateTerminatedExitCode) {
+                throw RuntimeException(
+                    resolveProcessFailureMessage(
+                        stderr = stderr,
+                        stdout = stdout,
+                        fallback = "CLI process did not exit after streams drained",
+                    )
+                )
+            }
+            if (exitCode != null && exitCode != 0 && !tolerateTerminatedExitCode) {
                 throw RuntimeException(
                     resolveProcessFailureMessage(
                         stderr = stderr,
@@ -350,7 +372,7 @@ abstract class CliEngine(
         return timedOut to future
     }
 
-    private fun startProcess(
+    protected open fun startProcess(
         args: List<String>,
         workingDir: String?
     ): Process {
@@ -443,6 +465,25 @@ abstract class CliEngine(
             "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe",
         )
         return candidates.firstOrNull { File(it).isFile }
+    }
+
+    private fun terminateProcessAfterStreamDrain(process: Process, requestId: String): Boolean {
+        logger.info("CLI process for request=$requestId kept running after stdout/stderr drained; terminating it")
+        process.destroy()
+        if (waitForProcessExit(process, STREAM_PROCESS_EXIT_AFTER_DRAIN_MILLIS)) {
+            return true
+        }
+        process.destroyForcibly()
+        return waitForProcessExit(process, STREAM_PROCESS_FORCE_EXIT_AFTER_DRAIN_MILLIS)
+    }
+
+    private fun waitForProcessExit(process: Process, timeoutMillis: Long): Boolean {
+        if (!process.isAlive) {
+            return true
+        }
+        return runCatching {
+            process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)
+        }.getOrDefault(!process.isAlive)
     }
 
     private fun startLinePump(
@@ -592,6 +633,8 @@ abstract class CliEngine(
         private const val STREAM_PUMP_JOIN_MILLIS = 500L
         private const val STREAM_PROGRESS_FLUSH_CHARS = 120
         private const val STREAM_STDOUT_FLUSH_CHARS = 64
+        private const val STREAM_PROCESS_EXIT_AFTER_DRAIN_MILLIS = 200L
+        private const val STREAM_PROCESS_FORCE_EXIT_AFTER_DRAIN_MILLIS = 400L
         private const val MAX_DIAGNOSTIC_TEXT_LENGTH = 2000
         private val ERROR_ANSI_REGEX = Regex("""\u001B\[[;\d]*[ -/]*[@-~]""")
         private val ERROR_REPLACEMENT_CHAR_REGEX = Regex("""\uFFFD+""")

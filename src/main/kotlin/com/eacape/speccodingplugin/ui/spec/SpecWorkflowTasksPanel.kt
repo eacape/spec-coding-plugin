@@ -36,6 +36,7 @@ internal class SpecWorkflowTasksPanel(
     private val onUpdateRelatedFiles: (taskId: String, files: List<String>) -> Unit = { _, _ -> },
     private val onCompleteWithRelatedFiles: (taskId: String, files: List<String>) -> Unit = { _, _ -> },
     private val suggestRelatedFiles: (taskId: String, existingRelatedFiles: List<String>) -> List<String> = { _, existing -> existing },
+    private val showHeader: Boolean = true,
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
     private val headerTitleLabel = JBLabel().apply {
@@ -94,7 +95,9 @@ internal class SpecWorkflowTasksPanel(
     init {
         isOpaque = false
         border = JBUI.Borders.empty(6, 4, 6, 4)
-        add(buildHeader(), BorderLayout.NORTH)
+        if (showHeader) {
+            add(buildHeader(), BorderLayout.NORTH)
+        }
         add(
             JBScrollPane(tasksList).apply {
                 border = JBUI.Borders.empty()
@@ -176,6 +179,7 @@ internal class SpecWorkflowTasksPanel(
         val selectedId = tasksList.selectedValue?.id.orEmpty()
         return mapOf(
             "workflowId" to currentWorkflowId.orEmpty(),
+            "headerVisible" to showHeader.toString(),
             "headerTitle" to headerTitleLabel.text.orEmpty(),
             "headerSummary" to headerSummaryLabel.text.orEmpty(),
             "headerRefreshed" to headerRefreshedLabel.text.orEmpty(),
