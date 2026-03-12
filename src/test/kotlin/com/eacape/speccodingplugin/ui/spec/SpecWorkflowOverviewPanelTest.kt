@@ -86,6 +86,9 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals(SpecCodingBundle.message("spec.toolwindow.overview.advanceGate.warning"), snapshot.getValue("gateStatus"))
         assertEquals("false", snapshot.getValue("gateStatusOpaque"))
         assertEquals("0,0,0,0", snapshot.getValue("gateStatusInsets"))
+        assertEquals("5,9,5,9", snapshot.getValue("gateContainerInsets"))
+        assertEquals(snapshot.getValue("gateSummaryFont"), snapshot.getValue("gateStatusFont"))
+        assertEquals("true", snapshot.getValue("gateStatusBeforeSummary"))
         assertTrue(snapshot.getValue("gateSummary").contains("warning", ignoreCase = true))
         assertTrue(
             snapshot.getValue("stageFlow").contains(

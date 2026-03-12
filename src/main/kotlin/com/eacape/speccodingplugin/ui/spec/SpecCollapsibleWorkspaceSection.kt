@@ -42,14 +42,14 @@ internal class SpecCollapsibleWorkspaceSection(
     private val bodyContainer = JPanel(BorderLayout()).apply {
         isOpaque = false
         add(content, BorderLayout.CENTER)
-    }
+        }
 
-    init {
-        isOpaque = false
-        border = JBUI.Borders.empty(2, 2, 0, 2)
-        add(
-            JPanel(BorderLayout(JBUI.scale(8), JBUI.scale(2))).apply {
-                isOpaque = false
+        init {
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(2)
+            add(
+                JPanel(BorderLayout(JBUI.scale(8), JBUI.scale(2))).apply {
+                    isOpaque = false
                 add(
                     JPanel(BorderLayout(0, JBUI.scale(2))).apply {
                         isOpaque = false

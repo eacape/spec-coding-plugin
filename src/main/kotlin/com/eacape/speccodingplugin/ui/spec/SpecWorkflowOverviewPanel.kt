@@ -71,9 +71,30 @@ internal class SpecWorkflowOverviewPanel(
     private val gateSummaryValueLabel = createBodyLabel(VALUE_SECONDARY_FG)
     private val gateChipLabel = JBLabel().apply {
         horizontalAlignment = SwingConstants.LEFT
+        verticalAlignment = SwingConstants.TOP
         border = JBUI.Borders.empty()
         isOpaque = false
-        font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD, 10.5f)
+        alignmentY = Component.TOP_ALIGNMENT
+        font = JBUI.Fonts.smallFont()
+    }
+    private val gateStatusSummaryRow = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.X_AXIS)
+        isOpaque = false
+        alignmentX = Component.LEFT_ALIGNMENT
+        add(gateChipLabel)
+        add(Box.createHorizontalStrut(JBUI.scale(6)))
+        add(gateSummaryValueLabel.apply {
+            alignmentY = Component.TOP_ALIGNMENT
+        })
+        add(Box.createHorizontalGlue())
+    }
+    private val gateStatusSummaryContainer = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(GATE_ROW_BORDER, JBUI.scale(10)),
+            JBUI.Borders.empty(4, 8, 4, 8),
+        )
+        add(gateStatusSummaryRow, BorderLayout.CENTER)
     }
 
     private val templateTargetComboBox = ComboBox<WorkflowTemplate>().apply {
@@ -200,6 +221,15 @@ internal class SpecWorkflowOverviewPanel(
             "gateStatusInsets" to gateChipLabel.border.getBorderInsets(gateChipLabel).let { insets ->
                 "${insets.top},${insets.left},${insets.bottom},${insets.right}"
             },
+            "gateContainerInsets" to gateStatusSummaryContainer.border.getBorderInsets(gateStatusSummaryContainer).let { insets ->
+                "${insets.top},${insets.left},${insets.bottom},${insets.right}"
+            },
+            "gateStatusFont" to gateChipLabel.font.let { font -> "${font.size2D}:${font.style}" },
+            "gateSummaryFont" to gateSummaryValueLabel.font.let { font -> "${font.size2D}:${font.style}" },
+            "gateStatusBeforeSummary" to (
+                gateStatusSummaryRow.components.indexOf(gateChipLabel) <
+                    gateStatusSummaryRow.components.indexOf(gateSummaryValueLabel)
+                ).toString(),
             "gateSummary" to gateSummaryValueLabel.text.orEmpty(),
             "stageFlow" to stageStepperSnapshot.getValue("stages"),
             "advanceEnabled" to stageStepperSnapshot.getValue("advanceEnabled"),
@@ -272,22 +302,7 @@ internal class SpecWorkflowOverviewPanel(
         row = addDetailRow(grid, row, templateKeyLabel, templateValuePanel)
         row = addDetailRow(grid, row, activeStagesKeyLabel, activeStagesValueLabel)
         row = addDetailRow(grid, row, nextStageKeyLabel, nextStageValueLabel)
-        row = addDetailRow(
-            grid,
-            row,
-            advanceGateKeyLabel,
-            JPanel(BorderLayout(0, JBUI.scale(4))).apply {
-                isOpaque = false
-                add(
-                    JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-                        isOpaque = false
-                        add(gateChipLabel)
-                    },
-                    BorderLayout.NORTH,
-                )
-                add(gateSummaryValueLabel, BorderLayout.CENTER)
-            },
-        )
+        row = addDetailRow(grid, row, advanceGateKeyLabel, gateStatusSummaryContainer)
         addDetailRow(grid, row, refreshedKeyLabel, refreshedValueLabel, fillVertical = true)
         return JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = false
@@ -530,6 +545,7 @@ internal class SpecWorkflowOverviewPanel(
         private val CHECKLIST_FG = JBColor(Color(74, 86, 105), Color(189, 199, 214))
         private val CARD_BG = JBColor(Color(250, 252, 255), Color(55, 61, 71))
         private val CARD_BORDER = JBColor(Color(209, 220, 237), Color(85, 96, 111))
+        private val GATE_ROW_BORDER = JBColor(Color(214, 223, 238), Color(88, 98, 112))
         private val ACTION_BG = JBColor(Color(241, 247, 255), Color(69, 76, 88))
         private val ACTION_FG = JBColor(Color(45, 71, 111), Color(206, 218, 239))
         private val ACTION_BORDER = JBColor(Color(180, 199, 226), Color(101, 116, 138))

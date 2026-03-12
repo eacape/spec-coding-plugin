@@ -45,10 +45,6 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
         label.text = localizedModeLabelText()
         label.font = JBUI.Fonts.smallFont()
         comboBox.font = JBUI.Fonts.smallFont()
-        val comboSize = JBUI.size(MODE_COMBO_WIDTH, MODE_COMBO_HEIGHT)
-        comboBox.minimumSize = comboSize
-        comboBox.preferredSize = comboSize
-        comboBox.maximumSize = comboSize
         comboBox.putClientProperty("JComponent.roundRect", false)
         comboBox.putClientProperty("JComboBox.isBorderless", true)
         comboBox.putClientProperty("ComboBox.isBorderless", true)
@@ -68,6 +64,7 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
 
         // 自定义渲染器显示模式名称和描述
         comboBox.renderer = OperationModeRenderer()
+        updateComboWidth()
         installPopupWidthPolicy()
     }
 
@@ -131,6 +128,7 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
     private fun setupListeners() {
         comboBox.addActionListener {
             val selectedMode = comboBox.selectedItem as? OperationMode ?: return@addActionListener
+            updateComboWidth()
             if (selectedMode != modeManager.getCurrentMode()) {
                 modeManager.switchMode(selectedMode)
                 windowStateStore.updateOperationMode(selectedMode.name)
@@ -159,6 +157,7 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
      */
     fun setSelectedMode(mode: OperationMode) {
         comboBox.selectedItem = mode
+        updateComboWidth()
         windowStateStore.updateOperationMode(mode.name)
     }
 
@@ -167,14 +166,37 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
      */
     fun refresh() {
         comboBox.selectedItem = modeManager.getCurrentMode()
+        updateComboWidth()
         refreshLocalizedTexts()
     }
 
     fun refreshLocalizedTexts() {
         label.text = localizedModeLabelText()
+        updateComboWidth()
         comboBox.repaint()
         revalidate()
         repaint()
+    }
+
+    private fun updateComboWidth() {
+        val selectedMode = comboBox.selectedItem as? OperationMode ?: OperationMode.DEFAULT
+        val width = measureSelectedModeWidth(selectedMode)
+            .coerceIn(JBUI.scale(MODE_COMBO_MIN_WIDTH), JBUI.scale(MODE_COMBO_MAX_WIDTH))
+        val size = Dimension(width, JBUI.scale(MODE_COMBO_HEIGHT))
+        comboBox.minimumSize = size
+        comboBox.preferredSize = size
+        comboBox.maximumSize = size
+        comboBox.revalidate()
+        comboBox.repaint()
+    }
+
+    private fun measureSelectedModeWidth(mode: OperationMode): Int {
+        @Suppress("UNCHECKED_CAST")
+        val renderer = comboBox.renderer as? ListCellRenderer<in OperationMode> ?: return JBUI.scale(MODE_COMBO_MIN_WIDTH)
+        val list = JList(OperationMode.values())
+        list.font = comboBox.font ?: JBUI.Fonts.smallFont()
+        val component = renderer.getListCellRendererComponent(list, mode, -1, false, false)
+        return component.preferredSize.width + JBUI.scale(MODE_COMBO_OVERHEAD_WIDTH_PX)
     }
 
     private fun localizedModeLabelText(): String {
@@ -184,8 +206,10 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
     }
 
     companion object {
-        private const val MODE_COMBO_WIDTH = 124
+        private const val MODE_COMBO_MIN_WIDTH = 96
+        private const val MODE_COMBO_MAX_WIDTH = 180
         private const val MODE_COMBO_HEIGHT = 28
+        private const val MODE_COMBO_OVERHEAD_WIDTH_PX = 22
         private const val MODE_POPUP_MIN_EXTRA_WIDTH_PX = 14
         private const val MODE_POPUP_MAX_WIDTH = 340
         private const val MODE_POPUP_OVERHEAD_WIDTH_PX = 10

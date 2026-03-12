@@ -463,6 +463,9 @@ class ImprovedChatPanel(
         providerComboBox.repaint()
         modelComboBox.repaint()
         interactionModeComboBox.repaint()
+        updateProviderComboSize()
+        updateModelComboSize()
+        updateInteractionModeComboSize()
         refreshHistoryContentTitle()
         updateComboTooltips()
         if (isGenerating || isRestoringSession) {
@@ -481,17 +484,21 @@ class ImprovedChatPanel(
         )
 
         // Model and interaction setup
-        providerComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create<String> { label, value, _ ->
-            label.text = providerDisplayName(value)
+        providerComboBox.renderer = createCompactComboRenderer { value ->
+            providerDisplayName(value as? String)
         }
-        modelComboBox.renderer = com.intellij.ui.SimpleListCellRenderer.create<ModelInfo> { label, value, _ ->
-            label.text = toUiLowercase(value?.name ?: "")
+        modelComboBox.renderer = createCompactComboRenderer { value ->
+            toUiLowercase((value as? ModelInfo)?.name ?: "")
         }
         providerComboBox.addActionListener {
+            updateProviderComboSize()
             refreshModelCombo()
             updateComboTooltips()
         }
-        modelComboBox.addActionListener { updateComboTooltips() }
+        modelComboBox.addActionListener {
+            updateModelComboSize()
+            updateComboTooltips()
+        }
         refreshProviderCombo(preserveSelection = false)
 
         specWorkflowComboBox.renderer = object : DefaultListCellRenderer() {
@@ -554,12 +561,15 @@ class ImprovedChatPanel(
         interactionModeComboBox.selectedItem = restoredInteractionMode
         lastInteractionMode = restoredInteractionMode
         windowStateStore.updateChatInteractionMode(restoredInteractionMode.key)
-        interactionModeComboBox.addActionListener { onInteractionModeChanged() }
+        interactionModeComboBox.addActionListener {
+            updateInteractionModeComboSize()
+            onInteractionModeChanged()
+        }
         interactionModeComboBox.toolTipText = SpecCodingBundle.message("toolwindow.chat.mode.tooltip")
-        configureCompactCombo(interactionModeComboBox, 74)
+        configureCompactCombo(interactionModeComboBox, INTERACTION_MODE_COMBO_MIN_WIDTH)
         configureCompactCombo(specWorkflowComboBox, SPEC_WORKFLOW_COMBO_MIN_WIDTH)
-        configureCompactCombo(providerComboBox, 72)
-        configureCompactCombo(modelComboBox, 136)
+        configureCompactCombo(providerComboBox, PROVIDER_COMBO_MIN_WIDTH)
+        configureCompactCombo(modelComboBox, MODEL_COMBO_MIN_WIDTH)
         val italicSmallFont = JBUI.Fonts.smallFont().deriveFont(Font.ITALIC)
         specWorkflowComboBox.font = italicSmallFont
         interactionModeComboBox.font = italicSmallFont
@@ -579,6 +589,9 @@ class ImprovedChatPanel(
         installGlobalPasteKeyDispatcher()
         installComposerAutoCollapseListener()
         logPasteDiagnostic("paste diagnostics active; panel=${this::class.java.simpleName}")
+        updateProviderComboSize()
+        updateModelComboSize()
+        updateInteractionModeComboSize()
         updateComboTooltips()
 
         sendButton.addActionListener { handleSendOrStop() }
@@ -651,7 +664,7 @@ class ImprovedChatPanel(
 
         val controlsRow = JPanel(BorderLayout())
         controlsRow.isOpaque = false
-        controlsRow.border = JBUI.Borders.emptyTop(7)
+        controlsRow.border = JBUI.Borders.empty(7, COMPOSER_CONTROLS_LEFT_INSET, 0, 0)
         controlsRow.add(controlsLeftPanel, BorderLayout.CENTER)
         controlsRow.add(controlsRightPanel, BorderLayout.EAST)
 
@@ -3117,6 +3130,7 @@ class ImprovedChatPanel(
         }
         val selected = providers.firstOrNull { it == preferred } ?: providers.firstOrNull()
         providerComboBox.selectedItem = selected
+        updateProviderComboSize()
 
         refreshModelCombo()
     }
@@ -3147,6 +3161,7 @@ class ImprovedChatPanel(
         if (selected != null) {
             modelComboBox.selectedItem = selected
         }
+        updateModelComboSize()
     }
 
     private fun startNewSession() {
@@ -4369,6 +4384,7 @@ class ImprovedChatPanel(
                 suppressInteractionModeSelectionEvents = false
             }
         }
+        updateInteractionModeComboSize()
 
         val previousMode = lastInteractionMode
         if (mode == previousMode) {
@@ -4542,6 +4558,85 @@ class ImprovedChatPanel(
         comboBox.border = JBUI.Borders.empty(0)
         comboBox.isOpaque = false
         comboBox.font = JBUI.Fonts.smallFont()
+    }
+
+    private fun updateProviderComboSize() {
+        updateCompactComboSize(
+            comboBox = providerComboBox,
+            text = providerDisplayName(providerComboBox.selectedItem as? String),
+            minWidth = PROVIDER_COMBO_MIN_WIDTH,
+            maxWidth = PROVIDER_COMBO_MAX_WIDTH,
+        )
+    }
+
+    private fun updateModelComboSize() {
+        updateCompactComboSize(
+            comboBox = modelComboBox,
+            text = toUiLowercase((modelComboBox.selectedItem as? ModelInfo)?.name ?: ""),
+            minWidth = MODEL_COMBO_MIN_WIDTH,
+            maxWidth = MODEL_COMBO_MAX_WIDTH,
+        )
+    }
+
+    private fun updateInteractionModeComboSize() {
+        val selectedMode = interactionModeComboBox.selectedItem as? ChatInteractionMode
+        updateCompactComboSize(
+            comboBox = interactionModeComboBox,
+            text = selectedMode?.let { SpecCodingBundle.message(it.messageKey) }.orEmpty(),
+            minWidth = INTERACTION_MODE_COMBO_MIN_WIDTH,
+            maxWidth = INTERACTION_MODE_COMBO_MAX_WIDTH,
+        )
+    }
+
+    private fun updateCompactComboSize(
+        comboBox: ComboBox<*>,
+        text: String,
+        minWidth: Int,
+        maxWidth: Int,
+    ) {
+        val normalized = text.trim()
+        val desiredWidth = if (normalized.isBlank()) {
+            JBUI.scale(minWidth)
+        } else {
+            val metrics = comboBox.getFontMetrics(comboBox.font)
+            (metrics.stringWidth(normalized) + JBUI.scale(COMPACT_COMBO_TEXT_OVERHEAD_PX)).coerceIn(
+                JBUI.scale(minWidth),
+                JBUI.scale(maxWidth),
+            )
+        }
+        val size = Dimension(desiredWidth, JBUI.scale(COMPACT_COMBO_HEIGHT_PX))
+        comboBox.preferredSize = size
+        comboBox.minimumSize = size
+        comboBox.maximumSize = size
+        comboBox.revalidate()
+        comboBox.repaint()
+    }
+
+    private fun createCompactComboRenderer(textProvider: (Any?) -> String): DefaultListCellRenderer {
+        return object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: JList<*>?,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean,
+            ): java.awt.Component {
+                val component = super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+                val label = component as? JLabel ?: return component
+                label.text = textProvider(value)
+                label.border = if (index == -1) {
+                    JBUI.Borders.empty(1, COMPACT_COMBO_SELECTED_LEFT_INSET)
+                } else {
+                    JBUI.Borders.empty(
+                        COMPACT_COMBO_POPUP_VERTICAL_INSET,
+                        COMPACT_COMBO_POPUP_HORIZONTAL_INSET,
+                        COMPACT_COMBO_POPUP_VERTICAL_INSET,
+                        COMPACT_COMBO_POPUP_HORIZONTAL_INSET,
+                    )
+                }
+                return component
+            }
+        }
     }
 
     private fun updateSpecWorkflowComboSize() {
@@ -5871,6 +5966,18 @@ class ImprovedChatPanel(
         private val CHAT_STOP_ICON = IconLoader.getIcon("/icons/chat-stop.svg", ImprovedChatPanel::class.java)
         private val SPEC_SIDEBAR_TOGGLE_OPEN_ICON = IconLoader.getIcon("/icons/spec-sidebar-split-vertically.svg", ImprovedChatPanel::class.java)
         private val ACTION_ICON_BUTTON_SIZE = JBDimension(28, 24)
+        private const val COMPOSER_CONTROLS_LEFT_INSET = 2
+        private const val COMPACT_COMBO_HEIGHT_PX = 28
+        private const val COMPACT_COMBO_SELECTED_LEFT_INSET = 4
+        private const val COMPACT_COMBO_POPUP_HORIZONTAL_INSET = 6
+        private const val COMPACT_COMBO_POPUP_VERTICAL_INSET = 4
+        private const val COMPACT_COMBO_TEXT_OVERHEAD_PX = 38
+        private const val INTERACTION_MODE_COMBO_MIN_WIDTH = 74
+        private const val INTERACTION_MODE_COMBO_MAX_WIDTH = 132
+        private const val PROVIDER_COMBO_MIN_WIDTH = 72
+        private const val PROVIDER_COMBO_MAX_WIDTH = 132
+        private const val MODEL_COMBO_MIN_WIDTH = 96
+        private const val MODEL_COMBO_MAX_WIDTH = 220
         private const val SPEC_WORKFLOW_COMBO_MIN_WIDTH = 120
         private const val SPEC_WORKFLOW_COMBO_MAX_WIDTH = 220
         private const val SPEC_WORKFLOW_COMBO_TEXT_OVERHEAD_PX = 56

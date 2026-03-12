@@ -527,6 +527,7 @@ class SpecWorkflowPanel(
             add(
                 createSectionContainer(
                     content,
+                    padding = WORKSPACE_SECTION_CARD_PADDING,
                     backgroundColor = DETAIL_SECTION_BG,
                     borderColor = DETAIL_SECTION_BORDER,
                 ),
@@ -3600,6 +3601,7 @@ class SpecWorkflowPanel(
         private val PHASE_SECTION_BG = JBColor(Color(240, 246, 255), Color(62, 69, 80))
         private val DETAIL_SECTION_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
         private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
+        private const val WORKSPACE_SECTION_CARD_PADDING = 12
         private val WORKFLOW_ICON_CREATE_WORKTREE = IconLoader.getIcon("/icons/spec-workflow-create-worktree.svg", SpecWorkflowPanel::class.java)
         private val WORKFLOW_ICON_MERGE_WORKTREE = IconLoader.getIcon("/icons/spec-workflow-merge-worktree.svg", SpecWorkflowPanel::class.java)
         private val WORKFLOW_ICON_DELTA = IconLoader.getIcon("/icons/spec-workflow-diff.svg", SpecWorkflowPanel::class.java)

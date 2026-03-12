@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Test
 
 class SpecWorkflowStageStepperPanelTest {
@@ -35,6 +36,8 @@ class SpecWorkflowStageStepperPanelTest {
         assertEquals("true", snapshot.getValue("advanceEnabled"))
         assertEquals("true", snapshot.getValue("jumpEnabled"))
         assertEquals("true", snapshot.getValue("rollbackEnabled"))
+        assertEquals("true", snapshot.getValue("stageChipOpaque"))
+        assertNotEquals("0,0,0,0", snapshot.getValue("stageChipInsets"))
         assertEquals(
             true,
             snapshot.getValue("stages").contains(

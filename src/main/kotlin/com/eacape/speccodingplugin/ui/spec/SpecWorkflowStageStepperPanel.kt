@@ -8,6 +8,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.FlowLayout
+import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
@@ -72,6 +73,7 @@ internal class SpecWorkflowStageStepperPanel(
     }
 
     internal fun snapshotForTest(): Map<String, String> {
+        val firstStageChip = stagesPanel.components.filterIsInstance<JPanel>().firstOrNull()
         return mapOf(
             "stages" to currentState
                 ?.stages
@@ -79,6 +81,10 @@ internal class SpecWorkflowStageStepperPanel(
                     "${SpecWorkflowOverviewPresenter.stageLabel(stage.stageId)}:${statusText(stage)}"
                 }
                 .orEmpty(),
+            "stageChipOpaque" to firstStageChip?.isOpaque?.toString().orEmpty(),
+            "stageChipInsets" to firstStageChip?.border?.getBorderInsets(firstStageChip)?.let { insets ->
+                "${insets.top},${insets.left},${insets.bottom},${insets.right}"
+            }.orEmpty(),
             "advanceEnabled" to advanceButton.isEnabled.toString(),
             "jumpEnabled" to jumpButton.isEnabled.toString(),
             "rollbackEnabled" to rollbackButton.isEnabled.toString(),
@@ -128,14 +134,18 @@ internal class SpecWorkflowStageStepperPanel(
     }
 
     private fun createStageChip(stage: SpecWorkflowStageStepState): JPanel {
-        val (titleForeground, statusForeground) = textPalette(stage)
+        val palette = chipPalette(stage)
         return JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            border = JBUI.Borders.empty(2, 0, 2, 0)
+            isOpaque = true
+            background = palette.background
+            border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(palette.border, JBUI.scale(14)),
+                JBUI.Borders.empty(6, 10, 6, 10),
+            )
             add(
                 JBLabel(SpecWorkflowOverviewPresenter.stageLabel(stage.stageId)).apply {
-                    foreground = titleForeground
+                    foreground = palette.titleForeground
                     horizontalAlignment = SwingConstants.LEFT
                     alignmentX = LEFT_ALIGNMENT
                     font = JBUI.Fonts.smallFont().deriveFont(if (stage.current) java.awt.Font.BOLD else java.awt.Font.PLAIN)
@@ -144,7 +154,7 @@ internal class SpecWorkflowStageStepperPanel(
             add(Box.createVerticalStrut(JBUI.scale(2)))
             add(
                 JBLabel(statusText(stage)).apply {
-                    foreground = statusForeground
+                    foreground = palette.statusForeground
                     font = JBUI.Fonts.smallFont().deriveFont(10.0f)
                     horizontalAlignment = SwingConstants.LEFT
                     alignmentX = LEFT_ALIGNMENT
@@ -163,31 +173,41 @@ internal class SpecWorkflowStageStepperPanel(
         }
     }
 
-    private fun textPalette(stage: SpecWorkflowStageStepState): TextPalette {
+    private fun chipPalette(stage: SpecWorkflowStageStepState): ChipPalette {
         return when {
-            stage.current -> TextPalette(
+            stage.current -> ChipPalette(
+                background = CURRENT_BG,
+                border = CURRENT_BORDER,
                 titleForeground = CURRENT_FG,
                 statusForeground = CURRENT_FG,
             )
 
-            !stage.active -> TextPalette(
+            !stage.active -> ChipPalette(
+                background = INACTIVE_BG,
+                border = INACTIVE_BORDER,
                 titleForeground = INACTIVE_FG,
                 statusForeground = INACTIVE_FG,
             )
 
-            stage.progress == StageProgress.DONE -> TextPalette(
+            stage.progress == StageProgress.DONE -> ChipPalette(
+                background = DONE_BG,
+                border = DONE_BORDER,
                 titleForeground = DONE_FG,
                 statusForeground = DONE_FG,
             )
 
-            else -> TextPalette(
+            else -> ChipPalette(
+                background = ACTIVE_BG,
+                border = ACTIVE_BORDER,
                 titleForeground = ACTIVE_FG,
                 statusForeground = ACTIVE_FG,
             )
         }
     }
 
-    private data class TextPalette(
+    private data class ChipPalette(
+        val background: Color,
+        val border: Color,
         val titleForeground: Color,
         val statusForeground: Color,
     )
@@ -195,12 +215,20 @@ internal class SpecWorkflowStageStepperPanel(
     companion object {
         private val CONNECTOR_FG = JBColor(Color(132, 141, 153), Color(122, 130, 142))
 
+        private val CURRENT_BG = JBColor(Color(241, 246, 255), Color(53, 71, 109))
         private val CURRENT_FG = JBColor(Color(33, 72, 153), Color(212, 224, 255))
+        private val CURRENT_BORDER = JBColor(Color(160, 185, 238), Color(109, 130, 176))
 
+        private val DONE_BG = JBColor(Color(239, 248, 242), Color(49, 74, 57))
         private val DONE_FG = JBColor(Color(39, 94, 57), Color(200, 234, 208))
+        private val DONE_BORDER = JBColor(Color(173, 210, 184), Color(87, 134, 102))
 
+        private val ACTIVE_BG = JBColor(Color(247, 249, 252), Color(64, 70, 79))
         private val ACTIVE_FG = JBColor(Color(70, 79, 91), Color(218, 224, 231))
+        private val ACTIVE_BORDER = JBColor(Color(213, 220, 230), Color(98, 108, 121))
 
+        private val INACTIVE_BG = JBColor(Color(248, 249, 251), Color(62, 65, 71))
         private val INACTIVE_FG = JBColor(Color(131, 139, 149), Color(162, 170, 180))
+        private val INACTIVE_BORDER = JBColor(Color(221, 225, 231), Color(96, 102, 112))
     }
 }
