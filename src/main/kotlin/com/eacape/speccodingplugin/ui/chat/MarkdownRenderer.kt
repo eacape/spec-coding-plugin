@@ -80,6 +80,14 @@ object MarkdownRenderer {
                 return
             }
         }
+        if (containsRawHtmlTableBlock(markdown)) {
+            if (renderWithMarkdownEngine(textPane, markdown, proseFontFamily, baseFontSize)) {
+                return
+            }
+            if (renderWithHtmlFallback(textPane, markdown, proseFontFamily, baseFontSize)) {
+                return
+            }
+        }
 
         ensurePlainTextMode(textPane)
         val doc = textPane.styledDocument
@@ -743,6 +751,25 @@ object MarkdownRenderer {
         return false
     }
 
+    private fun containsRawHtmlTableBlock(markdown: String): Boolean {
+        val lines = normalizedLines(markdown)
+        var inCodeFence = false
+        var index = 0
+        while (index < lines.size) {
+            val trimmed = lines[index].trim()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                index += 1
+                continue
+            }
+            if (!inCodeFence && collectRawHtmlTableBlock(lines, index) != null) {
+                return true
+            }
+            index += 1
+        }
+        return false
+    }
+
     private fun renderWithHtmlFallback(
         textPane: JTextPane,
         markdown: String,
@@ -814,10 +841,7 @@ object MarkdownRenderer {
     }
 
     private fun convertBasicMarkdownToHtml(markdown: String): String {
-        val lines = markdown
-            .replace("\r\n", "\n")
-            .replace('\r', '\n')
-            .lines()
+        val lines = normalizedLines(markdown)
         val html = StringBuilder()
         val codeBuffer = StringBuilder()
         var inCodeFence = false
@@ -848,7 +872,9 @@ object MarkdownRenderer {
             closeLists()
         }
 
-        lines.forEach { rawLine ->
+        var lineIndex = 0
+        while (lineIndex < lines.size) {
+            val rawLine = lines[lineIndex]
             val line = rawLine.trimEnd()
             val trimmed = line.trim()
 
@@ -863,24 +889,29 @@ object MarkdownRenderer {
                 } else {
                     inCodeFence = true
                 }
-                return@forEach
+                lineIndex += 1
+                continue
             }
 
             if (inCodeFence) {
                 codeBuffer.append(line).append('\n')
-                return@forEach
+                lineIndex += 1
+                continue
             }
 
-            if (TABLE_HTML_BLOCK_REGEX.matches(trimmed)) {
+            val rawHtmlTableBlock = collectRawHtmlTableBlock(lines, lineIndex)
+            if (rawHtmlTableBlock != null) {
                 closeTextScopes()
-                html.append(trimmed)
-                return@forEach
+                html.append(rawHtmlTableBlock.html)
+                lineIndex = rawHtmlTableBlock.nextIndex
+                continue
             }
 
             if (trimmed == "---" || trimmed == "***" || trimmed == "___") {
                 closeTextScopes()
                 html.append("<hr/>")
-                return@forEach
+                lineIndex += 1
+                continue
             }
 
             val headingMatch = HEADING_REGEX.matchEntire(line)
@@ -890,7 +921,8 @@ object MarkdownRenderer {
                 html.append("<h").append(level).append(">")
                 html.append(renderInlineHtml(headingMatch.groupValues[2]))
                 html.append("</h").append(level).append(">")
-                return@forEach
+                lineIndex += 1
+                continue
             }
 
             val unorderedMatch = UNORDERED_LIST_HTML_REGEX.matchEntire(trimmed)
@@ -907,7 +939,8 @@ object MarkdownRenderer {
                 html.append("<li>")
                 html.append(renderInlineHtml(unorderedMatch.groupValues[1]))
                 html.append("</li>")
-                return@forEach
+                lineIndex += 1
+                continue
             }
 
             val orderedMatch = ORDERED_LIST_HTML_REGEX.matchEntire(trimmed)
@@ -924,12 +957,14 @@ object MarkdownRenderer {
                 html.append("<li>")
                 html.append(renderInlineHtml(orderedMatch.groupValues[1]))
                 html.append("</li>")
-                return@forEach
+                lineIndex += 1
+                continue
             }
 
             if (trimmed.isBlank()) {
                 closeTextScopes()
-                return@forEach
+                lineIndex += 1
+                continue
             }
 
             closeLists()
@@ -940,6 +975,7 @@ object MarkdownRenderer {
                 html.append("<br/>")
             }
             html.append(renderInlineHtml(trimmed))
+            lineIndex += 1
         }
 
         if (inCodeFence) {
@@ -951,6 +987,28 @@ object MarkdownRenderer {
         if (inUnorderedList) html.append("</ul>")
         if (inOrderedList) html.append("</ol>")
         return html.toString()
+    }
+
+    private fun collectRawHtmlTableBlock(lines: List<String>, startIndex: Int): HtmlTableBlock? {
+        val trimmedStartLine = lines[startIndex].trim()
+        if (!trimmedStartLine.startsWith("<table", ignoreCase = true)) return null
+
+        val blockLines = mutableListOf<String>()
+        var openTableCount = 0
+        var closeTableCount = 0
+        for (index in startIndex until lines.size) {
+            val line = lines[index].trimEnd()
+            blockLines += line
+            openTableCount += TABLE_OPEN_TAG_REGEX.findAll(line).count()
+            closeTableCount += TABLE_CLOSE_TAG_REGEX.findAll(line).count()
+            if (openTableCount > 0 && closeTableCount >= openTableCount) {
+                return HtmlTableBlock(
+                    html = blockLines.joinToString("\n"),
+                    nextIndex = index + 1,
+                )
+            }
+        }
+        return null
     }
 
     private fun renderInlineHtml(text: String): String {
@@ -1093,6 +1151,13 @@ object MarkdownRenderer {
         return escapeHtml(value)
             .replace("\"", "&quot;")
             .replace("'", "&#39;")
+    }
+
+    private fun normalizedLines(text: String): List<String> {
+        return text
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lines()
     }
 
     private fun ensurePlainTextMode(textPane: JTextPane) {
@@ -1454,12 +1519,12 @@ object MarkdownRenderer {
     private val LOOSE_DASH_UNORDERED_LIST_REGEX = Regex("""^(\s*)-([^\s-].*)$""")
     private val ORDERED_LIST_REGEX = Regex("""^(\d+)[.)]\s+(.*)$""")
     private val TABLE_OPEN_TAG_REGEX = Regex("""<table\b([^>]*)>""", RegexOption.IGNORE_CASE)
+    private val TABLE_CLOSE_TAG_REGEX = Regex("""</table\s*>""", RegexOption.IGNORE_CASE)
     private val TABLE_BORDER_ATTR_REGEX = Regex("""\bborder\s*=""", RegexOption.IGNORE_CASE)
     private val TABLE_CELL_SPACING_ATTR_REGEX = Regex("""\bcellspacing\s*=""", RegexOption.IGNORE_CASE)
     private val TABLE_CELL_PADDING_ATTR_REGEX = Regex("""\bcellpadding\s*=""", RegexOption.IGNORE_CASE)
     private val TABLE_STYLE_ATTR_REGEX = Regex("""\bstyle\s*=""", RegexOption.IGNORE_CASE)
     private val TABLE_SEPARATOR_CELL_REGEX = Regex("""^:?-{3,}:?$""")
-    private val TABLE_HTML_BLOCK_REGEX = Regex("""^<table>.*</table>$""", RegexOption.IGNORE_CASE)
     private val UNORDERED_LIST_HTML_REGEX = Regex("""^[-*]\s+(.+)$""")
     private val ORDERED_LIST_HTML_REGEX = Regex("""^\d+[.)]\s+(.+)$""")
     private const val MIN_TABLE_COLUMNS = 2
@@ -1507,6 +1572,11 @@ object MarkdownRenderer {
 
     private data class TableBlock(
         val rows: List<List<String>>,
+        val nextIndex: Int,
+    )
+
+    private data class HtmlTableBlock(
+        val html: String,
         val nextIndex: Int,
     )
 

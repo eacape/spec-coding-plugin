@@ -159,6 +159,7 @@ class SpecWorkflowPanel(
     private val workspaceSectionOverrides = mutableMapOf<SpecWorkflowWorkspaceSectionId, Boolean>()
     private var workspaceSectionPresetToken: String? = null
     private var currentOverviewState: SpecWorkflowOverviewState? = null
+    private var currentWorkbenchState: SpecWorkflowStageWorkbenchState? = null
     private var currentVerifyDeltaState: SpecWorkflowVerifyDeltaState? = null
     private var currentGateResult: GateResult? = null
     private var currentStructuredTasks: List<StructuredTask> = emptyList()
@@ -170,6 +171,7 @@ class SpecWorkflowPanel(
     private var selectedWorkflowId: String? = null
     private var highlightedWorkflowId: String? = null
     private var currentWorkflow: SpecWorkflow? = null
+    private var focusedStage: StageId? = null
     private var isWorkspaceMode: Boolean = false
     private var detailDividerLocation: Int = 210
 
@@ -665,9 +667,11 @@ class SpecWorkflowPanel(
         workspaceSectionOverrides.clear()
         workspaceSectionPresetToken = null
         currentOverviewState = null
+        currentWorkbenchState = null
         currentVerifyDeltaState = null
         currentGateResult = null
         currentStructuredTasks = emptyList()
+        focusedStage = null
         workspaceSummaryTitleLabel.text = ""
         workspaceSummaryMetaLabel.text = ""
         workspaceSummaryFocusLabel.text = ""
@@ -996,13 +1000,24 @@ class SpecWorkflowPanel(
         verifyDeltaState: SpecWorkflowVerifyDeltaState,
         gateResult: GateResult?,
     ) {
+        val previousWorkbenchState = currentWorkbenchState
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            focusedStage = focusedStage,
+        )
+        focusedStage = workbenchState.focusedStage
         currentOverviewState = overviewState
+        currentWorkbenchState = workbenchState
         currentVerifyDeltaState = verifyDeltaState
         currentGateResult = gateResult
         currentStructuredTasks = tasks
 
         showWorkspaceContent()
-        val guidance = SpecWorkflowStageGuidanceBuilder.build(overviewState)
+        val guidance = SpecWorkflowStageGuidanceBuilder.build(
+            state = overviewState,
+            workbenchState = workbenchState,
+        )
         workspaceSummaryTitleLabel.text = workflow.title.ifBlank { workflow.id }
         val nextStageText = overviewState.nextStage
             ?.let(SpecWorkflowOverviewPresenter::stageLabel)
@@ -1076,17 +1091,25 @@ class SpecWorkflowPanel(
         documentsSection.setSummary(
             buildDocumentsSectionSummary(workflow),
         )
-        applyWorkspaceSectionVisibility(workflow)
-        applyWorkspaceSectionPreset(workflow)
+        detailPanel.updateWorkbenchState(
+            state = workbenchState,
+            syncSelection = previousWorkbenchState?.focusedStage != workbenchState.focusedStage ||
+                previousWorkbenchState?.currentStage != workbenchState.currentStage,
+        )
+        applyWorkspaceSectionVisibility(workbenchState)
+        applyWorkspaceSectionPreset(workflow, workbenchState)
     }
 
-    private fun applyWorkspaceSectionPreset(workflow: SpecWorkflow) {
-        val token = "${workflow.id}:${workflow.currentStage.name}:${workflow.status.name}"
+    private fun applyWorkspaceSectionPreset(
+        workflow: SpecWorkflow,
+        workbenchState: SpecWorkflowStageWorkbenchState,
+    ) {
+        val token = "${workflow.id}:${workflow.currentStage.name}:${workbenchState.focusedStage.name}:${workflow.status.name}"
         if (workspaceSectionPresetToken != token) {
             workspaceSectionPresetToken = token
             workspaceSectionOverrides.clear()
             val expanded = SpecWorkflowWorkspaceLayout.defaultExpandedSections(
-                currentStage = workflow.currentStage,
+                currentStage = workbenchState.focusedStage,
                 status = workflow.status,
             )
             workspaceSections().forEach { (sectionId, section) ->
@@ -1102,11 +1125,8 @@ class SpecWorkflowPanel(
         }
     }
 
-    private fun applyWorkspaceSectionVisibility(workflow: SpecWorkflow) {
-        val visibleSections = SpecWorkflowWorkspaceLayout.visibleSections(
-            currentStage = workflow.currentStage,
-            status = workflow.status,
-        )
+    private fun applyWorkspaceSectionVisibility(workbenchState: SpecWorkflowStageWorkbenchState) {
+        val visibleSections = workbenchState.visibleSections
         workspaceSectionItems.forEach { (sectionId, item) ->
             item.isVisible = visibleSections.contains(sectionId)
         }
@@ -1274,6 +1294,8 @@ class SpecWorkflowPanel(
     private fun clearOpenedWorkflowUi(resetHighlight: Boolean = false) {
         selectedWorkflowId = null
         currentWorkflow = null
+        focusedStage = null
+        currentWorkbenchState = null
         phaseIndicator.reset()
         overviewPanel.showEmpty()
         tasksPanel.showEmpty()
@@ -1365,6 +1387,9 @@ class SpecWorkflowPanel(
     private fun selectWorkflow(workflowId: String) {
         val previousSelectedWorkflowId = selectedWorkflowId
         selectedWorkflowId = workflowId
+        if (previousSelectedWorkflowId != workflowId) {
+            focusedStage = null
+        }
         overviewPanel.showLoading()
         verifyDeltaPanel.showLoading()
         tasksPanel.showLoading()
@@ -3602,6 +3627,27 @@ class SpecWorkflowPanel(
             .keys
             .toCollection(linkedSetOf())
     }
+
+    internal fun focusStageForTest(stageId: StageId) {
+        focusedStage = stageId
+        val workflow = currentWorkflow ?: return
+        val overviewState = currentOverviewState ?: buildWorkflowUiSnapshot(workflow).overviewState
+        val verifyState = currentVerifyDeltaState ?: buildVerifyDeltaState(
+            workflow = workflow,
+            refreshedAtMillis = System.currentTimeMillis(),
+        )
+        updateWorkspacePresentation(
+            workflow = workflow,
+            overviewState = overviewState,
+            tasks = currentStructuredTasks,
+            verifyDeltaState = verifyState,
+            gateResult = currentGateResult,
+        )
+    }
+
+    internal fun focusedStageForTest(): StageId? = currentWorkbenchState?.focusedStage
+
+    internal fun selectedDocumentPhaseForTest(): String? = detailPanel.selectedPhaseNameForTest()
 
     internal fun workspaceSummarySnapshotForTest(): Map<String, String> {
         return mapOf(

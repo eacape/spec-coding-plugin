@@ -142,6 +142,7 @@ class SpecDetailPanel(
 
     private var isEditing: Boolean = false
     private var editingPhase: SpecPhase? = null
+    private var preferredWorkbenchPhase: SpecPhase? = null
     private var activePreviewCard: String = CARD_PREVIEW
     private var clarificationState: ClarificationState? = null
     private var activeChecklistDetailIndex: Int? = null
@@ -1413,7 +1414,7 @@ class SpecDetailPanel(
         rebuildTree(workflow)
         updateInputPlaceholder(workflow.currentPhase)
         val preservedPhase = selectedPhase?.takeIf { !followCurrentPhase && previousWorkflowId == workflow.id }
-        selectedPhase = preservedPhase ?: workflow.currentPhase
+        selectedPhase = preservedPhase ?: preferredWorkbenchPhase ?: workflow.currentPhase
         setPhaseStepperEnabled(!isEditing)
         updateTreeSelection(selectedPhase, forceComposerReset = false)
         updateButtonStates(workflow)
@@ -1436,6 +1437,7 @@ class SpecDetailPanel(
         stopGeneratingAnimation()
         isEditing = false
         editingPhase = null
+        preferredWorkbenchPhase = null
         selectedPhase = null
         clarificationState = null
         activeChecklistDetailIndex = null
@@ -1479,6 +1481,25 @@ class SpecDetailPanel(
         composerManualOverride = null
         if (::composerSectionBodyContainer.isInitialized) {
             setComposerExpanded(false)
+        }
+    }
+
+    internal fun updateWorkbenchState(
+        state: SpecWorkflowStageWorkbenchState,
+        syncSelection: Boolean,
+    ) {
+        preferredWorkbenchPhase = state.artifactBinding.documentPhase
+        val workflow = currentWorkflow ?: return
+        if (!syncSelection || isEditing) {
+            return
+        }
+        val desiredPhase = preferredWorkbenchPhase ?: return
+        if (selectedPhase != desiredPhase) {
+            updateTreeSelection(desiredPhase, forceComposerReset = false)
+        }
+        updateButtonStates(workflow)
+        if (clarificationState == null) {
+            showDocumentPreview(desiredPhase, keepGeneratingIndicator = false)
         }
     }
 
@@ -3384,6 +3405,8 @@ class SpecDetailPanel(
     internal fun selectPhaseForTest(phase: SpecPhase) {
         documentTabButtons[phase]?.doClick()
     }
+
+    internal fun selectedPhaseNameForTest(): String? = selectedPhase?.name
 
     internal fun toggleClarificationQuestionForTest(index: Int) {
         val currentDecision = clarificationState

@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.StageId
+import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 
 internal data class SpecWorkflowStageGuidance(
@@ -13,19 +14,55 @@ internal data class SpecWorkflowStageGuidance(
 
 internal object SpecWorkflowStageGuidanceBuilder {
     fun build(state: SpecWorkflowOverviewState): SpecWorkflowStageGuidance {
-        val stageLabel = SpecWorkflowOverviewPresenter.stageLabel(state.currentStage)
+        val activeStages = state.activeStages.ifEmpty { state.stageStepper.stages.map { it.stageId } }
+        val currentStep = state.stageStepper.stages.firstOrNull { it.stageId == state.currentStage }
+        val fallbackWorkbenchState = SpecWorkflowStageWorkbenchState(
+            currentStage = state.currentStage,
+            focusedStage = state.currentStage,
+            progress = SpecWorkflowStageProgressView(
+                stepIndex = activeStages.indexOf(state.currentStage).coerceAtLeast(0) + 1,
+                totalSteps = activeStages.size.coerceAtLeast(1),
+                stageStatus = currentStep?.progress ?: StageProgress.IN_PROGRESS,
+            ),
+            primaryAction = null,
+            overflowActions = emptyList(),
+            blockers = emptyList(),
+            artifactBinding = SpecWorkflowStageArtifactBinding(
+                stageId = state.currentStage,
+                title = SpecWorkflowOverviewPresenter.stageLabel(state.currentStage),
+                fileName = state.currentStage.artifactFileName,
+                documentPhase = null,
+                mode = SpecWorkflowWorkbenchDocumentMode.READ_ONLY,
+                fallbackEditable = false,
+            ),
+            visibleSections = SpecWorkflowWorkspaceLayout.visibleSections(
+                currentStage = state.currentStage,
+                status = state.status,
+            ),
+        )
+        return build(state, fallbackWorkbenchState)
+    }
+
+    fun build(
+        state: SpecWorkflowOverviewState,
+        workbenchState: SpecWorkflowStageWorkbenchState,
+    ): SpecWorkflowStageGuidance {
+        val stageLabel = SpecWorkflowOverviewPresenter.stageLabel(workbenchState.focusedStage)
         return SpecWorkflowStageGuidance(
             headline = SpecCodingBundle.message("spec.toolwindow.overview.focus.title", stageLabel),
-            summary = buildSummary(state),
-            checklist = buildChecklist(state),
+            summary = buildSummary(state, workbenchState),
+            checklist = buildChecklist(state, workbenchState),
         )
     }
 
-    private fun buildSummary(state: SpecWorkflowOverviewState): String {
-        if (state.status == WorkflowStatus.COMPLETED || state.currentStage == StageId.ARCHIVE) {
+    private fun buildSummary(
+        state: SpecWorkflowOverviewState,
+        workbenchState: SpecWorkflowStageWorkbenchState,
+    ): String {
+        if (state.status == WorkflowStatus.COMPLETED || workbenchState.focusedStage == StageId.ARCHIVE) {
             return SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.archive")
         }
-        return when (state.currentStage) {
+        return when (workbenchState.focusedStage) {
             StageId.REQUIREMENTS -> SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.requirements")
             StageId.DESIGN -> SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.design")
             StageId.TASKS -> SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.tasks")
@@ -35,15 +72,18 @@ internal object SpecWorkflowStageGuidanceBuilder {
         }
     }
 
-    private fun buildChecklist(state: SpecWorkflowOverviewState): List<String> {
+    private fun buildChecklist(
+        state: SpecWorkflowOverviewState,
+        workbenchState: SpecWorkflowStageWorkbenchState,
+    ): List<String> {
         val items = mutableListOf<String>()
-        when (state.gateStatus) {
+        when (state.gateStatus.takeIf { workbenchState.focusedStage == state.currentStage }) {
             GateStatus.ERROR -> items += SpecCodingBundle.message("spec.toolwindow.overview.checklist.gate.error")
             GateStatus.WARNING -> items += SpecCodingBundle.message("spec.toolwindow.overview.checklist.gate.warning")
             else -> Unit
         }
-        items += stageChecklistItems(state.currentStage)
-        items += buildNextStepLine(state)
+        items += stageChecklistItems(workbenchState.focusedStage)
+        items += buildNextStepLine(state, workbenchState)
         return items.filter { it.isNotBlank() }
     }
 
@@ -81,11 +121,28 @@ internal object SpecWorkflowStageGuidanceBuilder {
         }
     }
 
-    private fun buildNextStepLine(state: SpecWorkflowOverviewState): String {
+    private fun buildNextStepLine(
+        state: SpecWorkflowOverviewState,
+        workbenchState: SpecWorkflowStageWorkbenchState,
+    ): String {
+        val targetStage = workbenchState.primaryAction?.targetStage
+        if (targetStage != null) {
+            return SpecCodingBundle.message(
+                "spec.toolwindow.overview.checklist.next",
+                SpecWorkflowOverviewPresenter.stageLabel(targetStage),
+            )
+        }
         val nextStage = state.nextStage ?: return SpecCodingBundle.message("spec.toolwindow.overview.checklist.next.none")
-        return SpecCodingBundle.message(
-            "spec.toolwindow.overview.checklist.next",
-            SpecWorkflowOverviewPresenter.stageLabel(nextStage),
-        )
+        return if (workbenchState.focusedStage == state.currentStage) {
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.checklist.next",
+                SpecWorkflowOverviewPresenter.stageLabel(nextStage),
+            )
+        } else {
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.checklist.next",
+                SpecWorkflowOverviewPresenter.stageLabel(workbenchState.focusedStage),
+            )
+        }
     }
 }

@@ -145,6 +145,73 @@ class SpecWorkflowOverviewPresenterTest {
         assertEquals(latestSwitch, state.latestTemplateSwitch)
     }
 
+    @Test
+    fun `workbench builder should default focus to current stage and expose current-stage action`() {
+        val workflow = workflow()
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+        )
+
+        assertEquals(StageId.TASKS, workbenchState.focusedStage)
+        assertEquals(3, workbenchState.progress.stepIndex)
+        assertEquals(5, workbenchState.progress.totalSteps)
+        assertEquals(SpecWorkflowWorkbenchActionKind.ADVANCE, workbenchState.primaryAction?.kind)
+        assertEquals(StageId.IMPLEMENT, workbenchState.primaryAction?.targetStage)
+        assertEquals("tasks.md", workbenchState.artifactBinding.fileName)
+        assertEquals("IMPLEMENT", workbenchState.artifactBinding.documentPhase?.name)
+        assertEquals(
+            linkedSetOf(
+                SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.GATE,
+                SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            ),
+            workbenchState.visibleSections,
+        )
+    }
+
+    @Test
+    fun `workbench builder should support focused future stages without changing workflow current stage`() {
+        val workflow = workflow()
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            focusedStage = StageId.IMPLEMENT,
+        )
+
+        assertEquals(StageId.TASKS, workbenchState.currentStage)
+        assertEquals(StageId.IMPLEMENT, workbenchState.focusedStage)
+        assertEquals(SpecWorkflowWorkbenchActionKind.JUMP, workbenchState.primaryAction?.kind)
+        assertEquals(StageId.IMPLEMENT, workbenchState.primaryAction?.targetStage)
+        assertEquals("tasks.md", workbenchState.artifactBinding.fileName)
+        assertEquals("IMPLEMENT", workbenchState.artifactBinding.documentPhase?.name)
+        assertEquals(
+            linkedSetOf(
+                SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.GATE,
+                SpecWorkflowWorkspaceSectionId.VERIFY,
+                SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            ),
+            workbenchState.visibleSections,
+        )
+    }
+
     private fun workflow(
         status: WorkflowStatus = WorkflowStatus.IN_PROGRESS,
         verifyEnabled: Boolean = false,

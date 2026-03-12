@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecEngine
+import com.eacape.speccodingplugin.spec.StageId
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -100,6 +101,46 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             ),
             panel.visibleWorkspaceSectionIdsForTest(),
         )
+    }
+
+    fun `test focused stage should drive workspace sections and document selection`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Focused Stage",
+            description = "stage workbench focus",
+        ).getOrThrow()
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.focusStageForTest(StageId.IMPLEMENT)
+        }
+
+        waitUntil {
+            panel.focusedStageForTest() == StageId.IMPLEMENT
+        }
+
+        assertEquals(
+            linkedSetOf(
+                SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.GATE,
+                SpecWorkflowWorkspaceSectionId.VERIFY,
+                SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            ),
+            panel.visibleWorkspaceSectionIdsForTest(),
+        )
+        assertEquals("IMPLEMENT", panel.selectedDocumentPhaseForTest())
     }
 
     private fun createPanel(): SpecWorkflowPanel {
