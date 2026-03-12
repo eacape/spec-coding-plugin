@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecMetadata
 import com.eacape.speccodingplugin.spec.SpecPhase
@@ -610,9 +611,13 @@ class SpecDetailPanelTest {
             suggestedDetails = "",
         )
 
-        assertEquals("Collapse", panel.clarificationQuestionsToggleTextForTest())
+        assertEquals(SpecCodingBundle.message("spec.detail.toggle.collapse"), panel.clarificationQuestionsToggleTextForTest())
+        assertTrue(panel.clarificationQuestionsToggleHasEnoughWidthForTest())
+        assertTrue(panel.clarificationQuestionsToggleCanFitTextForTest("Collapse"))
         panel.toggleClarificationQuestionsExpandedForTest()
-        assertEquals("Expand", panel.clarificationQuestionsToggleTextForTest())
+        assertEquals(SpecCodingBundle.message("spec.detail.toggle.expand"), panel.clarificationQuestionsToggleTextForTest())
+        assertTrue(panel.clarificationQuestionsToggleHasEnoughWidthForTest())
+        assertTrue(panel.clarificationQuestionsToggleCanFitTextForTest("Expand"))
     }
 
     @Test

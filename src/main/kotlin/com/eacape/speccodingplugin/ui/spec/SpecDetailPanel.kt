@@ -1154,9 +1154,7 @@ class SpecDetailPanel(
         button.isBorderPainted = false
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         button.foreground = TREE_FILE_TEXT
-        button.margin = JBUI.insets(0, 4, 0, 4)
-        button.preferredSize = JBUI.size(JBUI.scale(52), JBUI.scale(20))
-        button.minimumSize = JBUI.size(JBUI.scale(46), JBUI.scale(20))
+        button.margin = JBUI.insets(0, 6, 0, 6)
         button.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
     }
 
@@ -1179,11 +1177,16 @@ class SpecDetailPanel(
         } else {
             Cursor.getDefaultCursor()
         }
-        val targetWidth = maxOf(
-            JBUI.scale(46),
-            button.getFontMetrics(button.font).stringWidth(button.text) + JBUI.scale(8),
-        )
-        button.preferredSize = JBUI.size(targetWidth, JBUI.scale(20))
+        applyCollapseToggleButtonSize(button)
+    }
+
+    private fun applyCollapseToggleButtonSize(button: JButton) {
+        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text.orEmpty())
+        val horizontalPadding = button.margin.left + button.margin.right + JBUI.scale(14)
+        val targetWidth = maxOf(JBUI.scale(68), textWidth + horizontalPadding)
+        val targetSize = JBUI.size(targetWidth, JBUI.scale(22))
+        button.preferredSize = targetSize
+        button.minimumSize = targetSize
     }
 
     private fun refreshCollapsibleToggleTexts() {
@@ -3557,6 +3560,25 @@ class SpecDetailPanel(
         } else {
             ""
         }
+    }
+
+    internal fun clarificationQuestionsToggleHasEnoughWidthForTest(): Boolean {
+        if (!::clarificationQuestionsToggleButton.isInitialized) {
+            return false
+        }
+        val button = clarificationQuestionsToggleButton
+        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text.orEmpty())
+        val horizontalPadding = button.margin.left + button.margin.right + JBUI.scale(14)
+        return button.preferredSize.width >= textWidth + horizontalPadding
+    }
+
+    internal fun clarificationQuestionsToggleCanFitTextForTest(text: String): Boolean {
+        if (!::clarificationQuestionsToggleButton.isInitialized) {
+            return false
+        }
+        clarificationQuestionsToggleButton.text = text
+        applyCollapseToggleButtonSize(clarificationQuestionsToggleButton)
+        return clarificationQuestionsToggleHasEnoughWidthForTest()
     }
 
     internal fun clickGenerateForTest() {

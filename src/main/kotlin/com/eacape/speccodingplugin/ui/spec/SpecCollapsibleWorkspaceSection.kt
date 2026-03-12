@@ -33,7 +33,7 @@ internal class SpecCollapsibleWorkspaceSection(
         isBorderPainted = false
         font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         foreground = SECTION_TOGGLE_FG
-        margin = JBUI.insets(0, 4, 0, 4)
+        margin = JBUI.insets(0, 6, 0, 6)
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         addActionListener {
             setExpanded(!isExpanded())
@@ -105,12 +105,30 @@ internal class SpecCollapsibleWorkspaceSection(
         }
         toggleButton.text = SpecCodingBundle.message(key)
         toggleButton.toolTipText = toggleButton.text
-        val targetWidth = maxOf(
-            JBUI.scale(52),
-            toggleButton.getFontMetrics(toggleButton.font).stringWidth(toggleButton.text) + JBUI.scale(10),
-        )
-        toggleButton.preferredSize = JBUI.size(targetWidth, JBUI.scale(20))
-        toggleButton.minimumSize = toggleButton.preferredSize
+        applyToggleButtonSize()
+    }
+
+    private fun applyToggleButtonSize() {
+        val textWidth = toggleButton.getFontMetrics(toggleButton.font).stringWidth(toggleButton.text.orEmpty())
+        val horizontalPadding = toggleButton.margin.left + toggleButton.margin.right + JBUI.scale(14)
+        val targetWidth = maxOf(JBUI.scale(68), textWidth + horizontalPadding)
+        val targetSize = JBUI.size(targetWidth, JBUI.scale(22))
+        toggleButton.preferredSize = targetSize
+        toggleButton.minimumSize = targetSize
+    }
+
+    internal fun toggleButtonTextForTest(): String = toggleButton.text.orEmpty()
+
+    internal fun toggleButtonHasEnoughWidthForTextForTest(): Boolean {
+        val textWidth = toggleButton.getFontMetrics(toggleButton.font).stringWidth(toggleButton.text.orEmpty())
+        val horizontalPadding = toggleButton.margin.left + toggleButton.margin.right + JBUI.scale(14)
+        return toggleButton.preferredSize.width >= textWidth + horizontalPadding
+    }
+
+    internal fun toggleButtonCanFitTextForTest(text: String): Boolean {
+        toggleButton.text = text
+        applyToggleButtonSize()
+        return toggleButtonHasEnoughWidthForTextForTest()
     }
 
     companion object {
