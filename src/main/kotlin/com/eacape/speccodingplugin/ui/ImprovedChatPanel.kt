@@ -934,11 +934,12 @@ class ImprovedChatPanel(
         }
         stopRequested.set(true)
         showStatus(SpecCodingBundle.message("toolwindow.status.stopping"))
+        val panelToFinish = currentAssistantPanel
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed || _isDisposed) {
                 return@invokeLater
             }
-            currentAssistantPanel?.finishMessage()
+            panelToFinish?.finishMessage()
         }
         activeLlmRequest?.let { request -> cancelRequestAcrossProviders(request) }
         activeOperationJob?.cancel(CancellationException("Stopped by user"))
@@ -1117,7 +1118,8 @@ class ImprovedChatPanel(
         isFinalizingResponse = false
         setSendingState(true)
         val assistantStartedAtMillis = System.currentTimeMillis()
-        currentAssistantPanel = addAssistantMessage(startedAtMillis = assistantStartedAtMillis)
+        val assistantPanel = addAssistantMessage(startedAtMillis = assistantStartedAtMillis)
+        currentAssistantPanel = assistantPanel
 
         activeOperationJob = scope.launch {
             val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
@@ -1167,8 +1169,7 @@ class ImprovedChatPanel(
                     if (stopRequested.get()) {
                         return@invokeLater
                     }
-                    val panel = currentAssistantPanel ?: return@invokeLater
-                    panel.appendStreamContent(delta, events)
+                    assistantPanel.appendStreamContent(delta, events)
                 }
             }
             try {
@@ -1216,7 +1217,7 @@ class ImprovedChatPanel(
                                 return@invokeLater
                             }
                             setResponseFinalizingState(true)
-                            currentAssistantPanel?.finishMessage()
+                            assistantPanel.finishMessage()
                             messagesPanel.scrollToBottom()
                         }
                     } else {
@@ -1291,7 +1292,7 @@ class ImprovedChatPanel(
                         return@invokeLater
                     }
                     cleanupTransientClipboardImages(selectedImagePaths)
-                    currentAssistantPanel?.finishMessage()
+                    assistantPanel.finishMessage()
                     setSendingState(false)
                 }
                 runCatching {
@@ -5411,7 +5412,8 @@ class ImprovedChatPanel(
         isFinalizingResponse = false
         setSendingState(true)
         val assistantStartedAtMillis = System.currentTimeMillis()
-        currentAssistantPanel = addAssistantMessage(startedAtMillis = assistantStartedAtMillis)
+        val assistantPanel = addAssistantMessage(startedAtMillis = assistantStartedAtMillis)
+        currentAssistantPanel = assistantPanel
 
         activeOperationJob = scope.launch {
             val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
@@ -5461,8 +5463,7 @@ class ImprovedChatPanel(
                     if (stopRequested.get()) {
                         return@invokeLater
                     }
-                    val panelForUpdate = currentAssistantPanel ?: return@invokeLater
-                    panelForUpdate.appendStreamContent(delta, events)
+                    assistantPanel.appendStreamContent(delta, events)
                 }
             }
             try {
@@ -5508,7 +5509,7 @@ class ImprovedChatPanel(
                                 return@invokeLater
                             }
                             setResponseFinalizingState(true)
-                            currentAssistantPanel?.finishMessage()
+                            assistantPanel.finishMessage()
                             messagesPanel.scrollToBottom()
                         }
                     } else {
@@ -5577,7 +5578,7 @@ class ImprovedChatPanel(
                     if (project.isDisposed || _isDisposed) {
                         return@invokeLater
                     }
-                    currentAssistantPanel?.finishMessage()
+                    assistantPanel.finishMessage()
                     setSendingState(false)
                 }
                 runCatching {

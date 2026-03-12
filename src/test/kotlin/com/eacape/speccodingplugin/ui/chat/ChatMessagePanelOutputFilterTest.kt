@@ -95,6 +95,44 @@ class ChatMessagePanelOutputFilterTest {
         )
     }
 
+    @Test
+    fun `output key filter should hide screenshot style command diagnostics and keep explanation`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                [Output] I updated the filter to show only natural-language output in key mode.
+                [Output] src/main/resources/messages/SpecCodingBundle_zh_CN.properties:682:changeset.timeline.status.error=异常
+                [Output] currentAssistantPanel = null
+                [Output] At line:2 char:1
+                [Output] succeeded in 285ms:
+                [Output] finishMessage()
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == SpecCodingBundle.message("chat.timeline.toggle.expand") }
+        assertNotNull(expandButton, "Expected output expand button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val filteredText = collectText(panel)
+        assertTrue(filteredText.contains("I updated the filter to show only natural-language output in key mode."))
+        assertFalse(filteredText.contains("SpecCodingBundle_zh_CN.properties:682"))
+        assertFalse(filteredText.contains("currentAssistantPanel = null"))
+        assertFalse(filteredText.contains("At line:2 char:1"))
+        assertFalse(filteredText.contains("succeeded in 285ms:"))
+        assertFalse(filteredText.contains("finishMessage()"))
+        assertTrue(
+            filteredText.contains(
+                SpecCodingBundle.message("chat.timeline.output.filtered.more", 5)
+            )
+        )
+    }
+
     private fun collectText(panel: ChatMessagePanel): String {
         return collectDescendants(panel)
             .filterIsInstance<JTextPane>()

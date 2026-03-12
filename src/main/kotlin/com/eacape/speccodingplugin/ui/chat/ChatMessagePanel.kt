@@ -2128,40 +2128,29 @@ open class ChatMessagePanel(
     }
 
     private fun selectKeyOutputLines(lines: List<String>): List<String> {
-        val kept = mutableListOf<String>()
-        lines.forEach { line ->
-            if (looksLikeRawCodeOrPatchLine(line)) {
-                return@forEach
-            }
-            val lowered = line.lowercase()
-            val keywordMatch = OUTPUT_KEYWORDS.any { lowered.contains(it) } ||
-                OUTPUT_KEYWORDS_ZH.any { line.contains(it) }
-            val keyValueMatch = OUTPUT_KEY_VALUE_REGEX.containsMatchIn(line)
-            val structureMatch = line.startsWith("[") ||
-                line.startsWith("#") ||
-                line.startsWith("> ")
-            val narrativeMatch = looksLikeNarrativeOutputLine(line)
-
-            if (keywordMatch || keyValueMatch || structureMatch || narrativeMatch) {
-                kept += line
-            }
-        }
-
-        val deduped = kept.distinct()
+        val deduped = lines
+            .filter(::looksLikeWhitelistedOutputLine)
+            .distinct()
         if (deduped.isNotEmpty()) {
             return deduped.take(OUTPUT_FILTER_MAX_LINES)
         }
 
-        return lines
-            .filterNot(::looksLikeRawCodeOrPatchLine)
-            .filter(::looksLikeNarrativeOutputLine)
-            .take(OUTPUT_FILTER_FALLBACK_LINES)
-            .distinct()
+        return emptyList()
+    }
+
+    private fun looksLikeWhitelistedOutputLine(line: String): Boolean {
+        val trimmed = line.trim()
+        if (trimmed.isBlank()) return false
+        if (looksLikeRawCodeOrPatchLine(trimmed)) return false
+        if (looksLikeToolDiagnosticLine(trimmed)) return false
+        return looksLikeNarrativeOutputLine(trimmed)
     }
 
     private fun looksLikeNarrativeOutputLine(line: String): Boolean {
         val trimmed = line.trim()
         if (trimmed.isBlank() || trimmed.startsWith("|")) return false
+        if (OUTPUT_ALLOWED_HEADING_REGEX.matches(trimmed)) return true
+        if (OUTPUT_METADATA_KEY_VALUE_REGEX.matches(trimmed)) return false
         if (OUTPUT_SHORT_STATUS_REGEX.matches(trimmed)) return true
 
         val cjkCount = OUTPUT_CJK_CHAR_REGEX.findAll(trimmed).count()
@@ -2199,6 +2188,15 @@ open class ChatMessagePanel(
             return true
         }
         return line.endsWith("{") || line.endsWith(");") || line.endsWith("},")
+    }
+
+    private fun looksLikeToolDiagnosticLine(line: String): Boolean {
+        return OUTPUT_STACKTRACE_LOCATION_REGEX.matches(line) ||
+            OUTPUT_TIMING_STATUS_REGEX.matches(line) ||
+            OUTPUT_SOURCE_REFERENCE_WITH_VALUE_REGEX.matches(line) ||
+            OUTPUT_IDENTIFIER_ASSIGNMENT_REGEX.matches(line) ||
+            OUTPUT_METHOD_CALL_REGEX.matches(line) ||
+            OUTPUT_PIPELINE_FRAGMENT_REGEX.containsMatchIn(line)
     }
 
     private fun outputFilterLabel(level: OutputFilterLevel): String {
@@ -2908,6 +2906,14 @@ open class ChatMessagePanel(
         private val OUTPUT_NARRATIVE_HINT_PUNCTUATION = setOf('。', '！', '？', '，', '.', '!', '?', ':', '：')
         private val OUTPUT_CJK_CHAR_REGEX = Regex("""\p{IsHan}""")
         private val OUTPUT_LATIN_WORD_REGEX = Regex("""[A-Za-z]+(?:['-][A-Za-z0-9]+)?""")
+        private val OUTPUT_ALLOWED_HEADING_REGEX = Regex(
+            """^(?:(?:summary|result|results|next step|next steps|note|notes|update|updated|recommendation|recommendations|analysis|answer|explanation|plan)\s*[:：].+|(?:总结|结果|下一步|说明|建议|分析|结论|回答|计划)\s*[:：].+)$""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val OUTPUT_METADATA_KEY_VALUE_REGEX = Regex(
+            """^(?!summary\b|result\b|results\b|next step\b|next steps\b|note\b|notes\b|update\b|updated\b|recommendation\b|recommendations\b|analysis\b|answer\b|explanation\b|plan\b|总结|结果|下一步|说明|建议|分析|结论|回答|计划)(?:[\p{L}_][\p{L}\p{N}_.-]{0,31}|\p{IsHan}{1,8})\s*[:：]\s*\S.*$""",
+            setOf(RegexOption.IGNORE_CASE),
+        )
         private val OUTPUT_SHORT_STATUS_REGEX = Regex(
             """^(?:(?:ok|okay|done|ready|complete(?:d)?|success(?:ful(?:ly)?)?|warning|note|summary|result|next(?:\s+step)?|updated|created|changed|fixed|verified|passed|failed|error)\b.*|(?:已完成|完成|成功|失败|错误|警告|注意|总结|结果|下一步|已更新|已创建|已修改|已验证).*)$""",
             RegexOption.IGNORE_CASE,
@@ -2938,6 +2944,27 @@ open class ChatMessagePanel(
         )
         private val OUTPUT_CODE_BLOCK_ONLY_LINE_REGEX = Regex("""^[{}\[\](),;]+$""")
         private val OUTPUT_CODE_SYMBOL_HINTS = setOf('{', '}', '(', ')', '[', ']', ';', '=', '<', '>')
+        private val OUTPUT_STACKTRACE_LOCATION_REGEX = Regex(
+            """^(?:At line:\d+ char:\d+|at\s+.+:\d+|Caused by:\s+.+|Exception(?:\b|:).*)$""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val OUTPUT_TIMING_STATUS_REGEX = Regex(
+            """^(?:(?:succeeded|failed|finished|completed|timed out)\s+in\s+\d+(?:ms|s|m|h)\s*:?\s*|exited(?:\s+\d+)?\s+in\s+\d+(?:ms|s|m|h)\s*:?\s*)$""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val OUTPUT_SOURCE_REFERENCE_WITH_VALUE_REGEX = Regex(
+            """^(?!https?://)(?:(?:[A-Za-z]:)?[\\/])?(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+(?:\.[A-Za-z0-9]+)?(?::\d+(?::\d+)?)?(?::[\p{L}\p{N}_.-]+)+(?:=.*)?$""",
+        )
+        private val OUTPUT_IDENTIFIER_ASSIGNMENT_REGEX = Regex(
+            """^(?:[A-Za-z_][\w.]*|[\p{IsHan}]{2,16})\s*=\s*.+$""",
+        )
+        private val OUTPUT_METHOD_CALL_REGEX = Regex(
+            """^(?:[A-Za-z_][\w.]*|[\p{IsHan}]{2,16})\([^)]*\)\s*$""",
+        )
+        private val OUTPUT_PIPELINE_FRAGMENT_REGEX = Regex(
+            """\|\s*(?:Select-Object|Where-Object|ForEach-Object|Get-Content|Set-Content|Out-String|Format-Table)\b""",
+            RegexOption.IGNORE_CASE,
+        )
         private val ASSISTANT_ACK_PREFIXES_ZH = listOf(
             "好的",
             "收到",
@@ -2964,17 +2991,6 @@ open class ChatMessagePanel(
             "execute", "execution", "implement", "执行", "实施",
             "verify", "verification", "test", "验证", "测试",
         )
-        private val OUTPUT_KEYWORDS = listOf(
-            "model", "provider", "workdir", "sandbox", "approval", "session id",
-            "error", "failed", "success", "warning", "exit", "command", "token",
-            "cost", "trace", "task", "verify", "read", "edit", "spec", "mcp", "hook",
-        )
-        private val OUTPUT_KEYWORDS_ZH = listOf(
-            "模型", "提供商", "工作目录", "沙箱", "审批", "会话",
-            "错误", "失败", "成功", "警告", "退出", "命令",
-            "成本", "任务", "验证", "读取", "编辑", "规格", "输出",
-        )
-        private val OUTPUT_KEY_VALUE_REGEX = Regex("""^[^\\s].{0,40}[:：]\\s*.+$""")
         private val MARKDOWN_FENCE_LANGUAGES = setOf(
             "markdown",
             "md",

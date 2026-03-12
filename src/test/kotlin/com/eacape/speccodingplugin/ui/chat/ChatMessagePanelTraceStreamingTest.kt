@@ -129,6 +129,17 @@ class ChatMessagePanelTraceStreamingTest {
         assertNotNull(expandButton, "Expected output expand button")
         runOnEdt { expandButton!!.doClick() }
 
+        val filterButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull {
+                it.text == SpecCodingBundle.message(
+                    "chat.timeline.output.filter.toggle",
+                    SpecCodingBundle.message("chat.timeline.output.filter.key"),
+                )
+            }
+        assertNotNull(filterButton, "Expected output filter button in key mode")
+        runOnEdt { filterButton!!.doClick() }
+
         val expandedText = collectDescendants(panel)
             .filterIsInstance<JTextPane>()
             .joinToString("\n") { it.text.orEmpty() }
@@ -745,6 +756,18 @@ class ChatMessagePanelTraceStreamingTest {
         assertNotNull(expandButton, "Expected output expand button")
         runOnEdt { expandButton!!.doClick() }
 
+        val filterButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull {
+                it.text == SpecCodingBundle.message(
+                    "chat.timeline.output.filter.toggle",
+                    SpecCodingBundle.message("chat.timeline.output.filter.key"),
+                )
+            }
+        assertNotNull(filterButton, "Expected output filter button in key mode")
+        runOnEdt { filterButton!!.doClick() }
+
+
         val textPanes = collectDescendants(panel)
             .filterIsInstance<JTextPane>()
             .map { it.text.orEmpty() }
@@ -875,11 +898,11 @@ class ChatMessagePanelTraceStreamingTest {
             .filterIsInstance<JTextPane>()
             .joinToString("\n") { it.text.orEmpty() }
 
-        assertTrue(filteredText.contains("model: gpt-5.3-codex"))
+        assertFalse(filteredText.contains("model: gpt-5.3-codex"))
         assertFalse(filteredText.contains("final-noise-tail"))
         assertTrue(
             filteredText.contains(
-                SpecCodingBundle.message("chat.timeline.output.filtered.more", 7)
+                SpecCodingBundle.message("chat.timeline.output.filtered.more", 8)
             )
         )
 
@@ -901,7 +924,7 @@ class ChatMessagePanelTraceStreamingTest {
         assertTrue(allText.contains("final-noise-tail"))
         assertFalse(
             allText.contains(
-                SpecCodingBundle.message("chat.timeline.output.filtered.more", 7)
+                SpecCodingBundle.message("chat.timeline.output.filtered.more", 8)
             )
         )
     }
@@ -1263,4 +1286,6 @@ class ChatMessagePanelTraceStreamingTest {
         return method.invoke(panel, content) as String
     }
 }
+
+
 
