@@ -167,6 +167,51 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `composer should auto collapse for non current documents and reopen for current stage`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-composer",
+            currentPhase = SpecPhase.DESIGN,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = "requirements content",
+                    valid = true,
+                ),
+                SpecPhase.DESIGN to document(
+                    phase = SpecPhase.DESIGN,
+                    content = "design content",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Composer",
+            description = "Composer visibility",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(workflow)
+        assertTrue(panel.isComposerExpandedForTest())
+
+        panel.selectPhaseForTest(SpecPhase.SPECIFY)
+        assertFalse(panel.isComposerExpandedForTest())
+
+        panel.selectPhaseForTest(SpecPhase.DESIGN)
+        assertTrue(panel.isComposerExpandedForTest())
+
+        panel.toggleComposerExpandedForTest()
+        assertFalse(panel.isComposerExpandedForTest())
+
+        panel.updateWorkflow(workflow.copy(updatedAt = 3L))
+        assertFalse(panel.isComposerExpandedForTest())
+
+        panel.selectPhaseForTest(SpecPhase.SPECIFY)
+        panel.selectPhaseForTest(SpecPhase.DESIGN)
+        assertTrue(panel.isComposerExpandedForTest())
+    }
+
+    @Test
     fun `updateWorkflow should enable complete only when implement document is valid`() {
         val panel = createPanel()
 

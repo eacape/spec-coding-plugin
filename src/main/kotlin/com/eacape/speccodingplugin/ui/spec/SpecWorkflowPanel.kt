@@ -38,14 +38,15 @@ import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
+import java.awt.CardLayout
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
 import java.awt.Cursor
+import java.awt.Dimension
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.FlowLayout
@@ -55,6 +56,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
 import java.util.UUID
+import javax.swing.Box
+import javax.swing.BoxLayout
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.Icon
@@ -126,6 +129,25 @@ class SpecWorkflowPanel(
     private val codeGraphButton = JButton()
     private val archiveButton = JButton()
     private val refreshButton = JButton()
+    private val workspaceCardLayout = CardLayout()
+    private val workspaceCardPanel = JPanel(workspaceCardLayout)
+    private val workspaceSummaryTitleLabel = JBLabel()
+    private val workspaceSummaryMetaLabel = JBLabel()
+    private val workspaceStageChipLabel = createWorkspaceChipLabel()
+    private val workspaceGateChipLabel = createWorkspaceChipLabel()
+    private val workspaceTasksChipLabel = createWorkspaceChipLabel()
+    private val workspaceVerifyChipLabel = createWorkspaceChipLabel()
+    private lateinit var overviewSection: SpecCollapsibleWorkspaceSection
+    private lateinit var tasksSection: SpecCollapsibleWorkspaceSection
+    private lateinit var gateSection: SpecCollapsibleWorkspaceSection
+    private lateinit var verifySection: SpecCollapsibleWorkspaceSection
+    private lateinit var documentsSection: SpecCollapsibleWorkspaceSection
+    private val workspaceSectionOverrides = mutableMapOf<SpecWorkflowWorkspaceSectionId, Boolean>()
+    private var workspaceSectionPresetToken: String? = null
+    private var currentOverviewState: SpecWorkflowOverviewState? = null
+    private var currentVerifyDeltaState: SpecWorkflowVerifyDeltaState? = null
+    private var currentGateResult: GateResult? = null
+    private var currentStructuredTasks: List<StructuredTask> = emptyList()
     private val pendingClarificationRetryByWorkflowId = mutableMapOf<String, ClarificationRetryPayload>()
     private var activeGenerationJob: Job? = null
     private var activeGenerationRequest: ActiveGenerationRequest? = null
@@ -268,52 +290,7 @@ class SpecWorkflowPanel(
         val rightPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = true
             background = DETAIL_COLUMN_BG
-            val overviewSection = createSectionContainer(
-                overviewPanel,
-                backgroundColor = DETAIL_SECTION_BG,
-                borderColor = DETAIL_SECTION_BORDER,
-            )
-            val workspaceSplit = JSplitPane(
-                JSplitPane.VERTICAL_SPLIT,
-                createSectionContainer(
-                    buildInsightsTabs(),
-                    backgroundColor = DETAIL_SECTION_BG,
-                    borderColor = DETAIL_SECTION_BORDER,
-                ),
-                createSectionContainer(
-                    detailPanel,
-                    backgroundColor = DETAIL_SECTION_BG,
-                    borderColor = DETAIL_SECTION_BORDER,
-                ),
-            ).apply {
-                dividerLocation = JBUI.scale(290)
-                resizeWeight = 0.34
-                isContinuousLayout = true
-                border = JBUI.Borders.empty()
-                background = DETAIL_COLUMN_BG
-                SpecUiStyle.applyChatLikeSpecDivider(
-                    splitPane = this,
-                    dividerSize = JBUI.scale(4),
-                )
-            }
-            workspaceSplit.addComponentListener(
-                object : ComponentAdapter() {
-                    override fun componentResized(e: ComponentEvent?) {
-                        clampVerticalDividerLocation(
-                            split = workspaceSplit,
-                            minTop = JBUI.scale(180),
-                            minBottom = JBUI.scale(260),
-                        )
-                    }
-                },
-            )
-            add(overviewSection, BorderLayout.NORTH)
-            add(workspaceSplit, BorderLayout.CENTER)
-            clampVerticalDividerLocation(
-                split = workspaceSplit,
-                minTop = JBUI.scale(180),
-                minBottom = JBUI.scale(260),
-            )
+            add(buildWorkspaceCardPanel(), BorderLayout.CENTER)
         }
 
         val split = JSplitPane(
@@ -345,27 +322,7 @@ class SpecWorkflowPanel(
         add(split, BorderLayout.CENTER)
         clampDividerLocation(split)
         setStatusText(null)
-    }
-
-    private fun buildInsightsTabs(): JBTabbedPane {
-        return JBTabbedPane().apply {
-            tabLayoutPolicy = JBTabbedPane.SCROLL_TAB_LAYOUT
-            isFocusable = false
-            border = JBUI.Borders.empty()
-            background = DETAIL_SECTION_BG
-            addTab(
-                SpecCodingBundle.message("spec.toolwindow.tasks.title"),
-                tasksPanel,
-            )
-            addTab(
-                SpecCodingBundle.message("spec.toolwindow.gate.title"),
-                gateDetailsPanel,
-            )
-            addTab(
-                SpecCodingBundle.message("spec.toolwindow.verifyDelta.title"),
-                verifyDeltaPanel,
-            )
-        }
+        showWorkspaceEmptyState()
     }
 
     private fun clampDividerLocation(split: JSplitPane) {
@@ -381,20 +338,234 @@ class SpecWorkflowPanel(
         }
     }
 
-    private fun clampVerticalDividerLocation(
-        split: JSplitPane,
-        minTop: Int = JBUI.scale(140),
-        minBottom: Int = JBUI.scale(200),
-    ) {
-        val total = split.height - split.dividerSize
-        if (total <= 0) return
-        val maxTop = (total - minBottom).coerceAtLeast(minTop)
-        val current = split.dividerLocation
-        val clamped = current.coerceIn(minTop, maxTop)
-        if (clamped != current) {
-            split.dividerLocation = clamped
+    private fun createWorkspaceChipLabel(): JBLabel {
+        return JBLabel().apply {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD, 10.5f)
+            isOpaque = true
+            isVisible = false
         }
     }
+
+    private fun workspaceChipColors(tone: WorkspaceChipTone): WorkspaceChipColors {
+        return when (tone) {
+            WorkspaceChipTone.INFO -> WorkspaceChipColors(
+                background = WORKSPACE_INFO_CHIP_BG,
+                border = WORKSPACE_INFO_CHIP_BORDER,
+                foreground = WORKSPACE_INFO_CHIP_FG,
+            )
+
+            WorkspaceChipTone.SUCCESS -> WorkspaceChipColors(
+                background = WORKSPACE_SUCCESS_CHIP_BG,
+                border = WORKSPACE_SUCCESS_CHIP_BORDER,
+                foreground = WORKSPACE_SUCCESS_CHIP_FG,
+            )
+
+            WorkspaceChipTone.WARNING -> WorkspaceChipColors(
+                background = WORKSPACE_WARNING_CHIP_BG,
+                border = WORKSPACE_WARNING_CHIP_BORDER,
+                foreground = WORKSPACE_WARNING_CHIP_FG,
+            )
+
+            WorkspaceChipTone.ERROR -> WorkspaceChipColors(
+                background = WORKSPACE_ERROR_CHIP_BG,
+                border = WORKSPACE_ERROR_CHIP_BORDER,
+                foreground = WORKSPACE_ERROR_CHIP_FG,
+            )
+
+            WorkspaceChipTone.MUTED -> WorkspaceChipColors(
+                background = WORKSPACE_MUTED_CHIP_BG,
+                border = WORKSPACE_MUTED_CHIP_BORDER,
+                foreground = WORKSPACE_MUTED_CHIP_FG,
+            )
+        }
+    }
+
+    private fun buildWorkspaceCardPanel(): JPanel {
+        val sectionsStack = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = JBUI.Borders.empty(0, 0, 4, 0)
+        }
+
+        val summaryCard = buildWorkspaceSummaryCard()
+        sectionsStack.add(prepareWorkspaceStackItem(summaryCard))
+        sectionsStack.add(Box.createVerticalStrut(JBUI.scale(6)))
+
+        overviewSection = createWorkspaceSection(
+            id = SpecWorkflowWorkspaceSectionId.OVERVIEW,
+            titleProvider = { SpecCodingBundle.message("spec.toolwindow.overview.currentStage") },
+            content = overviewPanel,
+        )
+        tasksSection = createWorkspaceSection(
+            id = SpecWorkflowWorkspaceSectionId.TASKS,
+            titleProvider = { SpecCodingBundle.message("spec.toolwindow.tasks.title") },
+            content = tasksPanel,
+        )
+        gateSection = createWorkspaceSection(
+            id = SpecWorkflowWorkspaceSectionId.GATE,
+            titleProvider = { SpecCodingBundle.message("spec.toolwindow.gate.title") },
+            content = gateDetailsPanel,
+        )
+        verifySection = createWorkspaceSection(
+            id = SpecWorkflowWorkspaceSectionId.VERIFY,
+            titleProvider = { SpecCodingBundle.message("spec.toolwindow.verifyDelta.title") },
+            content = verifyDeltaPanel,
+        )
+        documentsSection = createWorkspaceSection(
+            id = SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            titleProvider = { SpecCodingBundle.message("spec.detail.documents") },
+            content = detailPanel,
+        )
+
+        listOf(
+            overviewSection,
+            tasksSection,
+            gateSection,
+            verifySection,
+            documentsSection,
+        ).forEachIndexed { index, section ->
+            sectionsStack.add(prepareWorkspaceStackItem(createSectionContainer(section, backgroundColor = DETAIL_SECTION_BG, borderColor = DETAIL_SECTION_BORDER)))
+            if (index < 4) {
+                sectionsStack.add(Box.createVerticalStrut(JBUI.scale(6)))
+            }
+        }
+
+        val contentPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(
+                JBScrollPane(sectionsStack).apply {
+                    border = JBUI.Borders.empty()
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                    verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+                    viewport.isOpaque = false
+                    isOpaque = false
+                },
+                BorderLayout.CENTER,
+            )
+        }
+
+        workspaceCardPanel.apply {
+            isOpaque = false
+            add(buildWorkspaceEmptyState(), WORKSPACE_CARD_EMPTY)
+            add(contentPanel, WORKSPACE_CARD_CONTENT)
+        }
+        return workspaceCardPanel
+    }
+
+    private fun prepareWorkspaceStackItem(component: Component): Component {
+        if (component is JPanel) {
+            component.alignmentX = Component.LEFT_ALIGNMENT
+            component.maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+        }
+        return component
+    }
+
+    private fun buildWorkspaceSummaryCard(): JPanel {
+        workspaceSummaryTitleLabel.font = JBUI.Fonts.label().deriveFont(Font.BOLD, 13f)
+        workspaceSummaryTitleLabel.foreground = WORKSPACE_SUMMARY_TITLE_FG
+        workspaceSummaryMetaLabel.font = JBUI.Fonts.smallFont()
+        workspaceSummaryMetaLabel.foreground = WORKSPACE_SUMMARY_META_FG
+
+        val chipRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            add(workspaceStageChipLabel)
+            add(workspaceGateChipLabel)
+            add(workspaceTasksChipLabel)
+            add(workspaceVerifyChipLabel)
+        }
+
+        return JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            name = "workspaceSummaryCard"
+            isOpaque = true
+            background = WORKSPACE_SUMMARY_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = WORKSPACE_SUMMARY_BORDER,
+                arc = JBUI.scale(16),
+                top = 8,
+                left = 10,
+                bottom = 8,
+                right = 10,
+            )
+            add(
+                JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+                    isOpaque = false
+                    add(workspaceSummaryTitleLabel, BorderLayout.NORTH)
+                    add(workspaceSummaryMetaLabel, BorderLayout.CENTER)
+                    add(chipRow, BorderLayout.SOUTH)
+                },
+                BorderLayout.CENTER,
+            )
+        }
+    }
+
+    private fun buildWorkspaceEmptyState(): JPanel {
+        val titleLabel = JBLabel(SpecCodingBundle.message("spec.detail.noWorkflow")).apply {
+            font = JBUI.Fonts.label().deriveFont(Font.BOLD, 13f)
+            foreground = WORKSPACE_EMPTY_TITLE_FG
+        }
+        val descriptionLabel = JBLabel(
+            "<html>${SpecCodingBundle.message("spec.toolwindow.overview.empty")}</html>",
+        ).apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = WORKSPACE_EMPTY_DESCRIPTION_FG
+        }
+        return JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            isOpaque = true
+            background = DETAIL_SECTION_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = DETAIL_SECTION_BORDER,
+                arc = JBUI.scale(16),
+                top = 18,
+                left = 18,
+                bottom = 18,
+                right = 18,
+            )
+            add(titleLabel, BorderLayout.NORTH)
+            add(descriptionLabel, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createWorkspaceSection(
+        id: SpecWorkflowWorkspaceSectionId,
+        titleProvider: () -> String,
+        content: Component,
+    ): SpecCollapsibleWorkspaceSection {
+        return SpecCollapsibleWorkspaceSection(
+            titleProvider = titleProvider,
+            content = content,
+            expandedInitially = true,
+            onExpandedChanged = { expanded ->
+                workspaceSectionOverrides[id] = expanded
+            },
+        )
+    }
+
+    private fun showWorkspaceEmptyState() {
+        workspaceCardLayout.show(workspaceCardPanel, WORKSPACE_CARD_EMPTY)
+        workspaceSectionOverrides.clear()
+        workspaceSectionPresetToken = null
+        currentOverviewState = null
+        currentVerifyDeltaState = null
+        currentGateResult = null
+        currentStructuredTasks = emptyList()
+        workspaceSummaryTitleLabel.text = ""
+        workspaceSummaryMetaLabel.text = ""
+        clearWorkspaceChip(workspaceStageChipLabel)
+        clearWorkspaceChip(workspaceGateChipLabel)
+        clearWorkspaceChip(workspaceTasksChipLabel)
+        clearWorkspaceChip(workspaceVerifyChipLabel)
+        if (::overviewSection.isInitialized) {
+            workspaceSections().values.forEach { section ->
+                section.setSummary(null)
+                section.setExpanded(true, notify = false)
+            }
+        }
+    }
+
+    private fun showWorkspaceContent() {
+        workspaceCardLayout.show(workspaceCardPanel, WORKSPACE_CARD_CONTENT)
+    }
+
 
     private fun styleToolbarButton(button: JButton) {
         val iconOnly = button.icon != null && button.text.isNullOrBlank()
@@ -671,6 +842,238 @@ class SpecWorkflowPanel(
         }
     }
 
+    private fun refreshWorkspacePresentation() {
+        val workflow = currentWorkflow
+        val overviewState = currentOverviewState
+        val verifyDeltaState = currentVerifyDeltaState
+        if (workflow == null || overviewState == null || verifyDeltaState == null) {
+            if (selectedWorkflowId == null) {
+                showWorkspaceEmptyState()
+            }
+            return
+        }
+        updateWorkspacePresentation(
+            workflow = workflow,
+            overviewState = overviewState,
+            tasks = currentStructuredTasks,
+            verifyDeltaState = verifyDeltaState,
+            gateResult = currentGateResult,
+        )
+    }
+
+    private fun updateWorkspacePresentation(
+        workflow: SpecWorkflow,
+        overviewState: SpecWorkflowOverviewState,
+        tasks: List<StructuredTask>,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState,
+        gateResult: GateResult?,
+    ) {
+        currentOverviewState = overviewState
+        currentVerifyDeltaState = verifyDeltaState
+        currentGateResult = gateResult
+        currentStructuredTasks = tasks
+
+        showWorkspaceContent()
+        workspaceSummaryTitleLabel.text = workflow.title.ifBlank { workflow.id }
+        val nextStageText = overviewState.nextStage
+            ?.let(SpecWorkflowOverviewPresenter::stageLabel)
+            ?: SpecCodingBundle.message("spec.toolwindow.overview.nextStage.none")
+        workspaceSummaryMetaLabel.text = buildString {
+            append(workflow.id)
+            append(" | ")
+            append(SpecWorkflowOverviewPresenter.templateLabel(workflow.template))
+            append(" | ")
+            append(SpecCodingBundle.message("spec.toolwindow.overview.nextStage"))
+            append(": ")
+            append(nextStageText)
+        }
+
+        updateWorkspaceChip(
+            label = workspaceStageChipLabel,
+            text = "${SpecWorkflowOverviewPresenter.stageLabel(workflow.currentStage)} | ${workspaceWorkflowStatusText(workflow.status)}",
+            tone = WorkspaceChipTone.INFO,
+        )
+        updateWorkspaceChip(
+            label = workspaceGateChipLabel,
+            text = buildGateChipText(gateResult),
+            tone = when (gateResult?.status) {
+                GateStatus.ERROR -> WorkspaceChipTone.ERROR
+                GateStatus.WARNING -> WorkspaceChipTone.WARNING
+                GateStatus.PASS -> WorkspaceChipTone.SUCCESS
+                null -> WorkspaceChipTone.MUTED
+            },
+        )
+        updateWorkspaceChip(
+            label = workspaceTasksChipLabel,
+            text = buildTasksChipText(tasks),
+            tone = if (tasks.any { it.status == TaskStatus.BLOCKED }) {
+                WorkspaceChipTone.WARNING
+            } else {
+                WorkspaceChipTone.INFO
+            },
+        )
+        updateWorkspaceChip(
+            label = workspaceVerifyChipLabel,
+            text = buildVerifyChipText(verifyDeltaState),
+            tone = when (verifyDeltaState.verificationHistory.firstOrNull()?.conclusion) {
+                VerificationConclusion.FAIL -> WorkspaceChipTone.ERROR
+                VerificationConclusion.WARN -> WorkspaceChipTone.WARNING
+                VerificationConclusion.PASS -> WorkspaceChipTone.SUCCESS
+                null -> WorkspaceChipTone.MUTED
+            },
+        )
+
+        overviewSection.setSummary(
+            "${SpecCodingBundle.message("spec.toolwindow.overview.nextStage")}: $nextStageText",
+        )
+        tasksSection.setSummary(buildTasksSectionSummary(tasks))
+        gateSection.setSummary(gateResult?.aggregation?.summary ?: SpecCodingBundle.message("spec.toolwindow.gate.summary.none"))
+        verifySection.setSummary(buildVerifySectionSummary(verifyDeltaState))
+        documentsSection.setSummary(
+            "${phaseLabel(workflow.currentPhase)} | ${workflow.currentPhase.outputFileName}",
+        )
+        applyWorkspaceSectionPreset(workflow)
+    }
+
+    private fun applyWorkspaceSectionPreset(workflow: SpecWorkflow) {
+        val token = "${workflow.id}:${workflow.currentStage.name}:${workflow.status.name}"
+        if (workspaceSectionPresetToken != token) {
+            workspaceSectionPresetToken = token
+            workspaceSectionOverrides.clear()
+            val expanded = SpecWorkflowWorkspaceLayout.defaultExpandedSections(
+                currentStage = workflow.currentStage,
+                status = workflow.status,
+            )
+            workspaceSections().forEach { (sectionId, section) ->
+                section.setExpanded(expanded.contains(sectionId), notify = false)
+            }
+            return
+        }
+
+        workspaceSections().forEach { (sectionId, section) ->
+            workspaceSectionOverrides[sectionId]?.let { expanded ->
+                section.setExpanded(expanded, notify = false)
+            }
+        }
+    }
+
+    private fun workspaceSections(): Map<SpecWorkflowWorkspaceSectionId, SpecCollapsibleWorkspaceSection> {
+        if (!::overviewSection.isInitialized) {
+            return emptyMap()
+        }
+        return linkedMapOf(
+            SpecWorkflowWorkspaceSectionId.OVERVIEW to overviewSection,
+            SpecWorkflowWorkspaceSectionId.TASKS to tasksSection,
+            SpecWorkflowWorkspaceSectionId.GATE to gateSection,
+            SpecWorkflowWorkspaceSectionId.VERIFY to verifySection,
+            SpecWorkflowWorkspaceSectionId.DOCUMENTS to documentsSection,
+        )
+    }
+
+    private fun buildGateChipText(gateResult: GateResult?): String {
+        val statusText = when (gateResult?.status) {
+            GateStatus.PASS -> SpecCodingBundle.message("spec.toolwindow.gate.status.pass")
+            GateStatus.WARNING -> SpecCodingBundle.message("spec.toolwindow.gate.status.warning")
+            GateStatus.ERROR -> SpecCodingBundle.message("spec.toolwindow.gate.status.error")
+            null -> SpecCodingBundle.message("spec.toolwindow.gate.status.unavailable")
+        }
+        return "${SpecCodingBundle.message("spec.toolwindow.gate.title")}: $statusText"
+    }
+
+    private fun buildTasksChipText(tasks: List<StructuredTask>): String {
+        if (tasks.isEmpty()) {
+            return "${SpecCodingBundle.message("spec.toolwindow.tasks.title")}: 0/0"
+        }
+        val completed = tasks.count { it.status == TaskStatus.COMPLETED }
+        return "${SpecCodingBundle.message("spec.toolwindow.tasks.title")}: $completed/${tasks.size}"
+    }
+
+    private fun buildTasksSectionSummary(tasks: List<StructuredTask>): String {
+        if (tasks.isEmpty()) {
+            return SpecCodingBundle.message("spec.toolwindow.tasks.emptyForWorkflow")
+        }
+        val completed = tasks.count { it.status == TaskStatus.COMPLETED }
+        val blocked = tasks.count { it.status == TaskStatus.BLOCKED }
+        return SpecCodingBundle.message(
+            "spec.toolwindow.tasks.summary",
+            tasks.size,
+            completed,
+            blocked,
+        )
+    }
+
+    private fun buildVerifyChipText(state: SpecWorkflowVerifyDeltaState): String {
+        val runCount = state.verificationHistory.size
+        val latest = state.verificationHistory.firstOrNull()?.conclusion?.name
+            ?: SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.pending")
+        return "${SpecCodingBundle.message("spec.toolwindow.verifyDelta.title")}: $runCount | $latest"
+    }
+
+    private fun buildVerifySectionSummary(state: SpecWorkflowVerifyDeltaState): String {
+        val latest = state.verificationHistory.firstOrNull()?.conclusion?.name
+            ?: SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.pending")
+        return when {
+            !state.verifyEnabled -> SpecCodingBundle.message(
+                "spec.toolwindow.verifyDelta.summary.disabled",
+                state.baselineChoices.size,
+            )
+
+            state.verificationHistory.isEmpty() -> SpecCodingBundle.message(
+                "spec.toolwindow.verifyDelta.summary.noRuns",
+                state.baselineChoices.size,
+            )
+
+            else -> SpecCodingBundle.message(
+                "spec.toolwindow.verifyDelta.summary",
+                state.verificationHistory.size,
+                latest,
+                state.baselineChoices.size,
+            )
+        }
+    }
+
+    private fun updateWorkspaceChip(
+        label: JBLabel,
+        text: String,
+        tone: WorkspaceChipTone,
+    ) {
+        val colors = workspaceChipColors(tone)
+        label.text = text
+        label.isVisible = text.isNotBlank()
+        label.foreground = colors.foreground
+        label.background = colors.background
+        label.border = SpecUiStyle.roundedCardBorder(
+            lineColor = colors.border,
+            arc = JBUI.scale(12),
+            top = 1,
+            left = 8,
+            bottom = 1,
+            right = 8,
+        )
+    }
+
+    private fun clearWorkspaceChip(label: JBLabel) {
+        label.text = ""
+        label.isVisible = false
+    }
+
+    private fun phaseLabel(phase: SpecPhase): String {
+        return when (phase) {
+            SpecPhase.SPECIFY -> SpecCodingBundle.message("spec.detail.step.requirements")
+            SpecPhase.DESIGN -> SpecCodingBundle.message("spec.detail.step.design")
+            SpecPhase.IMPLEMENT -> SpecCodingBundle.message("spec.detail.step.taskList")
+        }
+    }
+
+    private fun workspaceWorkflowStatusText(status: WorkflowStatus): String {
+        return when (status) {
+            WorkflowStatus.IN_PROGRESS -> SpecCodingBundle.message("spec.workflow.status.inProgress")
+            WorkflowStatus.PAUSED -> SpecCodingBundle.message("spec.workflow.status.paused")
+            WorkflowStatus.COMPLETED -> SpecCodingBundle.message("spec.workflow.status.completed")
+            WorkflowStatus.FAILED -> SpecCodingBundle.message("spec.workflow.status.failed")
+        }
+    }
+
     fun refreshWorkflows(selectWorkflowId: String? = null, showRefreshFeedback: Boolean = false) {
         scope.launch(Dispatchers.IO) {
             val ids = specEngine.listWorkflows()
@@ -704,11 +1107,13 @@ class SpecWorkflowPanel(
                     overviewPanel.showEmpty()
                     tasksPanel.showEmpty()
                     gateDetailsPanel.showEmpty()
+                    verifyDeltaPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
                     deltaButton.isEnabled = false
                     archiveButton.isEnabled = false
+                    showWorkspaceEmptyState()
                 } else {
                     selectedWorkflowId = null
                     currentWorkflow = null
@@ -716,11 +1121,13 @@ class SpecWorkflowPanel(
                     overviewPanel.showEmpty()
                     tasksPanel.showEmpty()
                     gateDetailsPanel.showEmpty()
+                    verifyDeltaPanel.showEmpty()
                     detailPanel.showEmpty()
                     createWorktreeButton.isEnabled = false
                     mergeWorktreeButton.isEnabled = false
                     deltaButton.isEnabled = false
                     archiveButton.isEnabled = false
+                    showWorkspaceEmptyState()
                 }
                 if (showRefreshFeedback) {
                     val successText = SpecCodingBundle.message("common.refresh.success")
@@ -756,6 +1163,7 @@ class SpecWorkflowPanel(
         verifyDeltaPanel.showLoading()
         tasksPanel.showLoading()
         gateDetailsPanel.showLoading()
+        showWorkspaceContent()
         scope.launch(Dispatchers.IO) {
             val wf = specEngine.reloadWorkflow(workflowId).getOrNull()
             val uiSnapshot = wf?.let(::buildWorkflowUiSnapshot)
@@ -783,11 +1191,25 @@ class SpecWorkflowPanel(
                             tasks = tasks,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
+                        updateWorkspacePresentation(
+                            workflow = wf,
+                            overviewState = snapshot.overviewState,
+                            tasks = tasks,
+                            verifyDeltaState = snapshot.verifyDeltaState,
+                            gateResult = snapshot.gateResult,
+                        )
                     }.onFailure { error ->
                         tasksPanel.updateTasks(
                             workflowId = workflowId,
                             tasks = emptyList(),
                             refreshedAtMillis = System.currentTimeMillis(),
+                        )
+                        updateWorkspacePresentation(
+                            workflow = wf,
+                            overviewState = snapshot.overviewState,
+                            tasks = emptyList(),
+                            verifyDeltaState = snapshot.verifyDeltaState,
+                            gateResult = snapshot.gateResult,
                         )
                         val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
                         setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
@@ -810,6 +1232,7 @@ class SpecWorkflowPanel(
                     mergeWorktreeButton.isEnabled = false
                     deltaButton.isEnabled = false
                     archiveButton.isEnabled = false
+                    showWorkspaceEmptyState()
                 }
             }
         }
@@ -2550,6 +2973,13 @@ class SpecWorkflowPanel(
         verifyDeltaPanel.refreshLocalizedTexts()
         tasksPanel.refreshLocalizedTexts()
         gateDetailsPanel.refreshLocalizedTexts()
+        if (::overviewSection.isInitialized) {
+            overviewSection.refreshLocalizedTexts()
+            tasksSection.refreshLocalizedTexts()
+            gateSection.refreshLocalizedTexts()
+            verifySection.refreshLocalizedTexts()
+            documentsSection.refreshLocalizedTexts()
+        }
         applyToolbarButtonPresentation()
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
         styleToolbarButton(refreshButton)
@@ -2559,6 +2989,7 @@ class SpecWorkflowPanel(
         styleToolbarButton(codeGraphButton)
         styleToolbarButton(archiveButton)
         refreshProviderCombo(preserveSelection = true)
+        refreshWorkspacePresentation()
         setStatusText(null)
     }
 
@@ -2718,6 +3149,7 @@ class SpecWorkflowPanel(
     ) {
         val wfId = selectedWorkflowId ?: return
         invokeLaterSafe {
+            showWorkspaceContent()
             overviewPanel.showLoading()
             verifyDeltaPanel.showLoading()
             tasksPanel.showLoading()
@@ -2747,11 +3179,25 @@ class SpecWorkflowPanel(
                             tasks = tasks,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
+                        updateWorkspacePresentation(
+                            workflow = wf,
+                            overviewState = snapshot.overviewState,
+                            tasks = tasks,
+                            verifyDeltaState = snapshot.verifyDeltaState,
+                            gateResult = snapshot.gateResult,
+                        )
                     }.onFailure { error ->
                         tasksPanel.updateTasks(
                             workflowId = wf.id,
                             tasks = emptyList(),
                             refreshedAtMillis = System.currentTimeMillis(),
+                        )
+                        updateWorkspacePresentation(
+                            workflow = wf,
+                            overviewState = snapshot.overviewState,
+                            tasks = emptyList(),
+                            verifyDeltaState = snapshot.verifyDeltaState,
+                            gateResult = snapshot.gateResult,
                         )
                         val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
                         setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
@@ -2763,11 +3209,27 @@ class SpecWorkflowPanel(
                     verifyDeltaPanel.showEmpty()
                     tasksPanel.showEmpty()
                     gateDetailsPanel.showEmpty()
+                    detailPanel.showEmpty()
                     archiveButton.isEnabled = false
+                    showWorkspaceEmptyState()
                 }
             }
         }
     }
+
+    private enum class WorkspaceChipTone {
+        INFO,
+        SUCCESS,
+        WARNING,
+        ERROR,
+        MUTED,
+    }
+
+    private data class WorkspaceChipColors(
+        val background: Color,
+        val border: Color,
+        val foreground: Color,
+    )
 
     private data class WorkflowUiSnapshot(
         val overviewState: SpecWorkflowOverviewState,
@@ -2935,6 +3397,27 @@ class SpecWorkflowPanel(
     companion object {
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val WORKSPACE_SUMMARY_BG = JBColor(Color(245, 249, 255), Color(56, 62, 72))
+        private val WORKSPACE_SUMMARY_BORDER = JBColor(Color(201, 214, 235), Color(86, 96, 110))
+        private val WORKSPACE_SUMMARY_TITLE_FG = JBColor(Color(42, 59, 94), Color(214, 223, 236))
+        private val WORKSPACE_SUMMARY_META_FG = JBColor(Color(94, 110, 139), Color(160, 171, 188))
+        private val WORKSPACE_EMPTY_TITLE_FG = JBColor(Color(57, 72, 104), Color(214, 223, 236))
+        private val WORKSPACE_EMPTY_DESCRIPTION_FG = JBColor(Color(101, 117, 145), Color(166, 176, 193))
+        private val WORKSPACE_INFO_CHIP_BG = JBColor(Color(236, 244, 255), Color(68, 78, 92))
+        private val WORKSPACE_INFO_CHIP_BORDER = JBColor(Color(175, 197, 228), Color(103, 118, 139))
+        private val WORKSPACE_INFO_CHIP_FG = JBColor(Color(48, 74, 112), Color(210, 220, 235))
+        private val WORKSPACE_SUCCESS_CHIP_BG = JBColor(Color(233, 247, 238), Color(62, 84, 72))
+        private val WORKSPACE_SUCCESS_CHIP_BORDER = JBColor(Color(144, 195, 161), Color(92, 140, 112))
+        private val WORKSPACE_SUCCESS_CHIP_FG = JBColor(Color(42, 118, 71), Color(177, 225, 194))
+        private val WORKSPACE_WARNING_CHIP_BG = JBColor(Color(255, 246, 226), Color(91, 79, 57))
+        private val WORKSPACE_WARNING_CHIP_BORDER = JBColor(Color(224, 188, 116), Color(150, 128, 88))
+        private val WORKSPACE_WARNING_CHIP_FG = JBColor(Color(140, 96, 28), Color(239, 210, 146))
+        private val WORKSPACE_ERROR_CHIP_BG = JBColor(Color(255, 238, 237), Color(96, 65, 66))
+        private val WORKSPACE_ERROR_CHIP_BORDER = JBColor(Color(227, 162, 162), Color(156, 109, 111))
+        private val WORKSPACE_ERROR_CHIP_FG = JBColor(Color(152, 52, 52), Color(244, 182, 182))
+        private val WORKSPACE_MUTED_CHIP_BG = JBColor(Color(241, 244, 248), Color(73, 78, 88))
+        private val WORKSPACE_MUTED_CHIP_BORDER = JBColor(Color(198, 206, 219), Color(106, 115, 130))
+        private val WORKSPACE_MUTED_CHIP_FG = JBColor(Color(98, 109, 126), Color(173, 181, 194))
         private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
         private val ICON_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(104, 116, 134))
         private val ICON_BUTTON_BG_HOVER = JBColor(Color(236, 246, 255), Color(76, 86, 100))
@@ -2967,6 +3450,8 @@ class SpecWorkflowPanel(
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")
         private const val DOCUMENT_RELOAD_DEBOUNCE_MILLIS = 300L
+        private const val WORKSPACE_CARD_EMPTY = "empty"
+        private const val WORKSPACE_CARD_CONTENT = "content"
         private val SPEC_DOCUMENT_FILE_NAMES = (SpecPhase.entries
             .map { it.outputFileName } + listOfNotNull(StageId.VERIFY.artifactFileName))
             .toSet()

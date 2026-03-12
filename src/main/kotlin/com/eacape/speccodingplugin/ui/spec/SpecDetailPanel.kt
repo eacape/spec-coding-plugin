@@ -112,6 +112,8 @@ class SpecDetailPanel(
     private lateinit var processTimelineSection: JPanel
     private lateinit var processTimelineBodyContainer: JPanel
     private lateinit var processTimelineToggleButton: JButton
+    private lateinit var composerSectionBodyContainer: JPanel
+    private lateinit var composerSectionToggleButton: JButton
     private lateinit var inputSectionContainer: JPanel
     private lateinit var bottomPanelContainer: JPanel
     private lateinit var mainSplitPane: JSplitPane
@@ -152,8 +154,12 @@ class SpecDetailPanel(
     private var isClarificationQuestionsExpanded: Boolean = true
     private var isClarificationPreviewExpanded: Boolean = true
     private var isClarificationPreviewContentVisible: Boolean = true
+    private var isComposerExpanded: Boolean = true
+    private var composerContextKey: String? = null
+    private var composerManualOverride: Boolean? = null
     private var hasAppliedInitialBottomHeight: Boolean = false
     private val processTimelineEntries = mutableListOf<ProcessTimelineEntry>()
+    private val composerTitleLabel = JBLabel()
 
     init {
         setupUI()
@@ -312,20 +318,32 @@ class SpecDetailPanel(
             ),
             BorderLayout.SOUTH,
         )
+        composerTitleLabel.text = SpecCodingBundle.message("spec.detail.composer.title")
+        styleClarificationSectionLabel(composerTitleLabel)
+        val composerSection = createCollapsibleSection(
+            titleLabel = composerTitleLabel,
+            content = createSectionContainer(
+                composerContent,
+                backgroundColor = INPUT_COLUMN_BG,
+                borderColor = INPUT_SECTION_BORDER,
+            ),
+            expanded = true,
+            onToggle = { expanded ->
+                isComposerExpanded = expanded
+                composerManualOverride = expanded
+                refreshComposerSectionLayout()
+            },
+        )
+        composerSectionBodyContainer = composerSection.bodyContainer
+        composerSectionToggleButton = composerSection.toggleButton
         bottomPanelContainer = JPanel(BorderLayout()).apply {
             isOpaque = false
             border = JBUI.Borders.emptyTop(6)
-            add(
-                createSectionContainer(
-                    composerContent,
-                    backgroundColor = INPUT_COLUMN_BG,
-                    borderColor = INPUT_SECTION_BORDER,
-                ),
-                BorderLayout.CENTER,
-            )
+            add(composerSection.root, BorderLayout.CENTER)
         }
         add(previewPanel, BorderLayout.CENTER)
         add(bottomPanelContainer, BorderLayout.SOUTH)
+        syncComposerSectionState(forceReset = true)
     }
 
     private fun applyInitialBottomPanelHeightIfNeeded() {
@@ -1182,6 +1200,13 @@ class SpecDetailPanel(
                 enabled = isClarificationPreviewContentVisible,
             )
         }
+        if (::composerSectionToggleButton.isInitialized) {
+            updateCollapseToggleButton(
+                composerSectionToggleButton,
+                expanded = isComposerExpanded,
+                enabled = currentWorkflow != null,
+            )
+        }
     }
 
     private fun styleClarificationSectionLabel(label: JBLabel) {
@@ -1351,6 +1376,7 @@ class SpecDetailPanel(
         clarificationQuestionsLabel.text = SpecCodingBundle.message("spec.detail.clarify.questions.title")
         clarificationChecklistHintLabel.text = SpecCodingBundle.message("spec.detail.clarify.checklist.hint")
         clarificationPreviewLabel.text = SpecCodingBundle.message("spec.detail.clarify.preview.title")
+        composerTitleLabel.text = SpecCodingBundle.message("spec.detail.composer.title")
         applyActionButtonPresentation()
         updateInputPlaceholder(currentWorkflow?.currentPhase)
         styleActionButton(previewModeButton)
@@ -1430,9 +1456,10 @@ class SpecDetailPanel(
         val preservedPhase = selectedPhase?.takeIf { !followCurrentPhase && previousWorkflowId == workflow.id }
         selectedPhase = preservedPhase ?: workflow.currentPhase
         setPhaseStepperEnabled(!isEditing)
-        updateTreeSelection(selectedPhase)
+        updateTreeSelection(selectedPhase, forceComposerReset = false)
         updateButtonStates(workflow)
         refreshInputAreaMode()
+        syncComposerSectionState(forceReset = previousWorkflowId != workflow.id || followCurrentPhase)
         if (clarificationState == null) {
             setClarificationPreviewVisible(true)
             switchPreviewCard(CARD_PREVIEW)
@@ -1489,6 +1516,11 @@ class SpecDetailPanel(
         skipClarificationButton.isVisible = false
         cancelClarificationButton.isVisible = false
         disableAllButtons()
+        composerContextKey = null
+        composerManualOverride = null
+        if (::composerSectionBodyContainer.isInitialized) {
+            setComposerExpanded(false)
+        }
     }
 
     private fun updateInputPlaceholder(currentPhase: SpecPhase?) {
@@ -1502,9 +1534,10 @@ class SpecDetailPanel(
         inputArea.emptyText.setText(SpecCodingBundle.message(key))
     }
 
-    private fun updateTreeSelection(phase: SpecPhase?) {
+    private fun updateTreeSelection(phase: SpecPhase?, forceComposerReset: Boolean = true) {
         selectedPhase = phase
         updatePhaseStepperVisuals()
+        syncComposerSectionState(forceReset = forceComposerReset)
     }
 
     private fun startEditing() {
@@ -2527,6 +2560,7 @@ class SpecDetailPanel(
             inputArea.isEnabled = false
             inputArea.isEditable = false
             inputArea.toolTipText = null
+            syncComposerSectionState()
             refreshActionButtonCursors()
             return
         }
@@ -2537,6 +2571,7 @@ class SpecDetailPanel(
         } else {
             null
         }
+        syncComposerSectionState()
         refreshActionButtonCursors()
     }
 
@@ -2547,6 +2582,59 @@ class SpecDetailPanel(
         val targetTopInset = if (showInputSection) JBUI.scale(8) else JBUI.scale(2)
         bottomPanelContainer.border = JBUI.Borders.emptyTop(targetTopInset)
         isBottomCollapsedForChecklist = !showInputSection
+        bottomPanelContainer.revalidate()
+        bottomPanelContainer.repaint()
+    }
+
+    private fun syncComposerSectionState(forceReset: Boolean = false) {
+        if (!::composerSectionBodyContainer.isInitialized) {
+            return
+        }
+        val contextKey = buildComposerContextKey()
+        if (forceReset || contextKey != composerContextKey) {
+            composerContextKey = contextKey
+            composerManualOverride = null
+            setComposerExpanded(desiredComposerExpanded())
+            return
+        }
+
+        composerManualOverride?.let(::setComposerExpanded)
+    }
+
+    private fun buildComposerContextKey(): String {
+        return listOf(
+            currentWorkflow?.id.orEmpty(),
+            currentWorkflow?.currentPhase?.name.orEmpty(),
+            selectedPhase?.name.orEmpty(),
+            currentWorkflow?.status?.name.orEmpty(),
+            isEditing.toString(),
+            (clarificationState != null).toString(),
+        ).joinToString("|")
+    }
+
+    private fun desiredComposerExpanded(): Boolean {
+        val workflow = currentWorkflow ?: return false
+        if (clarificationState != null || isEditing) {
+            return true
+        }
+        if (workflow.status != WorkflowStatus.IN_PROGRESS) {
+            return false
+        }
+        val activePhase = selectedPhase ?: workflow.currentPhase
+        return activePhase == workflow.currentPhase
+    }
+
+    private fun setComposerExpanded(expanded: Boolean) {
+        isComposerExpanded = expanded
+        composerSectionBodyContainer.isVisible = expanded
+        refreshComposerSectionLayout()
+        refreshCollapsibleToggleTexts()
+    }
+
+    private fun refreshComposerSectionLayout() {
+        if (!::bottomPanelContainer.isInitialized) {
+            return
+        }
         bottomPanelContainer.revalidate()
         bottomPanelContainer.repaint()
     }
@@ -3326,6 +3414,10 @@ class SpecDetailPanel(
         inputArea.caretPosition = inputArea.text.length
     }
 
+    internal fun selectPhaseForTest(phase: SpecPhase) {
+        documentTabButtons[phase]?.doClick()
+    }
+
     internal fun toggleClarificationQuestionForTest(index: Int) {
         val currentDecision = clarificationState
             ?.questionDecisions
@@ -3395,6 +3487,16 @@ class SpecDetailPanel(
 
     internal fun isBottomCollapsedForChecklistForTest(): Boolean {
         return isBottomCollapsedForChecklist
+    }
+
+    internal fun toggleComposerExpandedForTest() {
+        if (::composerSectionToggleButton.isInitialized) {
+            composerSectionToggleButton.doClick()
+        }
+    }
+
+    internal fun isComposerExpandedForTest(): Boolean {
+        return isComposerExpanded
     }
 
     internal fun toggleProcessTimelineExpandedForTest() {
