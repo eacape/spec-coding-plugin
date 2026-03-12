@@ -12,6 +12,26 @@ internal enum class SpecWorkflowWorkspaceSectionId {
 }
 
 internal object SpecWorkflowWorkspaceLayout {
+    fun visibleSections(
+        currentStage: StageId,
+        status: WorkflowStatus,
+    ): Set<SpecWorkflowWorkspaceSectionId> {
+        val visible = linkedSetOf(
+            SpecWorkflowWorkspaceSectionId.OVERVIEW,
+            SpecWorkflowWorkspaceSectionId.TASKS,
+            SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+        )
+
+        if (status != WorkflowStatus.COMPLETED && currentStage in setOf(StageId.TASKS, StageId.IMPLEMENT, StageId.VERIFY)) {
+            visible += SpecWorkflowWorkspaceSectionId.GATE
+        }
+        if (status == WorkflowStatus.COMPLETED || currentStage in setOf(StageId.IMPLEMENT, StageId.VERIFY, StageId.ARCHIVE)) {
+            visible += SpecWorkflowWorkspaceSectionId.VERIFY
+        }
+
+        return visible
+    }
+
     fun defaultExpandedSections(
         currentStage: StageId,
         status: WorkflowStatus,

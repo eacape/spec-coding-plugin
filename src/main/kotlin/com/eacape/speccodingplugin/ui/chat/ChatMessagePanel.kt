@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.icons.AllIcons
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.EditorColorsScheme
 import com.intellij.openapi.editor.colors.TextAttributesKey
@@ -47,6 +48,7 @@ import javax.swing.JTextPane
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 import javax.swing.Timer
+import javax.swing.event.HyperlinkEvent
 import javax.swing.border.AbstractBorder
 import javax.swing.border.Border
 import javax.swing.border.CompoundBorder
@@ -297,6 +299,7 @@ open class ChatMessagePanel(
                 contentHost.removeAll()
                 contentHost.add(contentPane, BorderLayout.CENTER)
                 MarkdownRenderer.render(contentPane, formatAssistantAcknowledgementLead(content))
+                refreshTextPaneCursor(contentPane)
             }
         } else {
             contentHost.removeAll()
@@ -304,6 +307,7 @@ open class ChatMessagePanel(
                 if (userImageAttachments.isEmpty()) {
                     contentHost.add(contentPane, BorderLayout.CENTER)
                     renderUserPromptAwareContent(contentPane.styledDocument, content, outputFontSize)
+                    refreshTextPaneCursor(contentPane)
                 } else {
                     contentHost.add(createUserPromptWithImages(content, outputFontSize), BorderLayout.CENTER)
                 }
@@ -316,6 +320,7 @@ open class ChatMessagePanel(
                 StyleConstants.setFontSize(attrs, outputFontSize)
                 StyleConstants.setLineSpacing(attrs, PLAIN_TEXT_LINE_SPACING)
                 doc.insertString(0, content, attrs)
+                refreshTextPaneCursor(contentPane)
             }
         }
         revalidate()
@@ -334,6 +339,7 @@ open class ChatMessagePanel(
         StyleConstants.setFontSize(attrs, fontSize)
         StyleConstants.setLineSpacing(attrs, PLAIN_TEXT_LINE_SPACING)
         doc.insertString(0, content, attrs)
+        refreshTextPaneCursor(contentPane)
     }
 
     private fun resolveAssistantAnswerContent(content: String): String {
@@ -410,6 +416,7 @@ open class ChatMessagePanel(
         val textContent = stripUserAttachmentMarkerLines(content)
         if (textContent.isNotBlank()) {
             renderUserPromptAwareContent(contentPane.styledDocument, textContent, fontSize)
+            refreshTextPaneCursor(contentPane)
             container.add(contentPane)
             container.add(createVerticalSpacer(USER_IMAGE_TEXT_GAP))
         }
@@ -1657,6 +1664,7 @@ open class ChatMessagePanel(
         configureReadableTextPane(pane)
         pane.border = JBUI.Borders.emptyTop(2)
         MarkdownRenderer.render(pane, content)
+        refreshTextPaneCursor(pane)
         return pane
     }
 
@@ -1664,8 +1672,9 @@ open class ChatMessagePanel(
         pane.isEditable = false
         pane.isOpaque = false
         pane.isFocusable = true
-        pane.cursor = Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR)
         applyConfiguredOutputFont(pane, configuredOutputFontSize())
+        installTextPaneLinkHandlers(pane)
+        refreshTextPaneCursor(pane)
     }
 
     private fun configuredOutputFontSize(): Int {
@@ -1687,6 +1696,7 @@ open class ChatMessagePanel(
     private fun renderTraceDetail(pane: JTextPane, content: String) {
         if (looksLikeMarkdown(content, scanLimit = MARKDOWN_DETECTION_SCAN_LIMIT)) {
             MarkdownRenderer.render(pane, content)
+            refreshTextPaneCursor(pane)
             return
         }
         val doc = pane.styledDocument
@@ -1696,6 +1706,7 @@ open class ChatMessagePanel(
         StyleConstants.setFontSize(attrs, configuredOutputFontSize())
         StyleConstants.setLineSpacing(attrs, PLAIN_TEXT_LINE_SPACING)
         doc.insertString(0, content, attrs)
+        refreshTextPaneCursor(pane)
     }
 
     private fun looksLikeMarkdown(content: String, scanLimit: Int = Int.MAX_VALUE): Boolean {
@@ -1707,6 +1718,7 @@ open class ChatMessagePanel(
         val normalizedSample = normalizeMarkdownSignalSample(
             normalizePipeTableLine(markerSample),
         )
+        if (MARKDOWN_INLINE_LINK_REGEX.containsMatchIn(normalizedSample)) return true
         if (normalizedSample.contains("**") || normalizedSample.contains('`')) return true
         var scannedChars = 0
         var previousPipeLikeLine = false
@@ -1734,6 +1746,97 @@ open class ChatMessagePanel(
         if (containsLoosePipeTableRows(normalizedSample, minConsecutiveRows = LOOSE_PIPE_TABLE_DETECTION_MIN_ROWS)) {
             return true
         }
+        return false
+    }
+
+    private fun installTextPaneLinkHandlers(pane: JTextPane) {
+        if (pane.getClientProperty(TEXT_PANE_LINK_HANDLERS_KEY) == true) {
+            return
+        }
+        pane.putClientProperty(TEXT_PANE_LINK_HANDLERS_KEY, true)
+        pane.addHyperlinkListener { event ->
+            if (event.eventType != HyperlinkEvent.EventType.ACTIVATED) {
+                return@addHyperlinkListener
+            }
+            val target = event.url?.toString().orEmpty().ifBlank { event.description.orEmpty() }
+            handleActivatedLinkTarget(target)
+        }
+        val linkMouseHandler = object : MouseAdapter() {
+            override fun mouseMoved(event: MouseEvent) {
+                updateTextPaneCursorForPointer(pane, event)
+            }
+
+            override fun mouseExited(event: MouseEvent) {
+                refreshTextPaneCursor(pane)
+            }
+
+            override fun mouseClicked(event: MouseEvent) {
+                if (!SwingUtilities.isLeftMouseButton(event) || event.clickCount != 1) {
+                    return
+                }
+                val target = resolveStyledLinkTargetAt(pane, event) ?: return
+                if (handleActivatedLinkTarget(target)) {
+                    event.consume()
+                }
+            }
+        }
+        pane.addMouseListener(linkMouseHandler)
+        pane.addMouseMotionListener(linkMouseHandler)
+    }
+
+    private fun updateTextPaneCursorForPointer(pane: JTextPane, event: MouseEvent) {
+        if (pane.contentType.contains("html", ignoreCase = true)) {
+            return
+        }
+        pane.cursor = if (resolveStyledLinkTargetAt(pane, event) != null) {
+            Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        } else {
+            defaultTextPaneCursor(pane)
+        }
+    }
+
+    private fun refreshTextPaneCursor(pane: JTextPane) {
+        pane.cursor = defaultTextPaneCursor(pane)
+    }
+
+    private fun defaultTextPaneCursor(pane: JTextPane): Cursor {
+        return if (pane.contentType.contains("html", ignoreCase = true)) {
+            Cursor.getDefaultCursor()
+        } else {
+            Cursor.getPredefinedCursor(Cursor.TEXT_CURSOR)
+        }
+    }
+
+    private fun resolveStyledLinkTargetAt(pane: JTextPane, event: MouseEvent): String? {
+        if (pane.contentType.contains("html", ignoreCase = true) || pane.document.length <= 0) {
+            return null
+        }
+        val offset = runCatching { pane.viewToModel2D(event.point) }.getOrDefault(-1)
+        if (offset !in 0 until pane.document.length) {
+            return null
+        }
+        return MarkdownRenderer.extractLinkTarget(
+            pane.styledDocument.getCharacterElement(offset).attributes
+        )
+    }
+
+    private fun handleActivatedLinkTarget(rawTarget: String): Boolean {
+        val target = rawTarget.trim()
+        if (target.isBlank()) {
+            return false
+        }
+
+        val fileAction = WorkflowQuickActionParser.parseFileActionCandidate(target)
+        if (fileAction != null && onWorkflowFileOpen != null) {
+            onWorkflowFileOpen.invoke(fileAction)
+            return true
+        }
+
+        if (target.startsWith("http://", ignoreCase = true) || target.startsWith("https://", ignoreCase = true)) {
+            BrowserUtil.browse(target)
+            return true
+        }
+
         return false
     }
 
@@ -2695,6 +2798,7 @@ open class ChatMessagePanel(
         private const val OUTPUT_FILTER_CONTEXT_HEAD_LINES = 6
         private const val COPY_FEEDBACK_DURATION_MS = 1000
         private const val COPY_FEEDBACK_TIMER_KEY = "spec.copy.feedback.timer"
+        private const val TEXT_PANE_LINK_HANDLERS_KEY = "spec.textPane.linkHandlersInstalled"
         private const val COPY_FEEDBACK_ICON_SUCCESS = "OK"
         private const val COPY_FEEDBACK_ICON_FAILURE = "!"
         private const val SPINNER_TICK_MS = 70
@@ -2732,6 +2836,7 @@ open class ChatMessagePanel(
         private val MARKDOWN_HORIZONTAL_RULE_REGEX = Regex("""^(?:-{3,}|\*{3,}|_{3,})\s*$""")
         private val UNORDERED_LIST_ITEM_REGEX = Regex("""^(?:[-*]|[•●·・▪◦‣])\s*.+$""")
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+[.)、）．](?:\s+|(?=[^\s\d])).+$""")
+        private val MARKDOWN_INLINE_LINK_REGEX = Regex("""(?<!!)\[[^\]\n]+]\(([^()\n]|\\[()])+\)""")
         private val WORKFLOW_MARKDOWN_HEADING_REGEX = Regex("""^##+(?:\s+|(?=\S)).+$""")
         private val PIPE_TABLE_ROW_REGEX = Regex("""^\s*\|?(?:[^|\n]+\|){1,}[^|\n]*\|?\s*$""")
         private val PIPE_TABLE_SEPARATOR_REGEX = Regex("""^\s*\|?(?:\s*:?-{3,}:?\s*\|){1,}\s*$""")

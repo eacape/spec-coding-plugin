@@ -10,6 +10,7 @@ import java.awt.Font
 import java.text.Normalizer
 import javax.swing.JEditorPane
 import javax.swing.JTextPane
+import javax.swing.text.AttributeSet
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
 import javax.swing.text.StyledDocument
@@ -42,6 +43,13 @@ object MarkdownRenderer {
     private val BLOCK_CODE_FG_DARK = Color(216, 223, 234)
     private val CODE_LANG_FG_LIGHT = Color(104, 120, 142)
     private val CODE_LANG_FG_DARK = Color(148, 164, 187)
+    private val LINK_FG_LIGHT = Color(45, 111, 214)
+    private val LINK_FG_DARK = Color(124, 181, 255)
+
+    const val LINK_TARGET_ATTRIBUTE: String = "specCoding.markdown.linkTarget"
+
+    fun extractLinkTarget(attributes: AttributeSet?): String? =
+        attributes?.getAttribute(LINK_TARGET_ATTRIBUTE) as? String
 
     fun render(textPane: JTextPane, markdown: String) {
         val proseFontFamily = textPane.font?.family ?: Font.SANS_SERIF
@@ -965,6 +973,13 @@ object MarkdownRenderer {
                         append(escapeHtml(token.text))
                         append("</code>")
                     }
+                    is InlineToken.Link -> {
+                        append("<a href=\"")
+                        append(escapeHtmlAttribute(token.target))
+                        append("\">")
+                        append(escapeHtml(token.text))
+                        append("</a>")
+                    }
                     is InlineToken.Plain -> append(escapeHtml(token.text))
                 }
             }
@@ -981,6 +996,7 @@ object MarkdownRenderer {
         val inlineCodeFg = toCssColor(JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
         val blockCodeBg = toCssColor(JBColor(BLOCK_CODE_BG_LIGHT, BLOCK_CODE_BG_DARK))
         val blockCodeFg = toCssColor(JBColor(BLOCK_CODE_FG_LIGHT, BLOCK_CODE_FG_DARK))
+        val linkFg = toCssColor(JBColor(LINK_FG_LIGHT, LINK_FG_DARK))
         val css = """
             html, body { margin: 0; padding: 0; background: transparent; }
             body {
@@ -992,6 +1008,10 @@ object MarkdownRenderer {
             ul, ol { padding-left: 20px; }
             li { margin: 0 0 5px 0; }
             li:last-child { margin-bottom: 0; }
+            a {
+                color: $linkFg;
+                text-decoration: underline;
+            }
             table {
                 border-collapse: collapse;
                 border-spacing: 0;
@@ -1067,6 +1087,12 @@ object MarkdownRenderer {
 
     private fun toCssColor(color: Color): String {
         return "#%02x%02x%02x".format(color.red, color.green, color.blue)
+    }
+
+    private fun escapeHtmlAttribute(value: String): String {
+        return escapeHtml(value)
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;")
     }
 
     private fun ensurePlainTextMode(textPane: JTextPane) {
@@ -1245,6 +1271,14 @@ object MarkdownRenderer {
                     StyleConstants.setForeground(attrs, JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
                     doc.insertString(doc.length, token.text, attrs)
                 }
+                is InlineToken.Link -> {
+                    val attrs = SimpleAttributeSet()
+                    applyProseTextAttrs(attrs, proseFontFamily, baseFontSize)
+                    StyleConstants.setForeground(attrs, JBColor(LINK_FG_LIGHT, LINK_FG_DARK))
+                    StyleConstants.setUnderline(attrs, true)
+                    attrs.addAttribute(LINK_TARGET_ATTRIBUTE, token.target)
+                    doc.insertString(doc.length, token.text, attrs)
+                }
                 is InlineToken.Plain -> {
                     val attrs = SimpleAttributeSet()
                     applyProseTextAttrs(attrs, proseFontFamily, baseFontSize)
@@ -1317,6 +1351,16 @@ object MarkdownRenderer {
         var pos = 0
 
         while (pos < text.length) {
+            // Markdown 链接 [label](target)
+            if (text[pos] == '[' && (pos == 0 || text[pos - 1] != '!')) {
+                val link = parseInlineLink(text, pos)
+                if (link != null) {
+                    tokens.add(link.first)
+                    pos = link.second
+                    continue
+                }
+            }
+
             // 行内代码 `...`
             if (text[pos] == '`') {
                 val end = text.indexOf('`', pos + 1)
@@ -1358,9 +1402,47 @@ object MarkdownRenderer {
 
     private fun findNextSpecial(text: String, from: Int): Int {
         for (i in from until text.length) {
-            if (text[i] == '`' || text[i] == '*') return i
+            if (text[i] == '`' || text[i] == '*' || text[i] == '[') return i
         }
         return text.length
+    }
+
+    private fun parseInlineLink(text: String, start: Int): Pair<InlineToken.Link, Int>? {
+        if (text.getOrNull(start) != '[') return null
+        val labelEnd = text.indexOf(']', start + 1)
+        if (labelEnd <= start) return null
+        if (text.getOrNull(labelEnd + 1) != '(') return null
+
+        val targetEnd = findInlineLinkTargetEnd(text, labelEnd + 2)
+        if (targetEnd <= labelEnd + 2) return null
+
+        val label = text.substring(start + 1, labelEnd)
+        val target = text.substring(labelEnd + 2, targetEnd).trim()
+        if (label.isBlank() || target.isBlank()) return null
+        return InlineToken.Link(text = label, target = target) to (targetEnd + 1)
+    }
+
+    private fun findInlineLinkTargetEnd(text: String, start: Int): Int {
+        var nestedParens = 0
+        var escaped = false
+        for (index in start until text.length) {
+            val ch = text[index]
+            if (escaped) {
+                escaped = false
+                continue
+            }
+            when (ch) {
+                '\\' -> escaped = true
+                '(' -> nestedParens += 1
+                ')' -> {
+                    if (nestedParens == 0) {
+                        return index
+                    }
+                    nestedParens -= 1
+                }
+            }
+        }
+        return -1
     }
 
     private val HEADING_REGEX = Regex("""^\s{0,3}(#{1,6})\s+(.*)$""")
@@ -1434,5 +1516,9 @@ object MarkdownRenderer {
         data class Bold(override val text: String) : InlineToken()
         data class Italic(override val text: String) : InlineToken()
         data class InlineCode(override val text: String) : InlineToken()
+        data class Link(
+            override val text: String,
+            val target: String,
+        ) : InlineToken()
     }
 }

@@ -154,6 +154,7 @@ class SpecWorkflowPanel(
     private lateinit var gateSection: SpecCollapsibleWorkspaceSection
     private lateinit var verifySection: SpecCollapsibleWorkspaceSection
     private lateinit var documentsSection: SpecCollapsibleWorkspaceSection
+    private val workspaceSectionItems = mutableMapOf<SpecWorkflowWorkspaceSectionId, JPanel>()
     private val workspaceSectionOverrides = mutableMapOf<SpecWorkflowWorkspaceSectionId, Boolean>()
     private var workspaceSectionPresetToken: String? = null
     private var currentOverviewState: SpecWorkflowOverviewState? = null
@@ -477,17 +478,20 @@ class SpecWorkflowPanel(
             content = detailPanel,
         )
 
+        workspaceSectionItems.clear()
         listOf(
-            overviewSection,
-            tasksSection,
-            gateSection,
-            verifySection,
-            documentsSection,
-        ).forEachIndexed { index, section ->
-            sectionsStack.add(prepareWorkspaceStackItem(createSectionContainer(section, backgroundColor = DETAIL_SECTION_BG, borderColor = DETAIL_SECTION_BORDER)))
-            if (index < 4) {
-                sectionsStack.add(Box.createVerticalStrut(JBUI.scale(6)))
-            }
+            SpecWorkflowWorkspaceSectionId.OVERVIEW to overviewSection,
+            SpecWorkflowWorkspaceSectionId.TASKS to tasksSection,
+            SpecWorkflowWorkspaceSectionId.GATE to gateSection,
+            SpecWorkflowWorkspaceSectionId.VERIFY to verifySection,
+            SpecWorkflowWorkspaceSectionId.DOCUMENTS to documentsSection,
+        ).forEachIndexed { index, (sectionId, section) ->
+            val item = createWorkspaceSectionItem(
+                content = section,
+                addBottomGap = index < 4,
+            )
+            workspaceSectionItems[sectionId] = item
+            sectionsStack.add(prepareWorkspaceStackItem(item))
         }
 
         val contentPanel = JPanel(BorderLayout()).apply {
@@ -518,6 +522,26 @@ class SpecWorkflowPanel(
             component.maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
         }
         return component
+    }
+
+    private fun createWorkspaceSectionItem(
+        content: Component,
+        addBottomGap: Boolean,
+    ): JPanel {
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            if (addBottomGap) {
+                border = JBUI.Borders.emptyBottom(6)
+            }
+            add(
+                createSectionContainer(
+                    content,
+                    backgroundColor = DETAIL_SECTION_BG,
+                    borderColor = DETAIL_SECTION_BORDER,
+                ),
+                BorderLayout.CENTER,
+            )
+        }
     }
 
     private fun buildWorkspaceSummaryCard(): JPanel {
@@ -648,6 +672,9 @@ class SpecWorkflowPanel(
                 section.setSummary(null)
                 section.setExpanded(true, notify = false)
             }
+        }
+        workspaceSectionItems.values.forEach { item ->
+            item.isVisible = true
         }
     }
 
@@ -1030,6 +1057,7 @@ class SpecWorkflowPanel(
         documentsSection.setSummary(
             buildDocumentsSectionSummary(workflow),
         )
+        applyWorkspaceSectionVisibility(workflow)
         applyWorkspaceSectionPreset(workflow)
     }
 
@@ -1055,6 +1083,18 @@ class SpecWorkflowPanel(
         }
     }
 
+    private fun applyWorkspaceSectionVisibility(workflow: SpecWorkflow) {
+        val visibleSections = SpecWorkflowWorkspaceLayout.visibleSections(
+            currentStage = workflow.currentStage,
+            status = workflow.status,
+        )
+        workspaceSectionItems.forEach { (sectionId, item) ->
+            item.isVisible = visibleSections.contains(sectionId)
+        }
+        workspaceCardPanel.revalidate()
+        workspaceCardPanel.repaint()
+    }
+
     private fun workspaceSections(): Map<SpecWorkflowWorkspaceSectionId, SpecCollapsibleWorkspaceSection> {
         if (!::overviewSection.isInitialized) {
             return emptyMap()
@@ -1075,7 +1115,7 @@ class SpecWorkflowPanel(
             GateStatus.ERROR -> SpecCodingBundle.message("spec.toolwindow.gate.status.error")
             null -> SpecCodingBundle.message("spec.toolwindow.gate.status.unavailable")
         }
-        return "${SpecCodingBundle.message("spec.toolwindow.gate.title")}: $statusText"
+        return "${SpecCodingBundle.message("spec.toolwindow.section.gate")}: $statusText"
     }
 
     private fun buildTasksChipText(tasks: List<StructuredTask>): String {
@@ -1129,7 +1169,7 @@ class SpecWorkflowPanel(
         val runCount = state.verificationHistory.size
         val latest = state.verificationHistory.firstOrNull()?.conclusion?.name
             ?: SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.pending")
-        return "${SpecCodingBundle.message("spec.toolwindow.verifyDelta.title")}: $runCount | $latest"
+        return "${SpecCodingBundle.message("spec.toolwindow.section.verify")}: $runCount | $latest"
     }
 
     private fun buildVerifySectionSummary(state: SpecWorkflowVerifyDeltaState): String {
@@ -3524,6 +3564,13 @@ class SpecWorkflowPanel(
 
     internal fun isBackButtonInlineForTest(): Boolean {
         return javax.swing.SwingUtilities.isDescendingFrom(backToListButton, workspaceCardPanel)
+    }
+
+    internal fun visibleWorkspaceSectionIdsForTest(): Set<SpecWorkflowWorkspaceSectionId> {
+        return workspaceSectionItems
+            .filterValues { it.isVisible }
+            .keys
+            .toCollection(linkedSetOf())
     }
 
     override fun dispose() {

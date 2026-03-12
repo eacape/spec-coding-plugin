@@ -38,6 +38,12 @@ object WorkflowQuickActionParser {
         )
     }
 
+    fun parseFileActionCandidate(candidate: String): FileAction? {
+        val files = linkedMapOf<String, FileAction>()
+        addFileCandidate(candidate, files)
+        return files.values.firstOrNull()
+    }
+
     private fun collectFiles(content: String, sink: MutableMap<String, FileAction>) {
         val withoutUrls = URL_REGEX.replace(content, " ")
         BACKTICK_INLINE_REGEX.findAll(withoutUrls).forEach { match ->

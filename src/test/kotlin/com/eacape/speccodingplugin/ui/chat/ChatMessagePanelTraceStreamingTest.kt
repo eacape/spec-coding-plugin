@@ -136,7 +136,7 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
-    fun `spec message mode should hide timeline expand buttons but keep summary cards`() {
+    fun `timeline summary cards should keep expand buttons visible`() {
         val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
 
         runOnEdt {
@@ -148,7 +148,6 @@ class ChatMessagePanelTraceStreamingTest {
                 """.trimIndent()
             )
             panel.finishMessage()
-            panel.setTimelineExpandButtonsVisible(false)
         }
 
         val labels = collectDescendants(panel)
@@ -165,7 +164,7 @@ class ChatMessagePanelTraceStreamingTest {
             .any { button ->
                 button.text == expandText || button.text == collapseText
             }
-        assertFalse(hasTimelineToggle)
+        assertTrue(hasTimelineToggle)
     }
 
     @Test

@@ -4329,7 +4329,7 @@ class ImprovedChatPanel(
     }
 
     private fun timelineExpandButtonsVisibleFor(mode: ChatInteractionMode): Boolean {
-        return mode != ChatInteractionMode.SPEC
+        return true
     }
 
     private fun refreshContinueActions(mode: ChatInteractionMode) {

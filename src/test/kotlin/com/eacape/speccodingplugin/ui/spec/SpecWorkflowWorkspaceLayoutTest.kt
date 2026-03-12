@@ -8,6 +8,70 @@ import org.junit.jupiter.api.Test
 class SpecWorkflowWorkspaceLayoutTest {
 
     @Test
+    fun `requirements stage should hide checks and verification sections`() {
+        assertEquals(
+            linkedSetOf(
+                SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            ),
+            SpecWorkflowWorkspaceLayout.visibleSections(
+                currentStage = StageId.REQUIREMENTS,
+                status = WorkflowStatus.IN_PROGRESS,
+            ),
+        )
+    }
+
+    @Test
+    fun `tasks stage should show continue checks but not verification yet`() {
+        assertEquals(
+            linkedSetOf(
+                SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.GATE,
+                SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            ),
+            SpecWorkflowWorkspaceLayout.visibleSections(
+                currentStage = StageId.TASKS,
+                status = WorkflowStatus.IN_PROGRESS,
+            ),
+        )
+    }
+
+    @Test
+    fun `implement stage should show checks and verification together`() {
+        assertEquals(
+            linkedSetOf(
+                SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.GATE,
+                SpecWorkflowWorkspaceSectionId.VERIFY,
+                SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            ),
+            SpecWorkflowWorkspaceLayout.visibleSections(
+                currentStage = StageId.IMPLEMENT,
+                status = WorkflowStatus.IN_PROGRESS,
+            ),
+        )
+    }
+
+    @Test
+    fun `completed workflow should keep verification visible without continue checks`() {
+        assertEquals(
+            linkedSetOf(
+                SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.VERIFY,
+                SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            ),
+            SpecWorkflowWorkspaceLayout.visibleSections(
+                currentStage = StageId.ARCHIVE,
+                status = WorkflowStatus.COMPLETED,
+            ),
+        )
+    }
+
+    @Test
     fun `requirements stage should focus overview and documents`() {
         assertEquals(
             linkedSetOf(
