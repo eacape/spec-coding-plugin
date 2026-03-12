@@ -229,6 +229,7 @@ class SpecDetailPanel(
             CARD_EDIT,
         )
         previewCardPanel.add(createClarificationCard(), CARD_CLARIFY)
+        applyDocumentViewportSizing(previewCardPanel)
         switchPreviewCard(CARD_PREVIEW)
         configurePreviewModePanel()
         configureDocumentTabsPanel()
@@ -341,8 +342,15 @@ class SpecDetailPanel(
             border = JBUI.Borders.emptyTop(6)
             add(composerSection.root, BorderLayout.CENTER)
         }
-        add(previewPanel, BorderLayout.CENTER)
-        add(bottomPanelContainer, BorderLayout.SOUTH)
+        add(
+            JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                add(previewPanel)
+                add(bottomPanelContainer)
+            },
+            BorderLayout.NORTH,
+        )
         syncComposerSectionState(forceReset = true)
     }
 
@@ -1264,6 +1272,12 @@ class SpecDetailPanel(
             )
             add(content, BorderLayout.CENTER)
         }
+    }
+
+    private fun applyDocumentViewportSizing(component: JPanel) {
+        val viewportSize = JBUI.size(0, JBUI.scale(DOCUMENT_VIEWPORT_HEIGHT))
+        component.preferredSize = viewportSize
+        component.minimumSize = viewportSize
     }
 
     private fun styleActionButton(button: JButton) {
@@ -3409,6 +3423,14 @@ class SpecDetailPanel(
         return inputArea.text
     }
 
+    internal fun documentViewportPreferredHeightForTest(): Int {
+        return previewCardPanel.preferredSize.height
+    }
+
+    internal fun documentViewportMinimumHeightForTest(): Int {
+        return previewCardPanel.minimumSize.height
+    }
+
     internal fun setInputTextForTest(text: String) {
         inputArea.text = text
         inputArea.caretPosition = inputArea.text.length
@@ -3838,6 +3860,7 @@ class SpecDetailPanel(
         private val SECTION_TITLE_FG = JBColor(Color(36, 60, 101), Color(212, 223, 241))
         private val COLLAPSE_TOGGLE_TEXT_ACTIVE = JBColor(Color(86, 115, 158), Color(187, 205, 230))
         private const val MAX_PROCESS_TIMELINE_ENTRIES = 18
+        private const val DOCUMENT_VIEWPORT_HEIGHT = 360
         private const val CARD_PREVIEW = "preview"
         private const val CARD_EDIT = "edit"
         private const val CARD_CLARIFY = "clarify"

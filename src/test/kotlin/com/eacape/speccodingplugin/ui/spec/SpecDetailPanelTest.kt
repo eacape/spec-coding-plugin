@@ -6,6 +6,7 @@ import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.WorkflowStatus
+import com.intellij.util.ui.JBUI
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -209,6 +210,39 @@ class SpecDetailPanelTest {
         panel.selectPhaseForTest(SpecPhase.SPECIFY)
         panel.selectPhaseForTest(SpecPhase.DESIGN)
         assertTrue(panel.isComposerExpandedForTest())
+    }
+
+    @Test
+    fun `document viewport should keep a fixed height for long content`() {
+        val panel = createPanel()
+        val longTasksContent = buildString {
+            appendLine("# Tasks")
+            repeat(80) { index ->
+                appendLine("## Item ${index + 1}")
+                appendLine("- detail line ${index + 1}")
+            }
+        }.trim()
+        val workflow = SpecWorkflow(
+            id = "wf-document-scroll",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = longTasksContent,
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Long Document",
+            description = "Document viewport should stay fixed",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(workflow)
+
+        assertEquals(JBUI.scale(360), panel.documentViewportPreferredHeightForTest())
+        assertEquals(panel.documentViewportPreferredHeightForTest(), panel.documentViewportMinimumHeightForTest())
     }
 
     @Test
