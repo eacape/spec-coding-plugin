@@ -197,6 +197,7 @@ class SpecWorkflowPanel(
             onComplete = ::onComplete,
             onPauseResume = ::onPauseResume,
             onOpenInEditor = ::onOpenInEditor,
+            onOpenArtifactInEditor = ::onOpenArtifactInEditor,
             onShowHistoryDiff = ::onShowHistoryDiff,
             onSaveDocument = ::onSaveDocument,
             onClarificationDraftAutosave = ::onClarificationDraftAutosave,
@@ -1000,10 +1001,13 @@ class SpecWorkflowPanel(
         gateResult: GateResult?,
     ) {
         val previousWorkbenchState = currentWorkbenchState
-        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+        val workbenchState = resolveWorkbenchState(
             workflow = workflow,
-            overviewState = overviewState,
-            focusedStage = focusedStage,
+            state = SpecWorkflowStageWorkbenchBuilder.build(
+                workflow = workflow,
+                overviewState = overviewState,
+                focusedStage = focusedStage,
+            ),
         )
         focusedStage = workbenchState.focusedStage
         currentOverviewState = overviewState
@@ -1260,6 +1264,40 @@ class SpecWorkflowPanel(
             append(" | ")
             append(workbenchState.artifactBinding.fileName ?: workbenchState.artifactBinding.title)
         }
+    }
+
+    private fun resolveWorkbenchState(
+        workflow: SpecWorkflow,
+        state: SpecWorkflowStageWorkbenchState,
+    ): SpecWorkflowStageWorkbenchState {
+        val binding = state.artifactBinding
+        val resolvedBinding = when {
+            binding.documentPhase != null -> binding.copy(
+                available = workflow.documents.containsKey(binding.documentPhase),
+                previewContent = workflow.documents[binding.documentPhase]?.content,
+            )
+
+            !binding.fileName.isNullOrBlank() -> {
+                val path = runCatching {
+                    artifactService.locateArtifact(workflow.id, binding.fileName)
+                }.getOrNull()
+                val available = path?.let(Files::exists) == true
+                val previewContent = if (available) {
+                    path?.let { artifactPath ->
+                        runCatching { Files.readString(artifactPath, StandardCharsets.UTF_8) }.getOrNull()
+                    }
+                } else {
+                    null
+                }
+                binding.copy(
+                    available = available,
+                    previewContent = previewContent,
+                )
+            }
+
+            else -> binding
+        }
+        return state.copy(artifactBinding = resolvedBinding)
     }
 
     private fun updateWorkspaceMetric(
@@ -3258,6 +3296,14 @@ class SpecWorkflowPanel(
         }
     }
 
+    private fun onOpenArtifactInEditor(fileName: String) {
+        val workflowId = selectedWorkflowId ?: return
+        val path = runCatching { artifactService.locateArtifact(workflowId, fileName) }.getOrNull() ?: return
+        if (!Files.exists(path) || !SpecWorkflowActionSupport.openFile(project, path)) {
+            setStatusText(SpecCodingBundle.message("spec.action.verify.document.unavailable.title"))
+        }
+    }
+
     private fun onShowHistoryDiff(phase: SpecPhase) {
         val workflow = currentWorkflow ?: return
         onShowHistoryDiffForWorkflow(
@@ -3700,6 +3746,10 @@ class SpecWorkflowPanel(
     internal fun focusedStageForTest(): StageId? = currentWorkbenchState?.focusedStage
 
     internal fun selectedDocumentPhaseForTest(): String? = detailPanel.selectedPhaseNameForTest()
+
+    internal fun currentDocumentPreviewTextForTest(): String = detailPanel.currentPreviewTextForTest()
+
+    internal fun currentDocumentMetaTextForTest(): String = detailPanel.currentDocumentMetaTextForTest()
 
     internal fun workspaceSummarySnapshotForTest(): Map<String, String> {
         return mapOf(

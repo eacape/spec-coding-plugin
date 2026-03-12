@@ -2170,13 +2170,15 @@ open class ChatMessagePanel(
     private fun looksLikeRawCodeOrPatchLine(line: String): Boolean {
         val trimmed = line.trim()
         if (trimmed.isBlank()) return false
+        val normalized = normalizeOutputClassifierLine(trimmed)
         if (trimmed.startsWith("```")) return true
         if (OUTPUT_DIFF_CONTROL_PREFIXES.any { trimmed.startsWith(it) }) return true
         if (OUTPUT_COMMAND_LINE_REGEX.matches(trimmed)) return true
         if (OUTPUT_FILE_PATH_LINE_REGEX.matches(trimmed)) return true
-        if (OUTPUT_CODE_DECLARATION_REGEX.matches(trimmed)) return true
-        if (OUTPUT_CODE_BLOCK_ONLY_LINE_REGEX.matches(trimmed)) return true
-        if (looksLikeSymbolDenseCodeLine(trimmed)) return true
+        if (OUTPUT_CODE_DECLARATION_REGEX.matches(normalized)) return true
+        if (OUTPUT_CODE_BLOCK_ONLY_LINE_REGEX.matches(normalized)) return true
+        if (OUTPUT_OPEN_CALL_REGEX.matches(normalized)) return true
+        if (looksLikeSymbolDenseCodeLine(normalized)) return true
         return false
     }
 
@@ -2191,12 +2193,18 @@ open class ChatMessagePanel(
     }
 
     private fun looksLikeToolDiagnosticLine(line: String): Boolean {
+        val normalized = normalizeOutputClassifierLine(line)
         return OUTPUT_STACKTRACE_LOCATION_REGEX.matches(line) ||
             OUTPUT_TIMING_STATUS_REGEX.matches(line) ||
             OUTPUT_SOURCE_REFERENCE_WITH_VALUE_REGEX.matches(line) ||
-            OUTPUT_IDENTIFIER_ASSIGNMENT_REGEX.matches(line) ||
-            OUTPUT_METHOD_CALL_REGEX.matches(line) ||
+            OUTPUT_IDENTIFIER_ASSIGNMENT_REGEX.matches(normalized) ||
+            OUTPUT_METHOD_CALL_REGEX.matches(normalized) ||
             OUTPUT_PIPELINE_FRAGMENT_REGEX.containsMatchIn(line)
+    }
+
+    private fun normalizeOutputClassifierLine(line: String): String {
+        val withoutSourcePrefix = OUTPUT_SOURCE_SNIPPET_PREFIX_REGEX.replaceFirst(line.trim(), "")
+        return OUTPUT_SOURCE_LINE_NUMBER_PREFIX_REGEX.replaceFirst(withoutSourcePrefix, "").trimStart()
     }
 
     private fun outputFilterLabel(level: OutputFilterLevel): String {
@@ -2943,6 +2951,7 @@ open class ChatMessagePanel(
             RegexOption.IGNORE_CASE,
         )
         private val OUTPUT_CODE_BLOCK_ONLY_LINE_REGEX = Regex("""^[{}\[\](),;]+$""")
+        private val OUTPUT_OPEN_CALL_REGEX = Regex("""^(?:[A-Za-z_][\w.]*|[\p{IsHan}]{2,16})\([^)]*$""")
         private val OUTPUT_CODE_SYMBOL_HINTS = setOf('{', '}', '(', ')', '[', ']', ';', '=', '<', '>')
         private val OUTPUT_STACKTRACE_LOCATION_REGEX = Regex(
             """^(?:At line:\d+ char:\d+|at\s+.+:\d+|Caused by:\s+.+|Exception(?:\b|:).*)$""",
@@ -2956,7 +2965,7 @@ open class ChatMessagePanel(
             """^(?!https?://)(?:(?:[A-Za-z]:)?[\\/])?(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+(?:\.[A-Za-z0-9]+)?(?::\d+(?::\d+)?)?(?::[\p{L}\p{N}_.-]+)+(?:=.*)?$""",
         )
         private val OUTPUT_IDENTIFIER_ASSIGNMENT_REGEX = Regex(
-            """^(?:[A-Za-z_][\w.]*|[\p{IsHan}]{2,16})\s*=\s*.+$""",
+            """^(?:[A-Za-z_][\w.-]*|[\p{IsHan}]{2,16})\s*=\s*.+$""",
         )
         private val OUTPUT_METHOD_CALL_REGEX = Regex(
             """^(?:[A-Za-z_][\w.]*|[\p{IsHan}]{2,16})\([^)]*\)\s*$""",
@@ -2965,6 +2974,10 @@ open class ChatMessagePanel(
             """\|\s*(?:Select-Object|Where-Object|ForEach-Object|Get-Content|Set-Content|Out-String|Format-Table)\b""",
             RegexOption.IGNORE_CASE,
         )
+        private val OUTPUT_SOURCE_SNIPPET_PREFIX_REGEX = Regex(
+            """^(?!https?://)(?:(?:[A-Za-z]:)?[\\/])?(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]+(?:\.[A-Za-z0-9]+)?:\d+:\s*""",
+        )
+        private val OUTPUT_SOURCE_LINE_NUMBER_PREFIX_REGEX = Regex("""^\d+:\s*""")
         private val ASSISTANT_ACK_PREFIXES_ZH = listOf(
             "好的",
             "收到",

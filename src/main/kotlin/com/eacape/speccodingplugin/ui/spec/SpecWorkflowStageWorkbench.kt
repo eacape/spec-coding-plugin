@@ -38,6 +38,8 @@ internal data class SpecWorkflowStageArtifactBinding(
     val documentPhase: SpecPhase?,
     val mode: SpecWorkflowWorkbenchDocumentMode,
     val fallbackEditable: Boolean,
+    val available: Boolean = false,
+    val previewContent: String? = null,
 )
 
 internal data class SpecWorkflowStageWorkbenchState(

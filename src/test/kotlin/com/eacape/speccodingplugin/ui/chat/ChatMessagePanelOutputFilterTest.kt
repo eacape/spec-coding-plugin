@@ -133,6 +133,45 @@ class ChatMessagePanelOutputFilterTest {
         )
     }
 
+    @Test
+    fun `output key filter should hide line numbered source snippets and keep summary`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                [Output] I narrowed the output view to summary text only.
+                [Output] 3252:     val wfId = selectedWorkflowId ?: return
+                [Output] 3253:     val basePath = project.basePath ?: return
+                [Output] 3262:     val workflow = currentWorkflow ?: return
+                [Output] 3263:     onShowHistoryDiffForWorkflow(
+                [Output] src/main/kotlin/com/eacape/speccodingplugin/spec/SpecDeltaModels.kt:147:data class SpecVerificationArtifactSummary(
+                [Output] 527:     val totalChecks: Int,
+                """.trimIndent()
+            )
+            panel.finishMessage()
+        }
+
+        val expandButton = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.text == SpecCodingBundle.message("chat.timeline.toggle.expand") }
+        assertNotNull(expandButton, "Expected output expand button")
+        runOnEdt { expandButton!!.doClick() }
+
+        val filteredText = collectText(panel)
+        assertTrue(filteredText.contains("I narrowed the output view to summary text only."))
+        assertFalse(filteredText.contains("3252:"))
+        assertFalse(filteredText.contains("selectedWorkflowId"))
+        assertFalse(filteredText.contains("onShowHistoryDiffForWorkflow("))
+        assertFalse(filteredText.contains("SpecVerificationArtifactSummary("))
+        assertFalse(filteredText.contains("val totalChecks: Int"))
+        assertTrue(
+            filteredText.contains(
+                SpecCodingBundle.message("chat.timeline.output.filtered.more", 6)
+            )
+        )
+    }
+
     private fun collectText(panel: ChatMessagePanel): String {
         return collectDescendants(panel)
             .filterIsInstance<JTextPane>()

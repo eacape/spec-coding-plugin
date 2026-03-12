@@ -5,6 +5,7 @@ import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecMetadata
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
+import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.intellij.util.ui.JBUI
@@ -211,6 +212,80 @@ class SpecDetailPanelTest {
         panel.selectPhaseForTest(SpecPhase.SPECIFY)
         panel.selectPhaseForTest(SpecPhase.DESIGN)
         assertTrue(panel.isComposerExpandedForTest())
+    }
+
+    @Test
+    fun `updateWorkbenchState should switch to verification artifact preview with fallback open action`() {
+        val openedArtifacts = mutableListOf<String>()
+        val panel = createPanel(onOpenArtifactInEditor = openedArtifacts::add)
+        val workflow = SpecWorkflow(
+            id = "wf-verify-preview",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = "tasks content",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Verify",
+            description = "verification artifact preview",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val verificationContent = """
+            # Verification Document
+
+            ## Result
+            conclusion: PASS
+            summary: All checks green
+        """.trimIndent()
+
+        panel.updateWorkflow(workflow)
+        panel.updateWorkbenchState(
+            state = SpecWorkflowStageWorkbenchState(
+                currentStage = StageId.IMPLEMENT,
+                focusedStage = StageId.VERIFY,
+                progress = SpecWorkflowStageProgressView(
+                    stepIndex = 5,
+                    totalSteps = 6,
+                    stageStatus = com.eacape.speccodingplugin.spec.StageProgress.IN_PROGRESS,
+                ),
+                primaryAction = null,
+                overflowActions = emptyList(),
+                blockers = emptyList(),
+                artifactBinding = SpecWorkflowStageArtifactBinding(
+                    stageId = StageId.VERIFY,
+                    title = "verification.md",
+                    fileName = "verification.md",
+                    documentPhase = null,
+                    mode = SpecWorkflowWorkbenchDocumentMode.READ_ONLY,
+                    fallbackEditable = false,
+                    available = true,
+                    previewContent = verificationContent,
+                ),
+                visibleSections = setOf(SpecWorkflowWorkspaceSectionId.DOCUMENTS),
+            ),
+            syncSelection = true,
+        )
+
+        assertEquals(verificationContent, panel.currentPreviewTextForTest())
+        assertEquals(
+            SpecCodingBundle.message("spec.detail.workbench.readOnly", "verification.md"),
+            panel.currentValidationTextForTest(),
+        )
+        assertEquals("verification.md", panel.currentDocumentMetaTextForTest())
+        assertEquals(null, panel.selectedPhaseNameForTest())
+        assertFalse(panel.areDocumentTabsVisibleForTest())
+
+        val states = panel.buttonStatesForTest()
+        assertTrue(states["openEditorEnabled"] as Boolean)
+        assertFalse(states["historyDiffEnabled"] as Boolean)
+        assertFalse(states["confirmGenerateEnabled"] as Boolean)
+
+        panel.clickOpenEditorForTest()
+        assertEquals(listOf("verification.md"), openedArtifacts)
     }
 
     @Test
@@ -1098,6 +1173,7 @@ class SpecDetailPanelTest {
         canGenerateWithEmptyInput: () -> Boolean = { false },
         onClarificationConfirm: (String, String) -> Unit = { _, _ -> },
         onClarificationRegenerate: (String, String) -> Unit = { _, _ -> },
+        onOpenArtifactInEditor: (String) -> Unit = {},
         onClarificationDraftAutosave: (String, String, String, List<String>) -> Unit = { _, _, _, _ -> },
     ): SpecDetailPanel {
         return SpecDetailPanel(
@@ -1112,6 +1188,7 @@ class SpecDetailPanelTest {
             onComplete = {},
             onPauseResume = {},
             onOpenInEditor = {},
+            onOpenArtifactInEditor = onOpenArtifactInEditor,
             onShowHistoryDiff = {},
             onSaveDocument = { _, _, onDone -> onDone(Result.failure(IllegalStateException("not implemented"))) },
             onClarificationDraftAutosave = onClarificationDraftAutosave,

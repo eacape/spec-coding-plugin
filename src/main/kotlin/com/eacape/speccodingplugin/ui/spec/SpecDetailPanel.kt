@@ -71,6 +71,7 @@ class SpecDetailPanel(
     private val onComplete: () -> Unit,
     private val onPauseResume: () -> Unit,
     private val onOpenInEditor: (SpecPhase) -> Unit,
+    private val onOpenArtifactInEditor: (String) -> Unit,
     private val onShowHistoryDiff: (SpecPhase) -> Unit,
     private val onSaveDocument: (SpecPhase, String, (Result<SpecWorkflow>) -> Unit) -> Unit,
     private val onClarificationDraftAutosave: (String, String, String, List<String>) -> Unit,
@@ -143,6 +144,7 @@ class SpecDetailPanel(
     private var isEditing: Boolean = false
     private var editingPhase: SpecPhase? = null
     private var preferredWorkbenchPhase: SpecPhase? = null
+    private var workbenchArtifactBinding: SpecWorkflowStageArtifactBinding? = null
     private var activePreviewCard: String = CARD_PREVIEW
     private var clarificationState: ClarificationState? = null
     private var activeChecklistDetailIndex: Int? = null
@@ -404,7 +406,12 @@ class SpecDetailPanel(
         completeButton.addActionListener { onComplete() }
         pauseResumeButton.addActionListener { onPauseResume() }
         openEditorButton.addActionListener {
-            selectedPhase?.let { onOpenInEditor(it) }
+            val phase = selectedPhase
+            if (phase != null) {
+                onOpenInEditor(phase)
+            } else {
+                workbenchArtifactBinding?.fileName?.let(onOpenArtifactInEditor)
+            }
         }
         historyDiffButton.addActionListener {
             selectedPhase?.let { onShowHistoryDiff(it) }
@@ -623,6 +630,18 @@ class SpecDetailPanel(
         }
     }
 
+    private fun isWorkbenchArtifactOnlyView(): Boolean {
+        return workbenchArtifactBinding?.documentPhase == null && !workbenchArtifactBinding?.fileName.isNullOrBlank()
+    }
+
+    private fun activeDocumentMetaText(): String {
+        return when {
+            isWorkbenchArtifactOnlyView() -> workbenchArtifactBinding?.fileName ?: workbenchArtifactBinding?.title.orEmpty()
+            selectedPhase != null -> selectedPhase?.outputFileName.orEmpty()
+            else -> ""
+        }
+    }
+
     private fun setPhaseStepperEnabled(enabled: Boolean) {
         isPhaseStepperEnabled = enabled
         updatePhaseStepperVisuals()
@@ -637,8 +656,9 @@ class SpecDetailPanel(
                     .toSet()
             }
             .orEmpty()
+        val artifactOnlyView = isWorkbenchArtifactOnlyView()
         phaseStepperRail.updateState(
-            selected = selectedPhase,
+            selected = selectedPhase.takeUnless { artifactOnlyView },
             current = workflow?.currentPhase,
             completed = completedPhases,
             interactive = isPhaseStepperEnabled && workflow != null,
@@ -649,7 +669,7 @@ class SpecDetailPanel(
             val isCurrentPhase = workflow?.currentPhase == phase
             val isSelectedPhase = selectedPhase == phase
             button.isEnabled = isPhaseStepperEnabled && workflow != null && (hasDocument || isCurrentPhase)
-            button.isVisible = workflow != null
+            button.isVisible = workflow != null && !artifactOnlyView
             applyDocumentTabButtonStyle(
                 button = button,
                 selected = isSelectedPhase,
@@ -657,11 +677,7 @@ class SpecDetailPanel(
                 available = hasDocument,
             )
         }
-        val selected = selectedPhase
-        documentMetaLabel.text = when {
-            selected == null -> ""
-            else -> selected.outputFileName
-        }
+        documentMetaLabel.text = activeDocumentMetaText()
         documentMetaLabel.isVisible = documentMetaLabel.text.isNotBlank()
     }
 
@@ -1383,7 +1399,7 @@ class SpecDetailPanel(
         if (currentWorkflow == null) {
             validationLabel.text = SpecCodingBundle.message("spec.detail.noWorkflow")
         } else {
-            selectedPhase?.let { showDocumentPreview(it) }
+            showActivePreview()
         }
     }
 
@@ -1414,7 +1430,12 @@ class SpecDetailPanel(
         rebuildTree(workflow)
         updateInputPlaceholder(workflow.currentPhase)
         val preservedPhase = selectedPhase?.takeIf { !followCurrentPhase && previousWorkflowId == workflow.id }
-        selectedPhase = preservedPhase ?: preferredWorkbenchPhase ?: workflow.currentPhase
+        val artifactOnlyView = previousWorkflowId == workflow.id && isWorkbenchArtifactOnlyView()
+        selectedPhase = when {
+            artifactOnlyView -> null
+            preferredWorkbenchPhase != null -> preferredWorkbenchPhase
+            else -> preservedPhase ?: workflow.currentPhase
+        }
         setPhaseStepperEnabled(!isEditing)
         updateTreeSelection(selectedPhase, forceComposerReset = false)
         updateButtonStates(workflow)
@@ -1423,7 +1444,7 @@ class SpecDetailPanel(
         if (clarificationState == null) {
             setClarificationPreviewVisible(true)
             switchPreviewCard(CARD_PREVIEW)
-            showDocumentPreview(selectedPhase ?: workflow.currentPhase, keepGeneratingIndicator = false)
+            showActivePreview(keepGeneratingIndicator = false)
         } else {
             setClarificationPreviewVisible(!isClarificationGenerating)
             updateClarificationPreview()
@@ -1438,6 +1459,7 @@ class SpecDetailPanel(
         isEditing = false
         editingPhase = null
         preferredWorkbenchPhase = null
+        workbenchArtifactBinding = null
         selectedPhase = null
         clarificationState = null
         activeChecklistDetailIndex = null
@@ -1488,18 +1510,27 @@ class SpecDetailPanel(
         state: SpecWorkflowStageWorkbenchState,
         syncSelection: Boolean,
     ) {
+        workbenchArtifactBinding = state.artifactBinding
         preferredWorkbenchPhase = state.artifactBinding.documentPhase
         val workflow = currentWorkflow ?: return
-        if (!syncSelection || isEditing) {
+        updatePhaseStepperVisuals()
+        if (isEditing) {
+            updateButtonStates(workflow)
             return
         }
-        val desiredPhase = preferredWorkbenchPhase ?: return
-        if (selectedPhase != desiredPhase) {
-            updateTreeSelection(desiredPhase, forceComposerReset = false)
+        if (syncSelection) {
+            val desiredPhase = preferredWorkbenchPhase
+            if (desiredPhase != null) {
+                if (selectedPhase != desiredPhase) {
+                    updateTreeSelection(desiredPhase, forceComposerReset = false)
+                }
+            } else if (selectedPhase != null) {
+                updateTreeSelection(null, forceComposerReset = false)
+            }
         }
         updateButtonStates(workflow)
-        if (clarificationState == null) {
-            showDocumentPreview(desiredPhase, keepGeneratingIndicator = false)
+        if (clarificationState == null && (syncSelection || isWorkbenchArtifactOnlyView())) {
+            showActivePreview(keepGeneratingIndicator = false)
         }
     }
 
@@ -1520,10 +1551,54 @@ class SpecDetailPanel(
         syncComposerSectionState(forceReset = forceComposerReset)
     }
 
+    private fun showActivePreview(keepGeneratingIndicator: Boolean = true) {
+        val workflow = currentWorkflow ?: return
+        if (isWorkbenchArtifactOnlyView()) {
+            showWorkbenchArtifactPreview(keepGeneratingIndicator = keepGeneratingIndicator)
+        } else {
+            showDocumentPreview(selectedPhase ?: workflow.currentPhase, keepGeneratingIndicator = keepGeneratingIndicator)
+        }
+    }
+
+    private fun showWorkbenchArtifactPreview(keepGeneratingIndicator: Boolean = true) {
+        if (!keepGeneratingIndicator || !isGeneratingActive) {
+            stopGeneratingAnimation()
+        }
+        val binding = workbenchArtifactBinding ?: return
+        val artifactName = binding.fileName ?: binding.title
+        val previewContent = binding.previewContent
+        if (!previewContent.isNullOrBlank()) {
+            renderPreviewMarkdown(previewContent)
+        } else {
+            renderPreviewMarkdown(SpecCodingBundle.message("spec.detail.workbench.missing", artifactName))
+        }
+        if (isGeneratingActive && keepGeneratingIndicator) {
+            updateGeneratingLabel()
+            return
+        }
+        validationLabel.text = if (binding.available) {
+            SpecCodingBundle.message("spec.detail.workbench.readOnly", artifactName)
+        } else {
+            SpecCodingBundle.message("spec.detail.workbench.unavailable", artifactName)
+        }
+        validationLabel.foreground = if (binding.available) {
+            JBColor.GRAY
+        } else {
+            JBColor(Color(213, 52, 52), Color(255, 140, 140))
+        }
+    }
+
+    private fun resolveEditablePhase(workflow: SpecWorkflow): SpecPhase? {
+        if (isWorkbenchArtifactOnlyView()) {
+            return null
+        }
+        return selectedPhase ?: preferredWorkbenchPhase ?: workflow.currentPhase
+    }
+
     private fun startEditing() {
         if (isEditing || clarificationState != null) return
         val workflow = currentWorkflow ?: return
-        val phase = selectedPhase ?: workflow.currentPhase
+        val phase = resolveEditablePhase(workflow) ?: return
         val document = workflow.getDocument(phase)
         isEditing = true
         editingPhase = phase
@@ -1548,7 +1623,7 @@ class SpecDetailPanel(
         setPhaseStepperEnabled(true)
         refreshInputAreaMode()
         updateButtonStates(workflow)
-        selectedPhase?.let { showDocumentPreview(it, keepGeneratingIndicator = false) }
+        showActivePreview(keepGeneratingIndicator = false)
     }
 
     private fun saveEditing() {
@@ -3308,6 +3383,9 @@ class SpecDetailPanel(
         val clarifying = clarificationState != null
         val clarificationLocked = clarifying && isClarificationChecklistReadOnly
         val standardModeEnabled = inProgress && !isEditing && !clarifying
+        val artifactOnlyView = isWorkbenchArtifactOnlyView()
+        val selectedDocumentAvailable = selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
+        val artifactOpenAvailable = artifactOnlyView && workbenchArtifactBinding?.available == true
 
         generateButton.isVisible = !clarifying
         nextPhaseButton.isVisible = !clarifying
@@ -3315,8 +3393,8 @@ class SpecDetailPanel(
         completeButton.isVisible = !clarifying
         pauseResumeButton.isVisible = !clarifying
         openEditorButton.isVisible = !clarifying
-        historyDiffButton.isVisible = !clarifying
-        editButton.isVisible = !clarifying && !isEditing
+        historyDiffButton.isVisible = !clarifying && !artifactOnlyView
+        editButton.isVisible = !clarifying && !isEditing && !artifactOnlyView
         saveButton.isVisible = !clarifying && isEditing
         cancelEditButton.isVisible = !clarifying && isEditing
 
@@ -3334,9 +3412,9 @@ class SpecDetailPanel(
         pauseResumeButton.isEnabled = !isEditing
         updatePauseResumeButtonPresentation(workflow.status)
         styleActionButton(pauseResumeButton)
-        openEditorButton.isEnabled = !isEditing && !clarifying && selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
-        historyDiffButton.isEnabled = !isEditing && !clarifying && selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
-        editButton.isEnabled = !isEditing && allowEditing && !clarifying
+        openEditorButton.isEnabled = !isEditing && !clarifying && (selectedDocumentAvailable || artifactOpenAvailable)
+        historyDiffButton.isEnabled = !artifactOnlyView && !isEditing && !clarifying && selectedDocumentAvailable
+        editButton.isEnabled = !artifactOnlyView && !isEditing && allowEditing && !clarifying && resolveEditablePhase(workflow) != null
         saveButton.isEnabled = isEditing
         cancelEditButton.isEnabled = isEditing
         confirmGenerateButton.isEnabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked
@@ -3385,6 +3463,10 @@ class SpecDetailPanel(
         return validationLabel.text
     }
 
+    internal fun currentDocumentMetaTextForTest(): String {
+        return documentMetaLabel.text.orEmpty()
+    }
+
     internal fun currentInputTextForTest(): String {
         return inputArea.text
     }
@@ -3407,6 +3489,8 @@ class SpecDetailPanel(
     }
 
     internal fun selectedPhaseNameForTest(): String? = selectedPhase?.name
+
+    internal fun areDocumentTabsVisibleForTest(): Boolean = documentTabButtons.values.any(JButton::isVisible)
 
     internal fun toggleClarificationQuestionForTest(index: Int) {
         val currentDecision = clarificationState
@@ -3552,6 +3636,10 @@ class SpecDetailPanel(
 
     internal fun clickConfirmGenerateForTest() {
         confirmGenerateButton.doClick()
+    }
+
+    internal fun clickOpenEditorForTest() {
+        openEditorButton.doClick()
     }
 
     internal fun isClarificationPreviewVisibleForTest(): Boolean {

@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.SpecArtifactService
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.StageId
 import com.intellij.openapi.application.ApplicationManager
@@ -151,6 +152,50 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             ),
         )
         assertEquals("IMPLEMENT", panel.selectedDocumentPhaseForTest())
+    }
+
+    fun `test verify focused stage should switch document preview to verification artifact`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Verify Preview",
+            description = "stage artifact binding",
+        ).getOrThrow()
+        SpecArtifactService(project).writeArtifact(
+            workflow.id,
+            StageId.VERIFY,
+            """
+                # Verification Document
+
+                ## Result
+                conclusion: PASS
+                summary: verification preview
+            """.trimIndent(),
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.focusStageForTest(StageId.VERIFY)
+        }
+
+        waitUntil {
+            panel.focusedStageForTest() == StageId.VERIFY &&
+                panel.selectedDocumentPhaseForTest() == null &&
+                panel.currentDocumentPreviewTextForTest().contains("verification preview")
+        }
+
+        assertEquals("verification.md", panel.currentDocumentMetaTextForTest())
+        assertTrue(panel.currentDocumentPreviewTextForTest().contains("# Verification Document"))
     }
 
     private fun createPanel(): SpecWorkflowPanel {
