@@ -80,6 +80,9 @@ class SpecDetailPanel(
     private val treeModel = DefaultTreeModel(treeRoot)
     private val documentTree = JTree(treeModel)
     private val phaseStepperRail = PhaseStepperRail()
+    private val documentTabsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
+    private val documentMetaLabel = JBLabel()
+    private val documentTabButtons = linkedMapOf<SpecPhase, JButton>()
 
     private val previewPane = JTextPane()
     private val clarificationQuestionsPane = JTextPane()
@@ -222,13 +225,20 @@ class SpecDetailPanel(
         previewCardPanel.add(createClarificationCard(), CARD_CLARIFY)
         switchPreviewCard(CARD_PREVIEW)
         configurePreviewModePanel()
-        val phaseStepperSection = createPhaseStepperSection()
+        configureDocumentTabsPanel()
         processTimelineSection = createProcessTimelineSection()
         setProcessTimelineVisible(false)
         previewPanel.add(
             JPanel(BorderLayout(0, JBUI.scale(6))).apply {
                 isOpaque = false
-                add(phaseStepperSection, BorderLayout.NORTH)
+                add(
+                    createSectionContainer(
+                        buildDocumentToolbar(),
+                        backgroundColor = PREVIEW_SECTION_BG,
+                        borderColor = PREVIEW_SECTION_BORDER,
+                    ),
+                    BorderLayout.NORTH,
+                )
                 add(processTimelineSection, BorderLayout.CENTER)
             },
             BorderLayout.NORTH,
@@ -255,7 +265,7 @@ class SpecDetailPanel(
             },
             BorderLayout.SOUTH,
         )
-        bottomPanelContainer = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
+        val composerContent = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
             isOpaque = true
             background = INPUT_COLUMN_BG
             border = JBUI.Borders.emptyTop(6)
@@ -280,14 +290,14 @@ class SpecDetailPanel(
             backgroundColor = INPUT_SECTION_BG,
             borderColor = INPUT_SECTION_BORDER,
         )
-        bottomPanelContainer.add(inputSectionContainer, BorderLayout.CENTER)
+        composerContent.add(inputSectionContainer, BorderLayout.CENTER)
 
         val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 3, 0)).apply {
             isOpaque = false
             border = JBUI.Borders.emptyBottom(JBUI.scale(1))
         }
         setupButtons(buttonPanel)
-        bottomPanelContainer.add(
+        composerContent.add(
             createSectionContainer(
                 JBScrollPane(buttonPanel).apply {
                     border = JBUI.Borders.empty(1, 3)
@@ -302,29 +312,20 @@ class SpecDetailPanel(
             ),
             BorderLayout.SOUTH,
         )
-
-        mainSplitPane = JSplitPane(JSplitPane.VERTICAL_SPLIT).apply {
-            topComponent = previewPanel
-            bottomComponent = bottomPanelContainer
-            resizeWeight = 0.67
-            border = JBUI.Borders.empty()
-            background = PANEL_BG
-            SpecUiStyle.applyChatLikeSpecDivider(
-                splitPane = this,
-                dividerSize = JBUI.scale(4),
+        bottomPanelContainer = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.emptyTop(6)
+            add(
+                createSectionContainer(
+                    composerContent,
+                    backgroundColor = INPUT_COLUMN_BG,
+                    borderColor = INPUT_SECTION_BORDER,
+                ),
+                BorderLayout.CENTER,
             )
         }
-        mainSplitPane.addComponentListener(
-            object : ComponentAdapter() {
-                override fun componentResized(e: ComponentEvent?) {
-                    applyInitialBottomPanelHeightIfNeeded()
-                }
-            },
-        )
-        add(mainSplitPane, BorderLayout.CENTER)
-        SwingUtilities.invokeLater {
-            applyInitialBottomPanelHeightIfNeeded()
-        }
+        add(previewPanel, BorderLayout.CENTER)
+        add(bottomPanelContainer, BorderLayout.SOUTH)
     }
 
     private fun applyInitialBottomPanelHeightIfNeeded() {
@@ -442,15 +443,6 @@ class SpecDetailPanel(
         }
 
         panel.add(generateButton)
-        panel.add(nextPhaseButton)
-        panel.add(goBackButton)
-        panel.add(completeButton)
-        panel.add(pauseResumeButton)
-        panel.add(openEditorButton)
-        panel.add(historyDiffButton)
-        panel.add(editButton)
-        panel.add(saveButton)
-        panel.add(cancelEditButton)
         panel.add(confirmGenerateButton)
         panel.add(regenerateClarificationButton)
         panel.add(skipClarificationButton)
@@ -573,22 +565,56 @@ class SpecDetailPanel(
         updatePreviewModeButtons()
     }
 
-    private fun createPhaseStepperSection(): JPanel {
-        phaseStepperRail.setOnPhaseSelected { phase ->
-            if (!isPhaseStepperEnabled) return@setOnPhaseSelected
-            val workflow = currentWorkflow ?: return@setOnPhaseSelected
-            if (selectedPhase == phase) return@setOnPhaseSelected
-            selectedPhase = phase
-            updateTreeSelection(phase)
-            showDocumentPreview(phase)
-            updateButtonStates(workflow)
-            updatePhaseStepperVisuals()
+    private fun configureDocumentTabsPanel() {
+        documentTabsPanel.isOpaque = false
+        documentMetaLabel.font = JBUI.Fonts.smallFont()
+        documentMetaLabel.foreground = TREE_FILE_TEXT
+        documentMetaLabel.border = JBUI.Borders.empty(1, 4, 0, 2)
+        documentTabsPanel.removeAll()
+        documentTabButtons.clear()
+        SpecPhase.entries.forEach { phase ->
+            val button = JButton().apply {
+                isFocusable = false
+                addActionListener {
+                    if (!isPhaseStepperEnabled) return@addActionListener
+                    val workflow = currentWorkflow ?: return@addActionListener
+                    if (selectedPhase == phase) return@addActionListener
+                    selectedPhase = phase
+                    updateTreeSelection(phase)
+                    showDocumentPreview(phase)
+                    updateButtonStates(workflow)
+                    updatePhaseStepperVisuals()
+                }
+            }
+            styleActionButton(button)
+            documentTabsPanel.add(button)
+            documentTabButtons[phase] = button
         }
         updatePhaseStepperVisuals()
-        return JPanel(BorderLayout()).apply {
+    }
+
+    private fun buildDocumentToolbar(): JPanel {
+        val documentActionsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.empty(0, 0, 2, 0)
-            add(phaseStepperRail, BorderLayout.CENTER)
+            add(previewModePanel)
+            add(pauseResumeButton)
+            add(completeButton)
+            add(openEditorButton)
+            add(historyDiffButton)
+            add(editButton)
+            add(saveButton)
+            add(cancelEditButton)
+        }
+        val headerLeft = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
+            isOpaque = false
+            add(documentTabsPanel, BorderLayout.NORTH)
+            add(documentMetaLabel, BorderLayout.SOUTH)
+        }
+        return JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(2, 2)
+            add(headerLeft, BorderLayout.CENTER)
+            add(documentActionsPanel, BorderLayout.EAST)
         }
     }
 
@@ -619,6 +645,58 @@ class SpecDetailPanel(
             current = workflow?.currentPhase,
             completed = completedPhases,
             interactive = isPhaseStepperEnabled && workflow != null,
+        )
+        documentTabButtons.forEach { (phase, button) ->
+            button.text = phaseStepperTitle(phase)
+            val hasDocument = workflow?.documents?.containsKey(phase) == true
+            val isCurrentPhase = workflow?.currentPhase == phase
+            val isSelectedPhase = selectedPhase == phase
+            button.isEnabled = isPhaseStepperEnabled && workflow != null && (hasDocument || isCurrentPhase)
+            button.isVisible = workflow != null
+            applyDocumentTabButtonStyle(
+                button = button,
+                selected = isSelectedPhase,
+                current = isCurrentPhase,
+                available = hasDocument,
+            )
+        }
+        val selected = selectedPhase
+        documentMetaLabel.text = when {
+            selected == null -> ""
+            else -> selected.outputFileName
+        }
+        documentMetaLabel.isVisible = documentMetaLabel.text.isNotBlank()
+    }
+
+    private fun applyDocumentTabButtonStyle(
+        button: JButton,
+        selected: Boolean,
+        current: Boolean,
+        available: Boolean,
+    ) {
+        val background = when {
+            selected -> DOCUMENT_TAB_BG_SELECTED
+            current -> DOCUMENT_TAB_BG_CURRENT
+            available -> DOCUMENT_TAB_BG_AVAILABLE
+            else -> DOCUMENT_TAB_BG_IDLE
+        }
+        val border = when {
+            selected -> DOCUMENT_TAB_BORDER_SELECTED
+            current -> DOCUMENT_TAB_BORDER_CURRENT
+            available -> DOCUMENT_TAB_BORDER_AVAILABLE
+            else -> DOCUMENT_TAB_BORDER_IDLE
+        }
+        val foreground = when {
+            selected -> DOCUMENT_TAB_TEXT_SELECTED
+            current -> DOCUMENT_TAB_TEXT_CURRENT
+            available -> DOCUMENT_TAB_TEXT_AVAILABLE
+            else -> DOCUMENT_TAB_TEXT_IDLE
+        }
+        button.background = background
+        button.foreground = foreground
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(border, JBUI.scale(10)),
+            JBUI.Borders.empty(2, 8, 2, 8),
         )
     }
 
@@ -1259,6 +1337,7 @@ class SpecDetailPanel(
             skipClarificationButton,
             cancelClarificationButton,
         ).forEach(::updateButtonCursor)
+        documentTabButtons.values.forEach(::updateButtonCursor)
     }
 
     fun refreshLocalizedTexts() {
@@ -1424,20 +1503,7 @@ class SpecDetailPanel(
     }
 
     private fun updateTreeSelection(phase: SpecPhase?) {
-        val targetPhase = phase ?: run {
-            documentTree.clearSelection()
-            updatePhaseStepperVisuals()
-            return
-        }
-        for (row in 0 until documentTree.rowCount) {
-            val path = documentTree.getPathForRow(row) ?: continue
-            val node = path.lastPathComponent as? DefaultMutableTreeNode ?: continue
-            val phaseNode = node.userObject as? PhaseNode ?: continue
-            if (phaseNode.phase == targetPhase) {
-                documentTree.selectionPath = path
-                break
-            }
-        }
+        selectedPhase = phase
         updatePhaseStepperVisuals()
     }
 
@@ -2475,40 +2541,14 @@ class SpecDetailPanel(
     }
 
     private fun refreshBottomSplitLayout(showInputSection: Boolean) {
-        if (!::bottomPanelContainer.isInitialized || !::mainSplitPane.isInitialized) {
+        if (!::bottomPanelContainer.isInitialized) {
             return
         }
         val targetTopInset = if (showInputSection) JBUI.scale(8) else JBUI.scale(2)
         bottomPanelContainer.border = JBUI.Borders.emptyTop(targetTopInset)
-        if (showInputSection) {
-            if (!isBottomCollapsedForChecklist) {
-                return
-            }
-            isBottomCollapsedForChecklist = false
-            SwingUtilities.invokeLater {
-                val total = mainSplitPane.height - mainSplitPane.dividerSize
-                if (total > 0) {
-                    mainSplitPane.dividerLocation = (total * 0.67).toInt()
-                }
-                mainSplitPane.revalidate()
-                mainSplitPane.repaint()
-            }
-            return
-        }
-        if (isBottomCollapsedForChecklist) {
-            return
-        }
-        isBottomCollapsedForChecklist = true
-        SwingUtilities.invokeLater {
-            val total = mainSplitPane.height - mainSplitPane.dividerSize
-            if (total <= 0) {
-                return@invokeLater
-            }
-            val desiredBottomHeight = bottomPanelContainer.preferredSize.height.coerceAtLeast(JBUI.scale(56))
-            mainSplitPane.dividerLocation = (total - desiredBottomHeight).coerceAtLeast(0)
-            mainSplitPane.revalidate()
-            mainSplitPane.repaint()
-        }
+        isBottomCollapsedForChecklist = !showInputSection
+        bottomPanelContainer.revalidate()
+        bottomPanelContainer.repaint()
     }
 
     private data class ChecklistRowColors(
@@ -3680,6 +3720,18 @@ class SpecDetailPanel(
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
+        private val DOCUMENT_TAB_BG_IDLE = JBColor(Color(246, 249, 253), Color(60, 67, 78))
+        private val DOCUMENT_TAB_BG_AVAILABLE = JBColor(Color(242, 247, 255), Color(65, 74, 87))
+        private val DOCUMENT_TAB_BG_CURRENT = JBColor(Color(234, 243, 255), Color(72, 87, 108))
+        private val DOCUMENT_TAB_BG_SELECTED = JBColor(Color(224, 238, 255), Color(80, 98, 122))
+        private val DOCUMENT_TAB_BORDER_IDLE = JBColor(Color(212, 222, 236), Color(92, 103, 121))
+        private val DOCUMENT_TAB_BORDER_AVAILABLE = JBColor(Color(193, 209, 230), Color(102, 114, 133))
+        private val DOCUMENT_TAB_BORDER_CURRENT = JBColor(Color(156, 190, 236), Color(120, 151, 191))
+        private val DOCUMENT_TAB_BORDER_SELECTED = JBColor(Color(121, 170, 236), Color(138, 176, 222))
+        private val DOCUMENT_TAB_TEXT_IDLE = JBColor(Color(120, 132, 149), Color(170, 182, 200))
+        private val DOCUMENT_TAB_TEXT_AVAILABLE = JBColor(Color(69, 92, 126), Color(210, 222, 238))
+        private val DOCUMENT_TAB_TEXT_CURRENT = JBColor(Color(45, 79, 128), Color(223, 233, 246))
+        private val DOCUMENT_TAB_TEXT_SELECTED = JBColor(Color(34, 68, 113), Color(236, 242, 251))
         private val SPEC_DETAIL_GENERATE_ICON = IconLoader.getIcon("/icons/spec-detail-generate-run-all.svg", SpecDetailPanel::class.java)
         private val SECTION_TITLE_FG = JBColor(Color(36, 60, 101), Color(212, 223, 241))
         private val COLLAPSE_TOGGLE_TEXT_ACTIVE = JBColor(Color(86, 115, 158), Color(187, 205, 230))

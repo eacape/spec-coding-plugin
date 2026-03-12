@@ -38,6 +38,7 @@ import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTabbedPane
 import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
@@ -272,63 +273,21 @@ class SpecWorkflowPanel(
                 backgroundColor = DETAIL_SECTION_BG,
                 borderColor = DETAIL_SECTION_BORDER,
             )
-            val verifyDeltaSection = createSectionContainer(
-                verifyDeltaPanel,
-                backgroundColor = DETAIL_SECTION_BG,
-                borderColor = DETAIL_SECTION_BORDER,
-            )
-
-            val tasksAndGateSplit = JSplitPane(
+            val workspaceSplit = JSplitPane(
                 JSplitPane.VERTICAL_SPLIT,
                 createSectionContainer(
-                    tasksPanel,
+                    buildInsightsTabs(),
                     backgroundColor = DETAIL_SECTION_BG,
                     borderColor = DETAIL_SECTION_BORDER,
                 ),
-                createSectionContainer(
-                    gateDetailsPanel,
-                    backgroundColor = DETAIL_SECTION_BG,
-                    borderColor = DETAIL_SECTION_BORDER,
-                ),
-            ).apply {
-                dividerLocation = JBUI.scale(250)
-                resizeWeight = 0.58
-                isContinuousLayout = true
-                border = JBUI.Borders.empty()
-                background = DETAIL_COLUMN_BG
-                SpecUiStyle.applyChatLikeSpecDivider(
-                    splitPane = this,
-                    dividerSize = JBUI.scale(4),
-                )
-            }
-            tasksAndGateSplit.addComponentListener(
-                object : ComponentAdapter() {
-                    override fun componentResized(e: ComponentEvent?) {
-                        clampVerticalDividerLocation(
-                            split = tasksAndGateSplit,
-                            minTop = JBUI.scale(140),
-                            minBottom = JBUI.scale(120),
-                        )
-                    }
-                },
-            )
-            clampVerticalDividerLocation(
-                split = tasksAndGateSplit,
-                minTop = JBUI.scale(140),
-                minBottom = JBUI.scale(120),
-            )
-
-            val tasksGateAndDetailSplit = JSplitPane(
-                JSplitPane.VERTICAL_SPLIT,
-                tasksAndGateSplit,
                 createSectionContainer(
                     detailPanel,
                     backgroundColor = DETAIL_SECTION_BG,
                     borderColor = DETAIL_SECTION_BORDER,
                 ),
             ).apply {
-                dividerLocation = JBUI.scale(420)
-                resizeWeight = 0.46
+                dividerLocation = JBUI.scale(290)
+                resizeWeight = 0.34
                 isContinuousLayout = true
                 border = JBUI.Borders.empty()
                 background = DETAIL_COLUMN_BG
@@ -337,47 +296,22 @@ class SpecWorkflowPanel(
                     dividerSize = JBUI.scale(4),
                 )
             }
-            tasksGateAndDetailSplit.addComponentListener(
-                object : ComponentAdapter() {
-                    override fun componentResized(e: ComponentEvent?) {
-                        clampVerticalDividerLocation(tasksGateAndDetailSplit)
-                    }
-                },
-            )
-            clampVerticalDividerLocation(tasksGateAndDetailSplit)
-
-            val verifyAndWorkSplit = JSplitPane(
-                JSplitPane.VERTICAL_SPLIT,
-                verifyDeltaSection,
-                tasksGateAndDetailSplit,
-            ).apply {
-                dividerLocation = JBUI.scale(220)
-                resizeWeight = 0.28
-                isContinuousLayout = true
-                border = JBUI.Borders.empty()
-                background = DETAIL_COLUMN_BG
-                SpecUiStyle.applyChatLikeSpecDivider(
-                    splitPane = this,
-                    dividerSize = JBUI.scale(4),
-                )
-            }
-            verifyAndWorkSplit.addComponentListener(
+            workspaceSplit.addComponentListener(
                 object : ComponentAdapter() {
                     override fun componentResized(e: ComponentEvent?) {
                         clampVerticalDividerLocation(
-                            split = verifyAndWorkSplit,
-                            minTop = JBUI.scale(150),
+                            split = workspaceSplit,
+                            minTop = JBUI.scale(180),
                             minBottom = JBUI.scale(260),
                         )
                     }
                 },
             )
-
             add(overviewSection, BorderLayout.NORTH)
-            add(verifyAndWorkSplit, BorderLayout.CENTER)
+            add(workspaceSplit, BorderLayout.CENTER)
             clampVerticalDividerLocation(
-                split = verifyAndWorkSplit,
-                minTop = JBUI.scale(150),
+                split = workspaceSplit,
+                minTop = JBUI.scale(180),
                 minBottom = JBUI.scale(260),
             )
         }
@@ -411,6 +345,27 @@ class SpecWorkflowPanel(
         add(split, BorderLayout.CENTER)
         clampDividerLocation(split)
         setStatusText(null)
+    }
+
+    private fun buildInsightsTabs(): JBTabbedPane {
+        return JBTabbedPane().apply {
+            tabLayoutPolicy = JBTabbedPane.SCROLL_TAB_LAYOUT
+            isFocusable = false
+            border = JBUI.Borders.empty()
+            background = DETAIL_SECTION_BG
+            addTab(
+                SpecCodingBundle.message("spec.toolwindow.tasks.title"),
+                tasksPanel,
+            )
+            addTab(
+                SpecCodingBundle.message("spec.toolwindow.gate.title"),
+                gateDetailsPanel,
+            )
+            addTab(
+                SpecCodingBundle.message("spec.toolwindow.verifyDelta.title"),
+                verifyDeltaPanel,
+            )
+        }
     }
 
     private fun clampDividerLocation(split: JSplitPane) {
