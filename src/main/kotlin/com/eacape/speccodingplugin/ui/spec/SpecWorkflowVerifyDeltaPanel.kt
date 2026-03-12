@@ -63,6 +63,7 @@ internal class SpecWorkflowVerifyDeltaPanel(
     private val onOpenVerificationRequested: (workflowId: String) -> Unit = {},
     private val onCompareBaselineRequested: (workflowId: String, choice: SpecWorkflowDeltaBaselineChoice) -> Unit = { _, _ -> },
     private val onPinBaselineRequested: (workflowId: String) -> Unit = {},
+    private val showHeader: Boolean = true,
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
     private val headerTitleLabel = JBLabel().apply {
@@ -232,6 +233,19 @@ internal class SpecWorkflowVerifyDeltaPanel(
         updateDetail()
     }
 
+    internal fun snapshotForTest(): Map<String, String> {
+        return mapOf(
+            "headerVisible" to showHeader.toString(),
+            "headerTitle" to headerTitleLabel.text.orEmpty(),
+            "headerSummary" to headerSummaryLabel.text.orEmpty(),
+            "headerRefreshed" to headerRefreshedLabel.text.orEmpty(),
+            "statusChip" to statusChipLabel.text.orEmpty(),
+            "workflowId" to currentState?.workflowId.orEmpty(),
+            "historyCount" to historyListModel.size().toString(),
+            "emptyText" to historyList.emptyText.text.orEmpty(),
+        )
+    }
+
     private fun buildHeader(): JPanel {
         val titleRow = JPanel(BorderLayout()).apply {
             isOpaque = false
@@ -247,6 +261,13 @@ internal class SpecWorkflowVerifyDeltaPanel(
             add(baselineComboBox)
             add(compareButton)
             add(pinBaselineButton)
+        }
+        if (!showHeader) {
+            return JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(2, 2, 4, 2)
+                add(controlsRow, BorderLayout.CENTER)
+            }
         }
         return JPanel(BorderLayout(0, JBUI.scale(2))).apply {
             isOpaque = false

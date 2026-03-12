@@ -90,9 +90,6 @@ class SpecDetailPanel(
     private val processTimelinePane = JTextPane()
     private val previewCardLayout = CardLayout()
     private val previewCardPanel = JPanel(previewCardLayout)
-    private val previewModePanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
-    private val previewModeButton = JButton(SpecCodingBundle.message("spec.detail.view.preview"))
-    private val clarificationModeButton = JButton(SpecCodingBundle.message("spec.detail.view.clarify"))
     private val processTimelineLabel = JBLabel(SpecCodingBundle.message("spec.detail.process.title"))
     private val clarificationQuestionsLabel = JBLabel(SpecCodingBundle.message("spec.detail.clarify.questions.title"))
     private val clarificationChecklistHintLabel = JBLabel(SpecCodingBundle.message("spec.detail.clarify.checklist.hint"))
@@ -231,7 +228,6 @@ class SpecDetailPanel(
         previewCardPanel.add(createClarificationCard(), CARD_CLARIFY)
         applyDocumentViewportSizing(previewCardPanel)
         switchPreviewCard(CARD_PREVIEW)
-        configurePreviewModePanel()
         configureDocumentTabsPanel()
         processTimelineSection = createProcessTimelineSection()
         setProcessTimelineVisible(false)
@@ -566,31 +562,6 @@ class SpecDetailPanel(
         )
     }
 
-    private fun configurePreviewModePanel() {
-        previewModePanel.isOpaque = false
-        styleActionButton(previewModeButton)
-        styleActionButton(clarificationModeButton)
-        previewModeButton.toolTipText = SpecCodingBundle.message("spec.detail.view.preview.tooltip")
-        clarificationModeButton.toolTipText = SpecCodingBundle.message("spec.detail.view.clarify.tooltip")
-        previewModeButton.addActionListener {
-            if (isEditing) {
-                switchPreviewCard(CARD_EDIT)
-            } else {
-                switchPreviewCard(CARD_PREVIEW)
-            }
-        }
-        clarificationModeButton.addActionListener {
-            if (clarificationState != null) {
-                switchPreviewCard(CARD_CLARIFY)
-            } else {
-                showClarificationEntryHint()
-            }
-        }
-        previewModePanel.add(previewModeButton)
-        previewModePanel.add(clarificationModeButton)
-        updatePreviewModeButtons()
-    }
-
     private fun configureDocumentTabsPanel() {
         documentTabsPanel.isOpaque = false
         documentMetaLabel.font = JBUI.Fonts.smallFont()
@@ -622,7 +593,6 @@ class SpecDetailPanel(
     private fun buildDocumentToolbar(): JPanel {
         val documentActionsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
             isOpaque = false
-            add(previewModePanel)
             add(pauseResumeButton)
             add(completeButton)
             add(openEditorButton)
@@ -1229,26 +1199,7 @@ class SpecDetailPanel(
     private fun switchPreviewCard(card: String) {
         activePreviewCard = card
         previewCardLayout.show(previewCardPanel, card)
-        updatePreviewModeButtons()
-    }
-
-    private fun updatePreviewModeButtons() {
-        val clarifying = clarificationState != null
-        clarificationModeButton.isEnabled = !isEditing
-        val previewSelected = activePreviewCard != CARD_CLARIFY
-        applyPreviewModeStyle(previewModeButton, selected = previewSelected)
-        applyPreviewModeStyle(clarificationModeButton, selected = !previewSelected && clarifying)
         refreshActionButtonCursors()
-    }
-
-    private fun applyPreviewModeStyle(button: JButton, selected: Boolean) {
-        button.background = if (selected) BUTTON_BG else STATUS_BG
-        button.foreground = if (selected) BUTTON_FG else TREE_TEXT
-    }
-
-    private fun showClarificationEntryHint() {
-        validationLabel.text = SpecCodingBundle.message("spec.detail.clarify.entry.hint")
-        validationLabel.foreground = GENERATING_FG
     }
 
     private fun showInputRequiredHint(phase: SpecPhase?) {
@@ -1362,8 +1313,6 @@ class SpecDetailPanel(
 
     private fun refreshActionButtonCursors() {
         listOf(
-            previewModeButton,
-            clarificationModeButton,
             generateButton,
             nextPhaseButton,
             goBackButton,
@@ -1385,10 +1334,6 @@ class SpecDetailPanel(
     fun refreshLocalizedTexts() {
         treeRoot.userObject = SpecCodingBundle.message("spec.detail.documents")
         treeModel.reload()
-        previewModeButton.text = SpecCodingBundle.message("spec.detail.view.preview")
-        clarificationModeButton.text = SpecCodingBundle.message("spec.detail.view.clarify")
-        previewModeButton.toolTipText = SpecCodingBundle.message("spec.detail.view.preview.tooltip")
-        clarificationModeButton.toolTipText = SpecCodingBundle.message("spec.detail.view.clarify.tooltip")
         processTimelineLabel.text = SpecCodingBundle.message("spec.detail.process.title")
         clarificationQuestionsLabel.text = SpecCodingBundle.message("spec.detail.clarify.questions.title")
         clarificationChecklistHintLabel.text = SpecCodingBundle.message("spec.detail.clarify.checklist.hint")
@@ -1396,8 +1341,6 @@ class SpecDetailPanel(
         composerTitleLabel.text = SpecCodingBundle.message("spec.detail.composer.title")
         applyActionButtonPresentation()
         updateInputPlaceholder(currentWorkflow?.currentPhase)
-        styleActionButton(previewModeButton)
-        styleActionButton(clarificationModeButton)
         styleActionButton(generateButton)
         styleActionButton(nextPhaseButton)
         styleActionButton(goBackButton)
@@ -1413,7 +1356,6 @@ class SpecDetailPanel(
         styleActionButton(skipClarificationButton)
         styleActionButton(cancelClarificationButton)
         updatePhaseStepperVisuals()
-        updatePreviewModeButtons()
         refreshCollapsibleToggleTexts()
         renderProcessTimeline()
         if (isClarificationGenerating) {
@@ -3601,6 +3543,14 @@ class SpecDetailPanel(
         return ::processTimelineSection.isInitialized && processTimelineSection.isVisible
     }
 
+    internal fun hasLegacyDocumentModeButtonsForTest(): Boolean {
+        val legacyLabels = setOf(
+            SpecCodingBundle.message("spec.detail.view.preview"),
+            SpecCodingBundle.message("spec.detail.view.clarify"),
+        )
+        return collectButtonTexts(this).any(legacyLabels::contains)
+    }
+
     internal fun buttonStatesForTest(): Map<String, Any> {
         return mapOf(
             "generateEnabled" to generateButton.isEnabled,
@@ -3616,6 +3566,22 @@ class SpecDetailPanel(
             "skipClarificationEnabled" to skipClarificationButton.isEnabled,
             "cancelClarificationEnabled" to cancelClarificationButton.isEnabled,
         )
+    }
+
+    private fun collectButtonTexts(component: Component): List<String> {
+        val texts = mutableListOf<String>()
+        if (component is JButton) {
+            val text = component.text?.trim().orEmpty()
+            if (text.isNotEmpty()) {
+                texts += text
+            }
+        }
+        if (component is java.awt.Container) {
+            component.components.forEach { child ->
+                texts += collectButtonTexts(child)
+            }
+        }
+        return texts
     }
 
     private data class PhaseNode(val phase: SpecPhase, val document: SpecDocument?) {

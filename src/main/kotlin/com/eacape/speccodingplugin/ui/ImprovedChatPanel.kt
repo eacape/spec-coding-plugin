@@ -453,6 +453,7 @@ class ImprovedChatPanel(
         providerLabel.text = SpecCodingBundle.message("toolwindow.provider.label")
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
         composerHintLabel.text = SpecCodingBundle.message("toolwindow.composer.hint")
+        composerHintLabel.toolTipText = composerHintLabel.text
         inputField.setPlaceholderText(SpecCodingBundle.message("toolwindow.input.placeholder"))
         operationModeSelector.refreshLocalizedTexts()
         refreshActionButtonTexts()
@@ -568,6 +569,7 @@ class ImprovedChatPanel(
         modelLabel.foreground = JBColor.GRAY
         composerHintLabel.foreground = JBColor.GRAY
         composerHintLabel.font = JBUI.Fonts.smallFont()
+        composerHintLabel.toolTipText = composerHintLabel.text
         statusLabel.foreground = JBColor.GRAY
         statusLabel.font = JBUI.Fonts.smallFont()
         statusLabel.isVisible = false
@@ -623,10 +625,10 @@ class ImprovedChatPanel(
         inputScroll.border = JBUI.Borders.empty()
         inputScroll.preferredSize = JBDimension(0, 92)
 
-        val composerMetaRow = JPanel(BorderLayout())
+        val composerMetaRow = JPanel(BorderLayout(JBUI.scale(8), 0))
         composerMetaRow.isOpaque = false
         composerMetaRow.border = JBUI.Borders.emptyTop(5)
-        composerMetaRow.add(composerHintLabel, BorderLayout.WEST)
+        composerMetaRow.add(composerHintLabel, BorderLayout.CENTER)
         val composerMetaActions = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
         composerMetaActions.isOpaque = false
         composerMetaActions.add(specWorkflowComboBox)

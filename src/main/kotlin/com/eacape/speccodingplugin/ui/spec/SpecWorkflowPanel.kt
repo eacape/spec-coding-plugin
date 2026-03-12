@@ -117,8 +117,12 @@ class SpecWorkflowPanel(
         onOpenVerificationRequested = ::onOpenVerificationRequested,
         onCompareBaselineRequested = ::onCompareDeltaBaselineRequested,
         onPinBaselineRequested = ::onPinDeltaBaselineRequested,
+        showHeader = false,
     )
-    private val gateDetailsPanel = SpecWorkflowGateDetailsPanel(project)
+    private val gateDetailsPanel = SpecWorkflowGateDetailsPanel(
+        project = project,
+        showHeader = false,
+    )
     private val statusLabel = JBLabel("")
     private val statusChipPanel = JPanel(BorderLayout())
     private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))

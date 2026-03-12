@@ -34,6 +34,7 @@ import javax.swing.event.DocumentListener
 
 internal class SpecWorkflowGateDetailsPanel(
     private val project: Project,
+    private val showHeader: Boolean = true,
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
     private enum class SeverityFilter {
@@ -191,6 +192,19 @@ internal class SpecWorkflowGateDetailsPanel(
         updateControlsForSelection()
     }
 
+    internal fun snapshotForTest(): Map<String, String> {
+        return mapOf(
+            "headerVisible" to showHeader.toString(),
+            "headerTitle" to headerTitleLabel.text.orEmpty(),
+            "headerSummary" to headerSummaryLabel.text.orEmpty(),
+            "headerRefreshed" to headerRefreshedLabel.text.orEmpty(),
+            "statusChip" to statusChipLabel.text.orEmpty(),
+            "workflowId" to currentWorkflowId.orEmpty(),
+            "violationCount" to listModel.size().toString(),
+            "emptyText" to violationsList.emptyText.text.orEmpty(),
+        )
+    }
+
     private fun buildHeader(): JPanel {
         val titleRow = JPanel(BorderLayout(0, 0)).apply {
             isOpaque = false
@@ -204,6 +218,13 @@ internal class SpecWorkflowGateDetailsPanel(
             add(searchField)
             add(openButton)
             add(fixButton)
+        }
+        if (!showHeader) {
+            return JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.empty(2, 2, 4, 2)
+                add(controlsRow, BorderLayout.CENTER)
+            }
         }
         return JPanel(BorderLayout(0, JBUI.scale(2))).apply {
             isOpaque = false

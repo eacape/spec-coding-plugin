@@ -247,6 +247,39 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `document toolbar should not render legacy preview mode buttons`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-no-legacy-mode-buttons",
+            currentPhase = SpecPhase.DESIGN,
+            documents = mapOf(
+                SpecPhase.DESIGN to document(
+                    phase = SpecPhase.DESIGN,
+                    content = "design content",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "No Legacy Buttons",
+            description = "toolbar should stay focused",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(workflow)
+        assertFalse(panel.hasLegacyDocumentModeButtonsForTest())
+
+        panel.showClarificationDraft(
+            phase = SpecPhase.DESIGN,
+            input = "clarify the design",
+            questionsMarkdown = "1. Explain the trade-offs",
+            suggestedDetails = "Keep the current module split",
+        )
+
+        assertFalse(panel.hasLegacyDocumentModeButtonsForTest())
+    }
+
+    @Test
     fun `updateWorkflow should enable complete only when implement document is valid`() {
         val panel = createPanel()
 
