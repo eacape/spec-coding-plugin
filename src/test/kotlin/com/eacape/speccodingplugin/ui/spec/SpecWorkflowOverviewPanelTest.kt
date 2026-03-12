@@ -84,6 +84,8 @@ class SpecWorkflowOverviewPanelTest {
         assertTrue(snapshot.getValue("activeStages").contains(SpecWorkflowOverviewPresenter.stageLabel(StageId.REQUIREMENTS)))
         assertEquals(SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT), snapshot.getValue("nextStage"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.overview.advanceGate.warning"), snapshot.getValue("gateStatus"))
+        assertEquals("false", snapshot.getValue("gateStatusOpaque"))
+        assertEquals("0,0,0,0", snapshot.getValue("gateStatusInsets"))
         assertTrue(snapshot.getValue("gateSummary").contains("warning", ignoreCase = true))
         assertTrue(
             snapshot.getValue("stageFlow").contains(

@@ -70,10 +70,10 @@ internal class SpecWorkflowOverviewPanel(
     private val refreshedValueLabel = createValueLabel()
     private val gateSummaryValueLabel = createBodyLabel(VALUE_SECONDARY_FG)
     private val gateChipLabel = JBLabel().apply {
-        horizontalAlignment = SwingConstants.CENTER
-        border = BorderFactory.createEmptyBorder()
-        isOpaque = true
-        font = JBUI.Fonts.smallFont().deriveFont(10.5f)
+        horizontalAlignment = SwingConstants.LEFT
+        border = JBUI.Borders.empty()
+        isOpaque = false
+        font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD, 10.5f)
     }
 
     private val templateTargetComboBox = ComboBox<WorkflowTemplate>().apply {
@@ -196,6 +196,10 @@ internal class SpecWorkflowOverviewPanel(
             "activeStages" to activeStagesValueLabel.text.orEmpty(),
             "nextStage" to nextStageValueLabel.text.orEmpty(),
             "gateStatus" to gateChipLabel.text.orEmpty(),
+            "gateStatusOpaque" to gateChipLabel.isOpaque.toString(),
+            "gateStatusInsets" to gateChipLabel.border.getBorderInsets(gateChipLabel).let { insets ->
+                "${insets.top},${insets.left},${insets.bottom},${insets.right}"
+            },
             "gateSummary" to gateSummaryValueLabel.text.orEmpty(),
             "stageFlow" to stageStepperSnapshot.getValue("stages"),
             "advanceEnabled" to stageStepperSnapshot.getValue("advanceEnabled"),
@@ -388,6 +392,7 @@ internal class SpecWorkflowOverviewPanel(
         activeStagesValueLabel.text = ""
         nextStageValueLabel.text = ""
         gateChipLabel.text = ""
+        applyGateChipStyle(null)
         gateSummaryValueLabel.text = ""
         refreshedValueLabel.text = ""
         updateTemplateTargets(emptyList())
@@ -501,18 +506,15 @@ internal class SpecWorkflowOverviewPanel(
     }
 
     private fun applyGateChipStyle(status: GateStatus?) {
-        val (background, foreground, border) = when (status) {
-            GateStatus.PASS -> Triple(PASS_BG, PASS_FG, PASS_BORDER)
-            GateStatus.WARNING -> Triple(WARN_BG, WARN_FG, WARN_BORDER)
-            GateStatus.ERROR -> Triple(ERROR_BG, ERROR_FG, ERROR_BORDER)
-            null -> Triple(NEUTRAL_BG, NEUTRAL_FG, NEUTRAL_BORDER)
+        val foreground = when (status) {
+            GateStatus.PASS -> PASS_FG
+            GateStatus.WARNING -> WARN_FG
+            GateStatus.ERROR -> ERROR_FG
+            null -> NEUTRAL_FG
         }
-        gateChipLabel.background = background
+        gateChipLabel.isOpaque = false
         gateChipLabel.foreground = foreground
-        gateChipLabel.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(border, JBUI.scale(10)),
-            JBUI.Borders.empty(2, 8, 2, 8),
-        )
+        gateChipLabel.border = JBUI.Borders.empty()
     }
 
     companion object {
@@ -532,20 +534,12 @@ internal class SpecWorkflowOverviewPanel(
         private val ACTION_FG = JBColor(Color(45, 71, 111), Color(206, 218, 239))
         private val ACTION_BORDER = JBColor(Color(180, 199, 226), Color(101, 116, 138))
 
-        private val PASS_BG = JBColor(Color(233, 246, 237), Color(54, 85, 63))
         private val PASS_FG = JBColor(Color(39, 94, 57), Color(194, 232, 204))
-        private val PASS_BORDER = JBColor(Color(154, 204, 170), Color(87, 134, 102))
 
-        private val WARN_BG = JBColor(Color(255, 244, 229), Color(97, 77, 42))
         private val WARN_FG = JBColor(Color(150, 96, 0), Color(245, 212, 152))
-        private val WARN_BORDER = JBColor(Color(232, 191, 111), Color(138, 112, 63))
 
-        private val ERROR_BG = JBColor(Color(252, 235, 236), Color(97, 54, 58))
         private val ERROR_FG = JBColor(Color(166, 53, 60), Color(250, 196, 200))
-        private val ERROR_BORDER = JBColor(Color(226, 140, 147), Color(145, 92, 98))
 
-        private val NEUTRAL_BG = JBColor(Color(241, 244, 248), Color(72, 77, 85))
         private val NEUTRAL_FG = JBColor(Color(85, 94, 106), Color(192, 199, 208))
-        private val NEUTRAL_BORDER = JBColor(Color(201, 208, 217), Color(98, 108, 121))
     }
 }

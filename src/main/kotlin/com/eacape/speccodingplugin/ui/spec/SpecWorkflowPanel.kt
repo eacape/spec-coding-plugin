@@ -402,7 +402,8 @@ class SpecWorkflowPanel(
     private fun createWorkspaceChipLabel(): JBLabel {
         return JBLabel().apply {
             font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD, 10.5f)
-            isOpaque = true
+            isOpaque = false
+            border = JBUI.Borders.empty()
             isVisible = false
         }
     }
@@ -410,32 +411,22 @@ class SpecWorkflowPanel(
     private fun workspaceChipColors(tone: WorkspaceChipTone): WorkspaceChipColors {
         return when (tone) {
             WorkspaceChipTone.INFO -> WorkspaceChipColors(
-                background = WORKSPACE_INFO_CHIP_BG,
-                border = WORKSPACE_INFO_CHIP_BORDER,
                 foreground = WORKSPACE_INFO_CHIP_FG,
             )
 
             WorkspaceChipTone.SUCCESS -> WorkspaceChipColors(
-                background = WORKSPACE_SUCCESS_CHIP_BG,
-                border = WORKSPACE_SUCCESS_CHIP_BORDER,
                 foreground = WORKSPACE_SUCCESS_CHIP_FG,
             )
 
             WorkspaceChipTone.WARNING -> WorkspaceChipColors(
-                background = WORKSPACE_WARNING_CHIP_BG,
-                border = WORKSPACE_WARNING_CHIP_BORDER,
                 foreground = WORKSPACE_WARNING_CHIP_FG,
             )
 
             WorkspaceChipTone.ERROR -> WorkspaceChipColors(
-                background = WORKSPACE_ERROR_CHIP_BG,
-                border = WORKSPACE_ERROR_CHIP_BORDER,
                 foreground = WORKSPACE_ERROR_CHIP_FG,
             )
 
             WorkspaceChipTone.MUTED -> WorkspaceChipColors(
-                background = WORKSPACE_MUTED_CHIP_BG,
-                border = WORKSPACE_MUTED_CHIP_BORDER,
                 foreground = WORKSPACE_MUTED_CHIP_FG,
             )
         }
@@ -1212,15 +1203,8 @@ class SpecWorkflowPanel(
         label.text = text
         label.isVisible = text.isNotBlank()
         label.foreground = colors.foreground
-        label.background = colors.background
-        label.border = SpecUiStyle.roundedCardBorder(
-            lineColor = colors.border,
-            arc = JBUI.scale(12),
-            top = 1,
-            left = 8,
-            bottom = 1,
-            right = 8,
-        )
+        label.isOpaque = false
+        label.border = JBUI.Borders.empty()
     }
 
     private fun clearWorkspaceChip(label: JBLabel) {
@@ -3376,8 +3360,6 @@ class SpecWorkflowPanel(
     }
 
     private data class WorkspaceChipColors(
-        val background: Color,
-        val border: Color,
         val foreground: Color,
     )
 
@@ -3590,20 +3572,10 @@ class SpecWorkflowPanel(
         private val WORKSPACE_SUMMARY_META_FG = JBColor(Color(94, 110, 139), Color(160, 171, 188))
         private val WORKSPACE_EMPTY_TITLE_FG = JBColor(Color(57, 72, 104), Color(214, 223, 236))
         private val WORKSPACE_EMPTY_DESCRIPTION_FG = JBColor(Color(101, 117, 145), Color(166, 176, 193))
-        private val WORKSPACE_INFO_CHIP_BG = JBColor(Color(236, 244, 255), Color(68, 78, 92))
-        private val WORKSPACE_INFO_CHIP_BORDER = JBColor(Color(175, 197, 228), Color(103, 118, 139))
         private val WORKSPACE_INFO_CHIP_FG = JBColor(Color(48, 74, 112), Color(210, 220, 235))
-        private val WORKSPACE_SUCCESS_CHIP_BG = JBColor(Color(233, 247, 238), Color(62, 84, 72))
-        private val WORKSPACE_SUCCESS_CHIP_BORDER = JBColor(Color(144, 195, 161), Color(92, 140, 112))
         private val WORKSPACE_SUCCESS_CHIP_FG = JBColor(Color(42, 118, 71), Color(177, 225, 194))
-        private val WORKSPACE_WARNING_CHIP_BG = JBColor(Color(255, 246, 226), Color(91, 79, 57))
-        private val WORKSPACE_WARNING_CHIP_BORDER = JBColor(Color(224, 188, 116), Color(150, 128, 88))
         private val WORKSPACE_WARNING_CHIP_FG = JBColor(Color(140, 96, 28), Color(239, 210, 146))
-        private val WORKSPACE_ERROR_CHIP_BG = JBColor(Color(255, 238, 237), Color(96, 65, 66))
-        private val WORKSPACE_ERROR_CHIP_BORDER = JBColor(Color(227, 162, 162), Color(156, 109, 111))
         private val WORKSPACE_ERROR_CHIP_FG = JBColor(Color(152, 52, 52), Color(244, 182, 182))
-        private val WORKSPACE_MUTED_CHIP_BG = JBColor(Color(241, 244, 248), Color(73, 78, 88))
-        private val WORKSPACE_MUTED_CHIP_BORDER = JBColor(Color(198, 206, 219), Color(106, 115, 130))
         private val WORKSPACE_MUTED_CHIP_FG = JBColor(Color(98, 109, 126), Color(173, 181, 194))
         private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
         private val ICON_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(104, 116, 134))
