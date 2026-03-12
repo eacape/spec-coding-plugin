@@ -17,6 +17,7 @@ import com.eacape.speccodingplugin.skill.SkillDiscoverySnapshot
 import com.eacape.speccodingplugin.skill.SkillRegistry
 import com.eacape.speccodingplugin.skill.SkillScope
 import com.eacape.speccodingplugin.skill.SkillSourceType
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.RefreshFeedback
 import com.eacape.speccodingplugin.ui.hook.HookPanel
 import com.eacape.speccodingplugin.ui.mcp.McpPanel
@@ -398,10 +399,13 @@ class SettingsPanel(
                 border = JBUI.Borders.empty()
             }
 
+        val defaultProviderComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(defaultProviderCombo)
+        val defaultModelComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(defaultModelCombo)
+        val interfaceLanguageComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(interfaceLanguageCombo)
         val generalPanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderCombo)
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultModel"), defaultModelCombo)
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.interfaceLanguage"), interfaceLanguageCombo)
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderComboHost)
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultModel"), defaultModelComboHost)
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.interfaceLanguage"), interfaceLanguageComboHost)
             .panel.apply {
                 isOpaque = false
                 border = JBUI.Borders.empty()
@@ -941,6 +945,7 @@ class SettingsPanel(
             styleSkillActionIconButton(skillSaveCurrentButton, SKILL_ACTION_SAVE_CURRENT_ICON)
 
             rebuildLocalizedSectionCards()
+            updateSkillComboPreferredSizes()
             setSidebarExpanded(sidebarExpanded)
             sectionList.revalidate()
             sectionList.repaint()
@@ -2351,65 +2356,48 @@ class SettingsPanel(
     }
 
     private fun updateSkillComboPreferredSizes() {
-        val scopeWidth = measureComboWidth(
-            combo = skillTargetScopeCombo,
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = defaultProviderCombo,
+            minWidth = JBUI.scale(72),
+            maxWidth = JBUI.scale(200),
+            height = defaultProviderCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(28),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = defaultModelCombo,
+            minWidth = JBUI.scale(96),
+            maxWidth = JBUI.scale(300),
+            height = defaultModelCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(28),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = interfaceLanguageCombo,
+            minWidth = JBUI.scale(92),
+            maxWidth = JBUI.scale(220),
+            height = interfaceLanguageCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(28),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = skillTargetScopeCombo,
             minWidth = JBUI.scale(86),
-            maxWidth = JBUI.scale(110),
-        ) { scope ->
-            when (scope) {
-                SkillScope.GLOBAL -> SpecCodingBundle.message("settings.skills.scope.global")
-                SkillScope.PROJECT -> SpecCodingBundle.message("settings.skills.scope.project")
-            }
-        }
-        val providerWidth = measureComboWidth(
-            combo = skillDraftProviderCombo,
+            maxWidth = JBUI.scale(140),
+            height = JBUI.scale(28),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = skillTargetChannelCombo,
+            minWidth = JBUI.scale(94),
+            maxWidth = JBUI.scale(160),
+            height = JBUI.scale(28),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = skillDraftProviderCombo,
             minWidth = JBUI.scale(86),
-            maxWidth = JBUI.scale(110),
-        ) { provider -> providerDisplayText(provider) }
-        val primaryWidth = maxOf(scopeWidth, providerWidth)
-        applyComboWidth(skillTargetScopeCombo, primaryWidth)
-        applyComboWidth(skillDraftProviderCombo, primaryWidth)
-
-        val channelWidth = measureComboWidth(
-            combo = skillTargetChannelCombo,
+            maxWidth = JBUI.scale(140),
+            height = JBUI.scale(28),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = skillDraftModelCombo,
             minWidth = JBUI.scale(94),
-            maxWidth = JBUI.scale(132),
-        ) { channel ->
-            when (channel) {
-                SkillSaveChannel.CODEX -> SpecCodingBundle.message("settings.skills.channel.codex")
-                SkillSaveChannel.CLUADE -> SpecCodingBundle.message("settings.skills.channel.cluade")
-                SkillSaveChannel.ALL -> SpecCodingBundle.message("settings.skills.channel.all")
-            }
-        }
-        val modelWidth = measureComboWidth(
-            combo = skillDraftModelCombo,
-            minWidth = JBUI.scale(94),
-            maxWidth = JBUI.scale(132),
-        ) { model -> lowerUiText(model.name) }
-        val secondaryWidth = maxOf(channelWidth, modelWidth)
-        applyComboWidth(skillTargetChannelCombo, secondaryWidth)
-        applyComboWidth(skillDraftModelCombo, secondaryWidth)
-    }
-
-    private fun <T> measureComboWidth(
-        combo: ComboBox<T>,
-        minWidth: Int,
-        maxWidth: Int,
-        textProvider: (T) -> String,
-    ): Int {
-        val fontMetrics = combo.getFontMetrics(combo.font)
-        var targetWidth = minWidth
-        for (index in 0 until combo.itemCount) {
-            val item = combo.getItemAt(index) ?: continue
-            val textWidth = fontMetrics.stringWidth(textProvider(item))
-            targetWidth = maxOf(targetWidth, textWidth + JBUI.scale(44))
-        }
-        return targetWidth.coerceIn(minWidth, maxWidth)
-    }
-
-    private fun applyComboWidth(combo: ComboBox<*>, width: Int) {
-        combo.preferredSize = JBUI.size(width, JBUI.scale(28))
-        combo.minimumSize = combo.preferredSize
+            maxWidth = JBUI.scale(180),
+            height = JBUI.scale(28),
+        )
     }
 
     private fun lowerUiText(text: String): String = text.lowercase(Locale.ROOT)

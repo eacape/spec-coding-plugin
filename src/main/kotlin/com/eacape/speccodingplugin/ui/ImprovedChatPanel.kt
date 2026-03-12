@@ -515,8 +515,13 @@ class ImprovedChatPanel(
                 val title = option?.title?.trim().orEmpty()
                 label.font = specWorkflowComboBox.font
                 label.text = if (index == -1) {
-                    val maxTextWidth = (specWorkflowComboBox.preferredSize?.width ?: 0) - JBUI.scale(SPEC_WORKFLOW_COMBO_TEXT_OVERHEAD_PX)
-                    ellipsizeToWidth(title, maxWidth = maxTextWidth, metrics = label.getFontMetrics(label.font))
+                    if (ComboBoxAutoWidthSupport.isIntrinsicMeasurementInProgress(specWorkflowComboBox)) {
+                        title
+                    } else {
+                        val maxTextWidth =
+                            (specWorkflowComboBox.preferredSize?.width ?: 0) - JBUI.scale(SPEC_WORKFLOW_COMBO_TEXT_OVERHEAD_PX)
+                        ellipsizeToWidth(title, maxWidth = maxTextWidth, metrics = label.getFontMetrics(label.font))
+                    }
                 } else {
                     title
                 }
@@ -573,6 +578,26 @@ class ImprovedChatPanel(
         val italicSmallFont = JBUI.Fonts.smallFont().deriveFont(Font.ITALIC)
         specWorkflowComboBox.font = italicSmallFont
         interactionModeComboBox.font = italicSmallFont
+        installCompactComboAutoWidth(
+            comboBox = interactionModeComboBox,
+            minWidth = INTERACTION_MODE_COMBO_MIN_WIDTH,
+            maxWidth = INTERACTION_MODE_COMBO_MAX_WIDTH,
+        )
+        installCompactComboAutoWidth(
+            comboBox = specWorkflowComboBox,
+            minWidth = SPEC_WORKFLOW_COMBO_MIN_WIDTH,
+            maxWidth = SPEC_WORKFLOW_COMBO_MAX_WIDTH,
+        )
+        installCompactComboAutoWidth(
+            comboBox = providerComboBox,
+            minWidth = PROVIDER_COMBO_MIN_WIDTH,
+            maxWidth = PROVIDER_COMBO_MAX_WIDTH,
+        )
+        installCompactComboAutoWidth(
+            comboBox = modelComboBox,
+            minWidth = MODEL_COMBO_MIN_WIDTH,
+            maxWidth = MODEL_COMBO_MAX_WIDTH,
+        )
         providerLabel.font = JBUI.Fonts.smallFont()
         modelLabel.font = JBUI.Fonts.smallFont()
         providerLabel.foreground = JBColor.GRAY
@@ -4561,63 +4586,32 @@ class ImprovedChatPanel(
     }
 
     private fun updateProviderComboSize() {
-        updateCompactComboSize(
-            comboBox = providerComboBox,
-            minWidth = PROVIDER_COMBO_MIN_WIDTH,
-            maxWidth = PROVIDER_COMBO_MAX_WIDTH,
-        )
+        updateCompactComboSize(providerComboBox)
     }
 
     private fun updateModelComboSize() {
-        updateCompactComboSize(
-            comboBox = modelComboBox,
-            minWidth = MODEL_COMBO_MIN_WIDTH,
-            maxWidth = MODEL_COMBO_MAX_WIDTH,
-        )
+        updateCompactComboSize(modelComboBox)
     }
 
     private fun updateInteractionModeComboSize() {
-        updateCompactComboSize(
-            comboBox = interactionModeComboBox,
-            minWidth = INTERACTION_MODE_COMBO_MIN_WIDTH,
-            maxWidth = INTERACTION_MODE_COMBO_MAX_WIDTH,
-        )
+        updateCompactComboSize(interactionModeComboBox)
     }
 
-    private fun updateCompactComboSize(
+    private fun installCompactComboAutoWidth(
         comboBox: ComboBox<*>,
         minWidth: Int,
         maxWidth: Int,
     ) {
-        val desiredWidth = measureCompactComboIntrinsicWidth(comboBox)
-            .coerceIn(JBUI.scale(minWidth), JBUI.scale(maxWidth))
-        val size = Dimension(desiredWidth, JBUI.scale(COMPACT_COMBO_HEIGHT_PX))
-        comboBox.preferredSize = size
-        comboBox.minimumSize = size
-        comboBox.maximumSize = size
-        comboBox.revalidate()
-        comboBox.repaint()
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = comboBox,
+            minWidth = JBUI.scale(minWidth),
+            maxWidth = JBUI.scale(maxWidth),
+            height = JBUI.scale(COMPACT_COMBO_HEIGHT_PX),
+        )
     }
 
-    @Suppress("UNCHECKED_CAST")
-    private fun measureCompactComboIntrinsicWidth(comboBox: ComboBox<*>): Int {
-        val swingCombo = comboBox as javax.swing.JComboBox<Any?>
-        val originalPreferredSize = comboBox.preferredSize
-        val originalMinimumSize = comboBox.minimumSize
-        val originalMaximumSize = comboBox.maximumSize
-        val originalPrototype = swingCombo.prototypeDisplayValue
-        return try {
-            comboBox.preferredSize = null
-            comboBox.minimumSize = null
-            comboBox.maximumSize = null
-            swingCombo.prototypeDisplayValue = swingCombo.selectedItem
-            comboBox.preferredSize.width
-        } finally {
-            swingCombo.prototypeDisplayValue = originalPrototype
-            comboBox.preferredSize = originalPreferredSize
-            comboBox.minimumSize = originalMinimumSize
-            comboBox.maximumSize = originalMaximumSize
-        }
+    private fun updateCompactComboSize(comboBox: ComboBox<*>) {
+        ComboBoxAutoWidthSupport.refreshSelectedItemAutoWidth(comboBox)
     }
 
     private fun createCompactComboRenderer(textProvider: (Any?) -> String): DefaultListCellRenderer {
@@ -4651,27 +4645,7 @@ class ImprovedChatPanel(
         if (currentInteractionMode() != ChatInteractionMode.SPEC) {
             return
         }
-        val title = (specWorkflowComboBox.selectedItem as? SpecWorkflowOption)
-            ?.title
-            ?.trim()
-            .orEmpty()
-        val metrics = specWorkflowComboBox.getFontMetrics(specWorkflowComboBox.font)
-        val padding = JBUI.scale(SPEC_WORKFLOW_COMBO_TEXT_OVERHEAD_PX)
-        val desiredWidth = if (title.isBlank()) {
-            JBUI.scale(SPEC_WORKFLOW_COMBO_MIN_WIDTH)
-        } else {
-            (metrics.stringWidth(title) + padding).coerceIn(
-                JBUI.scale(SPEC_WORKFLOW_COMBO_MIN_WIDTH),
-                JBUI.scale(SPEC_WORKFLOW_COMBO_MAX_WIDTH),
-            )
-        }
-        val height = JBUI.scale(28)
-        val size = Dimension(desiredWidth, height)
-        specWorkflowComboBox.preferredSize = size
-        specWorkflowComboBox.minimumSize = size
-        specWorkflowComboBox.maximumSize = size
-        specWorkflowComboBox.revalidate()
-        specWorkflowComboBox.repaint()
+        ComboBoxAutoWidthSupport.refreshSelectedItemAutoWidth(specWorkflowComboBox)
     }
 
     private fun ellipsizeToWidth(text: String, maxWidth: Int, metrics: FontMetrics): String {

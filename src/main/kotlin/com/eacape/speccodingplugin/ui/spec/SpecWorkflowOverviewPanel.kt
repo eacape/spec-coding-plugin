@@ -5,6 +5,8 @@ import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
+import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
@@ -26,6 +28,7 @@ import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JLabel
+import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 
@@ -152,6 +155,12 @@ internal class SpecWorkflowOverviewPanel(
     init {
         isOpaque = false
         buildContent()
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = templateTargetComboBox,
+            minWidth = JBUI.scale(96),
+            maxWidth = JBUI.scale(240),
+            height = templateTargetComboBox.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(28),
+        )
         add(emptyLabel, BorderLayout.CENTER)
         add(contentPanel, BorderLayout.NORTH)
         refreshLocalizedTexts()
@@ -188,8 +197,7 @@ internal class SpecWorkflowOverviewPanel(
         checklistTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.checklist.title")
         stageFlowTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.stageFlow.title")
         detailsTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.secondary.title")
-        templateSwitchButton.text = SpecCodingBundle.message("spec.toolwindow.overview.template.switch")
-        templateRollbackButton.text = SpecCodingBundle.message("spec.toolwindow.overview.template.rollback")
+        applyTemplateButtonPresentation()
         stageStepperPanel.refreshLocalizedTexts()
         if (currentState != null) {
             renderCurrentState()
@@ -209,7 +217,15 @@ internal class SpecWorkflowOverviewPanel(
             "template" to templateValueLabel.text.orEmpty(),
             "templateHistory" to templateHistoryValueLabel.text.orEmpty(),
             "templateSwitchEnabled" to templateSwitchButton.isEnabled.toString(),
+            "templateSwitchText" to templateSwitchButton.text.orEmpty(),
+            "templateSwitchTooltip" to templateSwitchButton.toolTipText.orEmpty(),
+            "templateSwitchHasIcon" to (templateSwitchButton.icon != null).toString(),
+            "templateSwitchRolloverEnabled" to templateSwitchButton.isRolloverEnabled.toString(),
             "templateRollbackEnabled" to templateRollbackButton.isEnabled.toString(),
+            "templateRollbackText" to templateRollbackButton.text.orEmpty(),
+            "templateRollbackTooltip" to templateRollbackButton.toolTipText.orEmpty(),
+            "templateRollbackHasIcon" to (templateRollbackButton.icon != null).toString(),
+            "templateRollbackRolloverEnabled" to templateRollbackButton.isRolloverEnabled.toString(),
             "currentStage" to currentStageValueLabel.text.orEmpty(),
             "activeStages" to activeStagesValueLabel.text.orEmpty(),
             "nextStage" to nextStageValueLabel.text.orEmpty(),
@@ -488,15 +504,21 @@ internal class SpecWorkflowOverviewPanel(
         return JButton().apply {
             isFocusable = false
             addActionListener { onClick() }
-            font = JBUI.Fonts.smallFont()
-            foreground = ACTION_FG
-            background = ACTION_BG
-            border = BorderFactory.createCompoundBorder(
-                SpecUiStyle.roundedLineBorder(ACTION_BORDER, JBUI.scale(12)),
-                JBUI.Borders.empty(2, 8, 2, 8),
-            )
-            SpecUiStyle.applyRoundRect(this, 12)
+            SpecUiStyle.styleIconActionButton(this, size = 24, arc = 12)
         }
+    }
+
+    private fun applyTemplateButtonPresentation() {
+        SpecUiStyle.configureIconActionButton(
+            button = templateSwitchButton,
+            icon = TEMPLATE_SWITCH_ICON,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.overview.template.switch"),
+        )
+        SpecUiStyle.configureIconActionButton(
+            button = templateRollbackButton,
+            icon = TEMPLATE_ROLLBACK_ICON,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.overview.template.rollback"),
+        )
     }
 
     private fun workflowStatusText(status: WorkflowStatus): String {
@@ -542,9 +564,10 @@ internal class SpecWorkflowOverviewPanel(
         private val CHECKLIST_FG = JBColor(Color(74, 86, 105), Color(189, 199, 214))
         private val CARD_BG = JBColor(Color(250, 252, 255), Color(55, 61, 71))
         private val CARD_BORDER = JBColor(Color(209, 220, 237), Color(85, 96, 111))
-        private val ACTION_BG = JBColor(Color(241, 247, 255), Color(69, 76, 88))
-        private val ACTION_FG = JBColor(Color(45, 71, 111), Color(206, 218, 239))
-        private val ACTION_BORDER = JBColor(Color(180, 199, 226), Color(101, 116, 138))
+        private val TEMPLATE_SWITCH_ICON: Icon =
+            IconLoader.getIcon("/icons/spec-workflow-template-switch.svg", SpecWorkflowOverviewPanel::class.java)
+        private val TEMPLATE_ROLLBACK_ICON: Icon =
+            IconLoader.getIcon("/icons/spec-workflow-template-rollback.svg", SpecWorkflowOverviewPanel::class.java)
 
         private val PASS_FG = JBColor(Color(39, 94, 57), Color(194, 232, 204))
 

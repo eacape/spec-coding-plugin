@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecDeltaBaselineRef
 import com.eacape.speccodingplugin.spec.VerificationConclusion
 import com.eacape.speccodingplugin.spec.VerifyRunHistoryEntry
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
@@ -94,7 +95,6 @@ internal class SpecWorkflowVerifyDeltaPanel(
             label.text = baselineChoiceLabel(value)
         }
         isEnabled = false
-        preferredSize = Dimension(JBUI.scale(240), JBUI.scale(24))
     }
     private val runVerifyButton = JButton().apply {
         isFocusable = false
@@ -150,6 +150,12 @@ internal class SpecWorkflowVerifyDeltaPanel(
         minimumSize = JBUI.size(220, 150)
         add(buildHeader(), BorderLayout.NORTH)
         add(buildContent(), BorderLayout.CENTER)
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = baselineComboBox,
+            minWidth = JBUI.scale(120),
+            maxWidth = JBUI.scale(320),
+            height = JBUI.scale(24),
+        )
 
         baselineComboBox.addActionListener {
             updateControls()
@@ -176,6 +182,7 @@ internal class SpecWorkflowVerifyDeltaPanel(
         updateHeader()
         updateDetail()
         baselineComboBox.repaint()
+        ComboBoxAutoWidthSupport.refreshSelectedItemAutoWidth(baselineComboBox)
     }
 
     fun showEmpty() {

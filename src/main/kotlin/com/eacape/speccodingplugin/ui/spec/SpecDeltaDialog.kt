@@ -7,6 +7,7 @@ import com.eacape.speccodingplugin.spec.SpecDeltaExportResult
 import com.eacape.speccodingplugin.spec.SpecDeltaStatus
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflowDelta
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.intellij.diff.DiffManager
 import com.intellij.diff.DiffContentFactory
@@ -138,6 +139,12 @@ class SpecDeltaDialog(
     override fun createActions() = arrayOf(okAction)
 
     private fun setupTable() {
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = statusFilterCombo,
+            minWidth = JBUI.scale(82),
+            maxWidth = JBUI.scale(150),
+            height = statusFilterCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
+        )
         deltaTable.rowSorter = tableSorter
         deltaTable.columnModel.getColumn(1).cellRenderer = object : DefaultTableCellRenderer() {
             override fun getTableCellRendererComponent(

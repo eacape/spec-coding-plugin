@@ -9,6 +9,7 @@ import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.llm.MockLlmProvider
 import com.eacape.speccodingplugin.prompt.PromptScope
 import com.eacape.speccodingplugin.prompt.PromptTemplate
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ui.ComboBox
@@ -445,8 +446,8 @@ class PromptEditorDialog(
         aiModelCombo.renderer = SimpleListCellRenderer.create<ModelInfo> { label, value, _ ->
             label.text = value?.name.orEmpty()
         }
-        styleAiSelectorCombo(aiProviderCombo, preferredWidth = 140)
-        styleAiSelectorCombo(aiModelCombo, preferredWidth = 240)
+        styleAiSelectorCombo(aiProviderCombo, minWidth = 72, maxWidth = 180)
+        styleAiSelectorCombo(aiModelCombo, minWidth = 96, maxWidth = 320)
 
         aiProviderCombo.addActionListener {
             if (syncingAiSelectors) return@addActionListener
@@ -461,12 +462,7 @@ class PromptEditorDialog(
         refreshAiProviderCombo(preserveSelection = false)
     }
 
-    private fun styleAiSelectorCombo(comboBox: ComboBox<*>, preferredWidth: Int) {
-        val width = JBUI.scale(preferredWidth)
-        val height = JBUI.scale(28)
-        comboBox.preferredSize = JBUI.size(width, height)
-        comboBox.minimumSize = JBUI.size(JBUI.scale(100), height)
-        comboBox.maximumSize = JBUI.size(JBUI.scale(320), height)
+    private fun styleAiSelectorCombo(comboBox: ComboBox<*>, minWidth: Int, maxWidth: Int) {
         comboBox.putClientProperty("JComponent.roundRect", false)
         comboBox.putClientProperty("JComboBox.isBorderless", true)
         comboBox.putClientProperty("ComboBox.isBorderless", true)
@@ -479,6 +475,12 @@ class PromptEditorDialog(
         )
         comboBox.isOpaque = true
         comboBox.font = JBUI.Fonts.smallFont()
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = comboBox,
+            minWidth = JBUI.scale(minWidth),
+            maxWidth = JBUI.scale(maxWidth),
+            height = JBUI.scale(28),
+        )
     }
 
     private fun refreshAiProviderCombo(preserveSelection: Boolean) {

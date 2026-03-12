@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.StartupUiUtil
@@ -12,6 +13,8 @@ import java.awt.RenderingHints
 import java.awt.geom.RoundRectangle2D
 import javax.swing.AbstractButton
 import javax.swing.BorderFactory
+import javax.swing.Icon
+import javax.swing.JButton
 import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.border.AbstractBorder
@@ -46,6 +49,35 @@ internal object SpecUiStyle {
     fun applyRoundRect(button: AbstractButton, arc: Int) {
         button.putClientProperty("JButton.buttonType", "roundRect")
         button.putClientProperty("JComponent.roundRectArc", JBUI.scale(arc))
+    }
+
+    fun configureIconActionButton(button: JButton, icon: Icon, tooltip: String) {
+        button.text = ""
+        button.icon = icon
+        button.disabledIcon = IconLoader.getDisabledIcon(icon)
+        button.iconTextGap = 0
+        button.toolTipText = tooltip
+        button.accessibleContext?.accessibleName = tooltip
+        button.accessibleContext?.accessibleDescription = tooltip
+    }
+
+    fun styleIconActionButton(
+        button: JButton,
+        size: Int = 24,
+        arc: Int = 10,
+    ) {
+        button.isFocusable = false
+        button.isFocusPainted = false
+        button.isContentAreaFilled = true
+        button.isOpaque = true
+        button.margin = JBUI.insets(0)
+        applyRoundRect(button, arc)
+        installIconActionButtonCursorTracking(button)
+        installIconActionButtonStateTracking(button)
+        applyIconActionButtonVisualState(button)
+        val scaledSize = JBUI.scale(size)
+        button.preferredSize = JBUI.size(scaledSize, scaledSize)
+        button.minimumSize = button.preferredSize
     }
 
     fun applySlimHorizontalScrollBar(scrollPane: JScrollPane, height: Int = 7) {
@@ -121,6 +153,51 @@ internal object SpecUiStyle {
                 Color(87, 94, 105),
             ),
             drawDarkBorder = true,
+        )
+    }
+
+    private fun installIconActionButtonStateTracking(button: JButton) {
+        if (button.getClientProperty("spec.iconActionButton.stateTrackingInstalled") == true) return
+        button.putClientProperty("spec.iconActionButton.stateTrackingInstalled", true)
+        button.isRolloverEnabled = true
+        button.addChangeListener { applyIconActionButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") { applyIconActionButtonVisualState(button) }
+    }
+
+    private fun installIconActionButtonCursorTracking(button: JButton) {
+        if (button.getClientProperty("spec.iconActionButton.cursorTrackingInstalled") == true) return
+        button.putClientProperty("spec.iconActionButton.cursorTrackingInstalled", true)
+        updateIconActionButtonCursor(button)
+        button.addPropertyChangeListener("enabled") { updateIconActionButtonCursor(button) }
+    }
+
+    private fun updateIconActionButtonCursor(button: JButton) {
+        button.cursor = if (button.isEnabled) {
+            Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        } else {
+            Cursor.getDefaultCursor()
+        }
+    }
+
+    private fun applyIconActionButtonVisualState(button: JButton) {
+        val model = button.model
+        val background = when {
+            !button.isEnabled -> ICON_BUTTON_BG_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BG_ACTIVE
+            model.isRollover -> ICON_BUTTON_BG_HOVER
+            else -> ICON_BUTTON_BG
+        }
+        val borderColor = when {
+            !button.isEnabled -> ICON_BUTTON_BORDER_DISABLED
+            model.isPressed || model.isSelected -> ICON_BUTTON_BORDER_ACTIVE
+            model.isRollover -> ICON_BUTTON_BORDER_HOVER
+            else -> ICON_BUTTON_BORDER
+        }
+        val borderThickness = if (model.isPressed || model.isSelected) JBUI.scale(2) else 1
+        button.background = background
+        button.border = BorderFactory.createCompoundBorder(
+            roundedLineBorder(borderColor, JBUI.scale(10), thickness = borderThickness),
+            JBUI.Borders.empty(1),
         )
     }
 
@@ -261,4 +338,13 @@ internal object SpecUiStyle {
             return insets
         }
     }
+
+    private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
+    private val ICON_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(104, 116, 134))
+    private val ICON_BUTTON_BG_HOVER = JBColor(Color(236, 246, 255), Color(76, 86, 100))
+    private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(124, 167, 229), Color(124, 158, 205))
+    private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 255), Color(84, 97, 116))
+    private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(89, 136, 208), Color(143, 182, 232))
+    private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
+    private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
 }

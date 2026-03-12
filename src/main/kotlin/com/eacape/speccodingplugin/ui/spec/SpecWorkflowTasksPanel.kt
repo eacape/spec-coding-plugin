@@ -3,8 +3,10 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.StructuredTask
 import com.eacape.speccodingplugin.spec.TaskStatus
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
@@ -26,6 +28,7 @@ import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
+import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
@@ -68,24 +71,16 @@ internal class SpecWorkflowTasksPanel(
             label.text = value?.name.orEmpty()
         }
         isEnabled = false
+        font = JBUI.Fonts.smallFont()
     }
-    private val applyStatusButton = JButton().apply {
-        isEnabled = false
-        isFocusable = false
-        SpecUiStyle.applyRoundRect(this, 14)
-        addActionListener { handleApplyStatus() }
+    private val applyStatusButton = createIconActionButton {
+        handleApplyStatus()
     }
-    private val editDependsOnButton = JButton().apply {
-        isEnabled = false
-        isFocusable = false
-        SpecUiStyle.applyRoundRect(this, 14)
-        addActionListener { handleEditDependsOn() }
+    private val editDependsOnButton = createIconActionButton {
+        handleEditDependsOn()
     }
-    private val editRelatedFilesButton = JButton().apply {
-        isEnabled = false
-        isFocusable = false
-        SpecUiStyle.applyRoundRect(this, 14)
-        addActionListener { handleEditRelatedFiles() }
+    private val editRelatedFilesButton = createIconActionButton {
+        handleEditRelatedFiles()
     }
 
     private var currentWorkflowId: String? = null
@@ -121,9 +116,7 @@ internal class SpecWorkflowTasksPanel(
 
     fun refreshLocalizedTexts() {
         headerTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.tasks.title")
-        applyStatusButton.text = SpecCodingBundle.message("spec.toolwindow.tasks.status.apply")
-        editDependsOnButton.text = SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.edit")
-        editRelatedFilesButton.text = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit")
+        applyActionButtonPresentation()
         tasksList.emptyText.text = SpecCodingBundle.message("spec.toolwindow.tasks.empty")
         updateHeader()
     }
@@ -185,6 +178,19 @@ internal class SpecWorkflowTasksPanel(
             "headerRefreshed" to headerRefreshedLabel.text.orEmpty(),
             "tasks" to tasks,
             "selectedTaskId" to selectedId,
+            "statusComboHeight" to statusComboBox.preferredSize.height.toString(),
+            "applyText" to applyStatusButton.text.orEmpty(),
+            "applyTooltip" to applyStatusButton.toolTipText.orEmpty(),
+            "applyHasIcon" to (applyStatusButton.icon != null).toString(),
+            "applyRolloverEnabled" to applyStatusButton.isRolloverEnabled.toString(),
+            "dependsOnText" to editDependsOnButton.text.orEmpty(),
+            "dependsOnTooltip" to editDependsOnButton.toolTipText.orEmpty(),
+            "dependsOnHasIcon" to (editDependsOnButton.icon != null).toString(),
+            "dependsOnRolloverEnabled" to editDependsOnButton.isRolloverEnabled.toString(),
+            "relatedFilesText" to editRelatedFilesButton.text.orEmpty(),
+            "relatedFilesTooltip" to editRelatedFilesButton.toolTipText.orEmpty(),
+            "relatedFilesHasIcon" to (editRelatedFilesButton.icon != null).toString(),
+            "relatedFilesRolloverEnabled" to editRelatedFilesButton.isRolloverEnabled.toString(),
             "applyEnabled" to applyStatusButton.isEnabled.toString(),
             "dependsOnEnabled" to editDependsOnButton.isEnabled.toString(),
             "relatedFilesEnabled" to editRelatedFilesButton.isEnabled.toString(),
@@ -220,7 +226,12 @@ internal class SpecWorkflowTasksPanel(
     }
 
     private fun buildControls(): JPanel {
-        statusComboBox.preferredSize = JBUI.size(JBUI.scale(120), JBUI.scale(24))
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = statusComboBox,
+            minWidth = JBUI.scale(88),
+            maxWidth = JBUI.scale(220),
+            height = JBUI.scale(28),
+        )
         val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
             border = JBUI.Borders.emptyTop(4)
@@ -237,6 +248,33 @@ internal class SpecWorkflowTasksPanel(
             isOpaque = false
             add(row, BorderLayout.CENTER)
         }
+    }
+
+    private fun createIconActionButton(onClick: () -> Unit): JButton {
+        return JButton().apply {
+            isEnabled = false
+            isFocusable = false
+            addActionListener { onClick() }
+            SpecUiStyle.styleIconActionButton(this, size = 24, arc = 12)
+        }
+    }
+
+    private fun applyActionButtonPresentation() {
+        SpecUiStyle.configureIconActionButton(
+            button = applyStatusButton,
+            icon = APPLY_STATUS_ICON,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.status.apply"),
+        )
+        SpecUiStyle.configureIconActionButton(
+            button = editDependsOnButton,
+            icon = EDIT_DEPENDS_ON_ICON,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.edit"),
+        )
+        SpecUiStyle.configureIconActionButton(
+            button = editRelatedFilesButton,
+            icon = EDIT_RELATED_FILES_ICON,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"),
+        )
     }
 
     private fun updateHeader() {
@@ -524,5 +562,11 @@ internal class SpecWorkflowTasksPanel(
         private val HEADER_FG = JBColor(Color(35, 40, 47), Color(222, 226, 232))
         private val HEADER_SECONDARY_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
         private val REFRESHED_AT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+        private val APPLY_STATUS_ICON: Icon =
+            IconLoader.getIcon("/icons/spec-task-status-apply.svg", SpecWorkflowTasksPanel::class.java)
+        private val EDIT_DEPENDS_ON_ICON: Icon =
+            IconLoader.getIcon("/icons/spec-task-depends-edit.svg", SpecWorkflowTasksPanel::class.java)
+        private val EDIT_RELATED_FILES_ICON: Icon =
+            IconLoader.getIcon("/icons/spec-task-related-files-edit.svg", SpecWorkflowTasksPanel::class.java)
     }
 }

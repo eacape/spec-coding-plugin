@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.CollectionComboBoxModel
@@ -69,7 +70,12 @@ class SpecBaselineSelectDialog(
         form.add(javax.swing.Box.createVerticalStrut(4))
 
         baselineCombo.alignmentX = JComponent.LEFT_ALIGNMENT
-        baselineCombo.maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(30))
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = baselineCombo,
+            minWidth = JBUI.scale(160),
+            maxWidth = JBUI.scale(520),
+            height = JBUI.scale(30),
+        )
         form.add(baselineCombo)
         form.add(javax.swing.Box.createVerticalStrut(10))
 

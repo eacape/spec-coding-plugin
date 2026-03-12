@@ -9,6 +9,7 @@ import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
 import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.window.GlobalConfigSyncService
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.ComboBox
@@ -107,10 +108,32 @@ class SpecCodingSettingsConfigurable : Configurable {
         interfaceLanguageCombo.addActionListener {
             applyLanguageImmediately(reason = "settings-configurable-language-immediate")
         }
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = defaultProviderCombo,
+            minWidth = JBUI.scale(72),
+            maxWidth = JBUI.scale(200),
+            height = defaultProviderCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = defaultModelCombo,
+            minWidth = JBUI.scale(96),
+            maxWidth = JBUI.scale(280),
+            height = defaultModelCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = interfaceLanguageCombo,
+            minWidth = JBUI.scale(92),
+            maxWidth = JBUI.scale(220),
+            height = interfaceLanguageCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
+        )
         detectCliButton.text = SpecCodingBundle.message("settings.cli.detectButton")
         detectCliButton.addActionListener { detectCliTools() }
 
         updateCliStatusLabels()
+
+        val defaultProviderComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(defaultProviderCombo)
+        val defaultModelComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(defaultModelCombo)
+        val interfaceLanguageComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(interfaceLanguageCombo)
 
         val cliDetectPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
         cliDetectPanel.isOpaque = false
@@ -125,9 +148,9 @@ class SpecCodingSettingsConfigurable : Configurable {
             .addLabeledComponent(SpecCodingBundle.message("settings.cli.codexLabel"), codexCliStatusLabel)
             .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.general")}</b></html>"))
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderCombo)
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultModel"), defaultModelCombo)
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.interfaceLanguage"), interfaceLanguageCombo)
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderComboHost)
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultModel"), defaultModelComboHost)
+            .addLabeledComponent(SpecCodingBundle.message("settings.general.interfaceLanguage"), interfaceLanguageComboHost)
             .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.teamSync")}</b></html>"))
             .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.promptRepoUrl"), teamPromptRepoUrlField)

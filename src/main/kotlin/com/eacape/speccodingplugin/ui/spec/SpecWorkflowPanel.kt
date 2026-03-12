@@ -13,6 +13,7 @@ import com.eacape.speccodingplugin.llm.MockLlmProvider
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.spec.*
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.RefreshFeedback
 import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
@@ -832,17 +833,12 @@ class SpecWorkflowPanel(
         modelComboBox.addActionListener {
             updateSelectorTooltips()
         }
-        configureToolbarCombo(providerComboBox, preferredWidth = 96)
-        configureToolbarCombo(modelComboBox, preferredWidth = 136)
+        configureToolbarCombo(providerComboBox, minWidth = 56, maxWidth = 160)
+        configureToolbarCombo(modelComboBox, minWidth = 72, maxWidth = 260)
         refreshProviderCombo(preserveSelection = false)
     }
 
-    private fun configureToolbarCombo(comboBox: ComboBox<*>, preferredWidth: Int) {
-        val width = JBUI.scale(preferredWidth)
-        val height = JBUI.scale(24)
-        comboBox.preferredSize = JBUI.size(width, height)
-        comboBox.minimumSize = JBUI.size(JBUI.scale(92), height)
-        comboBox.maximumSize = JBUI.size(JBUI.scale(260), height)
+    private fun configureToolbarCombo(comboBox: ComboBox<*>, minWidth: Int, maxWidth: Int) {
         comboBox.putClientProperty("JComponent.roundRect", false)
         comboBox.putClientProperty("JComboBox.isBorderless", true)
         comboBox.putClientProperty("ComboBox.isBorderless", true)
@@ -855,6 +851,12 @@ class SpecWorkflowPanel(
         )
         comboBox.isOpaque = true
         comboBox.font = JBUI.Fonts.smallFont()
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = comboBox,
+            minWidth = JBUI.scale(minWidth),
+            maxWidth = JBUI.scale(maxWidth),
+            height = JBUI.scale(24),
+        )
     }
 
     private fun refreshProviderCombo(preserveSelection: Boolean) {

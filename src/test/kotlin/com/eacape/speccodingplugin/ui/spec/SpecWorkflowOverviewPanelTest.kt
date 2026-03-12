@@ -79,7 +79,21 @@ class SpecWorkflowOverviewPanelTest {
         )
         assertTrue(snapshot.getValue("templateHistory").contains(SpecWorkflowOverviewPresenter.templateLabel(WorkflowTemplate.FULL_SPEC)))
         assertEquals("true", snapshot.getValue("templateSwitchEnabled"))
+        assertEquals("", snapshot.getValue("templateSwitchText"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.template.switch"),
+            snapshot.getValue("templateSwitchTooltip"),
+        )
+        assertEquals("true", snapshot.getValue("templateSwitchHasIcon"))
+        assertEquals("true", snapshot.getValue("templateSwitchRolloverEnabled"))
         assertEquals("true", snapshot.getValue("templateRollbackEnabled"))
+        assertEquals("", snapshot.getValue("templateRollbackText"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.template.rollback"),
+            snapshot.getValue("templateRollbackTooltip"),
+        )
+        assertEquals("true", snapshot.getValue("templateRollbackHasIcon"))
+        assertEquals("true", snapshot.getValue("templateRollbackRolloverEnabled"))
         assertEquals(SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS), snapshot.getValue("currentStage"))
         assertTrue(snapshot.getValue("activeStages").contains(SpecWorkflowOverviewPresenter.stageLabel(StageId.REQUIREMENTS)))
         assertEquals(SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT), snapshot.getValue("nextStage"))

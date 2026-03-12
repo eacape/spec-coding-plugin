@@ -52,6 +52,12 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
         comboBox.background = JBColor(Color(248, 250, 252), Color(46, 50, 56))
         comboBox.border = JBUI.Borders.empty(0)
         comboBox.isOpaque = false
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = comboBox,
+            minWidth = JBUI.scale(MODE_COMBO_MIN_WIDTH),
+            maxWidth = JBUI.scale(MODE_COMBO_MAX_WIDTH),
+            height = JBUI.scale(MODE_COMBO_HEIGHT),
+        )
         add(label)
         add(comboBox)
 
@@ -179,34 +185,7 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
     }
 
     private fun updateComboWidth() {
-        val selectedMode = comboBox.selectedItem as? OperationMode ?: OperationMode.DEFAULT
-        val width = measureIntrinsicComboWidth(selectedMode)
-            .coerceIn(JBUI.scale(MODE_COMBO_MIN_WIDTH), JBUI.scale(MODE_COMBO_MAX_WIDTH))
-        val size = Dimension(width, JBUI.scale(MODE_COMBO_HEIGHT))
-        comboBox.minimumSize = size
-        comboBox.preferredSize = size
-        comboBox.maximumSize = size
-        comboBox.revalidate()
-        comboBox.repaint()
-    }
-
-    private fun measureIntrinsicComboWidth(mode: OperationMode): Int {
-        val originalPreferredSize = comboBox.preferredSize
-        val originalMinimumSize = comboBox.minimumSize
-        val originalMaximumSize = comboBox.maximumSize
-        val originalPrototype = comboBox.prototypeDisplayValue
-        return try {
-            comboBox.preferredSize = null
-            comboBox.minimumSize = null
-            comboBox.maximumSize = null
-            comboBox.prototypeDisplayValue = mode
-            comboBox.preferredSize.width
-        } finally {
-            comboBox.prototypeDisplayValue = originalPrototype
-            comboBox.preferredSize = originalPreferredSize
-            comboBox.minimumSize = originalMinimumSize
-            comboBox.maximumSize = originalMaximumSize
-        }
+        ComboBoxAutoWidthSupport.refreshSelectedItemAutoWidth(comboBox)
     }
 
     private fun localizedModeLabelText(): String {

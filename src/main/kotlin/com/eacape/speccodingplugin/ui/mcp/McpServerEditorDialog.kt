@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.mcp
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.mcp.McpServerConfig
 import com.eacape.speccodingplugin.mcp.TransportType
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
@@ -274,9 +275,13 @@ class McpServerEditorDialog(
                     SpecUiStyle.roundedLineBorder(INPUT_BORDER, JBUI.scale(10)),
                     JBUI.Borders.empty(2, 8, 2, 8),
                 )
-                field.preferredSize = Dimension(0, JBUI.scale(30))
-                field.minimumSize = Dimension(0, JBUI.scale(30))
-                field
+                ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+                    comboBox = field,
+                    minWidth = JBUI.scale(96),
+                    maxWidth = JBUI.scale(220),
+                    height = JBUI.scale(30),
+                )
+                ComboBoxAutoWidthSupport.createLeftAlignedHost(field)
             }
 
             else -> field

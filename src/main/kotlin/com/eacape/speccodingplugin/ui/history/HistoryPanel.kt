@@ -1,7 +1,8 @@
-package com.eacape.speccodingplugin.ui.history
+﻿package com.eacape.speccodingplugin.ui.history
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.ui.ChatToolWindowFactory
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.session.ConversationSession
 import com.eacape.speccodingplugin.session.SessionContextSnapshot
 import com.eacape.speccodingplugin.session.SessionFilter
@@ -107,8 +108,12 @@ class HistoryPanel(
                 return this
             }
         }
-        filterCombo.preferredSize = JBUI.size(92, 30)
-        filterCombo.minimumSize = JBUI.size(82, 30)
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = filterCombo,
+            minWidth = JBUI.scale(70),
+            maxWidth = JBUI.scale(140),
+            height = JBUI.scale(30),
+        )
         filterCombo.addActionListener { refreshSessions() }
 
         val searchLabel = JBLabel(SpecCodingBundle.message("history.search.label"))
@@ -379,3 +384,4 @@ class HistoryPanel(
         private val PANEL_SECTION_BORDER = JBColor(Color(211, 218, 232), Color(79, 85, 96))
     }
 }
+

@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.Violation
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
@@ -118,6 +119,12 @@ internal class SpecWorkflowGateDetailsPanel(
             },
             BorderLayout.CENTER,
         )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = severityFilterComboBox,
+            minWidth = JBUI.scale(82),
+            maxWidth = JBUI.scale(170),
+            height = severityFilterComboBox.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(28),
+        )
         refreshLocalizedTexts()
         showEmpty()
 
@@ -152,6 +159,7 @@ internal class SpecWorkflowGateDetailsPanel(
         searchField.emptyText.text = SpecCodingBundle.message("spec.toolwindow.gate.filter.search")
         severityFilterComboBox.toolTipText = SpecCodingBundle.message("spec.toolwindow.gate.filter.severity.tooltip")
         severityFilterComboBox.repaint()
+        ComboBoxAutoWidthSupport.refreshSelectedItemAutoWidth(severityFilterComboBox)
         updateHeader()
         applyFilters()
     }

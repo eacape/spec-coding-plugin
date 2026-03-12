@@ -58,6 +58,18 @@ class SpecCodingToolWindowPanel(
 
         promptComboBox.isEnabled = false
         promptComboBox.renderer = PromptTemplateCellRenderer()
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = providerComboBox,
+            minWidth = JBUI.scale(72),
+            maxWidth = JBUI.scale(180),
+            height = providerComboBox.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = promptComboBox,
+            minWidth = JBUI.scale(100),
+            maxWidth = JBUI.scale(260),
+            height = promptComboBox.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
+        )
         promptComboBox.addActionListener {
             val selected = promptComboBox.selectedItem as? PromptTemplate ?: return@addActionListener
             ApplicationManager.getApplication().executeOnPooledThread {

@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
 import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
 import com.eacape.speccodingplugin.llm.ModelInfo
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
@@ -51,6 +52,18 @@ class McpAiQuickSetupDialog(
         modelCombo.renderer = SimpleListCellRenderer.create<ModelChoice> { label, value, _ ->
             label.text = value?.label.orEmpty()
         }
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = providerCombo,
+            minWidth = JBUI.scale(72),
+            maxWidth = JBUI.scale(180),
+            height = providerCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
+        )
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = modelCombo,
+            minWidth = JBUI.scale(96),
+            maxWidth = JBUI.scale(320),
+            height = modelCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
+        )
         providerCombo.addActionListener { refreshModelOptions(preferredModelId) }
 
         val initialProvider = availableProviders.firstOrNull { it == preferredProviderId }
@@ -74,10 +87,8 @@ class McpAiQuickSetupDialog(
         val controls = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0))
         controls.isOpaque = false
         controls.add(JBLabel(SpecCodingBundle.message("mcp.ai.dialog.provider")))
-        providerCombo.preferredSize = Dimension(JBUI.scale(140), providerCombo.preferredSize.height)
         controls.add(providerCombo)
         controls.add(JBLabel(SpecCodingBundle.message("mcp.ai.dialog.model")))
-        modelCombo.preferredSize = Dimension(JBUI.scale(220), modelCombo.preferredSize.height)
         controls.add(modelCombo)
 
         inputArea.lineWrap = true

@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.StageProgress
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
@@ -12,6 +13,7 @@ import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
+import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.SwingConstants
 
@@ -25,17 +27,17 @@ internal class SpecWorkflowStageStepperPanel(
     }
     private val advanceButton = JButton().apply {
         isFocusable = false
-        SpecUiStyle.applyRoundRect(this, 14)
+        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 14)
         addActionListener { onAdvanceRequested() }
     }
     private val jumpButton = JButton().apply {
         isFocusable = false
-        SpecUiStyle.applyRoundRect(this, 14)
+        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 14)
         addActionListener { onJumpRequested() }
     }
     private val rollbackButton = JButton().apply {
         isFocusable = false
-        SpecUiStyle.applyRoundRect(this, 14)
+        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 14)
         addActionListener { onRollbackRequested() }
     }
     private val controlsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
@@ -66,9 +68,7 @@ internal class SpecWorkflowStageStepperPanel(
     }
 
     fun refreshLocalizedTexts() {
-        advanceButton.text = SpecCodingBundle.message("spec.action.advance.text")
-        jumpButton.text = SpecCodingBundle.message("spec.action.jump.text")
-        rollbackButton.text = SpecCodingBundle.message("spec.action.rollback.text")
+        applyActionButtonPresentation()
         render()
     }
 
@@ -85,6 +85,18 @@ internal class SpecWorkflowStageStepperPanel(
             "stageChipInsets" to firstStageChip?.border?.getBorderInsets(firstStageChip)?.let { insets ->
                 "${insets.top},${insets.left},${insets.bottom},${insets.right}"
             }.orEmpty(),
+            "advanceText" to advanceButton.text.orEmpty(),
+            "advanceTooltip" to advanceButton.toolTipText.orEmpty(),
+            "advanceHasIcon" to (advanceButton.icon != null).toString(),
+            "advanceRolloverEnabled" to advanceButton.isRolloverEnabled.toString(),
+            "jumpText" to jumpButton.text.orEmpty(),
+            "jumpTooltip" to jumpButton.toolTipText.orEmpty(),
+            "jumpHasIcon" to (jumpButton.icon != null).toString(),
+            "jumpRolloverEnabled" to jumpButton.isRolloverEnabled.toString(),
+            "rollbackText" to rollbackButton.text.orEmpty(),
+            "rollbackTooltip" to rollbackButton.toolTipText.orEmpty(),
+            "rollbackHasIcon" to (rollbackButton.icon != null).toString(),
+            "rollbackRolloverEnabled" to rollbackButton.isRolloverEnabled.toString(),
             "advanceEnabled" to advanceButton.isEnabled.toString(),
             "jumpEnabled" to jumpButton.isEnabled.toString(),
             "rollbackEnabled" to rollbackButton.isEnabled.toString(),
@@ -131,6 +143,24 @@ internal class SpecWorkflowStageStepperPanel(
         rollbackButton.isEnabled = state.rollbackTargets.isNotEmpty()
         revalidate()
         repaint()
+    }
+
+    private fun applyActionButtonPresentation() {
+        SpecUiStyle.configureIconActionButton(
+            button = advanceButton,
+            icon = ADVANCE_ICON,
+            tooltip = SpecCodingBundle.message("spec.action.advance.text"),
+        )
+        SpecUiStyle.configureIconActionButton(
+            button = jumpButton,
+            icon = JUMP_ICON,
+            tooltip = SpecCodingBundle.message("spec.action.jump.text"),
+        )
+        SpecUiStyle.configureIconActionButton(
+            button = rollbackButton,
+            icon = ROLLBACK_ICON,
+            tooltip = SpecCodingBundle.message("spec.action.rollback.text"),
+        )
     }
 
     private fun createStageChip(stage: SpecWorkflowStageStepState): JPanel {
@@ -213,6 +243,12 @@ internal class SpecWorkflowStageStepperPanel(
     )
 
     companion object {
+        private val ADVANCE_ICON: Icon =
+            IconLoader.getIcon("/icons/spec-workflow-advance.svg", SpecWorkflowStageStepperPanel::class.java)
+        private val JUMP_ICON: Icon =
+            IconLoader.getIcon("/icons/spec-workflow-jump.svg", SpecWorkflowStageStepperPanel::class.java)
+        private val ROLLBACK_ICON: Icon =
+            IconLoader.getIcon("/icons/spec-workflow-stage-rollback.svg", SpecWorkflowStageStepperPanel::class.java)
         private val CONNECTOR_FG = JBColor(Color(132, 141, 153), Color(122, 130, 142))
 
         private val CURRENT_BG = JBColor(Color(241, 246, 255), Color(53, 71, 109))

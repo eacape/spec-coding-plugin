@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
+import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.chat.MarkdownRenderer
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ui.DialogWrapper
@@ -204,8 +205,8 @@ class SpecHistoryDiffDialog(
     }
 
     private fun setupToolbarControls() {
-        styleCompactCombo(snapshotCombo, width = 250)
-        styleCompactCombo(compareTargetCombo, width = 250)
+        styleCompactCombo(snapshotCombo, minWidth = 140, maxWidth = 420)
+        styleCompactCombo(compareTargetCombo, minWidth = 140, maxWidth = 420)
         styleNumberSpinner(summaryLinesSpinner, width = 72)
         styleNumberSpinner(keepLatestSpinner, width = 66)
         styleToolbarCheckBox(summaryOnlyCheckBox)
@@ -281,12 +282,7 @@ class SpecHistoryDiffDialog(
         }
     }
 
-    private fun styleCompactCombo(combo: JComboBox<*>, width: Int) {
-        val scaledWidth = JBUI.scale(width)
-        val height = JBUI.scale(28)
-        combo.preferredSize = Dimension(scaledWidth, height)
-        combo.minimumSize = Dimension(JBUI.scale(120), height)
-        combo.maximumSize = Dimension(JBUI.scale(420), height)
+    private fun styleCompactCombo(combo: JComboBox<*>, minWidth: Int, maxWidth: Int) {
         combo.font = JBUI.Fonts.smallFont()
         combo.background = CONTROL_BG
         combo.foreground = CONTROL_FG
@@ -298,6 +294,12 @@ class SpecHistoryDiffDialog(
             JBUI.Borders.empty(0, 6, 0, 6),
         )
         combo.isOpaque = true
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = combo,
+            minWidth = JBUI.scale(minWidth),
+            maxWidth = JBUI.scale(maxWidth),
+            height = JBUI.scale(28),
+        )
     }
 
     private fun styleNumberSpinner(spinner: JSpinner, width: Int) {
