@@ -145,10 +145,10 @@ class SpecWorkflowPanel(
     private val workspaceSummaryMetaLabel = JBLabel()
     private val workspaceSummaryFocusLabel = JBLabel()
     private val workspaceSummaryHintLabel = JBLabel()
-    private val workspaceStageChipLabel = createWorkspaceChipLabel()
-    private val workspaceGateChipLabel = createWorkspaceChipLabel()
-    private val workspaceTasksChipLabel = createWorkspaceChipLabel()
-    private val workspaceVerifyChipLabel = createWorkspaceChipLabel()
+    private val workspaceStageMetric = createWorkspaceSummaryMetric()
+    private val workspaceGateMetric = createWorkspaceSummaryMetric()
+    private val workspaceTasksMetric = createWorkspaceSummaryMetric()
+    private val workspaceVerifyMetric = createWorkspaceSummaryMetric()
     private lateinit var overviewSection: SpecCollapsibleWorkspaceSection
     private lateinit var tasksSection: SpecCollapsibleWorkspaceSection
     private lateinit var gateSection: SpecCollapsibleWorkspaceSection
@@ -399,13 +399,29 @@ class SpecWorkflowPanel(
         component.parent?.remove(component)
     }
 
-    private fun createWorkspaceChipLabel(): JBLabel {
-        return JBLabel().apply {
+    private fun createWorkspaceSummaryMetric(): WorkspaceSummaryMetric {
+        val titleLabel = JBLabel().apply {
+            font = JBUI.Fonts.smallFont().deriveFont(10.5f)
+            foreground = WORKSPACE_SUMMARY_LABEL_FG
+            isOpaque = false
+            border = JBUI.Borders.empty()
+        }
+        val valueLabel = JBLabel().apply {
             font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD, 10.5f)
             isOpaque = false
             border = JBUI.Borders.empty()
-            isVisible = false
         }
+        val root = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(3), 0)).apply {
+            isOpaque = false
+            isVisible = false
+            add(titleLabel)
+            add(valueLabel)
+        }
+        return WorkspaceSummaryMetric(
+            root = root,
+            titleLabel = titleLabel,
+            valueLabel = valueLabel,
+        )
     }
 
     private fun workspaceChipColors(tone: WorkspaceChipTone): WorkspaceChipColors {
@@ -568,12 +584,12 @@ class SpecWorkflowPanel(
             )
             add(titleStack, BorderLayout.CENTER)
         }
-        val chipRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        val chipRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(12), 0)).apply {
             isOpaque = false
-            add(workspaceStageChipLabel)
-            add(workspaceGateChipLabel)
-            add(workspaceTasksChipLabel)
-            add(workspaceVerifyChipLabel)
+            add(workspaceStageMetric.root)
+            add(workspaceGateMetric.root)
+            add(workspaceTasksMetric.root)
+            add(workspaceVerifyMetric.root)
         }
 
         return JPanel(BorderLayout(0, JBUI.scale(6))).apply {
@@ -655,10 +671,10 @@ class SpecWorkflowPanel(
         workspaceSummaryMetaLabel.text = ""
         workspaceSummaryFocusLabel.text = ""
         workspaceSummaryHintLabel.text = ""
-        clearWorkspaceChip(workspaceStageChipLabel)
-        clearWorkspaceChip(workspaceGateChipLabel)
-        clearWorkspaceChip(workspaceTasksChipLabel)
-        clearWorkspaceChip(workspaceVerifyChipLabel)
+        clearWorkspaceMetric(workspaceStageMetric)
+        clearWorkspaceMetric(workspaceGateMetric)
+        clearWorkspaceMetric(workspaceTasksMetric)
+        clearWorkspaceMetric(workspaceVerifyMetric)
         if (::overviewSection.isInitialized) {
             workspaceSections().values.forEach { section ->
                 section.setSummary(null)
@@ -1005,14 +1021,21 @@ class SpecWorkflowPanel(
         workspaceSummaryFocusLabel.text = guidance.headline
         workspaceSummaryHintLabel.text = guidance.summary
 
-        updateWorkspaceChip(
-            label = workspaceStageChipLabel,
-            text = "${SpecWorkflowOverviewPresenter.stageLabel(workflow.currentStage)} | ${workspaceWorkflowStatusText(workflow.status)}",
-            tone = WorkspaceChipTone.INFO,
+        updateWorkspaceMetric(
+            metric = workspaceStageMetric,
+            title = SpecCodingBundle.message("spec.toolwindow.overview.currentStage"),
+            value = buildStageChipText(workflow),
+            tone = when (workflow.status) {
+                WorkflowStatus.COMPLETED -> WorkspaceChipTone.SUCCESS
+                WorkflowStatus.PAUSED -> WorkspaceChipTone.WARNING
+                WorkflowStatus.FAILED -> WorkspaceChipTone.ERROR
+                WorkflowStatus.IN_PROGRESS -> WorkspaceChipTone.INFO
+            },
         )
-        updateWorkspaceChip(
-            label = workspaceGateChipLabel,
-            text = buildGateChipText(gateResult),
+        updateWorkspaceMetric(
+            metric = workspaceGateMetric,
+            title = SpecCodingBundle.message("spec.toolwindow.section.gate"),
+            value = buildGateChipText(gateResult),
             tone = when (gateResult?.status) {
                 GateStatus.ERROR -> WorkspaceChipTone.ERROR
                 GateStatus.WARNING -> WorkspaceChipTone.WARNING
@@ -1020,18 +1043,20 @@ class SpecWorkflowPanel(
                 null -> WorkspaceChipTone.MUTED
             },
         )
-        updateWorkspaceChip(
-            label = workspaceTasksChipLabel,
-            text = buildTasksChipText(tasks),
-            tone = if (tasks.any { it.status == TaskStatus.BLOCKED }) {
-                WorkspaceChipTone.WARNING
-            } else {
-                WorkspaceChipTone.INFO
+        updateWorkspaceMetric(
+            metric = workspaceTasksMetric,
+            title = SpecCodingBundle.message("spec.toolwindow.tasks.title"),
+            value = buildTasksChipText(tasks),
+            tone = when {
+                tasks.any { it.status == TaskStatus.BLOCKED } -> WorkspaceChipTone.WARNING
+                tasks.isNotEmpty() && tasks.all { it.status == TaskStatus.COMPLETED } -> WorkspaceChipTone.SUCCESS
+                else -> WorkspaceChipTone.INFO
             },
         )
-        updateWorkspaceChip(
-            label = workspaceVerifyChipLabel,
-            text = buildVerifyChipText(verifyDeltaState),
+        updateWorkspaceMetric(
+            metric = workspaceVerifyMetric,
+            title = SpecCodingBundle.message("spec.toolwindow.section.verify"),
+            value = buildVerifyChipText(verifyDeltaState),
             tone = when (verifyDeltaState.verificationHistory.firstOrNull()?.conclusion) {
                 VerificationConclusion.FAIL -> WorkspaceChipTone.ERROR
                 VerificationConclusion.WARN -> WorkspaceChipTone.WARNING
@@ -1100,22 +1125,25 @@ class SpecWorkflowPanel(
         )
     }
 
+    private fun buildStageChipText(workflow: SpecWorkflow): String {
+        return "${SpecWorkflowOverviewPresenter.stageLabel(workflow.currentStage)} / ${workspaceWorkflowStatusText(workflow.status)}"
+    }
+
     private fun buildGateChipText(gateResult: GateResult?): String {
-        val statusText = when (gateResult?.status) {
+        return when (gateResult?.status) {
             GateStatus.PASS -> SpecCodingBundle.message("spec.toolwindow.gate.status.pass")
             GateStatus.WARNING -> SpecCodingBundle.message("spec.toolwindow.gate.status.warning")
             GateStatus.ERROR -> SpecCodingBundle.message("spec.toolwindow.gate.status.error")
             null -> SpecCodingBundle.message("spec.toolwindow.gate.status.unavailable")
         }
-        return "${SpecCodingBundle.message("spec.toolwindow.section.gate")}: $statusText"
     }
 
     private fun buildTasksChipText(tasks: List<StructuredTask>): String {
         if (tasks.isEmpty()) {
-            return "${SpecCodingBundle.message("spec.toolwindow.tasks.title")}: 0/0"
+            return "0/0"
         }
         val completed = tasks.count { it.status == TaskStatus.COMPLETED }
-        return "${SpecCodingBundle.message("spec.toolwindow.tasks.title")}: $completed/${tasks.size}"
+        return "$completed/${tasks.size}"
     }
 
     private fun buildOverviewSectionSummary(
@@ -1159,9 +1187,7 @@ class SpecWorkflowPanel(
 
     private fun buildVerifyChipText(state: SpecWorkflowVerifyDeltaState): String {
         val runCount = state.verificationHistory.size
-        val latest = state.verificationHistory.firstOrNull()?.conclusion?.name
-            ?: SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.pending")
-        return "${SpecCodingBundle.message("spec.toolwindow.section.verify")}: $runCount | $latest"
+        return "$runCount / ${verificationStatusText(state)}"
     }
 
     private fun buildVerifySectionSummary(state: SpecWorkflowVerifyDeltaState): String {
@@ -1195,22 +1221,23 @@ class SpecWorkflowPanel(
         }
     }
 
-    private fun updateWorkspaceChip(
-        label: JBLabel,
-        text: String,
+    private fun updateWorkspaceMetric(
+        metric: WorkspaceSummaryMetric,
+        title: String,
+        value: String,
         tone: WorkspaceChipTone,
     ) {
         val colors = workspaceChipColors(tone)
-        label.text = text
-        label.isVisible = text.isNotBlank()
-        label.foreground = colors.foreground
-        label.isOpaque = false
-        label.border = JBUI.Borders.empty()
+        metric.titleLabel.text = "$title:"
+        metric.valueLabel.text = value
+        metric.valueLabel.foreground = colors.foreground
+        metric.root.isVisible = value.isNotBlank()
     }
 
-    private fun clearWorkspaceChip(label: JBLabel) {
-        label.text = ""
-        label.isVisible = false
+    private fun clearWorkspaceMetric(metric: WorkspaceSummaryMetric) {
+        metric.titleLabel.text = ""
+        metric.valueLabel.text = ""
+        metric.root.isVisible = false
     }
 
     private fun phaseLabel(phase: SpecPhase): String {
@@ -1227,6 +1254,18 @@ class SpecWorkflowPanel(
             WorkflowStatus.PAUSED -> SpecCodingBundle.message("spec.workflow.status.paused")
             WorkflowStatus.COMPLETED -> SpecCodingBundle.message("spec.workflow.status.completed")
             WorkflowStatus.FAILED -> SpecCodingBundle.message("spec.workflow.status.failed")
+        }
+    }
+
+    private fun verificationStatusText(state: SpecWorkflowVerifyDeltaState): String {
+        if (!state.verifyEnabled) {
+            return SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.disabled")
+        }
+        return when (state.verificationHistory.firstOrNull()?.conclusion) {
+            VerificationConclusion.PASS -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.pass")
+            VerificationConclusion.WARN -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.warn")
+            VerificationConclusion.FAIL -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.fail")
+            null -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.pending")
         }
     }
 
@@ -3364,6 +3403,12 @@ class SpecWorkflowPanel(
         val foreground: Color,
     )
 
+    private data class WorkspaceSummaryMetric(
+        val root: JPanel,
+        val titleLabel: JBLabel,
+        val valueLabel: JBLabel,
+    )
+
     private data class WorkflowUiSnapshot(
         val overviewState: SpecWorkflowOverviewState,
         val verifyDeltaState: SpecWorkflowVerifyDeltaState,
@@ -3556,6 +3601,19 @@ class SpecWorkflowPanel(
             .toCollection(linkedSetOf())
     }
 
+    internal fun workspaceSummarySnapshotForTest(): Map<String, String> {
+        return mapOf(
+            "stageTitle" to workspaceStageMetric.titleLabel.text.orEmpty(),
+            "stageValue" to workspaceStageMetric.valueLabel.text.orEmpty(),
+            "gateTitle" to workspaceGateMetric.titleLabel.text.orEmpty(),
+            "gateValue" to workspaceGateMetric.valueLabel.text.orEmpty(),
+            "tasksTitle" to workspaceTasksMetric.titleLabel.text.orEmpty(),
+            "tasksValue" to workspaceTasksMetric.valueLabel.text.orEmpty(),
+            "verifyTitle" to workspaceVerifyMetric.titleLabel.text.orEmpty(),
+            "verifyValue" to workspaceVerifyMetric.valueLabel.text.orEmpty(),
+        )
+    }
+
     override fun dispose() {
         _isDisposed = true
         pendingDocumentReloadJob?.cancel()
@@ -3571,6 +3629,7 @@ class SpecWorkflowPanel(
         private val WORKSPACE_SUMMARY_BORDER = JBColor(Color(201, 214, 235), Color(86, 96, 110))
         private val WORKSPACE_SUMMARY_TITLE_FG = JBColor(Color(42, 59, 94), Color(214, 223, 236))
         private val WORKSPACE_SUMMARY_META_FG = JBColor(Color(94, 110, 139), Color(160, 171, 188))
+        private val WORKSPACE_SUMMARY_LABEL_FG = JBColor(Color(112, 124, 143), Color(172, 182, 196))
         private val WORKSPACE_EMPTY_TITLE_FG = JBColor(Color(57, 72, 104), Color(214, 223, 236))
         private val WORKSPACE_EMPTY_DESCRIPTION_FG = JBColor(Color(101, 117, 145), Color(166, 176, 193))
         private val WORKSPACE_INFO_CHIP_FG = JBColor(Color(48, 74, 112), Color(210, 220, 235))

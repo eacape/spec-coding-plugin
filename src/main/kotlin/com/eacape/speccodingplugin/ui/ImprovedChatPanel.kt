@@ -4563,7 +4563,6 @@ class ImprovedChatPanel(
     private fun updateProviderComboSize() {
         updateCompactComboSize(
             comboBox = providerComboBox,
-            text = providerDisplayName(providerComboBox.selectedItem as? String),
             minWidth = PROVIDER_COMBO_MIN_WIDTH,
             maxWidth = PROVIDER_COMBO_MAX_WIDTH,
         )
@@ -4572,17 +4571,14 @@ class ImprovedChatPanel(
     private fun updateModelComboSize() {
         updateCompactComboSize(
             comboBox = modelComboBox,
-            text = toUiLowercase((modelComboBox.selectedItem as? ModelInfo)?.name ?: ""),
             minWidth = MODEL_COMBO_MIN_WIDTH,
             maxWidth = MODEL_COMBO_MAX_WIDTH,
         )
     }
 
     private fun updateInteractionModeComboSize() {
-        val selectedMode = interactionModeComboBox.selectedItem as? ChatInteractionMode
         updateCompactComboSize(
             comboBox = interactionModeComboBox,
-            text = selectedMode?.let { SpecCodingBundle.message(it.messageKey) }.orEmpty(),
             minWidth = INTERACTION_MODE_COMBO_MIN_WIDTH,
             maxWidth = INTERACTION_MODE_COMBO_MAX_WIDTH,
         )
@@ -4590,26 +4586,38 @@ class ImprovedChatPanel(
 
     private fun updateCompactComboSize(
         comboBox: ComboBox<*>,
-        text: String,
         minWidth: Int,
         maxWidth: Int,
     ) {
-        val normalized = text.trim()
-        val desiredWidth = if (normalized.isBlank()) {
-            JBUI.scale(minWidth)
-        } else {
-            val metrics = comboBox.getFontMetrics(comboBox.font)
-            (metrics.stringWidth(normalized) + JBUI.scale(COMPACT_COMBO_TEXT_OVERHEAD_PX)).coerceIn(
-                JBUI.scale(minWidth),
-                JBUI.scale(maxWidth),
-            )
-        }
+        val desiredWidth = measureCompactComboIntrinsicWidth(comboBox)
+            .coerceIn(JBUI.scale(minWidth), JBUI.scale(maxWidth))
         val size = Dimension(desiredWidth, JBUI.scale(COMPACT_COMBO_HEIGHT_PX))
         comboBox.preferredSize = size
         comboBox.minimumSize = size
         comboBox.maximumSize = size
         comboBox.revalidate()
         comboBox.repaint()
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun measureCompactComboIntrinsicWidth(comboBox: ComboBox<*>): Int {
+        val swingCombo = comboBox as javax.swing.JComboBox<Any?>
+        val originalPreferredSize = comboBox.preferredSize
+        val originalMinimumSize = comboBox.minimumSize
+        val originalMaximumSize = comboBox.maximumSize
+        val originalPrototype = swingCombo.prototypeDisplayValue
+        return try {
+            comboBox.preferredSize = null
+            comboBox.minimumSize = null
+            comboBox.maximumSize = null
+            swingCombo.prototypeDisplayValue = swingCombo.selectedItem
+            comboBox.preferredSize.width
+        } finally {
+            swingCombo.prototypeDisplayValue = originalPrototype
+            comboBox.preferredSize = originalPreferredSize
+            comboBox.minimumSize = originalMinimumSize
+            comboBox.maximumSize = originalMaximumSize
+        }
     }
 
     private fun createCompactComboRenderer(textProvider: (Any?) -> String): DefaultListCellRenderer {
@@ -5971,13 +5979,12 @@ class ImprovedChatPanel(
         private const val COMPACT_COMBO_SELECTED_LEFT_INSET = 4
         private const val COMPACT_COMBO_POPUP_HORIZONTAL_INSET = 6
         private const val COMPACT_COMBO_POPUP_VERTICAL_INSET = 4
-        private const val COMPACT_COMBO_TEXT_OVERHEAD_PX = 38
-        private const val INTERACTION_MODE_COMBO_MIN_WIDTH = 74
+        private const val INTERACTION_MODE_COMBO_MIN_WIDTH = 60
         private const val INTERACTION_MODE_COMBO_MAX_WIDTH = 132
-        private const val PROVIDER_COMBO_MIN_WIDTH = 72
+        private const val PROVIDER_COMBO_MIN_WIDTH = 56
         private const val PROVIDER_COMBO_MAX_WIDTH = 132
-        private const val MODEL_COMBO_MIN_WIDTH = 96
-        private const val MODEL_COMBO_MAX_WIDTH = 220
+        private const val MODEL_COMBO_MIN_WIDTH = 72
+        private const val MODEL_COMBO_MAX_WIDTH = 240
         private const val SPEC_WORKFLOW_COMBO_MIN_WIDTH = 120
         private const val SPEC_WORKFLOW_COMBO_MAX_WIDTH = 220
         private const val SPEC_WORKFLOW_COMBO_TEXT_OVERHEAD_PX = 56

@@ -90,10 +90,7 @@ internal class SpecWorkflowOverviewPanel(
     }
     private val gateStatusSummaryContainer = JPanel(BorderLayout()).apply {
         isOpaque = false
-        border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(GATE_ROW_BORDER, JBUI.scale(10)),
-            JBUI.Borders.empty(4, 8, 4, 8),
-        )
+        border = JBUI.Borders.empty()
         add(gateStatusSummaryRow, BorderLayout.CENTER)
     }
 
@@ -545,7 +542,6 @@ internal class SpecWorkflowOverviewPanel(
         private val CHECKLIST_FG = JBColor(Color(74, 86, 105), Color(189, 199, 214))
         private val CARD_BG = JBColor(Color(250, 252, 255), Color(55, 61, 71))
         private val CARD_BORDER = JBColor(Color(209, 220, 237), Color(85, 96, 111))
-        private val GATE_ROW_BORDER = JBColor(Color(214, 223, 238), Color(88, 98, 112))
         private val ACTION_BG = JBColor(Color(241, 247, 255), Color(69, 76, 88))
         private val ACTION_FG = JBColor(Color(45, 71, 111), Color(206, 218, 239))
         private val ACTION_BORDER = JBColor(Color(180, 199, 226), Color(101, 116, 138))

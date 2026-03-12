@@ -180,7 +180,7 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
 
     private fun updateComboWidth() {
         val selectedMode = comboBox.selectedItem as? OperationMode ?: OperationMode.DEFAULT
-        val width = measureSelectedModeWidth(selectedMode)
+        val width = measureIntrinsicComboWidth(selectedMode)
             .coerceIn(JBUI.scale(MODE_COMBO_MIN_WIDTH), JBUI.scale(MODE_COMBO_MAX_WIDTH))
         val size = Dimension(width, JBUI.scale(MODE_COMBO_HEIGHT))
         comboBox.minimumSize = size
@@ -190,13 +190,23 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
         comboBox.repaint()
     }
 
-    private fun measureSelectedModeWidth(mode: OperationMode): Int {
-        @Suppress("UNCHECKED_CAST")
-        val renderer = comboBox.renderer as? ListCellRenderer<in OperationMode> ?: return JBUI.scale(MODE_COMBO_MIN_WIDTH)
-        val list = JList(OperationMode.values())
-        list.font = comboBox.font ?: JBUI.Fonts.smallFont()
-        val component = renderer.getListCellRendererComponent(list, mode, -1, false, false)
-        return component.preferredSize.width + JBUI.scale(MODE_COMBO_OVERHEAD_WIDTH_PX)
+    private fun measureIntrinsicComboWidth(mode: OperationMode): Int {
+        val originalPreferredSize = comboBox.preferredSize
+        val originalMinimumSize = comboBox.minimumSize
+        val originalMaximumSize = comboBox.maximumSize
+        val originalPrototype = comboBox.prototypeDisplayValue
+        return try {
+            comboBox.preferredSize = null
+            comboBox.minimumSize = null
+            comboBox.maximumSize = null
+            comboBox.prototypeDisplayValue = mode
+            comboBox.preferredSize.width
+        } finally {
+            comboBox.prototypeDisplayValue = originalPrototype
+            comboBox.preferredSize = originalPreferredSize
+            comboBox.minimumSize = originalMinimumSize
+            comboBox.maximumSize = originalMaximumSize
+        }
     }
 
     private fun localizedModeLabelText(): String {
@@ -206,10 +216,9 @@ class OperationModeSelector(private val project: Project) : JPanel(FlowLayout(Fl
     }
 
     companion object {
-        private const val MODE_COMBO_MIN_WIDTH = 96
+        private const val MODE_COMBO_MIN_WIDTH = 76
         private const val MODE_COMBO_MAX_WIDTH = 180
         private const val MODE_COMBO_HEIGHT = 28
-        private const val MODE_COMBO_OVERHEAD_WIDTH_PX = 22
         private const val MODE_POPUP_MIN_EXTRA_WIDTH_PX = 14
         private const val MODE_POPUP_MAX_WIDTH = 340
         private const val MODE_POPUP_OVERHEAD_WIDTH_PX = 10
