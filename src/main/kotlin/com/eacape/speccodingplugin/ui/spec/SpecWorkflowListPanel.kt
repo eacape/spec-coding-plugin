@@ -5,6 +5,7 @@ import com.eacape.speccodingplugin.spec.SpecChangeIntent
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -35,7 +36,8 @@ import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 
 class SpecWorkflowListPanel(
-    private val onWorkflowSelected: (String) -> Unit,
+    private val onWorkflowFocused: (String) -> Unit,
+    private val onOpenWorkflow: (String) -> Unit,
     private val onCreateWorkflow: () -> Unit,
     private val onEditWorkflow: (String) -> Unit,
     private val onDeleteWorkflow: (String) -> Unit,
@@ -86,7 +88,7 @@ class SpecWorkflowListPanel(
             if (suppressSelectionEvents) return@addListSelectionListener
             if (!it.valueIsAdjusting) {
                 workflowList.selectedValue?.let { item ->
-                    onWorkflowSelected(item.workflowId)
+                    onWorkflowFocused(item.workflowId)
                 }
             }
         }
@@ -189,6 +191,10 @@ class SpecWorkflowListPanel(
         workflowList.selectedValue?.let { onEditWorkflow(it.workflowId) }
     }
 
+    internal fun clickOpenForTest() {
+        workflowList.selectedValue?.let { onOpenWorkflow(it.workflowId) }
+    }
+
     private fun updateListCursor(point: Point) {
         val index = workflowList.locationToIndex(point)
         if (index < 0) {
@@ -218,11 +224,12 @@ class SpecWorkflowListPanel(
         val selectedId = listModel.getElementAt(index).workflowId
         workflowList.selectedIndex = index
         when (workflowCellRenderer.resolveRowAction(workflowList, index, event.point)) {
+            WorkflowCellRenderer.RowAction.OPEN -> onOpenWorkflow(selectedId)
             WorkflowCellRenderer.RowAction.DELETE -> onDeleteWorkflow(selectedId)
             WorkflowCellRenderer.RowAction.EDIT -> onEditWorkflow(selectedId)
             null -> {
                 if (event.clickCount >= 2 && event.button == MouseEvent.BUTTON1) {
-                    onEditWorkflow(selectedId)
+                    onOpenWorkflow(selectedId)
                 }
             }
         }
@@ -232,6 +239,7 @@ class SpecWorkflowListPanel(
 
     private class WorkflowCellRenderer : ListCellRenderer<WorkflowListItem> {
         enum class RowAction {
+            OPEN,
             EDIT,
             DELETE,
         }
@@ -247,6 +255,7 @@ class SpecWorkflowListPanel(
         private val metaRow = JPanel(BorderLayout())
         private val rightPanel = JPanel(BorderLayout(0, RIGHT_PANEL_VERTICAL_GAP))
         private val actionPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, ACTION_ICON_GAP, 0))
+        private val openActionLabel = JLabel(WORKFLOW_ICON_OPEN)
         private val editActionLabel = JLabel(AllIcons.Actions.Edit)
         private val deleteActionLabel = JLabel(AllIcons.Actions.GC)
 
@@ -276,10 +285,13 @@ class SpecWorkflowListPanel(
 
             actionPanel.isOpaque = false
             actionPanel.border = JBUI.Borders.empty(0, ACTION_PANEL_LEFT_PAD, 0, ACTION_PANEL_RIGHT_PAD)
+            openActionLabel.preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
+            openActionLabel.minimumSize = openActionLabel.preferredSize
             editActionLabel.preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
             editActionLabel.minimumSize = editActionLabel.preferredSize
             deleteActionLabel.preferredSize = JBUI.size(ACTION_ICON_SIZE, ACTION_ICON_SIZE)
             deleteActionLabel.minimumSize = deleteActionLabel.preferredSize
+            actionPanel.add(openActionLabel)
             actionPanel.add(editActionLabel)
             actionPanel.add(deleteActionLabel)
 
@@ -381,6 +393,7 @@ class SpecWorkflowListPanel(
                 phaseText != fullPhaseText -> fullPhaseText
                 else -> null
             }
+            openActionLabel.toolTipText = SpecCodingBundle.message("spec.workflow.open")
             editActionLabel.toolTipText = SpecCodingBundle.message("spec.workflow.edit")
             deleteActionLabel.toolTipText = SpecCodingBundle.message("spec.workflow.delete")
             statusLabel.foreground = if (isSelected) {
@@ -402,8 +415,8 @@ class SpecWorkflowListPanel(
             }
             val actionColumnWidth = ACTION_PANEL_LEFT_PAD +
                 ACTION_PANEL_RIGHT_PAD +
-                ACTION_ICON_SIZE * 2 +
-                ACTION_ICON_GAP
+                ACTION_ICON_SIZE * 3 +
+                ACTION_ICON_GAP * 2
             val statusColumnReservedWidth = statusColumnWidth + ACTION_PANEL_RIGHT_PAD
             val rightColumnWidth = maxOf(actionColumnWidth, statusColumnReservedWidth)
             val reservedWidth = CARD_LEFT_PAD +
@@ -508,12 +521,23 @@ class SpecWorkflowListPanel(
                 editActionLabel.bounds,
                 rendererComponent,
             )
+            val openRect = SwingUtilities.convertRectangle(
+                openActionLabel.parent,
+                openActionLabel.bounds,
+                rendererComponent,
+            )
             val deleteRect = SwingUtilities.convertRectangle(
                 deleteActionLabel.parent,
                 deleteActionLabel.bounds,
                 rendererComponent,
             )
 
+            val listOpenRect = Rectangle(
+                cellBounds.x + openRect.x - ACTION_HIT_SLOP,
+                cellBounds.y + openRect.y - ACTION_HIT_SLOP,
+                openRect.width + ACTION_HIT_SLOP * 2,
+                openRect.height + ACTION_HIT_SLOP * 2,
+            )
             val listEditRect = Rectangle(
                 cellBounds.x + editRect.x - ACTION_HIT_SLOP,
                 cellBounds.y + editRect.y - ACTION_HIT_SLOP,
@@ -527,6 +551,7 @@ class SpecWorkflowListPanel(
                 deleteRect.height + ACTION_HIT_SLOP * 2,
             )
             return when {
+                listOpenRect.contains(point) -> RowAction.OPEN
                 listDeleteRect.contains(point) -> RowAction.DELETE
                 listEditRect.contains(point) -> RowAction.EDIT
                 else -> null
@@ -542,6 +567,10 @@ class SpecWorkflowListPanel(
         }
 
         companion object {
+            private val WORKFLOW_ICON_OPEN = IconLoader.getIcon(
+                "/icons/spec-workflow-open.svg",
+                SpecWorkflowListPanel::class.java,
+            )
             private val ROW_BOTTOM_GAP = JBUI.scale(8)
             private val CARD_VERTICAL_PAD = JBUI.scale(8)
             private val CARD_LEFT_PAD = JBUI.scale(10)

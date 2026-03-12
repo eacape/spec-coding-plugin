@@ -23,7 +23,8 @@ class SpecWorkflowListPanelTest {
     @Test
     fun `updateWorkflows should replace list items and selection can be set`() {
         val panel = SpecWorkflowListPanel(
-            onWorkflowSelected = {},
+            onWorkflowFocused = {},
+            onOpenWorkflow = {},
             onCreateWorkflow = {},
             onEditWorkflow = {},
             onDeleteWorkflow = {},
@@ -50,11 +51,13 @@ class SpecWorkflowListPanelTest {
     @Test
     fun `toolbar buttons should trigger callbacks`() {
         var createCalls = 0
+        val openedIds = mutableListOf<String>()
         val editedIds = mutableListOf<String>()
         val deletedIds = mutableListOf<String>()
 
         val panel = SpecWorkflowListPanel(
-            onWorkflowSelected = {},
+            onWorkflowFocused = {},
+            onOpenWorkflow = { openedIds += it },
             onCreateWorkflow = { createCalls += 1 },
             onEditWorkflow = { editedIds += it },
             onDeleteWorkflow = { deletedIds += it },
@@ -66,6 +69,9 @@ class SpecWorkflowListPanelTest {
         assertEquals(1, createCalls)
 
         panel.setSelectedWorkflow("wf-del")
+        panel.clickOpenForTest()
+        assertEquals(listOf("wf-del"), openedIds)
+
         panel.clickDeleteForTest()
         assertEquals(listOf("wf-del"), deletedIds)
 
@@ -76,7 +82,8 @@ class SpecWorkflowListPanelTest {
     @Test
     fun `workflowOptionsForCreate should expose current list as dialog options`() {
         val panel = SpecWorkflowListPanel(
-            onWorkflowSelected = {},
+            onWorkflowFocused = {},
+            onOpenWorkflow = {},
             onCreateWorkflow = {},
             onEditWorkflow = {},
             onDeleteWorkflow = {},
@@ -107,7 +114,8 @@ class SpecWorkflowListPanelTest {
         val editedIds = mutableListOf<String>()
         val panel = runOnEdtResult {
             SpecWorkflowListPanel(
-                onWorkflowSelected = {},
+                onWorkflowFocused = {},
+                onOpenWorkflow = {},
                 onCreateWorkflow = {},
                 onEditWorkflow = { editedIds += it },
                 onDeleteWorkflow = {},
@@ -165,10 +173,128 @@ class SpecWorkflowListPanelTest {
     }
 
     @Test
+    fun `single click on open icon should trigger open callback`() {
+        val openedIds = mutableListOf<String>()
+        val panel = runOnEdtResult {
+            SpecWorkflowListPanel(
+                onWorkflowFocused = {},
+                onOpenWorkflow = { openedIds += it },
+                onCreateWorkflow = {},
+                onEditWorkflow = {},
+                onDeleteWorkflow = {},
+            )
+        }
+
+        runOnEdt {
+            panel.updateWorkflows(
+                listOf(
+                    SpecWorkflowListPanel.WorkflowListItem(
+                        workflowId = "wf-open",
+                        title = "Open Workflow",
+                        description = "",
+                        currentPhase = SpecPhase.SPECIFY,
+                        status = WorkflowStatus.IN_PROGRESS,
+                        updatedAt = 1L,
+                    ),
+                ),
+            )
+
+            val list = extractWorkflowList(panel)
+            list.setSize(220, 100)
+            list.doLayout()
+
+            val cellBounds = list.getCellBounds(0, 0)
+            assertNotNull(cellBounds)
+
+            val rowComponent = rendererComponentFor(list, panel.itemsForTest().first(), cellBounds!!)
+            val openLabel = findLabelByTooltip(rowComponent, SpecCodingBundle.message("spec.workflow.open"))
+            assertNotNull(openLabel)
+
+            val openRect = SwingUtilities.convertRectangle(
+                openLabel!!.parent,
+                openLabel.bounds,
+                rowComponent,
+            )
+            val clickX = cellBounds.x + openRect.x + openRect.width / 2
+            val clickY = cellBounds.y + openRect.y + openRect.height / 2
+            list.dispatchEvent(
+                MouseEvent(
+                    list,
+                    MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(),
+                    0,
+                    clickX,
+                    clickY,
+                    1,
+                    false,
+                    MouseEvent.BUTTON1,
+                ),
+            )
+        }
+
+        assertEquals(listOf("wf-open"), openedIds)
+    }
+
+    @Test
+    fun `single click on row body should focus workflow without opening details`() {
+        val focusedIds = mutableListOf<String>()
+        val openedIds = mutableListOf<String>()
+        val panel = runOnEdtResult {
+            SpecWorkflowListPanel(
+                onWorkflowFocused = { focusedIds += it },
+                onOpenWorkflow = { openedIds += it },
+                onCreateWorkflow = {},
+                onEditWorkflow = {},
+                onDeleteWorkflow = {},
+            )
+        }
+
+        runOnEdt {
+            panel.updateWorkflows(
+                listOf(
+                    SpecWorkflowListPanel.WorkflowListItem(
+                        workflowId = "wf-focus",
+                        title = "Focused Workflow",
+                        description = "desc",
+                        currentPhase = SpecPhase.SPECIFY,
+                        status = WorkflowStatus.IN_PROGRESS,
+                        updatedAt = 1L,
+                    ),
+                ),
+            )
+
+            val list = extractWorkflowList(panel)
+            list.setSize(220, 100)
+            list.doLayout()
+
+            val cellBounds = list.getCellBounds(0, 0)
+            assertNotNull(cellBounds)
+
+            list.dispatchEvent(
+                MouseEvent(
+                    list,
+                    MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(),
+                    0,
+                    cellBounds!!.x + 12,
+                    cellBounds.y + cellBounds.height / 2,
+                    1,
+                    false,
+                    MouseEvent.BUTTON1,
+                ),
+            )
+        }
+
+        assertEquals(listOf("wf-focus"), focusedIds)
+        assertTrue(openedIds.isEmpty())
+    }
+
+    @Test
     fun `renderer should prefer explicit current stage label`() {
         val panel = runOnEdtResult {
             SpecWorkflowListPanel(
-                onWorkflowSelected = {},
+                onWorkflowFocused = {},
+                onOpenWorkflow = {},
                 onCreateWorkflow = {},
                 onEditWorkflow = {},
                 onDeleteWorkflow = {},
@@ -208,7 +334,8 @@ class SpecWorkflowListPanelTest {
         val deletedIds = mutableListOf<String>()
         val panel = runOnEdtResult {
             SpecWorkflowListPanel(
-                onWorkflowSelected = {},
+                onWorkflowFocused = {},
+                onOpenWorkflow = {},
                 onCreateWorkflow = {},
                 onEditWorkflow = {},
                 onDeleteWorkflow = { deletedIds += it },
@@ -271,6 +398,61 @@ class SpecWorkflowListPanelTest {
         }
 
         assertEquals(listOf("wf-b"), deletedIds)
+    }
+
+    @Test
+    fun `single click on row body should focus workflow without opening it`() {
+        val focusedIds = mutableListOf<String>()
+        val openedIds = mutableListOf<String>()
+        val panel = runOnEdtResult {
+            SpecWorkflowListPanel(
+                onWorkflowFocused = { focusedIds += it },
+                onOpenWorkflow = { openedIds += it },
+                onCreateWorkflow = {},
+                onEditWorkflow = {},
+                onDeleteWorkflow = {},
+            )
+        }
+
+        runOnEdt {
+            panel.updateWorkflows(
+                listOf(
+                    SpecWorkflowListPanel.WorkflowListItem(
+                        workflowId = "wf-focus",
+                        title = "Focus Workflow",
+                        description = "browse first",
+                        currentPhase = SpecPhase.DESIGN,
+                        status = WorkflowStatus.IN_PROGRESS,
+                        updatedAt = 1L,
+                    ),
+                ),
+            )
+
+            val list = extractWorkflowList(panel)
+            list.setSize(220, 100)
+            list.doLayout()
+
+            val cellBounds = list.getCellBounds(0, 0)
+            assertNotNull(cellBounds)
+            val clickX = cellBounds!!.x + 16
+            val clickY = cellBounds.y + cellBounds.height / 2
+            list.dispatchEvent(
+                MouseEvent(
+                    list,
+                    MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(),
+                    0,
+                    clickX,
+                    clickY,
+                    1,
+                    false,
+                    MouseEvent.BUTTON1,
+                ),
+            )
+        }
+
+        assertEquals(listOf("wf-focus"), focusedIds)
+        assertTrue(openedIds.isEmpty())
     }
 
     private fun item(id: String, title: String, phase: SpecPhase): SpecWorkflowListPanel.WorkflowListItem {

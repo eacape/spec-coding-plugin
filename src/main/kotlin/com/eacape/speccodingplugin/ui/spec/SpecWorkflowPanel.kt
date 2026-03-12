@@ -129,6 +129,10 @@ class SpecWorkflowPanel(
     private val codeGraphButton = JButton()
     private val archiveButton = JButton()
     private val refreshButton = JButton()
+    private lateinit var centerContentPanel: JPanel
+    private lateinit var listSectionContainer: JPanel
+    private lateinit var workspacePanelContainer: JPanel
+    private lateinit var mainSplitPane: JSplitPane
     private val workspaceCardLayout = CardLayout()
     private val workspaceCardPanel = JPanel(workspaceCardLayout)
     private val workspaceSummaryTitleLabel = JBLabel()
@@ -154,13 +158,17 @@ class SpecWorkflowPanel(
     private var pendingDocumentReloadJob: Job? = null
 
     private var selectedWorkflowId: String? = null
+    private var highlightedWorkflowId: String? = null
     private var currentWorkflow: SpecWorkflow? = null
+    private var isWorkspaceMode: Boolean = false
+    private var detailDividerLocation: Int = 210
 
     init {
         border = JBUI.Borders.empty(8)
 
         listPanel = SpecWorkflowListPanel(
-            onWorkflowSelected = ::onWorkflowSelectedByUser,
+            onWorkflowFocused = ::onWorkflowFocusedByUser,
+            onOpenWorkflow = ::onWorkflowOpenedByUser,
             onCreateWorkflow = ::onCreateWorkflow,
             onEditWorkflow = ::onEditWorkflow,
             onDeleteWorkflow = ::onDeleteWorkflow
@@ -287,22 +295,23 @@ class SpecWorkflowPanel(
             BorderLayout.NORTH,
         )
 
-        val rightPanel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+        listSectionContainer = createSectionContainer(
+            listPanel,
+            backgroundColor = LIST_SECTION_BG,
+            borderColor = LIST_SECTION_BORDER,
+        )
+        workspacePanelContainer = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = true
             background = DETAIL_COLUMN_BG
             add(buildWorkspaceCardPanel(), BorderLayout.CENTER)
         }
 
-        val split = JSplitPane(
+        mainSplitPane = JSplitPane(
             JSplitPane.HORIZONTAL_SPLIT,
-            createSectionContainer(
-                listPanel,
-                backgroundColor = LIST_SECTION_BG,
-                borderColor = LIST_SECTION_BORDER,
-            ),
-            rightPanel,
+            listSectionContainer,
+            workspacePanelContainer,
         ).apply {
-            dividerLocation = 210
+            dividerLocation = detailDividerLocation
             resizeWeight = 0.26
             isContinuousLayout = true
             border = JBUI.Borders.empty()
@@ -312,20 +321,28 @@ class SpecWorkflowPanel(
                 dividerSize = JBUI.scale(4),
             )
         }
-        split.addComponentListener(
+        mainSplitPane.addComponentListener(
             object : ComponentAdapter() {
                 override fun componentResized(e: ComponentEvent?) {
-                    clampDividerLocation(split)
+                    clampDividerLocation(mainSplitPane)
                 }
             },
         )
-        add(split, BorderLayout.CENTER)
-        clampDividerLocation(split)
+        mainSplitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY) {
+            if (isWorkspaceMode && mainSplitPane.dividerLocation > 0) {
+                detailDividerLocation = mainSplitPane.dividerLocation
+            }
+        }
+        centerContentPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+        }
+        add(centerContentPanel, BorderLayout.CENTER)
         setStatusText(null)
         showWorkspaceEmptyState()
     }
 
     private fun clampDividerLocation(split: JSplitPane) {
+        if (!isWorkspaceMode || split.parent == null) return
         val total = split.width - split.dividerSize
         if (total <= 0) return
         val minLeft = JBUI.scale(120)
@@ -336,6 +353,43 @@ class SpecWorkflowPanel(
         if (clamped != current) {
             split.dividerLocation = clamped
         }
+        detailDividerLocation = clamped
+    }
+
+    private fun showWorkflowListOnlyMode() {
+        isWorkspaceMode = false
+        reparentToCenter(listSectionContainer)
+    }
+
+    private fun showWorkflowWorkspaceMode() {
+        isWorkspaceMode = true
+        detachFromParent(listSectionContainer)
+        detachFromParent(workspacePanelContainer)
+        if (mainSplitPane.leftComponent !== listSectionContainer) {
+            mainSplitPane.leftComponent = listSectionContainer
+        }
+        if (mainSplitPane.rightComponent !== workspacePanelContainer) {
+            mainSplitPane.rightComponent = workspacePanelContainer
+        }
+        reparentToCenter(mainSplitPane)
+        val targetDividerLocation = detailDividerLocation.takeIf { it > 0 } ?: JBUI.scale(210)
+        mainSplitPane.dividerLocation = targetDividerLocation
+        clampDividerLocation(mainSplitPane)
+    }
+
+    private fun reparentToCenter(component: Component) {
+        detachFromParent(component)
+        if (centerContentPanel.componentCount == 1 && centerContentPanel.getComponent(0) === component) {
+            return
+        }
+        centerContentPanel.removeAll()
+        centerContentPanel.add(component, BorderLayout.CENTER)
+        centerContentPanel.revalidate()
+        centerContentPanel.repaint()
+    }
+
+    private fun detachFromParent(component: Component) {
+        component.parent?.remove(component)
     }
 
     private fun createWorkspaceChipLabel(): JBLabel {
@@ -541,6 +595,7 @@ class SpecWorkflowPanel(
     }
 
     private fun showWorkspaceEmptyState() {
+        showWorkflowListOnlyMode()
         workspaceCardLayout.show(workspaceCardPanel, WORKSPACE_CARD_EMPTY)
         workspaceSectionOverrides.clear()
         workspaceSectionPresetToken = null
@@ -563,6 +618,7 @@ class SpecWorkflowPanel(
     }
 
     private fun showWorkspaceContent() {
+        showWorkflowWorkspaceMode()
         workspaceCardLayout.show(workspaceCardPanel, WORKSPACE_CARD_CONTENT)
     }
 
@@ -1074,6 +1130,26 @@ class SpecWorkflowPanel(
         }
     }
 
+    private fun clearOpenedWorkflowUi(resetHighlight: Boolean = false) {
+        selectedWorkflowId = null
+        currentWorkflow = null
+        phaseIndicator.reset()
+        overviewPanel.showEmpty()
+        tasksPanel.showEmpty()
+        gateDetailsPanel.showEmpty()
+        verifyDeltaPanel.showEmpty()
+        detailPanel.showEmpty()
+        createWorktreeButton.isEnabled = false
+        mergeWorktreeButton.isEnabled = false
+        deltaButton.isEnabled = false
+        archiveButton.isEnabled = false
+        if (resetHighlight) {
+            highlightedWorkflowId = null
+            listPanel.setSelectedWorkflow(null)
+        }
+        showWorkspaceEmptyState()
+    }
+
     fun refreshWorkflows(selectWorkflowId: String? = null, showRefreshFeedback: Boolean = false) {
         scope.launch(Dispatchers.IO) {
             val ids = specEngine.listWorkflows()
@@ -1095,39 +1171,16 @@ class SpecWorkflowPanel(
             invokeLaterSafe {
                 listPanel.updateWorkflows(items)
                 setStatusText(null)
-                val targetSelection = selectWorkflowId
+                val targetOpenedWorkflowId = selectWorkflowId
                     ?: selectedWorkflowId?.takeIf { target -> items.any { it.workflowId == target } }
-                if (targetSelection != null) {
-                    listPanel.setSelectedWorkflow(targetSelection)
-                    selectWorkflow(targetSelection)
-                } else if (items.isEmpty()) {
-                    selectedWorkflowId = null
-                    currentWorkflow = null
-                    phaseIndicator.reset()
-                    overviewPanel.showEmpty()
-                    tasksPanel.showEmpty()
-                    gateDetailsPanel.showEmpty()
-                    verifyDeltaPanel.showEmpty()
-                    detailPanel.showEmpty()
-                    createWorktreeButton.isEnabled = false
-                    mergeWorktreeButton.isEnabled = false
-                    deltaButton.isEnabled = false
-                    archiveButton.isEnabled = false
-                    showWorkspaceEmptyState()
+                val targetHighlightedWorkflowId = targetOpenedWorkflowId
+                    ?: highlightedWorkflowId?.takeIf { target -> items.any { it.workflowId == target } }
+                highlightedWorkflowId = targetHighlightedWorkflowId
+                listPanel.setSelectedWorkflow(targetHighlightedWorkflowId)
+                if (targetOpenedWorkflowId != null) {
+                    selectWorkflow(targetOpenedWorkflowId)
                 } else {
-                    selectedWorkflowId = null
-                    currentWorkflow = null
-                    phaseIndicator.reset()
-                    overviewPanel.showEmpty()
-                    tasksPanel.showEmpty()
-                    gateDetailsPanel.showEmpty()
-                    verifyDeltaPanel.showEmpty()
-                    detailPanel.showEmpty()
-                    createWorktreeButton.isEnabled = false
-                    mergeWorktreeButton.isEnabled = false
-                    deltaButton.isEnabled = false
-                    archiveButton.isEnabled = false
-                    showWorkspaceEmptyState()
+                    clearOpenedWorkflowUi(resetHighlight = targetHighlightedWorkflowId == null)
                 }
                 if (showRefreshFeedback) {
                     val successText = SpecCodingBundle.message("common.refresh.success")
@@ -1138,7 +1191,15 @@ class SpecWorkflowPanel(
         }
     }
 
-    private fun onWorkflowSelectedByUser(workflowId: String) {
+    private fun onWorkflowFocusedByUser(workflowId: String) {
+        highlightedWorkflowId = workflowId
+        if (selectedWorkflowId != null && selectedWorkflowId != workflowId) {
+            clearOpenedWorkflowUi(resetHighlight = false)
+        }
+    }
+
+    private fun onWorkflowOpenedByUser(workflowId: String) {
+        highlightedWorkflowId = workflowId
         selectWorkflow(workflowId)
         publishWorkflowSelection(workflowId)
     }
@@ -1222,17 +1283,7 @@ class SpecWorkflowPanel(
                     deltaButton.isEnabled = true
                     archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
                 } else {
-                    phaseIndicator.reset()
-                    overviewPanel.showEmpty()
-                    verifyDeltaPanel.showEmpty()
-                    tasksPanel.showEmpty()
-                    gateDetailsPanel.showEmpty()
-                    detailPanel.showEmpty()
-                    createWorktreeButton.isEnabled = false
-                    mergeWorktreeButton.isEnabled = false
-                    deltaButton.isEnabled = false
-                    archiveButton.isEnabled = false
-                    showWorkspaceEmptyState()
+                    clearOpenedWorkflowUi(resetHighlight = false)
                 }
             }
         }
@@ -1253,9 +1304,9 @@ class SpecWorkflowPanel(
                     baselineWorkflowId = baselineWorkflowId,
                 ).onSuccess { wf ->
                     invokeLaterSafe {
-                        refreshWorkflows()
-                        selectWorkflow(wf.id)
-                        listPanel.setSelectedWorkflow(wf.id)
+                        highlightedWorkflowId = wf.id
+                        refreshWorkflows(selectWorkflowId = wf.id)
+                        publishWorkflowSelection(wf.id)
                     }
                 }.onFailure { e ->
                     logger.warn("Failed to create workflow", e)
@@ -1299,13 +1350,15 @@ class SpecWorkflowPanel(
                     invokeLaterSafe {
                         result.onSuccess { updated ->
                             setStatusText(null)
-                            if (selectedWorkflowId == workflowId) {
+                            val reopenWorkspace = selectedWorkflowId == workflowId
+                            highlightedWorkflowId = workflowId
+                            if (reopenWorkspace) {
                                 currentWorkflow = updated
                                 phaseIndicator.updatePhase(updated)
                                 detailPanel.updateWorkflow(updated)
                                 archiveButton.isEnabled = updated.status == WorkflowStatus.COMPLETED
                             }
-                            refreshWorkflows(selectWorkflowId = workflowId)
+                            refreshWorkflows(selectWorkflowId = workflowId.takeIf { reopenWorkspace })
                         }.onFailure { error ->
                             val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
                             setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
@@ -1321,15 +1374,7 @@ class SpecWorkflowPanel(
             specEngine.deleteWorkflow(workflowId)
             invokeLaterSafe {
                 if (selectedWorkflowId == workflowId) {
-                    selectedWorkflowId = null
-                    currentWorkflow = null
-                    phaseIndicator.reset()
-                    tasksPanel.showEmpty()
-                    detailPanel.showEmpty()
-                    createWorktreeButton.isEnabled = false
-                    mergeWorktreeButton.isEnabled = false
-                    deltaButton.isEnabled = false
-                    archiveButton.isEnabled = false
+                    clearOpenedWorkflowUi(resetHighlight = false)
                 }
                 refreshWorkflows()
             }
@@ -2340,15 +2385,7 @@ class SpecWorkflowPanel(
             invokeLaterSafe {
                 result.onSuccess {
                     if (selectedWorkflowId == workflow.id) {
-                        selectedWorkflowId = null
-                        currentWorkflow = null
-                        phaseIndicator.reset()
-                        tasksPanel.showEmpty()
-                        detailPanel.showEmpty()
-                        createWorktreeButton.isEnabled = false
-                        mergeWorktreeButton.isEnabled = false
-                        deltaButton.isEnabled = false
-                        archiveButton.isEnabled = false
+                        clearOpenedWorkflowUi(resetHighlight = false)
                     }
                     refreshWorkflows()
                     setStatusText(SpecCodingBundle.message("spec.workflow.archive.done", workflow.id))
@@ -3205,13 +3242,7 @@ class SpecWorkflowPanel(
                     archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
                     onUpdated?.invoke(wf)
                 } else {
-                    overviewPanel.showEmpty()
-                    verifyDeltaPanel.showEmpty()
-                    tasksPanel.showEmpty()
-                    gateDetailsPanel.showEmpty()
-                    detailPanel.showEmpty()
-                    archiveButton.isEnabled = false
-                    showWorkspaceEmptyState()
+                    clearOpenedWorkflowUi(resetHighlight = false)
                 }
             }
         }

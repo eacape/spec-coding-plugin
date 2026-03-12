@@ -253,7 +253,13 @@ open class ChatMessagePanel(
             return
         }
         if (role == MessageRole.ASSISTANT) {
-            if (!messageFinished && !useStructured) {
+            var traceSnapshot: StreamingTraceAssembler.TraceSnapshot? = null
+            fun resolveAssistantTraceSnapshot(): StreamingTraceAssembler.TraceSnapshot {
+                return traceSnapshot ?: resolveTraceSnapshot(content).also { traceSnapshot = it }
+            }
+
+            val shouldRenderStreamingTrace = !messageFinished && resolveAssistantTraceSnapshot().hasTrace
+            if (!messageFinished && !useStructured && !shouldRenderStreamingTrace) {
                 val shouldRepaintStreamingContent =
                     cachedStreamingRenderContentVersion != contentVersion ||
                         cachedStreamingRenderFontSize != outputFontSize ||
@@ -269,10 +275,10 @@ open class ChatMessagePanel(
                 return
             }
 
-            val traceSnapshot = resolveTraceSnapshot(content)
-            if (traceSnapshot.hasTrace) {
+            val resolvedTraceSnapshot = resolveAssistantTraceSnapshot()
+            if (resolvedTraceSnapshot.hasTrace) {
                 val answerContent = resolveAssistantAnswerContent(content)
-                renderAssistantTraceContent(answerContent, traceSnapshot, useStructured)
+                renderAssistantTraceContent(answerContent, resolvedTraceSnapshot, useStructured)
             } else if (useStructured) {
                 contentHost.removeAll()
                 contentHost.add(createAssistantAnswerComponent(content, structured = true), BorderLayout.CENTER)

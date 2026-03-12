@@ -56,6 +56,36 @@ class ChatMessagePanelTraceStreamingTest {
         assertNotNull(collapseButton, "Expected collapse trace button after expanding")
     }
 
+
+    @Test
+    fun `assistant output should render during streaming for structured events`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendStreamEvent(
+                ChatStreamEvent(
+                    kind = ChatTraceKind.OUTPUT,
+                    detail = "model: gpt-5.4",
+                    status = ChatTraceStatus.INFO,
+                )
+            )
+        }
+
+        val outputTitle = SpecCodingBundle.message("chat.timeline.kind.output")
+        val labels = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .mapNotNull { it.text }
+            .toList()
+        assertTrue(labels.any { it == outputTitle }, "Expected output section during streaming")
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val expandButtons = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .filter { it.text == expandText }
+            .toList()
+        assertTrue(expandButtons.isNotEmpty(), "Expected output expand button during streaming")
+    }
+
     @Test
     fun `thinking only trace should not render process timeline card`() {
         val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
