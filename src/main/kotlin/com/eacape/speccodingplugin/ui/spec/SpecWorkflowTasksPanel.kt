@@ -406,7 +406,7 @@ internal class SpecWorkflowTasksPanel(
             val background = if (isSelected) SELECTED_BG else ROW_BG
             panel.background = background
             titleLabel.text = "${value.id}: ${value.title}"
-            metaLabel.text = "${value.priority.name} 路 dependsOn=${value.dependsOn.size}, relatedFiles=${value.relatedFiles.size}"
+            metaLabel.text = "${value.priority.name} | dependsOn=${value.dependsOn.size}, relatedFiles=${value.relatedFiles.size}"
             statusChipLabel.text = value.status.name
             applyChipStyle(statusChipLabel, value.status, isSelected)
             return panel

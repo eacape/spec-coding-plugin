@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageActivationOptions
@@ -10,6 +11,7 @@ import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
 import com.eacape.speccodingplugin.spec.WorkflowTemplates
+import java.util.Locale
 
 internal data class SpecWorkflowStageStepState(
     val stageId: StageId,
@@ -104,16 +106,24 @@ internal object SpecWorkflowOverviewPresenter {
     }
 
     fun stageLabel(stageId: StageId): String {
-        return stageId.name
-            .lowercase()
+        val fallback = stageId.name
+            .lowercase(Locale.ROOT)
             .split('_')
-            .joinToString(" ") { token -> token.replaceFirstChar(Char::titlecase) }
+            .joinToString(" ") { token -> token.replaceFirstChar { char -> char.titlecase(Locale.ROOT) } }
+        return SpecCodingBundle.messageOrDefault(
+            "spec.stage.${stageId.name.lowercase(Locale.ROOT)}",
+            fallback,
+        )
     }
 
     fun templateLabel(template: WorkflowTemplate): String {
-        return template.name
-            .lowercase()
+        val fallback = template.name
+            .lowercase(Locale.ROOT)
             .split('_')
-            .joinToString(" ") { token -> token.replaceFirstChar(Char::titlecase) }
+            .joinToString(" ") { token -> token.replaceFirstChar { char -> char.titlecase(Locale.ROOT) } }
+        return SpecCodingBundle.messageOrDefault(
+            "spec.template.${template.name.lowercase(Locale.ROOT)}",
+            fallback,
+        )
     }
 }

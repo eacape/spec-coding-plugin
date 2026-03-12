@@ -139,6 +139,8 @@ class SpecWorkflowPanel(
     private val workspaceCardPanel = JPanel(workspaceCardLayout)
     private val workspaceSummaryTitleLabel = JBLabel()
     private val workspaceSummaryMetaLabel = JBLabel()
+    private val workspaceSummaryFocusLabel = JBLabel()
+    private val workspaceSummaryHintLabel = JBLabel()
     private val workspaceStageChipLabel = createWorkspaceChipLabel()
     private val workspaceGateChipLabel = createWorkspaceChipLabel()
     private val workspaceTasksChipLabel = createWorkspaceChipLabel()
@@ -447,27 +449,27 @@ class SpecWorkflowPanel(
 
         overviewSection = createWorkspaceSection(
             id = SpecWorkflowWorkspaceSectionId.OVERVIEW,
-            titleProvider = { SpecCodingBundle.message("spec.toolwindow.overview.currentStage") },
+            titleProvider = { SpecCodingBundle.message("spec.toolwindow.section.overview") },
             content = overviewPanel,
         )
         tasksSection = createWorkspaceSection(
             id = SpecWorkflowWorkspaceSectionId.TASKS,
-            titleProvider = { SpecCodingBundle.message("spec.toolwindow.tasks.title") },
+            titleProvider = { SpecCodingBundle.message("spec.toolwindow.section.tasks") },
             content = tasksPanel,
         )
         gateSection = createWorkspaceSection(
             id = SpecWorkflowWorkspaceSectionId.GATE,
-            titleProvider = { SpecCodingBundle.message("spec.toolwindow.gate.title") },
+            titleProvider = { SpecCodingBundle.message("spec.toolwindow.section.gate") },
             content = gateDetailsPanel,
         )
         verifySection = createWorkspaceSection(
             id = SpecWorkflowWorkspaceSectionId.VERIFY,
-            titleProvider = { SpecCodingBundle.message("spec.toolwindow.verifyDelta.title") },
+            titleProvider = { SpecCodingBundle.message("spec.toolwindow.section.verify") },
             content = verifyDeltaPanel,
         )
         documentsSection = createWorkspaceSection(
             id = SpecWorkflowWorkspaceSectionId.DOCUMENTS,
-            titleProvider = { SpecCodingBundle.message("spec.detail.documents") },
+            titleProvider = { SpecCodingBundle.message("spec.toolwindow.section.documents") },
             content = detailPanel,
         )
 
@@ -519,11 +521,21 @@ class SpecWorkflowPanel(
         workspaceSummaryTitleLabel.foreground = WORKSPACE_SUMMARY_TITLE_FG
         workspaceSummaryMetaLabel.font = JBUI.Fonts.smallFont()
         workspaceSummaryMetaLabel.foreground = WORKSPACE_SUMMARY_META_FG
+        workspaceSummaryFocusLabel.font = JBUI.Fonts.label().deriveFont(Font.BOLD, 12.5f)
+        workspaceSummaryFocusLabel.foreground = WORKSPACE_SUMMARY_TITLE_FG
+        workspaceSummaryHintLabel.font = JBUI.Fonts.smallFont()
+        workspaceSummaryHintLabel.foreground = WORKSPACE_SUMMARY_META_FG
 
-        val titleStack = JPanel(BorderLayout(0, JBUI.scale(4))).apply {
+        val titleStack = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            add(workspaceSummaryTitleLabel, BorderLayout.NORTH)
-            add(workspaceSummaryMetaLabel, BorderLayout.CENTER)
+            add(workspaceSummaryTitleLabel)
+            add(Box.createVerticalStrut(JBUI.scale(2)))
+            add(workspaceSummaryMetaLabel)
+            add(Box.createVerticalStrut(JBUI.scale(4)))
+            add(workspaceSummaryFocusLabel)
+            add(Box.createVerticalStrut(JBUI.scale(2)))
+            add(workspaceSummaryHintLabel)
         }
         val headerRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
@@ -621,6 +633,8 @@ class SpecWorkflowPanel(
         currentStructuredTasks = emptyList()
         workspaceSummaryTitleLabel.text = ""
         workspaceSummaryMetaLabel.text = ""
+        workspaceSummaryFocusLabel.text = ""
+        workspaceSummaryHintLabel.text = ""
         clearWorkspaceChip(workspaceStageChipLabel)
         clearWorkspaceChip(workspaceGateChipLabel)
         clearWorkspaceChip(workspaceTasksChipLabel)
@@ -947,19 +961,26 @@ class SpecWorkflowPanel(
         currentStructuredTasks = tasks
 
         showWorkspaceContent()
+        val guidance = SpecWorkflowStageGuidanceBuilder.build(overviewState)
         workspaceSummaryTitleLabel.text = workflow.title.ifBlank { workflow.id }
         val nextStageText = overviewState.nextStage
             ?.let(SpecWorkflowOverviewPresenter::stageLabel)
             ?: SpecCodingBundle.message("spec.toolwindow.overview.nextStage.none")
         workspaceSummaryMetaLabel.text = buildString {
+            append(SpecCodingBundle.message("spec.toolwindow.overview.secondary.workflow"))
+            append(": ")
             append(workflow.id)
             append(" | ")
+            append(SpecCodingBundle.message("spec.toolwindow.overview.secondary.template"))
+            append(": ")
             append(SpecWorkflowOverviewPresenter.templateLabel(workflow.template))
             append(" | ")
-            append(SpecCodingBundle.message("spec.toolwindow.overview.nextStage"))
+            append(SpecCodingBundle.message("spec.toolwindow.overview.secondary.next"))
             append(": ")
             append(nextStageText)
         }
+        workspaceSummaryFocusLabel.text = guidance.headline
+        workspaceSummaryHintLabel.text = guidance.summary
 
         updateWorkspaceChip(
             label = workspaceStageChipLabel,
@@ -997,13 +1018,13 @@ class SpecWorkflowPanel(
         )
 
         overviewSection.setSummary(
-            "${SpecCodingBundle.message("spec.toolwindow.overview.nextStage")}: $nextStageText",
+            buildOverviewSectionSummary(overviewState, nextStageText),
         )
         tasksSection.setSummary(buildTasksSectionSummary(tasks))
-        gateSection.setSummary(gateResult?.aggregation?.summary ?: SpecCodingBundle.message("spec.toolwindow.gate.summary.none"))
+        gateSection.setSummary(buildGateSectionSummary(gateResult))
         verifySection.setSummary(buildVerifySectionSummary(verifyDeltaState))
         documentsSection.setSummary(
-            "${phaseLabel(workflow.currentPhase)} | ${workflow.currentPhase.outputFileName}",
+            buildDocumentsSectionSummary(workflow),
         )
         applyWorkspaceSectionPreset(workflow)
     }
@@ -1061,6 +1082,19 @@ class SpecWorkflowPanel(
         return "${SpecCodingBundle.message("spec.toolwindow.tasks.title")}: $completed/${tasks.size}"
     }
 
+    private fun buildOverviewSectionSummary(
+        overviewState: SpecWorkflowOverviewState,
+        nextStageText: String,
+    ): String {
+        return buildString {
+            append(SpecWorkflowOverviewPresenter.stageLabel(overviewState.currentStage))
+            append(" | ")
+            append(SpecCodingBundle.message("spec.toolwindow.overview.secondary.next"))
+            append(": ")
+            append(nextStageText)
+        }
+    }
+
     private fun buildTasksSectionSummary(tasks: List<StructuredTask>): String {
         if (tasks.isEmpty()) {
             return SpecCodingBundle.message("spec.toolwindow.tasks.emptyForWorkflow")
@@ -1072,6 +1106,18 @@ class SpecWorkflowPanel(
             tasks.size,
             completed,
             blocked,
+        )
+    }
+
+    private fun buildGateSectionSummary(gateResult: GateResult?): String {
+        if (gateResult == null) {
+            return SpecCodingBundle.message("spec.toolwindow.gate.summary.none")
+        }
+        return SpecCodingBundle.message(
+            "spec.toolwindow.gate.summary",
+            gateResult.aggregation.errorCount,
+            gateResult.aggregation.warningCount,
+            gateResult.aggregation.totalViolationCount,
         )
     }
 
@@ -1102,6 +1148,14 @@ class SpecWorkflowPanel(
                 latest,
                 state.baselineChoices.size,
             )
+        }
+    }
+
+    private fun buildDocumentsSectionSummary(workflow: SpecWorkflow): String {
+        return buildString {
+            append(phaseLabel(workflow.currentPhase))
+            append(" | ")
+            append(workflow.currentPhase.outputFileName)
         }
     }
 

@@ -71,6 +71,7 @@ open class ChatMessagePanel(
     private val onWorkflowFileOpen: ((WorkflowQuickActionParser.FileAction) -> Unit)? = null,
     private val onWorkflowCommandExecute: ((String) -> Unit)? = null,
     private var workflowSectionsEnabled: Boolean = true,
+    private var timelineExpandButtonsVisible: Boolean = true,
     private val attachedImagePaths: List<String> = emptyList(),
     startedAtMillis: Long? = null,
     finishedAtMillis: Long? = null,
@@ -202,6 +203,16 @@ open class ChatMessagePanel(
     fun setWorkflowSectionsEnabled(enabled: Boolean) {
         if (workflowSectionsEnabled == enabled) return
         workflowSectionsEnabled = enabled
+        renderContent(structured = messageFinished)
+    }
+
+    fun setTimelineExpandButtonsVisible(visible: Boolean) {
+        if (timelineExpandButtonsVisible == visible) return
+        timelineExpandButtonsVisible = visible
+        if (!visible) {
+            traceExpanded = false
+            outputExpanded = false
+        }
         renderContent(structured = messageFinished)
     }
 
@@ -354,6 +365,7 @@ open class ChatMessagePanel(
         val snapshot = traceAssembler.snapshot(
             content = content,
             includeRawContent = includeRawContent,
+            finalizeRunningItems = messageFinished,
         )
         cachedTraceSnapshot = snapshot
         cachedTraceSnapshotContentVersion = contentVersion
@@ -872,17 +884,19 @@ open class ChatMessagePanel(
         }
         summaryBar.add(summaryLeft, BorderLayout.CENTER)
 
-        val toggleButton = JButton(
-            SpecCodingBundle.message(
-                if (traceExpanded) "chat.timeline.toggle.collapse" else "chat.timeline.toggle.expand"
+        if (timelineExpandButtonsVisible) {
+            val toggleButton = JButton(
+                SpecCodingBundle.message(
+                    if (traceExpanded) "chat.timeline.toggle.collapse" else "chat.timeline.toggle.expand"
+                )
             )
-        )
-        styleInlineActionButton(toggleButton)
-        toggleButton.addActionListener {
-            traceExpanded = !traceExpanded
-            renderContent()
+            styleInlineActionButton(toggleButton)
+            toggleButton.addActionListener {
+                traceExpanded = !traceExpanded
+                renderContent()
+            }
+            summaryBar.add(toggleButton, BorderLayout.EAST)
         }
-        summaryBar.add(toggleButton, BorderLayout.EAST)
 
         wrapper.add(summaryBar, BorderLayout.NORTH)
 
@@ -968,17 +982,19 @@ open class ChatMessagePanel(
         }
         right.add(filterButton)
 
-        val toggleButton = JButton(
-            SpecCodingBundle.message(
-                if (outputExpanded) "chat.timeline.toggle.collapse" else "chat.timeline.toggle.expand"
+        if (timelineExpandButtonsVisible) {
+            val toggleButton = JButton(
+                SpecCodingBundle.message(
+                    if (outputExpanded) "chat.timeline.toggle.collapse" else "chat.timeline.toggle.expand"
+                )
             )
-        )
-        styleInlineActionButton(toggleButton)
-        toggleButton.addActionListener {
-            outputExpanded = !outputExpanded
-            renderContent()
+            styleInlineActionButton(toggleButton)
+            toggleButton.addActionListener {
+                outputExpanded = !outputExpanded
+                renderContent()
+            }
+            right.add(toggleButton)
         }
-        right.add(toggleButton)
         header.add(right, BorderLayout.EAST)
 
         wrapper.add(header, BorderLayout.NORTH)

@@ -77,6 +77,7 @@ internal class SpecCollapsibleWorkspaceSection(
     fun setSummary(summary: String?) {
         val value = summary?.trim().orEmpty()
         summaryLabel.text = value
+        summaryLabel.toolTipText = value.ifEmpty { null }
         summaryLabel.isVisible = value.isNotEmpty()
     }
 

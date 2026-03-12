@@ -71,22 +71,37 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals("ToolWindow Demo | wf-42", snapshot.getValue("workflow"))
         assertEquals(SpecCodingBundle.message("spec.workflow.status.inProgress"), snapshot.getValue("status"))
         assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.template.current", "Full Spec"),
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.template.current",
+                SpecWorkflowOverviewPresenter.templateLabel(WorkflowTemplate.FULL_SPEC),
+            ),
             snapshot.getValue("template"),
         )
-        assertTrue(snapshot.getValue("templateHistory").contains("Full Spec"))
+        assertTrue(snapshot.getValue("templateHistory").contains(SpecWorkflowOverviewPresenter.templateLabel(WorkflowTemplate.FULL_SPEC)))
         assertEquals("true", snapshot.getValue("templateSwitchEnabled"))
         assertEquals("true", snapshot.getValue("templateRollbackEnabled"))
-        assertEquals("Tasks", snapshot.getValue("currentStage"))
-        assertTrue(snapshot.getValue("activeStages").contains("Requirements"))
-        assertEquals("Implement", snapshot.getValue("nextStage"))
+        assertEquals(SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS), snapshot.getValue("currentStage"))
+        assertTrue(snapshot.getValue("activeStages").contains(SpecWorkflowOverviewPresenter.stageLabel(StageId.REQUIREMENTS)))
+        assertEquals(SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT), snapshot.getValue("nextStage"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.overview.advanceGate.warning"), snapshot.getValue("gateStatus"))
         assertTrue(snapshot.getValue("gateSummary").contains("warning", ignoreCase = true))
         assertTrue(
             snapshot.getValue("stageFlow").contains(
-                "Verify:${SpecCodingBundle.message("spec.toolwindow.stage.state.inactive")}",
+                "${SpecWorkflowOverviewPresenter.stageLabel(StageId.VERIFY)}:${SpecCodingBundle.message("spec.toolwindow.stage.state.inactive")}",
             ),
         )
+        assertEquals(
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.title",
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS),
+            ),
+            snapshot.getValue("focusTitle"),
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.tasks"),
+            snapshot.getValue("focusSummary"),
+        )
+        assertTrue(snapshot.getValue("checklist").contains("tasks.md"))
         assertEquals("true", snapshot.getValue("advanceEnabled"))
         assertEquals("true", snapshot.getValue("jumpEnabled"))
         assertEquals("true", snapshot.getValue("rollbackEnabled"))

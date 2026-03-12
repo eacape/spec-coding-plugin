@@ -136,6 +136,39 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
+    fun `spec message mode should hide timeline expand buttons but keep summary cards`() {
+        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+
+        runOnEdt {
+            panel.appendContent(
+                """
+                [Task] simplify the spec response surface
+                [Output] model: gpt-5.4
+                [Output] focus: remove redundant controls
+                """.trimIndent()
+            )
+            panel.finishMessage()
+            panel.setTimelineExpandButtonsVisible(false)
+        }
+
+        val labels = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .mapNotNull { it.text }
+            .toList()
+        assertTrue(labels.contains(SpecCodingBundle.message("chat.timeline.summary.label")))
+        assertTrue(labels.contains(SpecCodingBundle.message("chat.timeline.kind.output")))
+
+        val expandText = SpecCodingBundle.message("chat.timeline.toggle.expand")
+        val collapseText = SpecCodingBundle.message("chat.timeline.toggle.collapse")
+        val hasTimelineToggle = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .any { button ->
+                button.text == expandText || button.text == collapseText
+            }
+        assertFalse(hasTimelineToggle)
+    }
+
+    @Test
     fun `edit trace row should expose open file action`() {
         var opened: WorkflowQuickActionParser.FileAction? = null
         val panel = ChatMessagePanel(

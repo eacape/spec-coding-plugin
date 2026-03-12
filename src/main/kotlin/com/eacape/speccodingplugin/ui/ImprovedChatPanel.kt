@@ -245,6 +245,7 @@ class ImprovedChatPanel(
     private var compactedConversationCutoff: Int = 0
     private var currentSessionId: String? = null
     private var isGenerating = false
+    private var isFinalizingResponse = false
     private var isRestoringSession = false
     private var suppressSpecWorkflowSelectionEvents = false
     private var suppressInteractionModeSelectionEvents = false
@@ -337,17 +338,11 @@ class ImprovedChatPanel(
                 return@invokeLater
             }
             if (isRestoringSession) {
-                showStatus(
-                    text = SpecCodingBundle.message("toolwindow.status.session.restoring"),
-                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
-                )
+                showBusyStatus(autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS)
                 return@invokeLater
             }
             if (isGenerating) {
-                showStatus(
-                    text = SpecCodingBundle.message("toolwindow.status.generating"),
-                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
-                )
+                showBusyStatus(autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS)
                 return@invokeLater
             }
             if (currentInteractionMode() != ChatInteractionMode.VIBE) {
@@ -367,17 +362,11 @@ class ImprovedChatPanel(
                 return@invokeLater
             }
             if (isRestoringSession) {
-                showStatus(
-                    text = SpecCodingBundle.message("toolwindow.status.session.restoring"),
-                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
-                )
+                showBusyStatus(autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS)
                 return@invokeLater
             }
             if (isGenerating) {
-                showStatus(
-                    text = SpecCodingBundle.message("toolwindow.status.generating"),
-                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
-                )
+                showBusyStatus(autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS)
                 return@invokeLater
             }
             openHistoryPanel()
@@ -475,10 +464,8 @@ class ImprovedChatPanel(
         interactionModeComboBox.repaint()
         refreshHistoryContentTitle()
         updateComboTooltips()
-        if (isGenerating) {
-            showStatus(SpecCodingBundle.message("toolwindow.status.generating"))
-        } else if (isRestoringSession) {
-            showStatus(SpecCodingBundle.message("toolwindow.status.session.restoring"))
+        if (isGenerating || isRestoringSession) {
+            showBusyStatus()
         }
     }
 
@@ -783,7 +770,11 @@ class ImprovedChatPanel(
             return
         }
         if (isRestoringSession) {
-            showStatus(SpecCodingBundle.message("toolwindow.status.session.restoring"))
+            showBusyStatus()
+            return
+        }
+        if (isFinalizingResponse) {
+            showBusyStatus()
             return
         }
         if (isGenerating) {
@@ -798,17 +789,11 @@ class ImprovedChatPanel(
             return
         }
         if (isRestoringSession) {
-            showStatus(
-                text = SpecCodingBundle.message("toolwindow.status.session.restoring"),
-                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
-            )
+            showBusyStatus(autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS)
             return
         }
         if (isGenerating) {
-            showStatus(
-                text = SpecCodingBundle.message("toolwindow.status.generating"),
-                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
-            )
+            showBusyStatus(autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS)
             return
         }
         if (conversationHistory.isEmpty() && compactedConversationSummary.isNullOrBlank()) {
@@ -1089,6 +1074,7 @@ class ImprovedChatPanel(
         val resolvedProviderId = resolveProviderIdForRequest(providerId)
         stopRequested.set(false)
         activeLlmRequest = ActiveLlmRequest(providerId = resolvedProviderId, requestId = requestId)
+        isFinalizingResponse = false
         setSendingState(true)
         val assistantStartedAtMillis = System.currentTimeMillis()
         currentAssistantPanel = addAssistantMessage(startedAtMillis = assistantStartedAtMillis)
@@ -1189,6 +1175,7 @@ class ImprovedChatPanel(
                             if (stopRequested.get()) {
                                 return@invokeLater
                             }
+                            setResponseFinalizingState(true)
                             currentAssistantPanel?.finishMessage()
                             messagesPanel.scrollToBottom()
                         }
@@ -2171,6 +2158,7 @@ class ImprovedChatPanel(
 
         stopRequested.set(false)
         activeLlmRequest = null
+        isFinalizingResponse = false
         setSendingState(true)
 
         activeOperationJob = scope.launch {
@@ -2245,6 +2233,7 @@ class ImprovedChatPanel(
 
         stopRequested.set(false)
         activeLlmRequest = null
+        isFinalizingResponse = false
         setSendingState(true)
 
         activeOperationJob = scope.launch(Dispatchers.IO) {
@@ -2892,6 +2881,7 @@ class ImprovedChatPanel(
 
         stopRequested.set(false)
         activeLlmRequest = null
+        isFinalizingResponse = false
         setSendingState(true)
 
         activeOperationJob = scope.launch {
@@ -3278,6 +3268,7 @@ class ImprovedChatPanel(
                             metadata = restoredSpecMetadata,
                         )
                     } else {
+                        val timelineExpandButtonsVisible = timelineExpandButtonsVisibleFor(interactionMode)
                          val panel = ChatMessagePanel(
                              ChatMessagePanel.MessageRole.ASSISTANT,
                              restoredContent,
@@ -3287,6 +3278,7 @@ class ImprovedChatPanel(
                              onWorkflowFileOpen = ::handleWorkflowFileOpen,
                              onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
                              workflowSectionsEnabled = workflowSectionsEnabled,
+                             timelineExpandButtonsVisible = timelineExpandButtonsVisible,
                              startedAtMillis = restoredTraceMetadata.startedAtMillis,
                              finishedAtMillis = restoredTraceMetadata.finishedAtMillis,
                              captureElapsedAutomatically = false,
@@ -3548,6 +3540,7 @@ class ImprovedChatPanel(
             onWorkflowFileOpen = ::handleWorkflowFileOpen,
             onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
             workflowSectionsEnabled = workflowSectionRenderingEnabledFor(mode),
+            timelineExpandButtonsVisible = timelineExpandButtonsVisibleFor(mode),
             startedAtMillis = startedAtMillis,
             finishedAtMillis = finishedAtMillis,
             captureElapsedAutomatically = captureElapsedAutomatically,
@@ -4032,6 +4025,7 @@ class ImprovedChatPanel(
         val sessionId = currentSessionId
         stopRequested.set(false)
         activeLlmRequest = null
+        isFinalizingResponse = false
         setSendingState(true)
 
         activeOperationJob = scope.launch(Dispatchers.IO) {
@@ -4151,6 +4145,9 @@ class ImprovedChatPanel(
     }
 
     private fun setSendingState(sending: Boolean) {
+        if (!sending) {
+            isFinalizingResponse = false
+        }
         isGenerating = sending
         refreshSendButtonState()
         inputField.isEnabled = true
@@ -4158,11 +4155,34 @@ class ImprovedChatPanel(
         modelComboBox.isEnabled = true
         interactionModeComboBox.isEnabled = true
         if (sending) {
-            showStatus(SpecCodingBundle.message("toolwindow.status.generating"))
+            showBusyStatus()
         } else if (isRestoringSession) {
-            showStatus(SpecCodingBundle.message("toolwindow.status.session.restoring"))
+            showBusyStatus()
         } else {
             hideStatus()
+        }
+    }
+
+    private fun setResponseFinalizingState(finalizing: Boolean) {
+        if (isFinalizingResponse == finalizing) return
+        isFinalizingResponse = finalizing
+        refreshSendButtonState()
+        if (isGenerating && !isRestoringSession) {
+            showBusyStatus()
+        }
+    }
+
+    private fun showBusyStatus(autoHideMillis: Int? = null) {
+        val text = currentBusyStatusText() ?: return
+        showStatus(text = text, autoHideMillis = autoHideMillis)
+    }
+
+    private fun currentBusyStatusText(): String? {
+        return when {
+            isRestoringSession -> SpecCodingBundle.message("toolwindow.status.session.restoring")
+            !isGenerating -> null
+            isFinalizingResponse -> SpecCodingBundle.message("toolwindow.status.finalizing")
+            else -> SpecCodingBundle.message("toolwindow.status.generating")
         }
     }
 
@@ -4172,7 +4192,7 @@ class ImprovedChatPanel(
     }
 
     private fun refreshSendButtonState() {
-        sendButton.isEnabled = !isRestoringSession
+        sendButton.isEnabled = !isRestoringSession && !isFinalizingResponse
         compactButton.isEnabled = !isGenerating && !isRestoringSession
         refreshActionButtonTexts()
     }
@@ -4209,13 +4229,13 @@ class ImprovedChatPanel(
     }
 
     private fun refreshActionButtonTexts() {
-        val stopMode = isGenerating && !isRestoringSession
-        val tooltipKey = if (stopMode) {
-            "toolwindow.stop"
-        } else {
-            "toolwindow.send"
+        val stopMode = isGenerating && !isRestoringSession && !isFinalizingResponse
+        val tooltip = when {
+            isRestoringSession -> SpecCodingBundle.message("toolwindow.status.session.restoring")
+            isFinalizingResponse -> SpecCodingBundle.message("toolwindow.status.finalizing")
+            stopMode -> SpecCodingBundle.message("toolwindow.stop")
+            else -> SpecCodingBundle.message("toolwindow.send")
         }
-        val tooltip = SpecCodingBundle.message(tooltipKey)
         sendButton.toolTipText = tooltip
         sendButton.accessibleContext.accessibleName = tooltip
         sendButton.icon = if (stopMode) {
@@ -4306,14 +4326,20 @@ class ImprovedChatPanel(
         return mode == ChatInteractionMode.SPEC
     }
 
+    private fun timelineExpandButtonsVisibleFor(mode: ChatInteractionMode): Boolean {
+        return mode != ChatInteractionMode.SPEC
+    }
+
     private fun refreshContinueActions(mode: ChatInteractionMode) {
         val handler = continueHandlerFor(mode)
         val workflowSectionsEnabled = workflowSectionRenderingEnabledFor(mode)
+        val timelineExpandButtonsVisible = timelineExpandButtonsVisibleFor(mode)
         messagesPanel.getAllMessages()
             .filter { message -> message.role == ChatMessagePanel.MessageRole.ASSISTANT }
             .forEach { message ->
                 message.updateContinueAction(handler)
                 message.setWorkflowSectionsEnabled(workflowSectionsEnabled)
+                message.setTimelineExpandButtonsVisible(timelineExpandButtonsVisible)
             }
     }
 
@@ -4762,7 +4788,7 @@ class ImprovedChatPanel(
             return
         }
         if (isGenerating || isRestoringSession) {
-            showStatus(SpecCodingBundle.message("toolwindow.status.generating"))
+            showBusyStatus()
             return
         }
 
@@ -5303,6 +5329,7 @@ class ImprovedChatPanel(
         val resolvedProviderId = resolveProviderIdForRequest(providerId)
         stopRequested.set(false)
         activeLlmRequest = ActiveLlmRequest(providerId = resolvedProviderId, requestId = requestId)
+        isFinalizingResponse = false
         setSendingState(true)
         val assistantStartedAtMillis = System.currentTimeMillis()
         currentAssistantPanel = addAssistantMessage(startedAtMillis = assistantStartedAtMillis)
@@ -5401,6 +5428,7 @@ class ImprovedChatPanel(
                             if (stopRequested.get()) {
                                 return@invokeLater
                             }
+                            setResponseFinalizingState(true)
                             currentAssistantPanel?.finishMessage()
                             messagesPanel.scrollToBottom()
                         }

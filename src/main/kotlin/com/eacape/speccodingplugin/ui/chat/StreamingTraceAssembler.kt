@@ -50,17 +50,24 @@ internal class StreamingTraceAssembler {
         }
     }
 
-    fun snapshot(content: String, includeRawContent: Boolean = true): TraceSnapshot {
+    fun snapshot(
+        content: String,
+        includeRawContent: Boolean = true,
+        finalizeRunningItems: Boolean = false,
+    ): TraceSnapshot {
         val merged = linkedMapOf<String, ExecutionTimelineParser.TimelineItem>()
 
         if (includeRawContent) {
             sanitizedTimelineItems(content).forEach { item ->
-                mergeItem(item, merged)
+                mergeItem(finalizeIfRunning(item, finalizeRunningItems), merged)
             }
         }
         structuredItems.values.forEach { item ->
             val sanitizedDetail = sanitizeDetail(item.detail) ?: return@forEach
-            mergeItem(item.copy(detail = sanitizedDetail), merged)
+            mergeItem(
+                finalizeIfRunning(item.copy(detail = sanitizedDetail), finalizeRunningItems),
+                merged,
+            )
         }
 
         return TraceSnapshot(
@@ -149,6 +156,16 @@ internal class StreamingTraceAssembler {
         if (looksLikePlaceholderDetail(normalized)) return null
         if (!looksLikeGarbledLine(normalized)) return normalized
         return tryRepairMojibake(normalized)
+    }
+
+    private fun finalizeIfRunning(
+        item: ExecutionTimelineParser.TimelineItem,
+        finalizeRunningItems: Boolean,
+    ): ExecutionTimelineParser.TimelineItem {
+        if (!finalizeRunningItems || item.status != ExecutionTimelineParser.Status.RUNNING) {
+            return item
+        }
+        return item.copy(status = ExecutionTimelineParser.Status.DONE)
     }
 
     private fun normalizeDetail(value: String): String? {
