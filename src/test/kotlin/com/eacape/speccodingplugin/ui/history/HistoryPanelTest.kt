@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.history
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.session.ConversationSession
 import com.eacape.speccodingplugin.session.SessionContextSnapshot
 import com.eacape.speccodingplugin.session.SessionFilter
@@ -44,6 +45,8 @@ class HistoryPanelTest {
         assertEquals(2, panel.sessionsForTest().size)
         assertEquals("s-1", panel.selectedSessionIdForTest())
         assertTrue(panel.statusTextForTest().contains("2"))
+        assertTrue(panel.statusTextForTest().contains(SpecCodingBundle.message("history.filter.workflow")))
+        assertEquals(SpecCodingBundle.message("history.filter.workflow"), panel.selectedFilterLabelForTest())
 
         panel.dispose()
     }
@@ -111,14 +114,14 @@ class HistoryPanelTest {
                 sessions.add(
                     summary(
                         id = "s-branch",
-                        title = "Root [branch]",
+                        title = "/spec status [branch]",
                         branchName = "branch",
                     )
                 )
                 Result.success(
                     ConversationSession(
                         id = "s-branch",
-                        title = "Root [branch]",
+                        title = "/spec status [branch]",
                         specTaskId = null,
                         worktreeId = null,
                         modelProvider = "openai",
@@ -139,7 +142,7 @@ class HistoryPanelTest {
 
         assertEquals(listOf("s-root" to null), forkedMessages)
         assertEquals("s-branch", panel.selectedSessionIdForTest())
-        assertTrue(panel.statusTextForTest().contains("Root [branch]"))
+        assertTrue(panel.statusTextForTest().contains("/workflow status [branch]"))
 
         panel.dispose()
     }
@@ -172,7 +175,7 @@ class HistoryPanelTest {
                 sessions.add(
                     summary(
                         id = "s-continue",
-                        title = "Root [continue]",
+                        title = "/spec status [continue]",
                         parentSessionId = "s-root",
                         branchName = "continue-1",
                     )
@@ -180,7 +183,7 @@ class HistoryPanelTest {
                 Result.success(
                     ConversationSession(
                         id = "s-continue",
-                        title = "Root [continue]",
+                        title = "/spec status [continue]",
                         specTaskId = null,
                         worktreeId = null,
                         modelProvider = "openai",
@@ -202,7 +205,7 @@ class HistoryPanelTest {
         assertEquals(listOf("s-root"), snapshots)
         assertEquals(listOf("snap-1"), continuations)
         assertEquals("s-continue", panel.selectedSessionIdForTest())
-        assertTrue(panel.statusTextForTest().contains("Root [continue]"))
+        assertTrue(panel.statusTextForTest().contains("/workflow status [continue]"))
 
         panel.dispose()
     }

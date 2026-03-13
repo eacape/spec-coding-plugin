@@ -536,7 +536,7 @@ class SpecTaskExecutionService(private val project: Project) {
         val clarificationConclusions = extractClarificationConclusions(workflow)
 
         return buildString {
-            appendLine("Interaction mode: spec")
+            appendLine("Interaction mode: workflow")
             appendLine("Workflow=${workflow.id} (docs: .spec-coding/specs/${workflow.id}/{requirements,design,tasks}.md)")
             appendLine(SpecCodingBundle.message("toolwindow.chat.mode.spec.instruction"))
             appendLine("Execution action: ${trigger.toExecutionActionName()}")

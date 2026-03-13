@@ -1,5 +1,8 @@
 package com.eacape.speccodingplugin.ui.chat
 
+import com.eacape.speccodingplugin.session.displayWorkflowChatCommand
+import com.eacape.speccodingplugin.session.isWorkflowChatCommand
+
 /**
  * 从工作流区块中提取可交互动作（文件跳转与命令建议）。
  */
@@ -65,7 +68,7 @@ object WorkflowQuickActionParser {
             block.lines().forEach { rawLine ->
                 val command = normalizeCommandCandidate(rawLine) ?: return@forEach
                 if (isLikelyCommand(command)) {
-                    sink += command
+                    sink += displayCommand(command)
                 }
             }
             replaceRangeWithWhitespace(contentWithoutBlocks, match.range.first, match.range.last)
@@ -75,7 +78,7 @@ object WorkflowQuickActionParser {
         BACKTICK_INLINE_REGEX.findAll(remaining).forEach { match ->
             val candidate = normalizeCommandCandidate(match.groupValues[1]) ?: return@forEach
             if (isLikelyCommand(candidate)) {
-                sink += candidate
+                sink += displayCommand(candidate)
             }
         }
 
@@ -87,15 +90,23 @@ object WorkflowQuickActionParser {
             if (prefixMatch != null) {
                 val candidate = normalizeCommandCandidate(prefixMatch.groupValues[2]) ?: return@forEach
                 if (isLikelyCommand(candidate)) {
-                    sink += candidate
+                    sink += displayCommand(candidate)
                 }
                 return@forEach
             }
 
             val candidate = normalizeCommandCandidate(line) ?: return@forEach
             if (isLikelyCommand(candidate)) {
-                sink += candidate
+                sink += displayCommand(candidate)
             }
+        }
+    }
+
+    private fun displayCommand(command: String): String {
+        return if (isWorkflowChatCommand(command)) {
+            displayWorkflowChatCommand(command).orEmpty()
+        } else {
+            command
         }
     }
 
@@ -313,6 +324,7 @@ object WorkflowQuickActionParser {
         "cmd",
         "/pipeline",
         "/mode",
+        "/workflow",
         "/spec",
     )
 }

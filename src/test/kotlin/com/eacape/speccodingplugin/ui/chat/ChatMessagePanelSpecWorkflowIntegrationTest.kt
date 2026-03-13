@@ -17,7 +17,7 @@ import java.awt.BorderLayout
 class ChatMessagePanelSpecWorkflowIntegrationTest {
 
     @Test
-    fun `assistant message should render workflow sections and support spec command quick action`() {
+    fun `assistant message should render workflow sections and support workflow command quick action`() {
         var insertedCommand: String? = null
         val panel = ChatMessagePanel(
             role = ChatMessagePanel.MessageRole.ASSISTANT,
@@ -47,14 +47,14 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
 
         val commandButton = collectDescendants(panel)
             .filterIsInstance<JButton>()
-            .firstOrNull { it.toolTipText?.contains("/spec ") == true }
-        assertNotNull(commandButton, "Expected at least one /spec command button")
+            .firstOrNull { it.toolTipText?.contains("/workflow ") == true }
+        assertNotNull(commandButton, "Expected at least one /workflow command button")
         runOnEdt { commandButton!!.doClick() }
-        assertTrue(insertedCommand?.startsWith("/spec ") == true)
+        assertTrue(insertedCommand?.startsWith("/workflow ") == true)
     }
 
     @Test
-    fun `assistant message should render spec quick action buttons for transition response`() {
+    fun `assistant message should render workflow quick action buttons for transition response`() {
         var insertedCommand: String? = null
         val panel = ChatMessagePanel(
             role = ChatMessagePanel.MessageRole.ASSISTANT,
@@ -76,15 +76,15 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
             .filterIsInstance<JButton>()
             .filter { button ->
                 val tooltip = button.toolTipText ?: ""
-                tooltip.contains("/spec generate <input>") || tooltip.contains("/spec status")
+                tooltip.contains("/workflow generate <input>") || tooltip.contains("/workflow status")
             }
             .toList()
-        assertFalse(commandButtons.isEmpty(), "Expected spec quick action buttons")
+        assertFalse(commandButtons.isEmpty(), "Expected workflow quick action buttons")
 
-        val statusButton = commandButtons.firstOrNull { it.toolTipText?.contains("/spec status") == true }
+        val statusButton = commandButtons.firstOrNull { it.toolTipText?.contains("/workflow status") == true }
         assertNotNull(statusButton, "Expected status command button")
         runOnEdt { statusButton!!.doClick() }
-        assertEquals("/spec status", insertedCommand)
+        assertEquals("/workflow status", insertedCommand)
     }
 
     @Test
@@ -107,12 +107,12 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
         val footer = layout.getLayoutComponent(BorderLayout.SOUTH) as? Container
         val footerHasCommandButton = footer
             ?.let { collectDescendants(it).filterIsInstance<JButton>() }
-            ?.any { it.toolTipText?.contains("/spec ") == true }
+            ?.any { it.toolTipText?.contains("/workflow ") == true }
             ?: false
 
         val hasMarkdownCommandButton = collectDescendants(panel)
             .filterIsInstance<JButton>()
-            .any { it.toolTipText?.contains("/spec ") == true }
+            .any { it.toolTipText?.contains("/workflow ") == true }
 
         assertFalse(footerHasCommandButton, "Footer action bar should not host workflow command buttons")
         assertTrue(hasMarkdownCommandButton, "Expected workflow command button inside markdown content area")
@@ -152,8 +152,12 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
     }
 
     @Test
-    fun `slash workflow command should not render stop action`() {
-        val panel = ChatMessagePanel(role = ChatMessagePanel.MessageRole.ASSISTANT)
+    fun `legacy spec slash command should remain runnable without stop action`() {
+        var executedCommand: String? = null
+        val panel = ChatMessagePanel(
+            role = ChatMessagePanel.MessageRole.ASSISTANT,
+            onWorkflowCommandExecute = { command -> executedCommand = command },
+        )
 
         runOnEdt {
             panel.appendContent(
@@ -166,12 +170,14 @@ class ChatMessagePanelSpecWorkflowIntegrationTest {
         }
 
         val buttons = collectDescendants(panel).filterIsInstance<JButton>().toList()
-        val runButton = buttons.firstOrNull { it.toolTipText?.contains("/spec status") == true }
+        val runButton = buttons.firstOrNull { it.toolTipText?.contains("/workflow status") == true }
         assertNotNull(runButton, "Expected run button for slash command")
+        runOnEdt { runButton!!.doClick() }
+        assertEquals("/workflow status", executedCommand)
 
         val stopButton = buttons.firstOrNull {
             it.text == SpecCodingBundle.message("chat.workflow.action.stopCommand") &&
-                it.toolTipText?.contains("/spec status") == true
+                it.toolTipText?.contains("/workflow status") == true
         }
         assertNull(stopButton, "Slash command should not render stop button")
     }

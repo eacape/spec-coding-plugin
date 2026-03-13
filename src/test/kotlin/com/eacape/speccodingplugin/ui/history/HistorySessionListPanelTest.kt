@@ -105,6 +105,29 @@ class HistorySessionListPanelTest {
         assertFalse(clearedInfo.contains("Session 1"))
     }
 
+    @Test
+    fun `selection info should normalize legacy spec session title to workflow`() {
+        val panel = HistorySessionListPanel(
+            onSessionSelected = {},
+            onOpenSession = {},
+            onContinueSession = {},
+            onDeleteSession = {},
+            onBranchSession = {},
+        )
+
+        panel.updateSessions(
+            listOf(
+                summary(id = "legacy", title = "/spec status", msgCount = 1),
+            ),
+        )
+
+        panel.setSelectedSession("legacy")
+
+        val selectedInfo = panel.selectedInfoTextForTest()
+        assertTrue(selectedInfo.contains("/workflow status"))
+        assertFalse(selectedInfo.contains("/spec status"))
+    }
+
     private fun summary(id: String, title: String, msgCount: Int): SessionSummary {
         return SessionSummary(
             id = id,

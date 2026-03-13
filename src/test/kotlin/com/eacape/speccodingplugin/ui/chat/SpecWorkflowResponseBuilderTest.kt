@@ -26,8 +26,8 @@ class SpecWorkflowResponseBuilderTest {
 
         val insertedHint = SpecCodingBundle.message("toolwindow.spec.command.phaseTemplate.inserted")
         assertTrue(response.contains(insertedHint))
-        assertTrue(response.contains("/spec generate <input>"))
-        assertTrue(response.contains("/spec status"))
+        assertTrue(response.contains("/workflow generate <input>"))
+        assertTrue(response.contains("/workflow status"))
     }
 
     @Test
@@ -42,7 +42,7 @@ class SpecWorkflowResponseBuilderTest {
 
         val insertedHint = SpecCodingBundle.message("toolwindow.spec.command.phaseTemplate.inserted")
         assertFalse(response.contains(insertedHint))
-        assertTrue(response.contains("/spec generate <input>"))
+        assertTrue(response.contains("/workflow generate <input>"))
         assertTrue(response.contains("## ${SpecCodingBundle.message("chat.workflow.section.execute")}"))
     }
 }

@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.ui.history
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.session.displayWorkflowChatSessionTitle
+import com.eacape.speccodingplugin.session.isWorkflowChatSessionTitle
 import com.eacape.speccodingplugin.session.SessionSummary
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.util.IconLoader
@@ -160,8 +162,7 @@ class HistorySessionListPanel(
 
     private fun isSpecSession(summary: SessionSummary): Boolean {
         if (!summary.specTaskId.isNullOrBlank()) return true
-        val normalizedTitle = summary.title.trim().lowercase()
-        return normalizedTitle.startsWith("/spec") || normalizedTitle.startsWith("[spec]")
+        return isWorkflowChatSessionTitle(summary.title)
     }
 
     private fun formatTimestamp(timestamp: Long): String {
@@ -201,7 +202,12 @@ class HistorySessionListPanel(
             SpecCodingBundle.message("history.info.empty")
         } else {
             buildString {
-                appendLine(SpecCodingBundle.message("history.info.titleLine", summary.title))
+                appendLine(
+                    SpecCodingBundle.message(
+                        "history.info.titleLine",
+                        displayWorkflowChatSessionTitle(summary.title).orEmpty(),
+                    ),
+                )
                 append(SpecCodingBundle.message("history.tooltip.id", summary.id))
             }
         }
@@ -426,7 +432,7 @@ class HistorySessionListPanel(
                     value.messageCount,
                 )
                 val updated = formatTimestamp(value.updatedAt)
-                titleLabel.text = value.title
+                titleLabel.text = displayWorkflowChatSessionTitle(value.title).orEmpty()
                 detailLabel.text = bindingDetail
                 providerLabel.text = SpecCodingBundle.message("history.tooltip.provider", resolveProviderText(value))
                 updatedLabel.text = SpecCodingBundle.message("history.tooltip.updated", updated)

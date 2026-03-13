@@ -337,7 +337,9 @@ class SessionManager internal constructor(
             val specSessionCondition = """
                 (
                     (s.spec_task_id IS NOT NULL AND TRIM(s.spec_task_id) <> '')
+                    OR LOWER(TRIM(s.title)) LIKE '/workflow%'
                     OR LOWER(TRIM(s.title)) LIKE '/spec%'
+                    OR LOWER(TRIM(s.title)) LIKE '[workflow]%'
                     OR LOWER(TRIM(s.title)) LIKE '[spec]%'
                 )
             """.trimIndent()
@@ -807,7 +809,7 @@ class SessionManager internal constructor(
     private fun ResultSet.toSession(): ConversationSession {
         return ConversationSession(
             id = getString("id"),
-            title = getString("title"),
+            title = displayWorkflowChatSessionTitle(getString("title")).orEmpty(),
             specTaskId = getString("spec_task_id"),
             worktreeId = getString("worktree_id"),
             modelProvider = getString("model_provider"),
@@ -849,7 +851,7 @@ class SessionManager internal constructor(
     private fun ResultSet.toSummary(): SessionSummary {
         return SessionSummary(
             id = getString("id"),
-            title = getString("title"),
+            title = displayWorkflowChatSessionTitle(getString("title")).orEmpty(),
             specTaskId = getString("spec_task_id"),
             worktreeId = getString("worktree_id"),
             modelProvider = getString("model_provider"),

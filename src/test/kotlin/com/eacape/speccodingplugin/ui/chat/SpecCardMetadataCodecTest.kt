@@ -17,7 +17,7 @@ class SpecCardMetadataCodecTest {
             status = WorkflowStatus.IN_PROGRESS,
             title = "Auth Module",
             revision = 1739430011223,
-            sourceCommand = "/spec generate optimize login flow",
+            sourceCommand = "/workflow generate optimize login flow",
         )
 
         val encoded = SpecCardMetadataCodec.encode(metadata)
@@ -25,6 +25,28 @@ class SpecCardMetadataCodecTest {
 
         assertNotNull(decoded)
         assertEquals(metadata, decoded)
+    }
+
+    @Test
+    fun `decode should normalize legacy spec command to workflow`() {
+        val decoded = SpecCardMetadataCodec.decode(
+            """
+            {
+              "format":"spec_card_v1",
+              "spec_card":{
+                "workflow_id":"spec-123",
+                "phase":"DESIGN",
+                "status":"IN_PROGRESS",
+                "title":"Auth Module",
+                "revision":1739430011223,
+                "source_command":"/spec generate optimize login flow"
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertNotNull(decoded)
+        assertEquals("/workflow generate optimize login flow", decoded?.sourceCommand)
     }
 
     @Test

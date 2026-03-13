@@ -164,15 +164,25 @@ class SessionManagerTest {
     }
 
     @Test
-    fun `searchSessions SPEC filter should match spec command style titles`() {
-        val specByTitle = manager.createSession(title = "/spec generate requirement doc").getOrThrow()
+    fun `searchSessions SPEC filter should match workflow and legacy spec command style titles`() {
+        val workflowByTitle = manager.createSession(title = "/workflow generate requirement doc").getOrThrow()
+        val legacySpecByTitle = manager.createSession(title = "/spec status").getOrThrow()
         val vibe = manager.createSession(title = "General discussion").getOrThrow()
 
-        manager.addMessage(specByTitle.id, ConversationRole.USER, "spec plan").getOrThrow()
+        manager.addMessage(workflowByTitle.id, ConversationRole.USER, "workflow plan").getOrThrow()
+        manager.addMessage(legacySpecByTitle.id, ConversationRole.USER, "legacy spec plan").getOrThrow()
         manager.addMessage(vibe.id, ConversationRole.USER, "vibe chat").getOrThrow()
 
         val specOnly = manager.searchSessions(filter = SessionFilter.SPEC, limit = 20)
-        assertEquals(setOf(specByTitle.id), specOnly.map { it.id }.toSet())
+        assertEquals(setOf(workflowByTitle.id, legacySpecByTitle.id), specOnly.map { it.id }.toSet())
+        assertEquals(
+            "/workflow status",
+            specOnly.first { it.id == legacySpecByTitle.id }.title,
+        )
+
+        val reloadedLegacy = manager.getSession(legacySpecByTitle.id)
+        assertNotNull(reloadedLegacy)
+        assertEquals("/workflow status", reloadedLegacy?.title)
 
         val vibeOnly = manager.searchSessions(filter = SessionFilter.VIBE, limit = 20)
         assertEquals(setOf(vibe.id), vibeOnly.map { it.id }.toSet())

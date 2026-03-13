@@ -37,6 +37,13 @@ import com.eacape.speccodingplugin.session.ConversationMessage
 import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.ConversationSession
 import com.eacape.speccodingplugin.session.SessionManager
+import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_COMMAND_PREFIX
+import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_MODE_KEY
+import com.eacape.speccodingplugin.session.canonicalizeWorkflowChatCommand
+import com.eacape.speccodingplugin.session.canonicalizeWorkflowChatModeKey
+import com.eacape.speccodingplugin.session.displayWorkflowChatCommand
+import com.eacape.speccodingplugin.session.isWorkflowChatCommand
+import com.eacape.speccodingplugin.session.workflowChatCommandArgs
 import com.eacape.speccodingplugin.skill.SkillExecutor
 import com.eacape.speccodingplugin.skill.SkillContext
 import com.eacape.speccodingplugin.spec.SpecEngine
@@ -270,11 +277,11 @@ class ImprovedChatPanel(
         val messageKey: String,
     ) {
         VIBE("vibe", "toolwindow.chat.mode.vibe"),
-        SPEC("spec", "toolwindow.chat.mode.spec");
+        SPEC(WORKFLOW_CHAT_MODE_KEY, "toolwindow.chat.mode.spec");
 
         companion object {
             fun fromPersistedKeyOrDefault(value: String?): ChatInteractionMode {
-                val normalized = value?.trim().orEmpty()
+                val normalized = canonicalizeWorkflowChatModeKey(value).orEmpty()
                 if (normalized.isBlank()) {
                     return VIBE
                 }
@@ -1058,7 +1065,7 @@ class ImprovedChatPanel(
                 if (normalizedInput.isBlank()) {
                     return
                 }
-                handleSpecCommand("/spec $normalizedInput", sessionTitleSeed = normalizedInput)
+                handleSpecCommand("$WORKFLOW_CHAT_COMMAND_PREFIX $normalizedInput", sessionTitleSeed = normalizedInput)
                 return
             }
         }
@@ -2000,10 +2007,10 @@ class ImprovedChatPanel(
                 append(" (docs: .spec-coding/specs/$workflowId/{requirements,design,tasks}.md)")
             }
         } else {
-            "No active workflow. If needed, run /spec <requirements> first."
+            "No active workflow. If needed, run /workflow <requirements> first."
         }
         return buildString {
-            appendLine("Interaction mode: spec")
+            appendLine("Interaction mode: workflow")
             appendLine(workflowHint)
             appendLine(SpecCodingBundle.message("toolwindow.chat.mode.spec.instruction"))
             appendLine("User instruction:")
@@ -2069,8 +2076,9 @@ class ImprovedChatPanel(
         if (handleModeCommand(trimmedCommand)) {
             return
         }
-        if (trimmedCommand.startsWith("/spec")) {
-            handleSpecCommand(trimmedCommand)
+        val workflowCommand = canonicalizeWorkflowChatCommand(trimmedCommand)
+        if (workflowCommand != null) {
+            handleSpecCommand(workflowCommand)
             return
         }
 
@@ -2279,7 +2287,7 @@ class ImprovedChatPanel(
         command: String,
         onProgress: (ChatStreamEvent) -> Unit = {},
     ): SpecCommandResult {
-        val args = command.removePrefix("/spec").trim()
+        val args = workflowChatCommandArgs(command)
         if (args.isBlank() || args.equals("help", ignoreCase = true)) {
             return plainSpecResult(SpecCodingBundle.message("toolwindow.spec.command.help"))
         }
@@ -2661,13 +2669,14 @@ class ImprovedChatPanel(
         }
 
         val title = workflow.title.ifBlank { workflow.id }
+        val displaySourceCommand = displayWorkflowChatCommand(sourceCommand) ?: sourceCommand
         val metadata = SpecCardMetadata(
             workflowId = workflow.id,
             phase = workflow.currentPhase,
             status = workflow.status,
             title = title,
             revision = document.metadata.updatedAt,
-            sourceCommand = sourceCommand,
+            sourceCommand = displaySourceCommand,
         )
         return SpecCommandResult(
             output = buildSpecCardMarkdown(
@@ -3303,7 +3312,7 @@ class ImprovedChatPanel(
 
         val hasSpecSlashCommand = messages.any { message ->
             message.role == ConversationRole.USER &&
-                message.content.trim().startsWith("/spec", ignoreCase = true)
+                isWorkflowChatCommand(message.content)
         }
         return if (hasSpecSlashCommand) {
             ChatInteractionMode.SPEC
@@ -4003,7 +4012,7 @@ class ImprovedChatPanel(
             try {
                 val result = transitionSpecWorkflow(
                     advance = true,
-                    sourceCommand = "/spec next",
+                    sourceCommand = "/workflow next",
                 )
                 ApplicationManager.getApplication().invokeLater {
                     if (project.isDisposed || _isDisposed) {
@@ -5817,7 +5826,7 @@ class ImprovedChatPanel(
     }
 
     private fun isSpecWorkflowCreateCommand(command: String): Boolean {
-        val args = command.removePrefix("/spec").trim()
+        val args = workflowChatCommandArgs(command)
         if (args.isBlank() || args.equals("help", ignoreCase = true)) {
             return false
         }

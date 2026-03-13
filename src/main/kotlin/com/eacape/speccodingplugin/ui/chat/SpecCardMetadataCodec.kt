@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.chat
 
+import com.eacape.speccodingplugin.session.displayWorkflowChatCommand
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import kotlinx.serialization.json.Json
@@ -40,7 +41,10 @@ internal object SpecCardMetadataCodec {
                     put("status", metadata.status.name)
                     put("title", metadata.title)
                     put("revision", metadata.revision)
-                    put("source_command", metadata.sourceCommand)
+                    put(
+                        "source_command",
+                        displayWorkflowChatCommand(metadata.sourceCommand) ?: metadata.sourceCommand,
+                    )
                 },
             )
         }
@@ -61,7 +65,7 @@ internal object SpecCardMetadataCodec {
         val status = enumOrNull<WorkflowStatus>(card.string("status")) ?: return null
         val title = card.string("title")?.trim().orEmpty()
         val revision = card.long("revision") ?: return null
-        val sourceCommand = card.string("source_command")?.trim().orEmpty()
+        val sourceCommand = displayWorkflowChatCommand(card.string("source_command")).orEmpty()
 
         return SpecCardMetadata(
             workflowId = workflowId,

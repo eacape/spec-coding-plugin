@@ -961,7 +961,7 @@ class SpecEngine(private val project: Project) {
             val currentDocument = workflow.getCurrentDocument()
                 ?: throw IllegalStateException(
                     "Cannot proceed to next phase. Current phase document is missing. " +
-                        "Run /spec generate <input> first.",
+                        "Run /workflow generate <input> first.",
                 )
             val currentValidation = SpecValidator.validate(currentDocument)
             if (!currentValidation.valid) {

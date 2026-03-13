@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.ui.ChatToolWindowFactory
 import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.session.ConversationSession
+import com.eacape.speccodingplugin.session.displayWorkflowChatSessionTitle
 import com.eacape.speccodingplugin.session.SessionContextSnapshot
 import com.eacape.speccodingplugin.session.SessionFilter
 import com.eacape.speccodingplugin.session.SessionManager
@@ -104,7 +105,7 @@ class HistoryPanel(
                 cellHasFocus: Boolean
             ): java.awt.Component {
                 super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
-                text = (value as? SessionFilter)?.name ?: SessionFilter.ALL.name
+                text = sessionFilterLabel(value as? SessionFilter ?: SessionFilter.ALL)
                 return this
             }
         }
@@ -262,7 +263,10 @@ class HistoryPanel(
                 result.onSuccess { branched ->
                     selectedSessionId = branched.id
                     refreshSessions()
-                    statusLabel.text = SpecCodingBundle.message("history.status.branchCreated", branched.title)
+                    statusLabel.text = SpecCodingBundle.message(
+                        "history.status.branchCreated",
+                        displayWorkflowChatSessionTitle(branched.title).orEmpty(),
+                    )
                 }.onFailure { error ->
                     logger.warn("Failed to branch session: $sessionId", error)
                     statusLabel.text = SpecCodingBundle.message(
@@ -285,7 +289,10 @@ class HistoryPanel(
                     refreshSessions()
                     project.messageBus.syncPublisher(HistorySessionOpenListener.TOPIC)
                         .onSessionOpenRequested(continued.id)
-                    statusLabel.text = SpecCodingBundle.message("history.status.continued", continued.title)
+                    statusLabel.text = SpecCodingBundle.message(
+                        "history.status.continued",
+                        displayWorkflowChatSessionTitle(continued.title).orEmpty(),
+                    )
                 }
             }.onFailure { error ->
                 logger.warn("Failed to continue session from snapshot: $sessionId", error)
@@ -302,10 +309,19 @@ class HistoryPanel(
     private fun buildStatusText(count: Int, query: String, filter: SessionFilter): String {
         val countText = SpecCodingBundle.message("history.status.count", count)
         val normalizedQuery = query.trim()
+        val filterLabel = sessionFilterLabel(filter)
         return when {
             normalizedQuery.isBlank() && filter == SessionFilter.ALL -> countText
-            normalizedQuery.isBlank() -> "$countText · ${filter.name}"
-            else -> "$countText · ${filter.name} · \"$normalizedQuery\""
+            normalizedQuery.isBlank() -> "$countText · $filterLabel"
+            else -> "$countText · $filterLabel · \"$normalizedQuery\""
+        }
+    }
+
+    private fun sessionFilterLabel(filter: SessionFilter): String {
+        return when (filter) {
+            SessionFilter.ALL -> SpecCodingBundle.message("history.filter.all")
+            SessionFilter.SPEC -> SpecCodingBundle.message("history.filter.workflow")
+            SessionFilter.VIBE -> SpecCodingBundle.message("history.filter.vibe")
         }
     }
 
@@ -344,6 +360,9 @@ class HistoryPanel(
     internal fun statusTextForTest(): String = statusLabel.text
 
     internal fun selectedSessionIdForTest(): String? = selectedSessionId
+
+    internal fun selectedFilterLabelForTest(): String =
+        sessionFilterLabel(filterCombo.selectedItem as? SessionFilter ?: SessionFilter.ALL)
 
     internal fun sessionsForTest(): List<SessionSummary> = listPanel.sessionsForTest()
 

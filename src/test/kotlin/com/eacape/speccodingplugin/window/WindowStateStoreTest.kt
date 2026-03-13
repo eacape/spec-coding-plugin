@@ -13,14 +13,14 @@ class WindowStateStoreTest {
         store.updateSelectedTabTitle("History")
         store.updateActiveSessionId("session-1")
         store.updateOperationMode("AGENT")
-        store.updateChatInteractionMode("spec")
+        store.updateChatInteractionMode("workflow")
         store.updateChatSpecSidebar(visible = true, dividerLocation = 640)
 
         val snapshot = store.snapshot()
         assertEquals("History", snapshot.selectedTabTitle)
         assertEquals("session-1", snapshot.activeSessionId)
         assertEquals("AGENT", snapshot.operationMode)
-        assertEquals("spec", snapshot.chatInteractionMode)
+        assertEquals("workflow", snapshot.chatInteractionMode)
         assertEquals(true, snapshot.chatSpecSidebarVisible)
         assertEquals(640, snapshot.chatSpecSidebarDividerLocation)
     }
@@ -51,5 +51,23 @@ class WindowStateStoreTest {
         assertEquals("vibe", snapshot.chatInteractionMode)
         assertEquals(true, snapshot.chatSpecSidebarVisible)
         assertEquals(420, snapshot.chatSpecSidebarDividerLocation)
+    }
+
+    @Test
+    fun `legacy spec chat interaction mode should normalize to workflow`() {
+        val store = WindowStateStore()
+
+        store.loadState(
+            WindowStateStore.WindowState(
+                selectedTabTitle = "Chat",
+                chatInteractionMode = "spec",
+            )
+        )
+
+        assertEquals("workflow", store.snapshot().chatInteractionMode)
+
+        store.updateChatInteractionMode("spec")
+
+        assertEquals("workflow", store.snapshot().chatInteractionMode)
     }
 }

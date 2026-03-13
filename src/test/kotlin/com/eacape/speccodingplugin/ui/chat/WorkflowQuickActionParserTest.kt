@@ -61,16 +61,16 @@ class WorkflowQuickActionParserTest {
     }
 
     @Test
-    fun `parse should detect spec slash command as runnable command`() {
+    fun `parse should detect workflow and legacy spec slash commands as runnable commands`() {
         val content = """
             ## Verify
-            - Next step: `/spec next`
-            - Continue with `/spec generate refine design section`
+            - Next step: `/workflow next`
+            - Legacy alias: `/spec generate refine design section`
         """.trimIndent()
 
         val result = WorkflowQuickActionParser.parse(content)
 
-        assertTrue(result.commands.contains("/spec next"))
-        assertTrue(result.commands.contains("/spec generate refine design section"))
+        assertTrue(result.commands.contains("/workflow next"))
+        assertTrue(result.commands.contains("/workflow generate refine design section"))
     }
 }

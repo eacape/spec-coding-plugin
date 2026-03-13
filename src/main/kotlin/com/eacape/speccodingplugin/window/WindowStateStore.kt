@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.window
 
+import com.eacape.speccodingplugin.session.canonicalizeWorkflowChatModeKey
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
@@ -21,7 +22,9 @@ class WindowStateStore : PersistentStateComponent<WindowStateStore.WindowState> 
 
     @Synchronized
     override fun loadState(state: WindowState) {
-        this.state = state.copy()
+        this.state = state.copy(
+            chatInteractionMode = canonicalizeWorkflowChatModeKey(state.chatInteractionMode),
+        )
     }
 
     @Synchronized
@@ -58,7 +61,7 @@ class WindowStateStore : PersistentStateComponent<WindowStateStore.WindowState> 
 
     @Synchronized
     fun updateChatInteractionMode(modeKey: String?) {
-        state.chatInteractionMode = modeKey?.trim()?.ifBlank { null }
+        state.chatInteractionMode = canonicalizeWorkflowChatModeKey(modeKey)
         state.updatedAt = System.currentTimeMillis()
     }
 
