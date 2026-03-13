@@ -129,10 +129,10 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
-    fun `requestExecutionForTask should route pending and blocked tasks to in progress`() {
-        val transitions = mutableListOf<String>()
+    fun `requestExecutionForTask should route pending tasks to execute and blocked tasks to retry`() {
+        val executions = mutableListOf<String>()
         val panel = SpecWorkflowTasksPanel(
-            onTransitionStatus = { taskId, to -> transitions += "$taskId:$to" },
+            onExecuteTask = { taskId, retry -> executions += "$taskId:$retry" },
         )
 
         panel.updateTasks(
@@ -157,7 +157,7 @@ class SpecWorkflowTasksPanelTest {
         assertTrue(panel.requestExecutionForTask("T-001"))
         assertTrue(panel.requestExecutionForTask("T-002"))
 
-        assertEquals(listOf("T-001:IN_PROGRESS", "T-002:IN_PROGRESS"), transitions)
+        assertEquals(listOf("T-001:false", "T-002:true"), executions)
     }
 
     @Test

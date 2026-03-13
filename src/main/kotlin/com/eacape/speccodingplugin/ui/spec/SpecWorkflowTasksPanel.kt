@@ -41,6 +41,7 @@ import javax.swing.SwingConstants
 
 internal class SpecWorkflowTasksPanel(
     private val onTransitionStatus: (taskId: String, to: TaskStatus) -> Unit = { _, _ -> },
+    private val onExecuteTask: (taskId: String, retry: Boolean) -> Unit = { _, _ -> },
     private val onUpdateDependsOn: (taskId: String, dependsOn: List<String>) -> Unit = { _, _ -> },
     private val onUpdateRelatedFiles: (taskId: String, files: List<String>) -> Unit = { _, _ -> },
     private val onCompleteWithRelatedFiles: (
@@ -487,8 +488,10 @@ internal class SpecWorkflowTasksPanel(
         val selectedTask = tasksList.selectedValue ?: return false
         when (selectedTask.status) {
             TaskStatus.PENDING,
+            -> onExecuteTask(selectedTask.id, false)
+
             TaskStatus.BLOCKED,
-            -> onTransitionStatus(selectedTask.id, TaskStatus.IN_PROGRESS)
+            -> onExecuteTask(selectedTask.id, true)
 
             TaskStatus.IN_PROGRESS -> requestCompletionWithRelatedFiles(selectedTask)
             else -> return false

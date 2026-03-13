@@ -3,6 +3,8 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.context.CodeGraphRenderer
 import com.eacape.speccodingplugin.context.CodeGraphService
+import com.eacape.speccodingplugin.core.OperationMode
+import com.eacape.speccodingplugin.core.OperationModeManager
 import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
@@ -74,6 +76,7 @@ class SpecWorkflowPanel(
     private val specEngine = SpecEngine.getInstance(project)
     private val specDeltaService = SpecDeltaService.getInstance(project)
     private val specTasksService = SpecTasksService.getInstance(project)
+    private val specTaskExecutionService = SpecTaskExecutionService.getInstance(project)
     private val specRelatedFilesService = SpecRelatedFilesService.getInstance(project)
     private val specVerificationService = SpecVerificationService.getInstance(project)
     private val artifactService = SpecArtifactService(project)
@@ -81,6 +84,7 @@ class SpecWorkflowPanel(
     private val worktreeManager = WorktreeManager.getInstance(project)
     private val llmRouter = LlmRouter.getInstance()
     private val modelRegistry = ModelRegistry.getInstance()
+    private val modeManager = OperationModeManager.getInstance(project)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val discoveryListener: () -> Unit = {
         llmRouter.refreshProviders()
@@ -103,6 +107,7 @@ class SpecWorkflowPanel(
     )
     private val tasksPanel = SpecWorkflowTasksPanel(
         onTransitionStatus = ::onTaskStatusTransitionRequested,
+        onExecuteTask = ::onTaskExecutionRequested,
         onUpdateDependsOn = ::onTaskDependsOnUpdateRequested,
         onUpdateRelatedFiles = ::onTaskRelatedFilesUpdateRequested,
         onCompleteWithRelatedFiles = ::onTaskCompleteRequested,
@@ -2288,6 +2293,12 @@ class SpecWorkflowPanel(
         val options: GenerationOptions,
     )
 
+    private data class TaskExecutionContext(
+        val providerId: String,
+        val modelId: String,
+        val operationMode: OperationMode,
+    )
+
     private data class ClarificationRetryPayload(
         val input: String,
         val confirmedContext: String,
@@ -2778,6 +2789,70 @@ class SpecWorkflowPanel(
         )
     }
 
+    private fun onTaskExecutionRequested(taskId: String, retry: Boolean) {
+        val workflowId = selectedWorkflowId ?: return
+        val executionContext = resolveTaskExecutionContext() ?: return
+        val actionName = if (retry) "RETRY_EXECUTION" else "EXECUTE_WITH_AI"
+        val auditContext = buildTaskAuditContext(taskId, actionName)
+        val progressKey = if (retry) {
+            "spec.toolwindow.tasks.retry.progress"
+        } else {
+            "spec.toolwindow.tasks.execute.progress"
+        }
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message(progressKey, taskId),
+            task = {
+                val previousRunId = if (retry) {
+                    specTaskExecutionService.listRuns(workflowId, taskId)
+                        .firstOrNull { run -> run.status.isTerminal() }
+                        ?.runId
+                } else {
+                    null
+                }
+                if (retry) {
+                    specTaskExecutionService.retryAiExecution(
+                        workflowId = workflowId,
+                        taskId = taskId,
+                        providerId = executionContext.providerId,
+                        modelId = executionContext.modelId,
+                        operationMode = executionContext.operationMode,
+                        previousRunId = previousRunId,
+                        auditContext = auditContext,
+                    )
+                } else {
+                    specTaskExecutionService.startAiExecution(
+                        workflowId = workflowId,
+                        taskId = taskId,
+                        providerId = executionContext.providerId,
+                        modelId = executionContext.modelId,
+                        operationMode = executionContext.operationMode,
+                        auditContext = auditContext,
+                    )
+                }
+            },
+            onSuccess = { result ->
+                val statusKey = if (retry) {
+                    "spec.toolwindow.tasks.retry.updated"
+                } else {
+                    "spec.toolwindow.tasks.execute.updated"
+                }
+                setStatusText(SpecCodingBundle.message(statusKey, taskId, result.sessionTitle))
+                reloadCurrentWorkflow()
+            },
+            onFailure = { error ->
+                val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                reloadCurrentWorkflow()
+                Messages.showErrorDialog(
+                    project,
+                    message,
+                    SpecCodingBundle.message(progressKey, taskId),
+                )
+            },
+        )
+    }
+
     private fun onTaskVerificationResultUpdateRequested(taskId: String, verificationResult: TaskVerificationResult?) {
         val workflowId = selectedWorkflowId ?: return
         val existingTask = currentStructuredTasks.firstOrNull { task -> task.id == taskId }
@@ -2833,6 +2908,29 @@ class SpecWorkflowPanel(
             put("documentSummary", summary)
             put("dependsOn", task?.dependsOn?.joinToString(", ").orEmpty())
         }.filterValues { value -> value.isNotBlank() }
+    }
+
+    private fun resolveTaskExecutionContext(): TaskExecutionContext? {
+        val providerId = providerComboBox.selectedItem as? String
+        if (providerId.isNullOrBlank()) {
+            setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.execute.providerRequired"))
+            return null
+        }
+        val modelId = (modelComboBox.selectedItem as? ModelInfo)?.id?.trim().orEmpty()
+        if (modelId.isBlank()) {
+            setStatusText(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.tasks.execute.modelRequired",
+                    providerDisplayName(providerId),
+                ),
+            )
+            return null
+        }
+        return TaskExecutionContext(
+            providerId = providerId,
+            modelId = modelId,
+            operationMode = modeManager.getCurrentMode(),
+        )
     }
 
     private fun onAdvanceStageRequested() {
