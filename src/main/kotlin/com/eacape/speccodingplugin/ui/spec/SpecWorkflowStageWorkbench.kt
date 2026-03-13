@@ -37,6 +37,7 @@ internal data class SpecWorkflowWorkbenchAction(
     val enabled: Boolean,
     val targetStage: StageId? = null,
     val taskId: String? = null,
+    val disabledReason: String? = null,
 )
 
 internal data class SpecWorkflowStageCompletionCheck(
@@ -64,6 +65,8 @@ internal data class SpecWorkflowStageArtifactBinding(
     val fallbackEditable: Boolean,
     val available: Boolean = false,
     val previewContent: String? = null,
+    val emptyStateMessage: String? = null,
+    val unavailableMessage: String? = null,
 )
 
 internal data class SpecWorkflowImplementationFocus(
@@ -160,9 +163,15 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 workflow = workflow,
                 overviewState = overviewState,
                 focusedStage = resolvedFocusedStage,
+                tasks = tasks,
                 verifyDeltaState = verifyDeltaState,
             ),
-            artifactBinding = buildArtifactBinding(workflow, resolvedFocusedStage),
+            artifactBinding = buildArtifactBinding(
+                workflow = workflow,
+                focusedStage = resolvedFocusedStage,
+                tasks = tasks,
+                verifyDeltaState = verifyDeltaState,
+            ),
             implementationFocus = implementationFocus,
             visibleSections = SpecWorkflowWorkspaceLayout.visibleSections(
                 currentStage = resolvedFocusedStage,
@@ -213,17 +222,21 @@ internal object SpecWorkflowStageWorkbenchBuilder {
             )?.let { return it }
         }
         return when {
-            focusedStage == overviewState.currentStage -> SpecWorkflowWorkbenchAction(
-                kind = SpecWorkflowWorkbenchActionKind.ADVANCE,
-                label = overviewState.nextStage?.let { nextStage ->
-                    SpecCodingBundle.message(
-                        "spec.toolwindow.overview.primary.advance",
-                        SpecWorkflowOverviewPresenter.stageLabel(nextStage),
-                    )
-                } ?: SpecCodingBundle.message("spec.action.advance.text"),
-                enabled = overviewState.stageStepper.canAdvance && blockers.isEmpty(),
-                targetStage = overviewState.nextStage,
-            )
+            focusedStage == overviewState.currentStage -> {
+                val enabled = overviewState.stageStepper.canAdvance && blockers.isEmpty()
+                SpecWorkflowWorkbenchAction(
+                    kind = SpecWorkflowWorkbenchActionKind.ADVANCE,
+                    label = overviewState.nextStage?.let { nextStage ->
+                        SpecCodingBundle.message(
+                            "spec.toolwindow.overview.primary.advance",
+                            SpecWorkflowOverviewPresenter.stageLabel(nextStage),
+                        )
+                    } ?: SpecCodingBundle.message("spec.action.advance.text"),
+                    enabled = enabled,
+                    targetStage = overviewState.nextStage,
+                    disabledReason = disabledReason(enabled, blockers),
+                )
+            }
 
             else -> null
         }
@@ -253,10 +266,16 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 targetStage = overviewState.nextStage,
             )
         } else {
+            val enabled = verifyEnabled
             SpecWorkflowWorkbenchAction(
                 kind = SpecWorkflowWorkbenchActionKind.RUN_VERIFY,
                 label = SpecCodingBundle.message("spec.toolwindow.overview.primary.verify.run"),
-                enabled = verifyEnabled,
+                enabled = enabled,
+                disabledReason = disabledReason(
+                    enabled = enabled,
+                    blockers = blockers,
+                    fallbackMessage = SpecCodingBundle.message("spec.toolwindow.overview.blockers.verify.enabled"),
+                ),
             )
         }
     }
@@ -272,11 +291,15 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 enabled = true,
             )
 
-            focusedStageRequiresCompletion(overviewState) -> SpecWorkflowWorkbenchAction(
-                kind = SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW,
-                label = SpecCodingBundle.message("spec.toolwindow.overview.primary.archive.complete"),
-                enabled = blockers.isEmpty(),
-            )
+            focusedStageRequiresCompletion(overviewState) -> {
+                val enabled = blockers.isEmpty()
+                SpecWorkflowWorkbenchAction(
+                    kind = SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW,
+                    label = SpecCodingBundle.message("spec.toolwindow.overview.primary.archive.complete"),
+                    enabled = enabled,
+                    disabledReason = disabledReason(enabled, blockers),
+                )
+            }
 
             else -> null
         }
@@ -326,6 +349,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 if (!allWorkSettled) {
                     return null
                 }
+                val enabled = overviewState.stageStepper.canAdvance && relatedFilesConfirmed
                 SpecWorkflowWorkbenchAction(
                     kind = SpecWorkflowWorkbenchActionKind.ADVANCE,
                     label = overviewState.nextStage?.let { nextStage ->
@@ -334,8 +358,16 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                             SpecWorkflowOverviewPresenter.stageLabel(nextStage),
                         )
                     } ?: SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.continueCheck"),
-                    enabled = overviewState.stageStepper.canAdvance && relatedFilesConfirmed,
+                    enabled = enabled,
                     targetStage = overviewState.nextStage,
+                    disabledReason = disabledReason(
+                        enabled = enabled,
+                        blockers = if (!relatedFilesConfirmed) {
+                            listOf(SpecCodingBundle.message("spec.toolwindow.overview.blockers.implement.relatedFiles"))
+                        } else {
+                            emptyList()
+                        },
+                    ),
                 )
             }
         }
@@ -440,13 +472,80 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         workflow: SpecWorkflow,
         overviewState: SpecWorkflowOverviewState,
         focusedStage: StageId,
+        tasks: List<StructuredTask>,
         verifyDeltaState: SpecWorkflowVerifyDeltaState?,
     ): List<String> {
         return when (focusedStage) {
+            StageId.REQUIREMENTS -> buildRequirementsFocusDetails(workflow)
+            StageId.DESIGN -> buildDesignFocusDetails(workflow)
+            StageId.TASKS -> buildTasksFocusDetails(workflow, tasks)
+            StageId.IMPLEMENT -> buildImplementFocusDetails(tasks)
             StageId.VERIFY -> buildVerifyFocusDetails(workflow, verifyDeltaState)
             StageId.ARCHIVE -> buildArchiveFocusDetails(workflow, overviewState, verifyDeltaState)
-            else -> emptyList()
         }
+    }
+
+    private fun buildRequirementsFocusDetails(workflow: SpecWorkflow): List<String> {
+        val requirementsReady = workflow.documents.containsKey(SpecPhase.SPECIFY)
+        return listOf(
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.requirements.source"),
+            artifactStateLine("requirements.md", requirementsReady),
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.requirements.workspace"),
+        )
+    }
+
+    private fun buildDesignFocusDetails(workflow: SpecWorkflow): List<String> {
+        val designReady = workflow.documents.containsKey(SpecPhase.DESIGN)
+        return listOf(
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.design.source"),
+            artifactStateLine("design.md", designReady),
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.design.workspace"),
+        )
+    }
+
+    private fun buildTasksFocusDetails(
+        workflow: SpecWorkflow,
+        tasks: List<StructuredTask>,
+    ): List<String> {
+        val completedCount = tasks.count { it.status == TaskStatus.COMPLETED }
+        val inProgressCount = tasks.count { it.status == TaskStatus.IN_PROGRESS }
+        val tasksLine = when {
+            !workflow.documents.containsKey(SpecPhase.IMPLEMENT) -> artifactStateLine("tasks.md", false)
+            tasks.isEmpty() -> SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.tasks.none")
+            else -> SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.detail.tasks.count",
+                tasks.size,
+                completedCount,
+                inProgressCount,
+            )
+        }
+        return listOf(
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.tasks.source"),
+            tasksLine,
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.tasks.workspace"),
+        )
+    }
+
+    private fun buildImplementFocusDetails(tasks: List<StructuredTask>): List<String> {
+        val completedCount = tasks.count { it.status == TaskStatus.COMPLETED }
+        val inProgressCount = tasks.count { it.status == TaskStatus.IN_PROGRESS }
+        val pendingCount = tasks.count { it.status == TaskStatus.PENDING || it.status == TaskStatus.BLOCKED }
+        val tasksLine = if (tasks.isEmpty()) {
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.implement.none")
+        } else {
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.detail.implement.count",
+                tasks.size,
+                completedCount,
+                inProgressCount,
+                pendingCount,
+            )
+        }
+        return listOf(
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.implement.source"),
+            tasksLine,
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.implement.workspace"),
+        )
     }
 
     private fun buildVerifyFocusDetails(
@@ -609,6 +708,8 @@ internal object SpecWorkflowStageWorkbenchBuilder {
     private fun buildArtifactBinding(
         workflow: SpecWorkflow,
         focusedStage: StageId,
+        tasks: List<StructuredTask>,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState?,
     ): SpecWorkflowStageArtifactBinding {
         val documentPhase = when (focusedStage) {
             StageId.REQUIREMENTS -> SpecPhase.SPECIFY
@@ -644,6 +745,16 @@ internal object SpecWorkflowStageWorkbenchBuilder {
             documentPhase = documentPhase,
             mode = mode,
             fallbackEditable = documentPhase != null && workflow.documents.containsKey(documentPhase),
+            emptyStateMessage = stageArtifactEmptyStateMessage(
+                stageId = focusedStage,
+                tasks = tasks,
+                verifyDeltaState = verifyDeltaState,
+            ),
+            unavailableMessage = stageArtifactUnavailableMessage(
+                stageId = focusedStage,
+                tasks = tasks,
+                verifyDeltaState = verifyDeltaState,
+            ),
         )
     }
 
@@ -1037,6 +1148,62 @@ internal object SpecWorkflowStageWorkbenchBuilder {
             return normalized
         }
         return normalized.take(maxLength - 3).trimEnd() + "..."
+    }
+
+    private fun disabledReason(
+        enabled: Boolean,
+        blockers: List<String>,
+        fallbackMessage: String = SpecCodingBundle.message("spec.toolwindow.overview.primary.disabled.advanceUnavailable"),
+    ): String? {
+        if (enabled) {
+            return null
+        }
+        return blockers.firstOrNull() ?: fallbackMessage
+    }
+
+    private fun artifactStateLine(fileName: String, available: Boolean): String {
+        return if (available) {
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.document.ready", fileName)
+        } else {
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.document.missing", fileName)
+        }
+    }
+
+    private fun stageArtifactEmptyStateMessage(
+        stageId: StageId,
+        tasks: List<StructuredTask>,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState?,
+    ): String {
+        return when (stageId) {
+            StageId.REQUIREMENTS -> SpecCodingBundle.message("spec.detail.workbench.requirements.missing")
+            StageId.DESIGN -> SpecCodingBundle.message("spec.detail.workbench.design.missing")
+            StageId.TASKS -> if (tasks.isEmpty()) {
+                SpecCodingBundle.message("spec.detail.workbench.tasks.missing")
+            } else {
+                SpecCodingBundle.message("spec.detail.workbench.tasks.empty")
+            }
+
+            StageId.IMPLEMENT -> SpecCodingBundle.message("spec.detail.workbench.implement.missing")
+            StageId.VERIFY -> if (verifyDeltaState?.verifyEnabled == true) {
+                SpecCodingBundle.message("spec.detail.workbench.verify.missing")
+            } else {
+                SpecCodingBundle.message("spec.detail.workbench.verify.disabled")
+            }
+
+            StageId.ARCHIVE -> SpecCodingBundle.message("spec.detail.workbench.archive.missing")
+        }
+    }
+
+    private fun stageArtifactUnavailableMessage(
+        stageId: StageId,
+        tasks: List<StructuredTask>,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState?,
+    ): String {
+        return stageArtifactEmptyStateMessage(
+            stageId = stageId,
+            tasks = tasks,
+            verifyDeltaState = verifyDeltaState,
+        )
     }
 
     private val REQUIRED_REQUIREMENTS_SECTIONS = listOf(

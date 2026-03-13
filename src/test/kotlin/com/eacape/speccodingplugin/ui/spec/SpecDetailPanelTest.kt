@@ -292,6 +292,125 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `updateWorkbenchState should explain missing requirements document in workbench preview`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-requirements-empty",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = emptyMap(),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Requirements Empty",
+            description = "requirements empty state",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val emptyMessage = SpecCodingBundle.message("spec.detail.workbench.requirements.missing")
+
+        panel.updateWorkflow(workflow)
+        panel.updateWorkbenchState(
+            state = SpecWorkflowStageWorkbenchState(
+                currentStage = StageId.REQUIREMENTS,
+                focusedStage = StageId.REQUIREMENTS,
+                progress = SpecWorkflowStageProgressView(
+                    stepIndex = 1,
+                    totalSteps = 6,
+                    stageStatus = com.eacape.speccodingplugin.spec.StageProgress.IN_PROGRESS,
+                    completedCheckCount = 0,
+                    totalCheckCount = 4,
+                    completionChecks = emptyList(),
+                ),
+                primaryAction = SpecWorkflowWorkbenchAction(
+                    kind = SpecWorkflowWorkbenchActionKind.ADVANCE,
+                    label = "continue",
+                    enabled = false,
+                    disabledReason = "blocked",
+                ),
+                overflowActions = emptyList(),
+                blockers = listOf("blocked"),
+                artifactBinding = SpecWorkflowStageArtifactBinding(
+                    stageId = StageId.REQUIREMENTS,
+                    title = "requirements.md",
+                    fileName = "requirements.md",
+                    documentPhase = SpecPhase.SPECIFY,
+                    mode = SpecWorkflowWorkbenchDocumentMode.PREVIEW,
+                    fallbackEditable = false,
+                    available = false,
+                    previewContent = null,
+                    emptyStateMessage = emptyMessage,
+                    unavailableMessage = emptyMessage,
+                ),
+                visibleSections = setOf(SpecWorkflowWorkspaceSectionId.DOCUMENTS),
+            ),
+            syncSelection = true,
+        )
+
+        assertEquals(emptyMessage, panel.currentPreviewTextForTest())
+        assertEquals(emptyMessage, panel.currentValidationTextForTest())
+        assertEquals("requirements.md", panel.currentDocumentMetaTextForTest())
+        assertEquals(SpecPhase.SPECIFY.name, panel.selectedPhaseNameForTest())
+        assertTrue(panel.areDocumentTabsVisibleForTest())
+    }
+
+    @Test
+    fun `updateWorkbenchState should explain missing verification artifact in workbench preview`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-verify-empty",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = emptyMap(),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Verify Empty",
+            description = "verify empty state",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        val emptyMessage = SpecCodingBundle.message("spec.detail.workbench.verify.missing")
+
+        panel.updateWorkflow(workflow)
+        panel.updateWorkbenchState(
+            state = SpecWorkflowStageWorkbenchState(
+                currentStage = StageId.VERIFY,
+                focusedStage = StageId.VERIFY,
+                progress = SpecWorkflowStageProgressView(
+                    stepIndex = 5,
+                    totalSteps = 6,
+                    stageStatus = com.eacape.speccodingplugin.spec.StageProgress.IN_PROGRESS,
+                    completedCheckCount = 1,
+                    totalCheckCount = 3,
+                    completionChecks = emptyList(),
+                ),
+                primaryAction = SpecWorkflowWorkbenchAction(
+                    kind = SpecWorkflowWorkbenchActionKind.RUN_VERIFY,
+                    label = "Run verification",
+                    enabled = true,
+                ),
+                overflowActions = emptyList(),
+                blockers = emptyList(),
+                artifactBinding = SpecWorkflowStageArtifactBinding(
+                    stageId = StageId.VERIFY,
+                    title = "verification.md",
+                    fileName = "verification.md",
+                    documentPhase = null,
+                    mode = SpecWorkflowWorkbenchDocumentMode.READ_ONLY,
+                    fallbackEditable = false,
+                    available = false,
+                    previewContent = null,
+                    emptyStateMessage = emptyMessage,
+                    unavailableMessage = emptyMessage,
+                ),
+                visibleSections = setOf(SpecWorkflowWorkspaceSectionId.DOCUMENTS),
+            ),
+            syncSelection = true,
+        )
+
+        assertEquals(emptyMessage, panel.currentPreviewTextForTest())
+        assertEquals(emptyMessage, panel.currentValidationTextForTest())
+        assertEquals("verification.md", panel.currentDocumentMetaTextForTest())
+        assertEquals(null, panel.selectedPhaseNameForTest())
+        assertFalse(panel.areDocumentTabsVisibleForTest())
+    }
+
+    @Test
     fun `document viewport should keep a fixed height for long content`() {
         val panel = createPanel()
         val longTasksContent = buildString {

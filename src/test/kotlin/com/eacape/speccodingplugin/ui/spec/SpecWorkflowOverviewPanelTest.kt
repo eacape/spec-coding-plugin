@@ -175,6 +175,11 @@ class SpecWorkflowOverviewPanelTest {
         assertTrue(snapshot.getValue("blockers").contains(SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.gateUnavailable")))
         assertEquals("true", snapshot.getValue("primaryActionVisible"))
         assertEquals("false", snapshot.getValue("primaryActionEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document"),
+            snapshot.getValue("primaryActionTooltip"),
+        )
+        assertTrue(snapshot.getValue("focusDetails").contains("tasks.md"))
     }
 
     @Test

@@ -146,6 +146,7 @@ abstract class CliEngine(
     override fun stream(request: EngineRequest): Flow<EngineChunk> = flow {
         val requestId = request.options["requestId"] ?: System.nanoTime().toString()
         val timeoutSeconds = resolveTimeoutSeconds(request)
+        val inactivityTimeoutMillis = streamInactivityTimeoutMillis(request)?.takeIf { it > 0 }
         val args = buildStreamCommandArgs(request)
         val process = startProcess(args, request.context.workingDirectory)
         activeProcesses[requestId] = process
@@ -155,11 +156,14 @@ abstract class CliEngine(
             var emittedChunk = false
             var sawStdoutData = false
             var terminatedAfterStreamDrain = false
+            var terminatedAfterInactivity = false
+            var inactivityTerminationAttempted = false
             val frames: BlockingQueue<StreamFrame> = LinkedBlockingQueue()
             val stdoutDone = AtomicBoolean(false)
             val stderrDone = AtomicBoolean(false)
             val stderrText = StringBuilder()
             val stdoutText = StringBuilder()
+            var lastFrameAtNanos = System.nanoTime()
 
             val stdoutPump = startLinePump(
                 stream = process.inputStream,
@@ -180,6 +184,7 @@ abstract class CliEngine(
                 currentCoroutineContext().ensureActive()
                 val frame = frames.poll(STREAM_POLL_MILLIS, TimeUnit.MILLISECONDS)
                 if (frame != null) {
+                    lastFrameAtNanos = System.nanoTime()
                     val parsed = when (frame.source) {
                         StreamSource.STDOUT -> parseStreamLine(
                             if (frame.hasLineBreak) frame.line + "\n" else frame.line
@@ -194,10 +199,25 @@ abstract class CliEngine(
                         emittedChunk = true
                         emit(parsed)
                     }
+                } else if (
+                    inactivityTimeoutMillis != null &&
+                    !inactivityTerminationAttempted &&
+                    sawStdoutData &&
+                    process.isAlive &&
+                    frames.isEmpty() &&
+                    (System.nanoTime() - lastFrameAtNanos) >= TimeUnit.MILLISECONDS.toNanos(inactivityTimeoutMillis)
+                ) {
+                    inactivityTerminationAttempted = true
+                    terminatedAfterInactivity = terminateProcessAfterInactivity(
+                        process = process,
+                        requestId = requestId,
+                        inactivityTimeoutMillis = inactivityTimeoutMillis,
+                    )
                 }
 
                 val streamDrained = stdoutDone.get() && stderrDone.get() && frames.isEmpty()
-                if (streamDrained) {
+                val terminatedAfterIdleAndFlushed = terminatedAfterInactivity && !process.isAlive && frames.isEmpty()
+                if (streamDrained || terminatedAfterIdleAndFlushed) {
                     if (process.isAlive) {
                         terminatedAfterStreamDrain = terminateProcessAfterStreamDrain(process, requestId)
                     }
@@ -218,7 +238,7 @@ abstract class CliEngine(
                     process.exitValue()
                 }
             }.getOrNull()
-            val tolerateTerminatedExitCode = terminatedAfterStreamDrain && sawStdoutData
+            val tolerateTerminatedExitCode = (terminatedAfterStreamDrain || terminatedAfterInactivity) && sawStdoutData
             if (timedOut.get()) {
                 val resolvedTimeoutMessage = resolveProcessFailureMessage(
                     stderr = stderr,
@@ -322,6 +342,12 @@ abstract class CliEngine(
      * 返回 null 或 <= 0 时仅按换行刷新，适合 JSONL 等按行协议。
      */
     protected open fun stdoutChunkFlushChars(): Int? = STREAM_STDOUT_FLUSH_CHARS
+
+    /**
+     * 流式输出在出现有效 stdout 后的静默超时。
+     * 返回 null 或 <= 0 时禁用；用于处理输出已经完成但 CLI 没有关闭流的场景。
+     */
+    protected open fun streamInactivityTimeoutMillis(request: EngineRequest): Long? = null
 
     /** 获取版本号 */
     protected abstract suspend fun getVersion(): String?
@@ -475,6 +501,22 @@ abstract class CliEngine(
         }
         process.destroyForcibly()
         return waitForProcessExit(process, STREAM_PROCESS_FORCE_EXIT_AFTER_DRAIN_MILLIS)
+    }
+
+    private fun terminateProcessAfterInactivity(
+        process: Process,
+        requestId: String,
+        inactivityTimeoutMillis: Long,
+    ): Boolean {
+        logger.info(
+            "CLI process for request=$requestId became idle for ${inactivityTimeoutMillis}ms after stdout activity; terminating it",
+        )
+        process.destroy()
+        if (waitForProcessExit(process, STREAM_PROCESS_EXIT_AFTER_IDLE_MILLIS)) {
+            return true
+        }
+        process.destroyForcibly()
+        return waitForProcessExit(process, STREAM_PROCESS_FORCE_EXIT_AFTER_IDLE_MILLIS)
     }
 
     private fun waitForProcessExit(process: Process, timeoutMillis: Long): Boolean {
@@ -635,6 +677,8 @@ abstract class CliEngine(
         private const val STREAM_STDOUT_FLUSH_CHARS = 64
         private const val STREAM_PROCESS_EXIT_AFTER_DRAIN_MILLIS = 200L
         private const val STREAM_PROCESS_FORCE_EXIT_AFTER_DRAIN_MILLIS = 400L
+        private const val STREAM_PROCESS_EXIT_AFTER_IDLE_MILLIS = 200L
+        private const val STREAM_PROCESS_FORCE_EXIT_AFTER_IDLE_MILLIS = 400L
         private const val MAX_DIAGNOSTIC_TEXT_LENGTH = 2000
         private val ERROR_ANSI_REGEX = Regex("""\u001B\[[;\d]*[ -/]*[@-~]""")
         private val ERROR_REPLACEMENT_CHAR_REGEX = Regex("""\uFFFD+""")

@@ -1570,7 +1570,9 @@ class SpecDetailPanel(
         if (!previewContent.isNullOrBlank()) {
             renderPreviewMarkdown(previewContent)
         } else {
-            renderPreviewMarkdown(SpecCodingBundle.message("spec.detail.workbench.missing", artifactName))
+            renderPreviewMarkdown(
+                binding.emptyStateMessage ?: SpecCodingBundle.message("spec.detail.workbench.missing", artifactName),
+            )
         }
         if (isGeneratingActive && keepGeneratingIndicator) {
             updateGeneratingLabel()
@@ -1579,7 +1581,7 @@ class SpecDetailPanel(
         validationLabel.text = if (binding.available) {
             SpecCodingBundle.message("spec.detail.workbench.readOnly", artifactName)
         } else {
-            SpecCodingBundle.message("spec.detail.workbench.unavailable", artifactName)
+            binding.unavailableMessage ?: SpecCodingBundle.message("spec.detail.workbench.unavailable", artifactName)
         }
         validationLabel.foreground = if (binding.available) {
             JBColor.GRAY
@@ -3177,8 +3179,13 @@ class SpecDetailPanel(
             stopGeneratingAnimation()
         }
         val doc = currentWorkflow?.documents?.get(phase)
+        val workbenchBinding = workbenchArtifactBinding?.takeIf { it.documentPhase == phase }
         if (doc != null) {
-            renderPreviewMarkdown(doc.content)
+            if (doc.content.isBlank() && !workbenchBinding?.emptyStateMessage.isNullOrBlank()) {
+                renderPreviewMarkdown(workbenchBinding?.emptyStateMessage.orEmpty())
+            } else {
+                renderPreviewMarkdown(doc.content)
+            }
             val vr = doc.validationResult
             if (isGeneratingActive && keepGeneratingIndicator) {
                 updateGeneratingLabel()
@@ -3199,11 +3206,14 @@ class SpecDetailPanel(
                 }
             }
         } else {
-            renderPreviewMarkdown(SpecCodingBundle.message("spec.detail.noDocumentForPhase", phaseDisplayText(phase)))
+            renderPreviewMarkdown(
+                workbenchBinding?.emptyStateMessage
+                    ?: SpecCodingBundle.message("spec.detail.noDocumentForPhase", phaseDisplayText(phase)),
+            )
             if (isGeneratingActive && keepGeneratingIndicator) {
                 updateGeneratingLabel()
             } else {
-                validationLabel.text = ""
+                validationLabel.text = workbenchBinding?.unavailableMessage.orEmpty()
                 validationLabel.foreground = JBColor.GRAY
             }
         }

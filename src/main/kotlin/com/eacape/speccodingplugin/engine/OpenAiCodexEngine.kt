@@ -92,6 +92,8 @@ class OpenAiCodexEngine(
         )
     }
 
+    override fun streamInactivityTimeoutMillis(request: EngineRequest): Long = CODEX_STREAM_INACTIVITY_TIMEOUT_MILLIS
+
     override suspend fun getVersion(): String? {
         return try {
             val command = if (System.getProperty("os.name").lowercase().contains("win")) {
@@ -112,5 +114,6 @@ class OpenAiCodexEngine(
 
     companion object {
         const val CODEX_CONFIG_OPTION_PREFIX: String = "codex_config_"
+        private const val CODEX_STREAM_INACTIVITY_TIMEOUT_MILLIS = 20_000L
     }
 }

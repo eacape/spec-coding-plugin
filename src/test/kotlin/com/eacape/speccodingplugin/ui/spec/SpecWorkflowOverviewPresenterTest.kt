@@ -240,11 +240,23 @@ class SpecWorkflowOverviewPresenterTest {
         assertEquals(4, workbenchState.progress.totalCheckCount)
         assertFalse(workbenchState.primaryAction?.enabled ?: true)
         assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document"),
+            workbenchState.primaryAction?.disabledReason,
+        )
+        assertEquals(
             listOf(
                 SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document"),
                 SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.gateUnavailable"),
             ),
             workbenchState.blockers,
+        )
+        assertEquals(
+            listOf(
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.tasks.source"),
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.document.missing", "tasks.md"),
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.tasks.workspace"),
+            ),
+            workbenchState.focusDetails,
         )
     }
 

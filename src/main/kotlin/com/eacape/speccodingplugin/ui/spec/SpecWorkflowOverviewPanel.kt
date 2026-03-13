@@ -226,6 +226,7 @@ internal class SpecWorkflowOverviewPanel(
             "primaryActionVisible" to primaryActionButton.isVisible.toString(),
             "primaryActionEnabled" to primaryActionButton.isEnabled.toString(),
             "primaryActionText" to primaryActionButton.text.orEmpty(),
+            "primaryActionTooltip" to primaryActionButton.toolTipText.orEmpty(),
             "overflowEnabled" to overflowActionsButton.isEnabled.toString(),
             "overflowVisible" to overflowActionsButton.isVisible.toString(),
             "overflowTooltip" to overflowActionsButton.toolTipText.orEmpty(),
@@ -621,9 +622,10 @@ internal class SpecWorkflowOverviewPanel(
         primaryActionButton.isVisible = true
         primaryActionButton.isEnabled = action.enabled
         primaryActionButton.text = action.label
-        primaryActionButton.toolTipText = action.label
+        primaryActionButton.toolTipText = if (action.enabled) action.label else action.disabledReason ?: action.label
         primaryActionButton.accessibleContext?.accessibleName = action.label
-        primaryActionButton.accessibleContext?.accessibleDescription = action.label
+        primaryActionButton.accessibleContext?.accessibleDescription =
+            if (action.enabled) action.label else action.disabledReason ?: action.label
     }
 
     private fun updateOverflowActions(actions: List<SpecWorkflowWorkbenchAction>) {
