@@ -199,12 +199,26 @@ internal class SpecWorkflowTasksPanel(
     }
 
     internal fun selectTaskForTest(taskId: String) {
+        selectTask(taskId)
+    }
+
+    internal fun selectTask(taskId: String): Boolean {
         for (index in 0 until listModel.size()) {
             if (listModel[index].id == taskId) {
                 tasksList.selectedIndex = index
-                return
+                return true
             }
         }
+        return false
+    }
+
+    internal fun requestCompletionForTask(taskId: String): Boolean {
+        if (!selectTask(taskId)) {
+            return false
+        }
+        val selectedTask = tasksList.selectedValue ?: return false
+        requestCompletionWithRelatedFiles(selectedTask)
+        return true
     }
 
     internal fun clickApplyStatusForTest() {

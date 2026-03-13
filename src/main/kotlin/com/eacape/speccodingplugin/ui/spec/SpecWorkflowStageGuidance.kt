@@ -1,7 +1,6 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
-import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.WorkflowStatus
@@ -23,6 +22,9 @@ internal object SpecWorkflowStageGuidanceBuilder {
                 stepIndex = activeStages.indexOf(state.currentStage).coerceAtLeast(0) + 1,
                 totalSteps = activeStages.size.coerceAtLeast(1),
                 stageStatus = currentStep?.progress ?: StageProgress.IN_PROGRESS,
+                completedCheckCount = 0,
+                totalCheckCount = 0,
+                completionChecks = emptyList(),
             ),
             primaryAction = null,
             overflowActions = emptyList(),
@@ -35,6 +37,7 @@ internal object SpecWorkflowStageGuidanceBuilder {
                 mode = SpecWorkflowWorkbenchDocumentMode.READ_ONLY,
                 fallbackEditable = false,
             ),
+            implementationFocus = null,
             visibleSections = SpecWorkflowWorkspaceLayout.visibleSections(
                 currentStage = state.currentStage,
                 status = state.status,
@@ -70,9 +73,40 @@ internal object SpecWorkflowStageGuidanceBuilder {
             StageId.REQUIREMENTS -> SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.requirements")
             StageId.DESIGN -> SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.design")
             StageId.TASKS -> SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.tasks")
-            StageId.IMPLEMENT -> SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.implement")
+            StageId.IMPLEMENT -> buildImplementSummary(workbenchState)
             StageId.VERIFY -> SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.verify")
             StageId.ARCHIVE -> SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.archive")
+        }
+    }
+
+    private fun buildImplementSummary(workbenchState: SpecWorkflowStageWorkbenchState): String {
+        val implementationFocus = workbenchState.implementationFocus
+        return when (implementationFocus?.status) {
+            com.eacape.speccodingplugin.spec.TaskStatus.IN_PROGRESS -> SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.summary.implement.inProgress",
+                implementationFocus.taskId,
+                implementationFocus.title,
+            )
+
+            com.eacape.speccodingplugin.spec.TaskStatus.PENDING -> SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.summary.implement.start",
+                implementationFocus.taskId,
+                implementationFocus.title,
+            )
+
+            com.eacape.speccodingplugin.spec.TaskStatus.BLOCKED -> SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.summary.implement.blocked",
+                implementationFocus.taskId,
+                implementationFocus.title,
+            )
+
+            else -> {
+                if (workbenchState.primaryAction?.kind == SpecWorkflowWorkbenchActionKind.ADVANCE) {
+                    SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.implement.continueCheck")
+                } else {
+                    SpecCodingBundle.message("spec.toolwindow.overview.focus.summary.implement")
+                }
+            }
         }
     }
 
@@ -80,73 +114,16 @@ internal object SpecWorkflowStageGuidanceBuilder {
         state: SpecWorkflowOverviewState,
         workbenchState: SpecWorkflowStageWorkbenchState,
     ): List<String> {
-        val items = mutableListOf<String>()
-        when (state.gateStatus.takeIf { workbenchState.focusedStage == state.currentStage }) {
-            GateStatus.ERROR -> items += SpecCodingBundle.message("spec.toolwindow.overview.checklist.gate.error")
-            GateStatus.WARNING -> items += SpecCodingBundle.message("spec.toolwindow.overview.checklist.gate.warning")
-            else -> Unit
+        if (workbenchState.progress.completionChecks.isEmpty()) {
+            return emptyList()
         }
-        items += stageChecklistItems(workbenchState.focusedStage)
-        items += buildNextStepLine(state, workbenchState)
-        return items.filter { it.isNotBlank() }
-    }
-
-    private fun stageChecklistItems(stage: StageId): List<String> {
-        return when (stage) {
-            StageId.REQUIREMENTS -> listOf(
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.requirements.1"),
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.requirements.2"),
-            )
-
-            StageId.DESIGN -> listOf(
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.design.1"),
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.design.2"),
-            )
-
-            StageId.TASKS -> listOf(
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.tasks.1"),
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.tasks.2"),
-            )
-
-            StageId.IMPLEMENT -> listOf(
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.implement.1"),
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.implement.2"),
-            )
-
-            StageId.VERIFY -> listOf(
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.verify.1"),
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.verify.2"),
-            )
-
-            StageId.ARCHIVE -> listOf(
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.archive.1"),
-                SpecCodingBundle.message("spec.toolwindow.overview.checklist.archive.2"),
-            )
-        }
-    }
-
-    private fun buildNextStepLine(
-        state: SpecWorkflowOverviewState,
-        workbenchState: SpecWorkflowStageWorkbenchState,
-    ): String {
-        val targetStage = workbenchState.primaryAction?.targetStage
-        if (targetStage != null) {
-            return SpecCodingBundle.message(
-                "spec.toolwindow.overview.checklist.next",
-                SpecWorkflowOverviewPresenter.stageLabel(targetStage),
-            )
-        }
-        val nextStage = state.nextStage ?: return SpecCodingBundle.message("spec.toolwindow.overview.checklist.next.none")
-        return if (workbenchState.focusedStage == state.currentStage) {
-            SpecCodingBundle.message(
-                "spec.toolwindow.overview.checklist.next",
-                SpecWorkflowOverviewPresenter.stageLabel(nextStage),
-            )
-        } else {
-            SpecCodingBundle.message(
-                "spec.toolwindow.overview.checklist.next",
-                SpecWorkflowOverviewPresenter.stageLabel(workbenchState.focusedStage),
-            )
+        return workbenchState.progress.completionChecks.map { check ->
+            val key = if (check.completed) {
+                "spec.toolwindow.overview.check.state.done"
+            } else {
+                "spec.toolwindow.overview.check.state.todo"
+            }
+            SpecCodingBundle.message(key, check.label)
         }
     }
 }

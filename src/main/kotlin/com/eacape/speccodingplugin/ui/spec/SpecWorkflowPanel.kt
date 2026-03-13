@@ -1006,6 +1006,9 @@ class SpecWorkflowPanel(
             state = SpecWorkflowStageWorkbenchBuilder.build(
                 workflow = workflow,
                 overviewState = overviewState,
+                tasks = tasks,
+                verifyDeltaState = verifyDeltaState,
+                gateResult = gateResult,
                 focusedStage = focusedStage,
             ),
         )
@@ -1107,8 +1110,27 @@ class SpecWorkflowPanel(
             syncSelection = previousWorkbenchState?.focusedStage != workbenchState.focusedStage ||
                 previousWorkbenchState?.currentStage != workbenchState.currentStage,
         )
+        syncWorkbenchTaskSelection(
+            previousWorkbenchState = previousWorkbenchState,
+            workbenchState = workbenchState,
+        )
         applyWorkspaceSectionVisibility(workbenchState)
         applyWorkspaceSectionPreset(workflow, workbenchState)
+    }
+
+    private fun syncWorkbenchTaskSelection(
+        previousWorkbenchState: SpecWorkflowStageWorkbenchState?,
+        workbenchState: SpecWorkflowStageWorkbenchState,
+    ) {
+        if (workbenchState.focusedStage != StageId.IMPLEMENT) {
+            return
+        }
+        val taskId = workbenchState.implementationFocus?.taskId ?: return
+        val shouldSyncSelection = previousWorkbenchState?.focusedStage != workbenchState.focusedStage ||
+            previousWorkbenchState?.implementationFocus?.taskId != taskId
+        if (shouldSyncSelection) {
+            tasksPanel.selectTask(taskId)
+        }
     }
 
     private fun applyWorkspaceSectionPreset(
@@ -1160,12 +1182,13 @@ class SpecWorkflowPanel(
 
     private fun buildStageChipText(workbenchState: SpecWorkflowStageWorkbenchState): String {
         val stageLabel = SpecWorkflowOverviewPresenter.stageLabel(workbenchState.focusedStage)
+        val checksText = "${workbenchState.progress.completedCheckCount}/${workbenchState.progress.totalCheckCount}"
         val progressText = "${workbenchState.progress.stepIndex}/${workbenchState.progress.totalSteps}"
         val stageStatus = SpecWorkflowOverviewPresenter.progressLabel(workbenchState.progress.stageStatus)
         return if (workbenchState.focusedStage == workbenchState.currentStage) {
-            "$stageLabel / $progressText / $stageStatus"
+            "$stageLabel / $checksText / $progressText / $stageStatus"
         } else {
-            "$stageLabel / $progressText"
+            "$stageLabel / $checksText / $progressText"
         }
     }
 
@@ -1194,9 +1217,11 @@ class SpecWorkflowPanel(
         return buildString {
             append(SpecWorkflowOverviewPresenter.stageLabel(workbenchState.focusedStage))
             append(" | ")
-            append(workbenchState.progress.stepIndex)
+            append(workbenchState.progress.completedCheckCount)
             append("/")
-            append(workbenchState.progress.totalSteps)
+            append(workbenchState.progress.totalCheckCount)
+            append(" ")
+            append(SpecCodingBundle.message("spec.toolwindow.overview.checks.short"))
             append(" | ")
             append(SpecCodingBundle.message("spec.toolwindow.overview.secondary.next"))
             append(": ")
@@ -3738,6 +3763,20 @@ class SpecWorkflowPanel(
                     executeRollbackStage(workflowId, targetStage)
                 } else {
                     onRollbackStageRequested()
+                }
+            }
+
+            SpecWorkflowWorkbenchActionKind.START_TASK -> {
+                val taskId = action.taskId ?: return
+                tasksPanel.selectTask(taskId)
+                onTaskStatusTransitionRequested(taskId, TaskStatus.IN_PROGRESS)
+            }
+
+            SpecWorkflowWorkbenchActionKind.COMPLETE_TASK -> {
+                val taskId = action.taskId ?: return
+                tasksPanel.selectTask(taskId)
+                if (!tasksPanel.requestCompletionForTask(taskId)) {
+                    setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.complete.failed", taskId))
                 }
             }
         }

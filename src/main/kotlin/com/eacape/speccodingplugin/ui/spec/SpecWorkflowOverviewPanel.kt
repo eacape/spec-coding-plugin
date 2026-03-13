@@ -47,6 +47,11 @@ internal class SpecWorkflowOverviewPanel(
     private val focusTitleLabel = JBLabel()
     private val focusMetaLabel = createBodyLabel(VALUE_SECONDARY_FG)
     private val focusSummaryLabel = createBodyLabel(FOCUS_SUMMARY_FG)
+    private val blockersTitleLabel = createSectionTitleLabel().apply {
+        foreground = BLOCKER_TITLE_FG
+    }
+    private val blockerLabels = List(3) { createBodyLabel(BLOCKER_FG) }
+    private val blockersPanel = JPanel()
     private val primaryActionButton = JButton().apply {
         isFocusable = false
         addActionListener { currentWorkbenchState?.primaryAction?.let(onWorkbenchActionRequested) }
@@ -153,6 +158,7 @@ internal class SpecWorkflowOverviewPanel(
         advanceGateKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.advanceGate")
         refreshedKeyLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.secondary.refreshed")
         checklistTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.checklist.title")
+        blockersTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.blockers.title")
         stageFlowTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.stageFlow.title")
         detailsTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.overview.secondary.title")
         applyTemplateButtonPresentation()
@@ -164,6 +170,9 @@ internal class SpecWorkflowOverviewPanel(
     internal fun snapshotForTest(): Map<String, String> {
         val stageStepperSnapshot = stageStepperPanel.snapshotForTest()
         val checklist = checklistLabels
+            .mapNotNull { label -> label.text?.trim()?.takeIf { it.isNotEmpty() } }
+            .joinToString(" | ")
+        val blockers = blockerLabels
             .mapNotNull { label -> label.text?.trim()?.takeIf { it.isNotEmpty() } }
             .joinToString(" | ")
         return mapOf(
@@ -206,6 +215,7 @@ internal class SpecWorkflowOverviewPanel(
             "focusTitle" to focusTitleLabel.text.orEmpty(),
             "focusMeta" to focusMetaLabel.text.orEmpty(),
             "focusSummary" to focusSummaryLabel.text.orEmpty(),
+            "blockers" to blockers,
             "checklist" to checklist,
             "primaryActionVisible" to primaryActionButton.isVisible.toString(),
             "primaryActionEnabled" to primaryActionButton.isEnabled.toString(),
@@ -241,6 +251,14 @@ internal class SpecWorkflowOverviewPanel(
         contentPanel.border = JBUI.Borders.empty(2, 2, 2, 2)
         focusTitleLabel.font = JBUI.Fonts.label().deriveFont(Font.BOLD, 13.5f)
         focusTitleLabel.foreground = VALUE_TEXT_FG
+        blockersPanel.layout = BoxLayout(blockersPanel, BoxLayout.Y_AXIS)
+        blockersPanel.isOpaque = false
+        blockerLabels.forEachIndexed { index, label ->
+            if (index > 0) {
+                blockersPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
+            }
+            blockersPanel.add(label)
+        }
         stylePrimaryActionButton(primaryActionButton)
         gateChipLabel.horizontalAlignment = SwingConstants.LEFT
         gateChipLabel.verticalAlignment = SwingConstants.TOP
@@ -306,7 +324,18 @@ internal class SpecWorkflowOverviewPanel(
         return JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = false
             add(headerPanel, BorderLayout.NORTH)
-            add(focusSummaryLabel, BorderLayout.CENTER)
+            add(
+                JPanel().apply {
+                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                    isOpaque = false
+                    add(focusSummaryLabel)
+                    add(Box.createVerticalStrut(JBUI.scale(6)))
+                    add(blockersTitleLabel)
+                    add(Box.createVerticalStrut(JBUI.scale(4)))
+                    add(blockersPanel)
+                },
+                BorderLayout.CENTER,
+            )
             add(actionRow, BorderLayout.SOUTH)
         }
     }
@@ -366,6 +395,7 @@ internal class SpecWorkflowOverviewPanel(
         focusTitleLabel.text = guidance.headline
         focusMetaLabel.text = buildFocusMetaText(state, workbenchState)
         focusSummaryLabel.text = guidance.summary
+        updateBlockers(workbenchState.blockers)
         updateChecklist(guidance.checklist)
         updatePrimaryAction(workbenchState.primaryAction)
         updateOverflowActions(workbenchState.overflowActions)
@@ -414,6 +444,7 @@ internal class SpecWorkflowOverviewPanel(
         focusTitleLabel.text = ""
         focusMetaLabel.text = ""
         focusSummaryLabel.text = ""
+        updateBlockers(emptyList())
         updateChecklist(emptyList())
         updatePrimaryAction(null)
         updateOverflowActions(emptyList())
@@ -461,6 +492,9 @@ internal class SpecWorkflowOverviewPanel(
                 stepIndex = activeStages.indexOf(state.currentStage).coerceAtLeast(0) + 1,
                 totalSteps = activeStages.size.coerceAtLeast(1),
                 stageStatus = currentStep?.progress ?: StageProgress.IN_PROGRESS,
+                completedCheckCount = 0,
+                totalCheckCount = 0,
+                completionChecks = emptyList(),
             ),
             primaryAction = null,
             overflowActions = emptyList(),
@@ -473,6 +507,7 @@ internal class SpecWorkflowOverviewPanel(
                 mode = SpecWorkflowWorkbenchDocumentMode.READ_ONLY,
                 fallbackEditable = false,
             ),
+            implementationFocus = null,
             visibleSections = SpecWorkflowWorkspaceLayout.visibleSections(
                 currentStage = state.currentStage,
                 status = state.status,
@@ -487,6 +522,8 @@ internal class SpecWorkflowOverviewPanel(
         return if (workbenchState.focusedStage == state.currentStage) {
             SpecCodingBundle.message(
                 "spec.toolwindow.overview.focus.meta.current",
+                workbenchState.progress.completedCheckCount,
+                workbenchState.progress.totalCheckCount,
                 workbenchState.progress.stepIndex,
                 workbenchState.progress.totalSteps,
                 SpecWorkflowOverviewPresenter.progressLabel(workbenchState.progress.stageStatus),
@@ -495,6 +532,8 @@ internal class SpecWorkflowOverviewPanel(
             SpecCodingBundle.message(
                 "spec.toolwindow.overview.focus.meta.focused",
                 SpecWorkflowOverviewPresenter.stageLabel(state.currentStage),
+                workbenchState.progress.completedCheckCount,
+                workbenchState.progress.totalCheckCount,
                 workbenchState.progress.stepIndex,
                 workbenchState.progress.totalSteps,
                 SpecWorkflowOverviewPresenter.progressLabel(workbenchState.progress.stageStatus),
@@ -505,6 +544,8 @@ internal class SpecWorkflowOverviewPanel(
     private fun buildProgressText(workbenchState: SpecWorkflowStageWorkbenchState): String {
         return SpecCodingBundle.message(
             "spec.toolwindow.overview.progress.value",
+            workbenchState.progress.completedCheckCount,
+            workbenchState.progress.totalCheckCount,
             workbenchState.progress.stepIndex,
             workbenchState.progress.totalSteps,
             SpecWorkflowOverviewPresenter.progressLabel(workbenchState.progress.stageStatus),
@@ -524,6 +565,17 @@ internal class SpecWorkflowOverviewPanel(
     private fun updateChecklist(lines: List<String>) {
         checklistLabels.forEachIndexed { index, label ->
             val value = lines.getOrNull(index).orEmpty()
+            label.text = value
+            label.isVisible = value.isNotBlank()
+        }
+    }
+
+    private fun updateBlockers(blockers: List<String>) {
+        val visible = blockers.isNotEmpty()
+        blockersTitleLabel.isVisible = visible
+        blockersPanel.isVisible = visible
+        blockerLabels.forEachIndexed { index, label ->
+            val value = blockers.getOrNull(index).orEmpty()
             label.text = value
             label.isVisible = value.isNotBlank()
         }
@@ -713,6 +765,8 @@ internal class SpecWorkflowOverviewPanel(
         private val SECTION_TITLE_FG = JBColor(Color(62, 80, 118), Color(204, 215, 231))
         private val FOCUS_SUMMARY_FG = JBColor(Color(84, 96, 116), Color(177, 186, 199))
         private val CHECKLIST_FG = JBColor(Color(74, 86, 105), Color(189, 199, 214))
+        private val BLOCKER_TITLE_FG = JBColor(Color(148, 67, 67), Color(244, 190, 190))
+        private val BLOCKER_FG = JBColor(Color(161, 73, 73), Color(244, 203, 203))
         private val CARD_BG = JBColor(Color(250, 252, 255), Color(55, 61, 71))
         private val CARD_BORDER = JBColor(Color(209, 220, 237), Color(85, 96, 111))
         private val PRIMARY_ACTION_BG = JBColor(Color(237, 245, 255), Color(68, 79, 96))

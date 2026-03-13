@@ -1,13 +1,21 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
+import com.eacape.speccodingplugin.spec.SpecDocument
+import com.eacape.speccodingplugin.spec.SpecMetadata
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageState
+import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskPriority
+import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
+import com.eacape.speccodingplugin.spec.ValidationResult
+import com.eacape.speccodingplugin.spec.Violation
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -26,9 +34,29 @@ class SpecWorkflowOverviewPanelTest {
             onWorkbenchActionRequested = { action -> primaryActionKind = action.kind },
         )
         val overviewState = overviewState()
+        val gateResult = GateResult.fromViolations(
+            listOf(
+                Violation(
+                    ruleId = "tasks-warning",
+                    severity = GateStatus.WARNING,
+                    fileName = "tasks.md",
+                    line = 8,
+                    message = "Task metadata is incomplete",
+                ),
+            ),
+        )
         val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
-            workflow = overviewWorkflow(),
+            workflow = overviewWorkflow(
+                documents = mapOf(
+                    SpecPhase.IMPLEMENT to document(
+                        phase = SpecPhase.IMPLEMENT,
+                        content = "tasks content",
+                    ),
+                ),
+            ),
             overviewState = overviewState,
+            tasks = listOf(task()),
+            gateResult = gateResult,
         )
 
         panel.updateOverview(overviewState, workbenchState)
@@ -64,6 +92,8 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals(
             SpecCodingBundle.message(
                 "spec.toolwindow.overview.progress.value",
+                4,
+                4,
                 3,
                 5,
                 SpecWorkflowOverviewPresenter.progressLabel(StageProgress.IN_PROGRESS),
@@ -93,6 +123,7 @@ class SpecWorkflowOverviewPanelTest {
             snapshot.getValue("focusSummary"),
         )
         assertTrue(snapshot.getValue("checklist").contains("tasks.md"))
+        assertEquals("", snapshot.getValue("blockers"))
         assertEquals("true", snapshot.getValue("primaryActionVisible"))
         assertEquals("true", snapshot.getValue("primaryActionEnabled"))
         assertEquals(
@@ -116,12 +147,49 @@ class SpecWorkflowOverviewPanelTest {
     }
 
     @Test
+    fun `updateOverview should render blockers and disable primary action when stage checks are incomplete`() {
+        val panel = SpecWorkflowOverviewPanel()
+        val overviewState = overviewState(gateStatus = null, gateSummary = null)
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = overviewWorkflow(),
+            overviewState = overviewState,
+        )
+
+        panel.updateOverview(overviewState, workbenchState)
+
+        val snapshot = panel.snapshotForTest()
+        assertEquals(
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.progress.value",
+                0,
+                4,
+                3,
+                5,
+                SpecWorkflowOverviewPresenter.progressLabel(StageProgress.IN_PROGRESS),
+            ),
+            snapshot.getValue("progress"),
+        )
+        assertTrue(snapshot.getValue("blockers").contains(SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document")))
+        assertTrue(snapshot.getValue("blockers").contains(SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.gateUnavailable")))
+        assertEquals("true", snapshot.getValue("primaryActionVisible"))
+        assertEquals("false", snapshot.getValue("primaryActionEnabled"))
+    }
+
+    @Test
     fun `updateOverview should keep jump and rollback inside overflow when viewing another stage`() {
         val panel = SpecWorkflowOverviewPanel()
         val overviewState = overviewState()
         val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
-            workflow = overviewWorkflow(),
+            workflow = overviewWorkflow(
+                documents = mapOf(
+                    SpecPhase.IMPLEMENT to document(
+                        phase = SpecPhase.IMPLEMENT,
+                        content = "tasks content",
+                    ),
+                ),
+            ),
             overviewState = overviewState,
+            tasks = listOf(task()),
             focusedStage = StageId.IMPLEMENT,
         )
 
@@ -159,7 +227,65 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals("false", panel.snapshotForTest().getValue("templateSwitchEnabled"))
     }
 
-    private fun overviewState(): SpecWorkflowOverviewState {
+    @Test
+    fun `updateOverview should render task-driven implement primary action`() {
+        var actionKind: SpecWorkflowWorkbenchActionKind? = null
+        val panel = SpecWorkflowOverviewPanel(
+            onWorkbenchActionRequested = { action -> actionKind = action.kind },
+        )
+        val overviewState = overviewState(
+            currentStage = StageId.IMPLEMENT,
+            nextStage = StageId.ARCHIVE,
+            gateStatus = null,
+            gateSummary = null,
+        )
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = overviewWorkflow(documents = emptyMap(), currentStage = StageId.IMPLEMENT),
+            overviewState = overviewState,
+            tasks = listOf(
+                task(id = "T-001", status = TaskStatus.IN_PROGRESS),
+                task(id = "T-002", status = TaskStatus.PENDING),
+            ),
+            gateResult = null,
+        )
+
+        panel.updateOverview(overviewState, workbenchState)
+
+        val snapshot = panel.snapshotForTest()
+        assertEquals("true", snapshot.getValue("primaryActionVisible"))
+        assertEquals("true", snapshot.getValue("primaryActionEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.completeTask", "T-001"),
+            snapshot.getValue("primaryActionText"),
+        )
+        assertEquals(
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.summary.implement.inProgress",
+                "T-001",
+                "Task T-001",
+            ),
+            snapshot.getValue("focusSummary"),
+        )
+        assertEquals(StageId.IMPLEMENT.name, snapshot.getValue("focusedStage"))
+
+        panel.clickPrimaryActionForTest()
+        assertEquals(SpecWorkflowWorkbenchActionKind.COMPLETE_TASK, actionKind)
+    }
+
+    private fun overviewState(
+        currentStage: StageId = StageId.TASKS,
+        nextStage: StageId? = StageId.IMPLEMENT,
+        gateStatus: GateStatus? = GateStatus.WARNING,
+        gateSummary: String? = "Gate requires warning confirmation: 1 warning(s) across 1 rule(s).",
+    ): SpecWorkflowOverviewState {
+        val stageOrder = listOf(
+            StageId.REQUIREMENTS,
+            StageId.DESIGN,
+            StageId.TASKS,
+            StageId.IMPLEMENT,
+            StageId.ARCHIVE,
+        )
+        val currentStageIndex = stageOrder.indexOf(currentStage).coerceAtLeast(0)
         return SpecWorkflowOverviewState(
             workflowId = "wf-42",
             title = "ToolWindow Demo",
@@ -177,7 +303,7 @@ class SpecWorkflowOverviewPanelTest {
                 occurredAt = "2026-03-11T10:00:00Z",
                 occurredAtEpochMs = 1_710_152_400_000,
             ),
-            currentStage = StageId.TASKS,
+            currentStage = currentStage,
             activeStages = listOf(
                 StageId.REQUIREMENTS,
                 StageId.DESIGN,
@@ -185,47 +311,130 @@ class SpecWorkflowOverviewPanelTest {
                 StageId.IMPLEMENT,
                 StageId.ARCHIVE,
             ),
-            nextStage = StageId.IMPLEMENT,
-            gateStatus = GateStatus.WARNING,
-            gateSummary = "Gate requires warning confirmation: 1 warning(s) across 1 rule(s).",
+            nextStage = nextStage,
+            gateStatus = gateStatus,
+            gateSummary = gateSummary,
             stageStepper = SpecWorkflowStageStepperState(
                 stages = listOf(
-                    SpecWorkflowStageStepState(StageId.REQUIREMENTS, active = true, current = false, progress = StageProgress.DONE),
-                    SpecWorkflowStageStepState(StageId.DESIGN, active = true, current = false, progress = StageProgress.DONE),
-                    SpecWorkflowStageStepState(StageId.TASKS, active = true, current = true, progress = StageProgress.IN_PROGRESS),
-                    SpecWorkflowStageStepState(StageId.IMPLEMENT, active = true, current = false, progress = StageProgress.NOT_STARTED),
+                    SpecWorkflowStageStepState(
+                        StageId.REQUIREMENTS,
+                        active = true,
+                        current = currentStage == StageId.REQUIREMENTS,
+                        progress = progressFor(StageId.REQUIREMENTS, currentStageIndex, stageOrder),
+                    ),
+                    SpecWorkflowStageStepState(
+                        StageId.DESIGN,
+                        active = true,
+                        current = currentStage == StageId.DESIGN,
+                        progress = progressFor(StageId.DESIGN, currentStageIndex, stageOrder),
+                    ),
+                    SpecWorkflowStageStepState(
+                        StageId.TASKS,
+                        active = true,
+                        current = currentStage == StageId.TASKS,
+                        progress = progressFor(StageId.TASKS, currentStageIndex, stageOrder),
+                    ),
+                    SpecWorkflowStageStepState(
+                        StageId.IMPLEMENT,
+                        active = true,
+                        current = currentStage == StageId.IMPLEMENT,
+                        progress = progressFor(StageId.IMPLEMENT, currentStageIndex, stageOrder),
+                    ),
                     SpecWorkflowStageStepState(StageId.VERIFY, active = false, current = false, progress = StageProgress.NOT_STARTED),
-                    SpecWorkflowStageStepState(StageId.ARCHIVE, active = true, current = false, progress = StageProgress.NOT_STARTED),
+                    SpecWorkflowStageStepState(
+                        StageId.ARCHIVE,
+                        active = true,
+                        current = currentStage == StageId.ARCHIVE,
+                        progress = progressFor(StageId.ARCHIVE, currentStageIndex, stageOrder),
+                    ),
                 ),
                 canAdvance = true,
-                jumpTargets = listOf(StageId.IMPLEMENT, StageId.ARCHIVE),
-                rollbackTargets = listOf(StageId.REQUIREMENTS, StageId.DESIGN),
+                jumpTargets = stageOrder.filterIndexed { index, _ -> index > currentStageIndex },
+                rollbackTargets = stageOrder.filterIndexed { index, _ -> index < currentStageIndex },
             ),
             refreshedAtMillis = 1_710_000_000_000,
         )
     }
 
     private fun overviewWorkflow(): SpecWorkflow {
+        return overviewWorkflow(documents = emptyMap())
+    }
+
+    private fun overviewWorkflow(
+        documents: Map<SpecPhase, SpecDocument>,
+        currentStage: StageId = StageId.TASKS,
+    ): SpecWorkflow {
+        val orderedStages = listOf(
+            StageId.REQUIREMENTS,
+            StageId.DESIGN,
+            StageId.TASKS,
+            StageId.IMPLEMENT,
+            StageId.ARCHIVE,
+        )
+        val currentStageIndex = orderedStages.indexOf(currentStage).coerceAtLeast(0)
         return SpecWorkflow(
             id = "wf-42",
             currentPhase = SpecPhase.IMPLEMENT,
-            documents = emptyMap(),
+            documents = documents,
             status = WorkflowStatus.IN_PROGRESS,
             title = "ToolWindow Demo",
             description = "Demo workflow",
             template = WorkflowTemplate.FULL_SPEC,
             stageStates = linkedMapOf(
-                StageId.REQUIREMENTS to StageState(active = true, status = StageProgress.DONE),
-                StageId.DESIGN to StageState(active = true, status = StageProgress.DONE),
-                StageId.TASKS to StageState(active = true, status = StageProgress.IN_PROGRESS),
-                StageId.IMPLEMENT to StageState(active = true, status = StageProgress.NOT_STARTED),
+                StageId.REQUIREMENTS to StageState(active = true, status = progressFor(StageId.REQUIREMENTS, currentStageIndex, orderedStages)),
+                StageId.DESIGN to StageState(active = true, status = progressFor(StageId.DESIGN, currentStageIndex, orderedStages)),
+                StageId.TASKS to StageState(active = true, status = progressFor(StageId.TASKS, currentStageIndex, orderedStages)),
+                StageId.IMPLEMENT to StageState(active = true, status = progressFor(StageId.IMPLEMENT, currentStageIndex, orderedStages)),
                 StageId.VERIFY to StageState(active = false, status = StageProgress.NOT_STARTED),
-                StageId.ARCHIVE to StageState(active = true, status = StageProgress.NOT_STARTED),
+                StageId.ARCHIVE to StageState(active = true, status = progressFor(StageId.ARCHIVE, currentStageIndex, orderedStages)),
             ),
-            currentStage = StageId.TASKS,
+            currentStage = currentStage,
             verifyEnabled = false,
             createdAt = 1L,
             updatedAt = 2L,
         )
+    }
+
+    private fun document(
+        phase: SpecPhase,
+        content: String,
+        valid: Boolean = true,
+    ): SpecDocument {
+        return SpecDocument(
+            id = "doc-${phase.name.lowercase()}",
+            phase = phase,
+            content = content,
+            metadata = SpecMetadata(
+                title = phase.displayName,
+                description = "test",
+            ),
+            validationResult = ValidationResult(valid = valid),
+        )
+    }
+
+    private fun task(
+        id: String = "T-001",
+        status: TaskStatus = TaskStatus.PENDING,
+    ): StructuredTask {
+        return StructuredTask(
+            id = id,
+            title = "Task $id",
+            status = status,
+            priority = TaskPriority.P1,
+        )
+    }
+
+    private fun progressFor(
+        stageId: StageId,
+        currentStageIndex: Int,
+        orderedStages: List<StageId>,
+    ): StageProgress {
+        val stageIndex = orderedStages.indexOf(stageId)
+        return when {
+            stageIndex < 0 -> StageProgress.NOT_STARTED
+            stageIndex < currentStageIndex -> StageProgress.DONE
+            stageIndex == currentStageIndex -> StageProgress.IN_PROGRESS
+            else -> StageProgress.NOT_STARTED
+        }
     }
 }

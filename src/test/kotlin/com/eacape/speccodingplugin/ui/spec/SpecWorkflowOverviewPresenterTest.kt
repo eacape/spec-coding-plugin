@@ -3,6 +3,8 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
+import com.eacape.speccodingplugin.spec.SpecDocument
+import com.eacape.speccodingplugin.spec.SpecMetadata
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageId
@@ -10,11 +12,16 @@ import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageState
 import com.eacape.speccodingplugin.spec.StageTransitionGatePreview
 import com.eacape.speccodingplugin.spec.StageTransitionType
+import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskPriority
+import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
+import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.Violation
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -148,22 +155,44 @@ class SpecWorkflowOverviewPresenterTest {
 
     @Test
     fun `workbench builder should default focus to current stage and expose current-stage action`() {
-        val workflow = workflow()
+        val workflow = workflow(
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = "tasks content",
+                ),
+            ),
+        )
         val overviewState = SpecWorkflowOverviewPresenter.buildState(
             workflow = workflow,
             gatePreview = null,
             latestTemplateSwitch = null,
             refreshedAtMillis = 1_710_000_000_000,
         )
+        val tasks = listOf(task())
 
         val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
             workflow = workflow,
             overviewState = overviewState,
+            tasks = tasks,
+            gateResult = GateResult.fromViolations(
+                listOf(
+                    Violation(
+                        ruleId = "tasks-warning",
+                        severity = GateStatus.WARNING,
+                        fileName = "tasks.md",
+                        line = 12,
+                        message = "Task metadata needs confirmation",
+                    ),
+                ),
+            ),
         )
 
         assertEquals(StageId.TASKS, workbenchState.focusedStage)
         assertEquals(3, workbenchState.progress.stepIndex)
         assertEquals(5, workbenchState.progress.totalSteps)
+        assertEquals(4, workbenchState.progress.completedCheckCount)
+        assertEquals(4, workbenchState.progress.totalCheckCount)
         assertEquals(SpecWorkflowWorkbenchActionKind.ADVANCE, workbenchState.primaryAction?.kind)
         assertEquals(
             SpecCodingBundle.message(
@@ -172,8 +201,10 @@ class SpecWorkflowOverviewPresenterTest {
             ),
             workbenchState.primaryAction?.label,
         )
+        assertTrue(workbenchState.primaryAction?.enabled == true)
         assertEquals(StageId.IMPLEMENT, workbenchState.primaryAction?.targetStage)
         assertEquals(2, workbenchState.overflowActions.size)
+        assertTrue(workbenchState.blockers.isEmpty())
         assertEquals("tasks.md", workbenchState.artifactBinding.fileName)
         assertEquals("IMPLEMENT", workbenchState.artifactBinding.documentPhase?.name)
         assertEquals(
@@ -188,7 +219,7 @@ class SpecWorkflowOverviewPresenterTest {
     }
 
     @Test
-    fun `workbench builder should support focused future stages without changing workflow current stage`() {
+    fun `workbench builder should derive blockers from incomplete current-stage checks`() {
         val workflow = workflow()
         val overviewState = SpecWorkflowOverviewPresenter.buildState(
             workflow = workflow,
@@ -200,6 +231,101 @@ class SpecWorkflowOverviewPresenterTest {
         val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
             workflow = workflow,
             overviewState = overviewState,
+        )
+
+        assertEquals(StageId.TASKS, workbenchState.focusedStage)
+        assertEquals(0, workbenchState.progress.completedCheckCount)
+        assertEquals(4, workbenchState.progress.totalCheckCount)
+        assertFalse(workbenchState.primaryAction?.enabled ?: true)
+        assertEquals(
+            listOf(
+                SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document"),
+                SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.gateUnavailable"),
+            ),
+            workbenchState.blockers,
+        )
+    }
+
+    @Test
+    fun `workbench builder should surface gate violations as blockers when preview fails`() {
+        val workflow = workflow(
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = "tasks content",
+                ),
+            ),
+        )
+        val gateResult = GateResult.fromViolations(
+            listOf(
+                Violation(
+                    ruleId = "tasks-structure",
+                    severity = GateStatus.ERROR,
+                    fileName = "tasks.md",
+                    line = 18,
+                    message = "A task dependency points to a missing task.",
+                ),
+            ),
+        )
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = StageTransitionGatePreview(
+                workflowId = workflow.id,
+                transitionType = StageTransitionType.ADVANCE,
+                fromStage = StageId.TASKS,
+                targetStage = StageId.IMPLEMENT,
+                evaluatedStages = listOf(StageId.TASKS),
+                gateResult = gateResult,
+            ),
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            tasks = listOf(task(dependsOn = listOf("T-099"))),
+            gateResult = gateResult,
+        )
+
+        assertEquals(2, workbenchState.progress.completedCheckCount)
+        assertEquals(4, workbenchState.progress.totalCheckCount)
+        assertFalse(workbenchState.primaryAction?.enabled ?: true)
+        assertEquals(
+            listOf(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.overview.blockers.gate.withLocation",
+                    "tasks-structure",
+                    "A task dependency points to a missing task.",
+                    "tasks.md",
+                    18,
+                ),
+            ),
+            workbenchState.blockers,
+        )
+    }
+
+    @Test
+    fun `workbench builder should support focused future stages without changing workflow current stage`() {
+        val workflow = workflow(
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = "tasks content",
+                ),
+            ),
+        )
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            tasks = listOf(task()),
             focusedStage = StageId.IMPLEMENT,
         )
 
@@ -229,30 +355,189 @@ class SpecWorkflowOverviewPresenterTest {
         )
     }
 
+    @Test
+    fun `workbench builder should surface start-task action during implement stage when no task is in progress`() {
+        val workflow = workflow(currentStage = StageId.IMPLEMENT)
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            tasks = listOf(
+                task(id = "T-001", status = TaskStatus.COMPLETED),
+                task(id = "T-002", status = TaskStatus.PENDING, dependsOn = listOf("T-001")),
+            ),
+        )
+
+        assertEquals(StageId.IMPLEMENT, workbenchState.currentStage)
+        assertEquals(StageId.IMPLEMENT, workbenchState.focusedStage)
+        assertEquals(SpecWorkflowWorkbenchActionKind.START_TASK, workbenchState.primaryAction?.kind)
+        assertEquals("T-002", workbenchState.primaryAction?.taskId)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.startTask", "T-002"),
+            workbenchState.primaryAction?.label,
+        )
+        assertEquals("T-002", workbenchState.implementationFocus?.taskId)
+        assertEquals(TaskStatus.PENDING, workbenchState.implementationFocus?.status)
+        assertTrue(workbenchState.primaryAction?.enabled == true)
+    }
+
+    @Test
+    fun `workbench builder should surface complete-task action during implement stage when a task is in progress`() {
+        val workflow = workflow(currentStage = StageId.IMPLEMENT)
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            tasks = listOf(
+                task(id = "T-001", status = TaskStatus.IN_PROGRESS),
+                task(id = "T-002", status = TaskStatus.PENDING),
+            ),
+        )
+
+        assertEquals(SpecWorkflowWorkbenchActionKind.COMPLETE_TASK, workbenchState.primaryAction?.kind)
+        assertEquals("T-001", workbenchState.primaryAction?.taskId)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.completeTask", "T-001"),
+            workbenchState.primaryAction?.label,
+        )
+        assertEquals("T-001", workbenchState.implementationFocus?.taskId)
+        assertEquals(TaskStatus.IN_PROGRESS, workbenchState.implementationFocus?.status)
+        assertTrue(workbenchState.primaryAction?.enabled == true)
+    }
+
+    @Test
+    fun `workbench builder should surface continue-check action during implement stage after tasks are settled`() {
+        val workflow = workflow(currentStage = StageId.IMPLEMENT, verifyEnabled = true)
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            tasks = listOf(
+                task(id = "T-001", status = TaskStatus.COMPLETED, relatedFiles = listOf("src/main/kotlin/App.kt")),
+                task(id = "T-002", status = TaskStatus.COMPLETED, relatedFiles = listOf("src/test/kotlin/AppTest.kt")),
+            ),
+        )
+
+        assertEquals(SpecWorkflowWorkbenchActionKind.ADVANCE, workbenchState.primaryAction?.kind)
+        assertEquals(
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.primary.implement.continueCheck.withTarget",
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.VERIFY),
+            ),
+            workbenchState.primaryAction?.label,
+        )
+        assertNull(workbenchState.primaryAction?.taskId)
+        assertNull(workbenchState.implementationFocus)
+        assertTrue(workbenchState.primaryAction?.enabled == true)
+    }
+
     private fun workflow(
         status: WorkflowStatus = WorkflowStatus.IN_PROGRESS,
         verifyEnabled: Boolean = false,
+        documents: Map<SpecPhase, SpecDocument> = emptyMap(),
+        currentStage: StageId = StageId.TASKS,
     ): SpecWorkflow {
+        val orderedStages = listOf(
+            StageId.REQUIREMENTS,
+            StageId.DESIGN,
+            StageId.TASKS,
+            StageId.IMPLEMENT,
+        ) + listOfNotNull(StageId.VERIFY.takeIf { verifyEnabled }) + listOf(StageId.ARCHIVE)
+        val currentStageIndex = orderedStages.indexOf(currentStage).coerceAtLeast(0)
         return SpecWorkflow(
             id = "wf-toolwindow",
-            currentPhase = SpecPhase.IMPLEMENT,
-            documents = emptyMap(),
+            currentPhase = when (currentStage) {
+                StageId.REQUIREMENTS -> SpecPhase.SPECIFY
+                StageId.DESIGN -> SpecPhase.DESIGN
+                else -> SpecPhase.IMPLEMENT
+            },
+            documents = documents,
             status = status,
             title = "ToolWindow Demo",
             description = "Demo workflow",
             template = WorkflowTemplate.FULL_SPEC,
             stageStates = linkedMapOf(
-                StageId.REQUIREMENTS to StageState(active = true, status = StageProgress.DONE),
-                StageId.DESIGN to StageState(active = true, status = StageProgress.DONE),
-                StageId.TASKS to StageState(active = true, status = StageProgress.IN_PROGRESS),
-                StageId.IMPLEMENT to StageState(active = true, status = StageProgress.NOT_STARTED),
-                StageId.VERIFY to StageState(active = verifyEnabled, status = StageProgress.NOT_STARTED),
-                StageId.ARCHIVE to StageState(active = true, status = StageProgress.NOT_STARTED),
+                StageId.REQUIREMENTS to stageState(StageId.REQUIREMENTS, currentStageIndex, orderedStages),
+                StageId.DESIGN to stageState(StageId.DESIGN, currentStageIndex, orderedStages),
+                StageId.TASKS to stageState(StageId.TASKS, currentStageIndex, orderedStages),
+                StageId.IMPLEMENT to stageState(StageId.IMPLEMENT, currentStageIndex, orderedStages),
+                StageId.VERIFY to if (verifyEnabled) {
+                    stageState(StageId.VERIFY, currentStageIndex, orderedStages)
+                } else {
+                    StageState(active = false, status = StageProgress.NOT_STARTED)
+                },
+                StageId.ARCHIVE to stageState(StageId.ARCHIVE, currentStageIndex, orderedStages),
             ),
-            currentStage = StageId.TASKS,
+            currentStage = currentStage,
             verifyEnabled = verifyEnabled,
             createdAt = 1L,
             updatedAt = 2L,
         )
+    }
+
+    private fun document(
+        phase: SpecPhase,
+        content: String,
+        valid: Boolean = true,
+    ): SpecDocument {
+        return SpecDocument(
+            id = "doc-${phase.name.lowercase()}",
+            phase = phase,
+            content = content,
+            metadata = SpecMetadata(
+                title = phase.displayName,
+                description = "test",
+            ),
+            validationResult = ValidationResult(valid = valid),
+        )
+    }
+
+    private fun task(
+        id: String = "T-001",
+        dependsOn: List<String> = emptyList(),
+        status: TaskStatus = TaskStatus.PENDING,
+        relatedFiles: List<String> = emptyList(),
+    ): StructuredTask {
+        return StructuredTask(
+            id = id,
+            title = "Task $id",
+            status = status,
+            priority = TaskPriority.P1,
+            dependsOn = dependsOn,
+            relatedFiles = relatedFiles,
+        )
+    }
+
+    private fun stageState(
+        stageId: StageId,
+        currentStageIndex: Int,
+        orderedStages: List<StageId>,
+    ): StageState {
+        val stageIndex = orderedStages.indexOf(stageId)
+        val status = when {
+            stageIndex < 0 -> StageProgress.NOT_STARTED
+            stageIndex < currentStageIndex -> StageProgress.DONE
+            stageIndex == currentStageIndex -> StageProgress.IN_PROGRESS
+            else -> StageProgress.NOT_STARTED
+        }
+        return StageState(active = true, status = status)
     }
 }
