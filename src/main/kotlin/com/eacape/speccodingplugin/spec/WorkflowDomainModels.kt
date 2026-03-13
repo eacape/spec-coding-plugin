@@ -547,6 +547,54 @@ data class TemplateSwitchHistoryEntry(
     val rolledBack: Boolean = false,
 )
 
+enum class TaskLifecycleStatus {
+    PENDING,
+    BLOCKED,
+    COMPLETED,
+    CANCELLED,
+}
+
+enum class TaskExecutionRunStatus {
+    QUEUED,
+    RUNNING,
+    WAITING_CONFIRMATION,
+    FAILED,
+    CANCELLED,
+    SUCCEEDED,
+    ;
+
+    fun isTerminal(): Boolean {
+        return when (this) {
+            FAILED,
+            CANCELLED,
+            SUCCEEDED,
+            -> true
+            QUEUED,
+            RUNNING,
+            WAITING_CONFIRMATION,
+            -> false
+        }
+    }
+
+    fun canTransitionTo(next: TaskExecutionRunStatus): Boolean {
+        return when (this) {
+            QUEUED -> next == RUNNING || next == CANCELLED || next == FAILED
+            RUNNING -> next == WAITING_CONFIRMATION || next == SUCCEEDED || next == FAILED || next == CANCELLED
+            WAITING_CONFIRMATION -> next == SUCCEEDED || next == FAILED || next == CANCELLED
+            FAILED,
+            CANCELLED,
+            SUCCEEDED,
+            -> false
+        }
+    }
+}
+
+enum class ExecutionTrigger {
+    USER_EXECUTE,
+    USER_RETRY,
+    SYSTEM_RECOVERY,
+}
+
 enum class TaskPriority {
     P0,
     P1,
@@ -583,6 +631,16 @@ data class TaskVerificationResult(
     val runId: String,
     val summary: String,
     val at: String,
+)
+
+data class TaskExecutionRun(
+    val runId: String,
+    val taskId: String,
+    val status: TaskExecutionRunStatus,
+    val trigger: ExecutionTrigger,
+    val startedAt: String,
+    val finishedAt: String? = null,
+    val summary: String? = null,
 )
 
 data class VerifyCommandExecutionRequest(
@@ -753,6 +811,18 @@ class InvalidTaskVerificationResultError(taskId: String, fieldName: String, deta
                 }
         },
     )
+
+class MissingTaskExecutionRunError(runId: String) :
+    WorkflowDomainError("Task execution run $runId was not found")
+
+class ActiveTaskExecutionRunExistsError(taskId: String) :
+    WorkflowDomainError("Task $taskId already has an active execution run")
+
+class InvalidTaskExecutionRunTransitionError(
+    runId: String,
+    from: TaskExecutionRunStatus,
+    to: TaskExecutionRunStatus,
+) : WorkflowDomainError("Invalid task execution run transition: $runId $from -> $to")
 
 class InvalidVerifyCommandError(commandId: String?, details: String) :
     WorkflowDomainError(

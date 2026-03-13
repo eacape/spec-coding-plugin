@@ -30,6 +30,7 @@ class SpecEngine(private val project: Project) {
     private val projectConfigDelegate: SpecProjectConfigService by lazy { SpecProjectConfigService(project) }
     private val artifactServiceDelegate: SpecArtifactService by lazy { SpecArtifactService(project) }
     private val tasksServiceDelegate: SpecTasksService by lazy { SpecTasksService(project) }
+    private val taskExecutionServiceDelegate: SpecTaskExecutionService by lazy { SpecTaskExecutionService(project) }
     private val verificationServiceDelegate: SpecVerificationService by lazy { SpecVerificationService(project) }
     private val gateRuleEngine: SpecGateRuleEngine by lazy {
         SpecGateRuleEngine(
@@ -210,12 +211,17 @@ class SpecEngine(private val project: Project) {
     fun loadWorkflow(workflowId: String): Result<SpecWorkflow> {
         return runCatching {
             // 先从内存缓存查找
-            activeWorkflows[workflowId]?.let { return@runCatching it }
+            activeWorkflows[workflowId]?.let { cachedWorkflow ->
+                val hydratedWorkflow = hydrateLegacyTaskExecutionRuns(cachedWorkflow)
+                activeWorkflows[workflowId] = hydratedWorkflow
+                return@runCatching hydratedWorkflow
+            }
 
             // 从存储加载
             val workflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            activeWorkflows[workflowId] = workflow
-            workflow
+            val hydratedWorkflow = hydrateLegacyTaskExecutionRuns(workflow)
+            activeWorkflows[workflowId] = hydratedWorkflow
+            hydratedWorkflow
         }
     }
 
@@ -225,8 +231,9 @@ class SpecEngine(private val project: Project) {
     fun reloadWorkflow(workflowId: String): Result<SpecWorkflow> {
         return runCatching {
             val workflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            activeWorkflows[workflowId] = workflow
-            workflow
+            val hydratedWorkflow = hydrateLegacyTaskExecutionRuns(workflow)
+            activeWorkflows[workflowId] = hydratedWorkflow
+            hydratedWorkflow
         }
     }
 
@@ -244,9 +251,18 @@ class SpecEngine(private val project: Project) {
     fun openWorkflow(workflowId: String): Result<WorkflowSnapshot> {
         return runCatching {
             val snapshot = storageDelegate.openWorkflow(workflowId).getOrThrow()
-            activeWorkflows[workflowId] = snapshot.workflow
-            snapshot
+            val hydratedWorkflow = hydrateLegacyTaskExecutionRuns(snapshot.workflow)
+            activeWorkflows[workflowId] = hydratedWorkflow
+            snapshot.copy(
+                meta = hydratedWorkflow.toWorkflowMeta(),
+                workflow = hydratedWorkflow,
+                documents = hydratedWorkflow.documents,
+            )
         }
+    }
+
+    private fun hydrateLegacyTaskExecutionRuns(workflow: SpecWorkflow): SpecWorkflow {
+        return taskExecutionServiceDelegate.migrateLegacyInProgressTasks(workflow).workflow
     }
 
     fun previewTemplateSwitch(

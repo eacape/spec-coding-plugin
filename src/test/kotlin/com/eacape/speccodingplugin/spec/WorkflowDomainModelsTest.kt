@@ -165,6 +165,16 @@ class WorkflowDomainModelsTest {
     }
 
     @Test
+    fun `task execution run status should follow state machine`() {
+        assertTrue(TaskExecutionRunStatus.QUEUED.canTransitionTo(TaskExecutionRunStatus.RUNNING))
+        assertTrue(TaskExecutionRunStatus.RUNNING.canTransitionTo(TaskExecutionRunStatus.WAITING_CONFIRMATION))
+        assertTrue(TaskExecutionRunStatus.WAITING_CONFIRMATION.canTransitionTo(TaskExecutionRunStatus.SUCCEEDED))
+        assertTrue(TaskExecutionRunStatus.SUCCEEDED.isTerminal())
+        assertFalse(TaskExecutionRunStatus.QUEUED.canTransitionTo(TaskExecutionRunStatus.SUCCEEDED))
+        assertFalse(TaskExecutionRunStatus.CANCELLED.canTransitionTo(TaskExecutionRunStatus.RUNNING))
+    }
+
+    @Test
     fun `template definition should reject duplicate stages`() {
         assertThrows(IllegalArgumentException::class.java) {
             TemplateDefinition(

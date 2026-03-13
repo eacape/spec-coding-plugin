@@ -848,6 +848,9 @@ class SpecStorage(
         workflow.configPinHash?.takeIf { it.isNotBlank() }?.let { configPinHash ->
             metadata["configPinHash"] = configPinHash
         }
+        if (workflow.taskExecutionRuns.isNotEmpty()) {
+            metadata["executionRuns"] = encodeTaskExecutionRuns(workflow.taskExecutionRuns)
+        }
         workflow.clarificationRetryState?.let { retry ->
             metadata["clarificationRetryState"] = encodeClarificationRetryState(retry)
         }
@@ -885,6 +888,7 @@ class SpecStorage(
             verifyEnabled = parsed.verifyEnabled,
             baselineWorkflowId = parsed.baselineWorkflowId,
             configPinHash = parsed.configPinHash,
+            taskExecutionRuns = parsed.taskExecutionRuns,
             clarificationRetryState = parsed.clarificationRetryState,
             createdAt = parsed.createdAt,
             updatedAt = parsed.updatedAt
@@ -913,6 +917,7 @@ class SpecStorage(
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?.let(::decodeClarificationRetryState)
+        val taskExecutionRuns = parseTaskExecutionRuns(migrated["executionRuns"])
         val createdAt = parseLong(migrated["createdAt"], now)
         val updatedAt = parseLong(migrated["updatedAt"], now)
         val createdAtIso = Instant.ofEpochMilli(createdAt).toString()
@@ -954,6 +959,7 @@ class SpecStorage(
             description = description,
             baselineWorkflowId = baselineWorkflowId,
             configPinHash = configPinHash,
+            taskExecutionRuns = taskExecutionRuns,
             clarificationRetryState = clarificationRetryState,
             createdAt = createdAt,
             updatedAt = updatedAt,
@@ -976,6 +982,7 @@ class SpecStorage(
         val description: String,
         val baselineWorkflowId: String?,
         val configPinHash: String?,
+        val taskExecutionRuns: List<TaskExecutionRun>,
         val clarificationRetryState: ClarificationRetryState?,
         val createdAt: Long,
         val updatedAt: Long,
@@ -1236,6 +1243,7 @@ class SpecStorage(
             verifyEnabled = parsed.verifyEnabled,
             baselineWorkflowId = parsed.baselineWorkflowId,
             configPinHash = parsed.configPinHash,
+            taskExecutionRuns = parsed.taskExecutionRuns,
             clarificationRetryState = parsed.clarificationRetryState,
             createdAt = parsed.createdAt,
             updatedAt = parsed.updatedAt,
@@ -1351,6 +1359,71 @@ class SpecStorage(
             )
         }
         return parsed
+    }
+
+    private fun encodeTaskExecutionRuns(runs: List<TaskExecutionRun>): List<Map<String, Any?>> {
+        return runs
+            .sortedWith(compareBy<TaskExecutionRun> { it.startedAt }.thenBy { it.runId })
+            .map { run ->
+                linkedMapOf<String, Any?>(
+                    "runId" to run.runId,
+                    "taskId" to run.taskId,
+                    "status" to run.status.name,
+                    "trigger" to run.trigger.name,
+                    "startedAt" to run.startedAt,
+                    "finishedAt" to run.finishedAt,
+                    "summary" to run.summary,
+                )
+            }
+    }
+
+    private fun parseTaskExecutionRuns(raw: Any?): List<TaskExecutionRun> {
+        val items = raw as? List<*> ?: return emptyList()
+        return items.mapNotNull { entry ->
+            val map = entry as? Map<*, *> ?: return@mapNotNull null
+            val runId = map["runId"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val taskId = map["taskId"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val startedAt = map["startedAt"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val status = parseEnumValue(
+                raw = map["status"],
+                fallback = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                candidates = TaskExecutionRunStatus.entries,
+            )
+            val trigger = parseEnumValue(
+                raw = map["trigger"],
+                fallback = ExecutionTrigger.SYSTEM_RECOVERY,
+                candidates = ExecutionTrigger.entries,
+            )
+            val finishedAt = map["finishedAt"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+            val summary = map["summary"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+            TaskExecutionRun(
+                runId = runId,
+                taskId = taskId,
+                status = status,
+                trigger = trigger,
+                startedAt = startedAt,
+                finishedAt = finishedAt,
+                summary = summary,
+            )
+        }.sortedWith(compareBy<TaskExecutionRun> { it.startedAt }.thenBy { it.runId })
     }
 
     private fun buildLegacyStageStates(

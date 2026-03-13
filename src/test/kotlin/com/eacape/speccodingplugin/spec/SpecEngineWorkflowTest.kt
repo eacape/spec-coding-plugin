@@ -818,4 +818,75 @@ class SpecEngineWorkflowTest {
         val reloadedCleared = engine.reloadWorkflow(created.id).getOrThrow()
         assertEquals(null, reloadedCleared.clarificationRetryState)
     }
+
+    @Test
+    fun `openWorkflow should recover legacy in progress tasks into execution runs`() {
+        val workflowId = "wf-legacy-recovery"
+        val artifactService = SpecArtifactService(project)
+        storage.saveWorkflow(
+            SpecWorkflow(
+                id = workflowId,
+                currentPhase = SpecPhase.IMPLEMENT,
+                documents = emptyMap(),
+                status = WorkflowStatus.IN_PROGRESS,
+                title = "Legacy recovery",
+                description = "recover task execution state",
+                currentStage = StageId.IMPLEMENT,
+                stageStates = linkedMapOf(
+                    StageId.TASKS to StageState(
+                        active = true,
+                        status = StageProgress.DONE,
+                        enteredAt = "2026-03-13T07:50:00Z",
+                        completedAt = "2026-03-13T07:55:00Z",
+                    ),
+                    StageId.IMPLEMENT to StageState(
+                        active = true,
+                        status = StageProgress.IN_PROGRESS,
+                        enteredAt = "2026-03-13T08:00:00Z",
+                    ),
+                    StageId.ARCHIVE to StageState(
+                        active = true,
+                        status = StageProgress.NOT_STARTED,
+                    ),
+                ),
+            ),
+        ).getOrThrow()
+        artifactService.writeArtifact(
+            workflowId,
+            StageId.TASKS,
+            """
+                # Implement Document
+
+                ## Task List
+
+                ### T-001: Legacy task
+                ```spec-task
+                status: IN_PROGRESS
+                priority: P0
+                dependsOn: []
+                relatedFiles: []
+                verificationResult: null
+                ```
+                - [ ] Resume task state.
+            """.trimIndent(),
+        )
+
+        val engine = SpecEngine(project, storage) {
+            SpecGenerationResult.Failure("not used")
+        }
+
+        val snapshot = engine.openWorkflow(workflowId).getOrThrow()
+        val recoveredRun = snapshot.workflow.taskExecutionRuns.single()
+        val auditEvents = storage.listAuditEvents(workflowId).getOrThrow()
+
+        assertEquals(TaskExecutionRunStatus.WAITING_CONFIRMATION, recoveredRun.status)
+        assertEquals(ExecutionTrigger.SYSTEM_RECOVERY, recoveredRun.trigger)
+        assertEquals("T-001", recoveredRun.taskId)
+        assertTrue(
+            auditEvents.any { event ->
+                event.eventType == SpecAuditEventType.TASK_EXECUTION_RUN_CREATED &&
+                    event.details["migratedFromStatus"] == TaskStatus.IN_PROGRESS.name
+            },
+        )
+    }
 }

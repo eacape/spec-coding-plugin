@@ -178,6 +178,7 @@ data class SpecWorkflow(
     val verifyEnabled: Boolean = false,
     val baselineWorkflowId: String? = null,
     val configPinHash: String? = null,
+    val taskExecutionRuns: List<TaskExecutionRun> = emptyList(),
     val clarificationRetryState: ClarificationRetryState? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()

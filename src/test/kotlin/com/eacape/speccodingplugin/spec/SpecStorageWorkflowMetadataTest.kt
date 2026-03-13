@@ -158,6 +158,46 @@ class SpecStorageWorkflowMetadataTest {
     }
 
     @Test
+    fun `loadWorkflow should preserve task execution runs metadata`() {
+        val workflowId = "wf-execution-runs"
+        val workflow = SpecWorkflow(
+            id = workflowId,
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = emptyMap(),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Execution runs",
+            description = "persist execution runs",
+            currentStage = StageId.IMPLEMENT,
+            taskExecutionRuns = listOf(
+                TaskExecutionRun(
+                    runId = "run-t-001-1",
+                    taskId = "T-001",
+                    status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                    trigger = ExecutionTrigger.SYSTEM_RECOVERY,
+                    startedAt = "2026-03-13T08:00:00Z",
+                    summary = "Recovered from legacy task status IN_PROGRESS.",
+                ),
+            ),
+        )
+
+        storage.saveWorkflow(workflow).getOrThrow()
+
+        val yamlPath = tempDir
+            .resolve(".spec-coding")
+            .resolve("specs")
+            .resolve(workflowId)
+            .resolve("workflow.yaml")
+        val yamlContent = Files.readString(yamlPath)
+        assertTrue(yamlContent.contains("executionRuns:"))
+        assertTrue(yamlContent.contains("runId: run-t-001-1"))
+
+        val loaded = storage.loadWorkflow(workflowId).getOrThrow()
+        assertEquals(1, loaded.taskExecutionRuns.size)
+        assertEquals(TaskExecutionRunStatus.WAITING_CONFIRMATION, loaded.taskExecutionRuns.single().status)
+        assertEquals(ExecutionTrigger.SYSTEM_RECOVERY, loaded.taskExecutionRuns.single().trigger)
+    }
+
+    @Test
     fun `loadWorkflow should preserve template stage metadata and current stage`() {
         val workflowId = "wf-stage-metadata"
         val workflow = SpecWorkflow(
