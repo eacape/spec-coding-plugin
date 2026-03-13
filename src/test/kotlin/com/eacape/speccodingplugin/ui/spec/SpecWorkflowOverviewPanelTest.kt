@@ -89,8 +89,8 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals(
             SpecCodingBundle.message(
                 "spec.toolwindow.overview.progress.value",
-                4,
-                4,
+                5,
+                5,
                 3,
                 5,
                 SpecWorkflowOverviewPresenter.progressLabel(StageProgress.IN_PROGRESS),
@@ -157,8 +157,8 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals(
             SpecCodingBundle.message(
                 "spec.toolwindow.overview.progress.value",
-                0,
-                4,
+                1,
+                5,
                 3,
                 5,
                 SpecWorkflowOverviewPresenter.progressLabel(StageProgress.IN_PROGRESS),

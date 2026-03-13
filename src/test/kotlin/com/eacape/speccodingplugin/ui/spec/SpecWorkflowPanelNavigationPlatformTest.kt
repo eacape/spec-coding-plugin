@@ -398,6 +398,63 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test clicking another stage should only change focused stage and keep persisted current stage`() {
+        val engine = SpecEngine.getInstance(project)
+        val tasksService = SpecTasksService(project)
+        val workflow = engine.createWorkflow(
+            title = "Read Only Stage Navigation",
+            description = "task 70 focused stage regression",
+        ).getOrThrow()
+        tasksService.addTask(workflow.id, "Keep stage read only", TaskPriority.P1)
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.TASKS,
+            verifyEnabled = true,
+            includeTasksDocument = true,
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.overviewSnapshotForTest().getValue("currentStage") ==
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickOverviewStageForTest(StageId.IMPLEMENT)
+        }
+
+        waitUntil {
+            panel.focusedStageForTest() == StageId.IMPLEMENT &&
+                panel.overviewSnapshotForTest().getValue("focusedStage") == StageId.IMPLEMENT.name
+        }
+
+        val persistedWorkflow = engine.reloadWorkflow(workflow.id).getOrThrow()
+        val overviewSnapshot = panel.overviewSnapshotForTest()
+
+        assertEquals(StageId.TASKS, persistedWorkflow.currentStage)
+        assertEquals(
+            SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS),
+            overviewSnapshot.getValue("currentStage"),
+        )
+        assertEquals(StageId.IMPLEMENT.name, overviewSnapshot.getValue("focusedStage"))
+        assertTrue(
+            overviewSnapshot.getValue("focusTitle").contains(
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+            ),
+        )
+        assertNull(panel.currentPrimaryActionKindForTest())
+    }
+
     fun `test implement workbench should resume blocked task from spec page button`() {
         val engine = SpecEngine.getInstance(project)
         val tasksService = SpecTasksService(project)
