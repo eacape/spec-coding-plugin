@@ -260,6 +260,7 @@ class SpecTasksService(private val project: Project) {
         taskId: String,
         to: TaskStatus,
         reason: String? = null,
+        auditContext: Map<String, String> = emptyMap(),
     ) {
         val normalizedReason = reason
             ?.trim()
@@ -281,7 +282,7 @@ class SpecTasksService(private val project: Project) {
             TaskMetadataUpdate(
                 updatedTask = updatedTask,
                 auditEventType = SpecAuditEventType.TASK_STATUS_CHANGED,
-                auditDetails = details,
+                auditDetails = mergeAuditDetails(details, auditContext),
             )
         }
     }
@@ -307,18 +308,22 @@ class SpecTasksService(private val project: Project) {
         workflowId: String,
         taskId: String,
         files: List<String>,
+        auditContext: Map<String, String> = emptyMap(),
     ): StructuredTask {
         return updateTaskMetadata(workflowId, taskId) { targetTask, _ ->
             val normalizedFiles = normalizeRelatedFiles(targetTask.id, files)
             TaskMetadataUpdate(
                 updatedTask = targetTask.copy(relatedFiles = normalizedFiles),
                 auditEventType = SpecAuditEventType.RELATED_FILES_UPDATED,
-                auditDetails = linkedMapOf(
-                    "taskId" to targetTask.id,
-                    "title" to targetTask.title,
-                    "fileCount" to normalizedFiles.size.toString(),
-                    "previousRelatedFiles" to targetTask.relatedFiles.joinToString(", "),
-                    "relatedFiles" to normalizedFiles.joinToString(", "),
+                auditDetails = mergeAuditDetails(
+                    linkedMapOf(
+                        "taskId" to targetTask.id,
+                        "title" to targetTask.title,
+                        "fileCount" to normalizedFiles.size.toString(),
+                        "previousRelatedFiles" to targetTask.relatedFiles.joinToString(", "),
+                        "relatedFiles" to normalizedFiles.joinToString(", "),
+                    ),
+                    auditContext,
                 ),
             )
         }
@@ -328,6 +333,7 @@ class SpecTasksService(private val project: Project) {
         workflowId: String,
         taskId: String,
         verificationResult: TaskVerificationResult,
+        auditContext: Map<String, String> = emptyMap(),
     ): StructuredTask {
         return updateTaskMetadata(workflowId, taskId) { targetTask, _ ->
             val normalizedVerificationResult = normalizeVerificationResult(
@@ -350,7 +356,7 @@ class SpecTasksService(private val project: Project) {
             TaskMetadataUpdate(
                 updatedTask = targetTask.copy(verificationResult = normalizedVerificationResult),
                 auditEventType = SpecAuditEventType.TASK_VERIFICATION_RESULT_UPDATED,
-                auditDetails = details,
+                auditDetails = mergeAuditDetails(details, auditContext),
             )
         }
     }
@@ -358,6 +364,7 @@ class SpecTasksService(private val project: Project) {
     fun clearVerificationResult(
         workflowId: String,
         taskId: String,
+        auditContext: Map<String, String> = emptyMap(),
     ): StructuredTask {
         return updateTaskMetadata(workflowId, taskId) { targetTask, _ ->
             val details = linkedMapOf(
@@ -373,7 +380,7 @@ class SpecTasksService(private val project: Project) {
             TaskMetadataUpdate(
                 updatedTask = targetTask.copy(verificationResult = null),
                 auditEventType = SpecAuditEventType.TASK_VERIFICATION_RESULT_UPDATED,
-                auditDetails = details,
+                auditDetails = mergeAuditDetails(details, auditContext),
             )
         }
     }
@@ -467,6 +474,23 @@ class SpecTasksService(private val project: Project) {
             .map { rawPath -> normalizeRelatedFile(taskId, rawPath, projectRoot) }
             .distinct()
             .sorted()
+    }
+
+    private fun mergeAuditDetails(
+        base: LinkedHashMap<String, String>,
+        extra: Map<String, String>,
+    ): LinkedHashMap<String, String> {
+        if (extra.isEmpty()) {
+            return base
+        }
+        extra.entries
+            .asSequence()
+            .filter { (key, value) -> key.isNotBlank() && value.isNotBlank() }
+            .sortedBy { (key, _) -> key }
+            .forEach { (key, value) ->
+                base[key] = value
+            }
+        return base
     }
 
     private fun normalizeVerificationResult(

@@ -1638,6 +1638,9 @@ class ImprovedChatPanel(
             pastedTextSequence = 0
             return
         }
+        if (cleanupDuplicatedPastedTextDisplayIfNeeded(currentInput)) {
+            return
+        }
         val collapsePlan = planComposerCollapse(
             previousSnapshot = previousSnapshot,
             currentInput = currentInput,
@@ -1675,6 +1678,23 @@ class ImprovedChatPanel(
             suppressComposerAutoCollapse = false
         }
         prunePendingPastedTextBlocks(inputField.text.orEmpty())
+    }
+
+    private fun cleanupDuplicatedPastedTextDisplayIfNeeded(currentInput: String): Boolean {
+        val cleanedInput = deduplicatePastedTextMarkerDisplay(
+            currentInput = currentInput,
+            markerPayloads = pendingPastedTextBlocks,
+        ) ?: return false
+        val caret = inputField.caretPosition
+        suppressComposerAutoCollapse = true
+        try {
+            inputField.text = cleanedInput
+            inputField.caretPosition = caret.coerceAtMost(cleanedInput.length)
+        } finally {
+            suppressComposerAutoCollapse = false
+        }
+        prunePendingPastedTextBlocks(cleanedInput)
+        return true
     }
 
     private fun extractImagePathsFromClipboardFiles(transferable: Transferable): List<String> {
@@ -5857,8 +5877,62 @@ class ImprovedChatPanel(
             )
         }
 
+        internal fun deduplicatePastedTextMarkerDisplay(
+            currentInput: String,
+            markerPayloads: Map<String, String>,
+        ): String? {
+            if (currentInput.isBlank() || markerPayloads.isEmpty()) {
+                return null
+            }
+            var normalized = currentInput
+            var changed = false
+            repeat(markerPayloads.size.coerceAtLeast(1) * 2) {
+                var passChanged = false
+                markerPayloads.forEach { (marker, rawText) ->
+                    val deduplicated = deduplicateSinglePastedTextMarker(
+                        currentInput = normalized,
+                        marker = marker,
+                        rawText = normalizeClipboardTextForCollapse(rawText),
+                    ) ?: return@forEach
+                    if (deduplicated != normalized) {
+                        normalized = deduplicated
+                        passChanged = true
+                        changed = true
+                    }
+                }
+                if (!passChanged) {
+                    return if (changed) normalized else null
+                }
+            }
+            return if (changed) normalized else null
+        }
+
         private fun normalizeClipboardTextForCollapse(text: String): String {
             return text.replace("\r\n", "\n").replace('\r', '\n')
+        }
+
+        private fun deduplicateSinglePastedTextMarker(
+            currentInput: String,
+            marker: String,
+            rawText: String,
+        ): String? {
+            if (rawText.isBlank() || !currentInput.contains(marker)) {
+                return null
+            }
+            val candidatePatterns = listOf(
+                rawText + "\n" + marker,
+                rawText + marker,
+                marker + "\n" + rawText,
+                marker + rawText,
+            )
+            candidatePatterns.forEach { pattern ->
+                val start = currentInput.indexOf(pattern)
+                if (start >= 0) {
+                    val endExclusive = start + pattern.length
+                    return currentInput.replaceRange(start, endExclusive, marker)
+                }
+            }
+            return null
         }
 
         private fun shouldCollapsePastedTextForCollapse(text: String, lineCount: Int): Boolean {

@@ -3,8 +3,11 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.StructuredTask
 import com.eacape.speccodingplugin.spec.TaskPriority
+import com.eacape.speccodingplugin.spec.TaskVerificationResult
 import com.eacape.speccodingplugin.spec.TaskStatus
+import com.eacape.speccodingplugin.spec.VerificationConclusion
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -41,6 +44,12 @@ class SpecWorkflowTasksPanelTest {
         assertTrue(snapshot.getValue("tasks").contains("T-001:PENDING:P0"))
         assertEquals("T-001", snapshot.getValue("selectedTaskId"))
         assertEquals("28", snapshot.getValue("statusComboHeight"))
+        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"), snapshot.getValue("executeText"))
+        assertEquals("true", snapshot.getValue("executeEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", "T-001"),
+            snapshot.getValue("executeTooltip"),
+        )
         assertEquals("", snapshot.getValue("applyText"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.status.apply"), snapshot.getValue("applyTooltip"))
         assertEquals("true", snapshot.getValue("applyHasIcon"))
@@ -53,6 +62,8 @@ class SpecWorkflowTasksPanelTest {
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"), snapshot.getValue("relatedFilesTooltip"))
         assertEquals("true", snapshot.getValue("relatedFilesHasIcon"))
         assertEquals("true", snapshot.getValue("relatedFilesRolloverEnabled"))
+        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.verification.button"), snapshot.getValue("verificationText"))
+        assertEquals("true", snapshot.getValue("verificationEnabled"))
         assertEquals("true", snapshot.getValue("applyEnabled"))
         assertEquals("true", snapshot.getValue("dependsOnEnabled"))
         assertEquals("true", snapshot.getValue("relatedFilesEnabled"))
@@ -78,9 +89,12 @@ class SpecWorkflowTasksPanelTest {
 
         panel.selectTaskForTest("T-010")
         val snapshot = panel.snapshotForTest()
+        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.execute.done"), snapshot.getValue("executeText"))
+        assertEquals("false", snapshot.getValue("executeEnabled"))
         assertEquals("false", snapshot.getValue("applyEnabled"))
         assertEquals("false", snapshot.getValue("dependsOnEnabled"))
         assertEquals("true", snapshot.getValue("relatedFilesEnabled"))
+        assertEquals("true", snapshot.getValue("verificationEnabled"))
     }
 
     @Test
@@ -112,5 +126,70 @@ class SpecWorkflowTasksPanelTest {
         val snapshot = panel.snapshotForTest()
         assertEquals("false", snapshot.getValue("headerVisible"))
         assertTrue(snapshot.getValue("tasks").contains("T-001:PENDING:P0"))
+    }
+
+    @Test
+    fun `requestExecutionForTask should route pending and blocked tasks to in progress`() {
+        val transitions = mutableListOf<String>()
+        val panel = SpecWorkflowTasksPanel(
+            onTransitionStatus = { taskId, to -> transitions += "$taskId:$to" },
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-1",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "Pending",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+                StructuredTask(
+                    id = "T-002",
+                    title = "Blocked",
+                    status = TaskStatus.BLOCKED,
+                    priority = TaskPriority.P1,
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.requestExecutionForTask("T-001"))
+        assertTrue(panel.requestExecutionForTask("T-002"))
+
+        assertEquals(listOf("T-001:IN_PROGRESS", "T-002:IN_PROGRESS"), transitions)
+    }
+
+    @Test
+    fun `updateTasks should show resume and verification edit presentation for blocked verified tasks`() {
+        val panel = SpecWorkflowTasksPanel()
+
+        panel.updateTasks(
+            workflowId = "wf-verify",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-100",
+                    title = "Blocked verification task",
+                    status = TaskStatus.BLOCKED,
+                    priority = TaskPriority.P1,
+                    verificationResult = TaskVerificationResult(
+                        conclusion = VerificationConclusion.WARN,
+                        runId = "manual-t-100",
+                        summary = "Needs follow-up",
+                        at = "2026-03-13T10:00:00Z",
+                    ),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        panel.selectTaskForTest("T-100")
+        val snapshot = panel.snapshotForTest()
+
+        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"), snapshot.getValue("executeText"))
+        assertEquals("true", snapshot.getValue("executeEnabled"))
+        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.verification.edit"), snapshot.getValue("verificationText"))
+        assertEquals("true", snapshot.getValue("verificationEnabled"))
+        assertFalse(snapshot.getValue("verificationTooltip").isBlank())
     }
 }

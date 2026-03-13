@@ -398,6 +398,62 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test implement workbench should resume blocked task from spec page button`() {
+        val engine = SpecEngine.getInstance(project)
+        val tasksService = SpecTasksService(project)
+        val workflow = engine.createWorkflow(
+            title = "Resume Blocked Task",
+            description = "task 68 resume",
+        ).getOrThrow()
+        tasksService.addTask(workflow.id, "Finish dependency", TaskPriority.P0)
+        val blockedTask = tasksService.addTask(
+            workflow.id,
+            "Resume blocked implementation",
+            TaskPriority.P1,
+            dependsOn = listOf("T-001"),
+        )
+        tasksService.updateRelatedFiles(workflow.id, "T-001", listOf("src/main/kotlin/Dependency.kt"))
+        tasksService.transitionStatus(workflow.id, "T-001", TaskStatus.COMPLETED)
+        tasksService.transitionStatus(workflow.id, blockedTask.id, TaskStatus.IN_PROGRESS)
+        tasksService.transitionStatus(workflow.id, blockedTask.id, TaskStatus.BLOCKED)
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = true,
+            includeTasksDocument = true,
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.RESUME_TASK
+        }
+
+        assertEquals(blockedTask.id, panel.tasksSnapshotForTest().getValue("selectedTaskId"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"),
+            panel.tasksSnapshotForTest().getValue("executeText"),
+        )
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickOverviewPrimaryActionForTest()
+        }
+
+        waitUntil {
+            panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK &&
+                panel.tasksSnapshotForTest().getValue("tasks").contains("${blockedTask.id}:IN_PROGRESS")
+        }
+    }
+
     private fun createPanel(): SpecWorkflowPanel {
         var panel: SpecWorkflowPanel? = null
         ApplicationManager.getApplication().invokeAndWait {

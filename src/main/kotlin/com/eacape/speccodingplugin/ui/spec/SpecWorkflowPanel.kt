@@ -106,6 +106,7 @@ class SpecWorkflowPanel(
         onUpdateDependsOn = ::onTaskDependsOnUpdateRequested,
         onUpdateRelatedFiles = ::onTaskRelatedFilesUpdateRequested,
         onCompleteWithRelatedFiles = ::onTaskCompleteRequested,
+        onUpdateVerificationResult = ::onTaskVerificationResultUpdateRequested,
         suggestRelatedFiles = { taskId, existingRelatedFiles ->
             specRelatedFilesService.suggestRelatedFiles(taskId, existingRelatedFiles)
         },
@@ -2652,6 +2653,7 @@ class SpecWorkflowPanel(
 
     private fun onTaskStatusTransitionRequested(taskId: String, to: TaskStatus) {
         val workflowId = selectedWorkflowId ?: return
+        val auditContext = buildTaskAuditContext(taskId, "STATUS_${to.name}")
         SpecWorkflowActionSupport.runBackground(
             project = project,
             title = SpecCodingBundle.message("spec.toolwindow.tasks.status.progress"),
@@ -2660,6 +2662,7 @@ class SpecWorkflowPanel(
                     workflowId = workflowId,
                     taskId = taskId,
                     to = to,
+                    auditContext = auditContext,
                 )
             },
             onSuccess = {
@@ -2690,6 +2693,7 @@ class SpecWorkflowPanel(
 
     private fun onTaskRelatedFilesUpdateRequested(taskId: String, files: List<String>) {
         val workflowId = selectedWorkflowId ?: return
+        val auditContext = buildTaskAuditContext(taskId, "UPDATE_RELATED_FILES")
         SpecWorkflowActionSupport.runBackground(
             project = project,
             title = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.progress"),
@@ -2698,6 +2702,7 @@ class SpecWorkflowPanel(
                     workflowId = workflowId,
                     taskId = taskId,
                     files = files,
+                    auditContext = auditContext,
                 )
             },
             onSuccess = {
@@ -2707,8 +2712,14 @@ class SpecWorkflowPanel(
         )
     }
 
-    private fun onTaskCompleteRequested(taskId: String, files: List<String>) {
+    private fun onTaskCompleteRequested(
+        taskId: String,
+        files: List<String>,
+        verificationResult: TaskVerificationResult?,
+    ) {
         val workflowId = selectedWorkflowId ?: return
+        val existingTask = currentStructuredTasks.firstOrNull { task -> task.id == taskId }
+        val auditContext = buildTaskAuditContext(taskId, "COMPLETE")
         SpecWorkflowActionSupport.runBackground(
             project = project,
             title = SpecCodingBundle.message("spec.toolwindow.tasks.complete.progress"),
@@ -2717,11 +2728,27 @@ class SpecWorkflowPanel(
                     workflowId = workflowId,
                     taskId = taskId,
                     files = files,
+                    auditContext = auditContext,
                 )
+                when {
+                    verificationResult != null -> specTasksService.updateVerificationResult(
+                        workflowId = workflowId,
+                        taskId = taskId,
+                        verificationResult = verificationResult,
+                        auditContext = auditContext,
+                    )
+
+                    existingTask?.verificationResult != null -> specTasksService.clearVerificationResult(
+                        workflowId = workflowId,
+                        taskId = taskId,
+                        auditContext = auditContext,
+                    )
+                }
                 specTasksService.transitionStatus(
                     workflowId = workflowId,
                     taskId = taskId,
                     to = TaskStatus.COMPLETED,
+                    auditContext = auditContext,
                 )
             },
             onSuccess = {
@@ -2729,6 +2756,63 @@ class SpecWorkflowPanel(
                 reloadCurrentWorkflow()
             },
         )
+    }
+
+    private fun onTaskVerificationResultUpdateRequested(taskId: String, verificationResult: TaskVerificationResult?) {
+        val workflowId = selectedWorkflowId ?: return
+        val existingTask = currentStructuredTasks.firstOrNull { task -> task.id == taskId }
+        val auditContext = buildTaskAuditContext(taskId, "UPDATE_VERIFICATION_RESULT")
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.toolwindow.tasks.verification.progress"),
+            task = {
+                when {
+                    verificationResult != null -> specTasksService.updateVerificationResult(
+                        workflowId = workflowId,
+                        taskId = taskId,
+                        verificationResult = verificationResult,
+                        auditContext = auditContext,
+                    )
+
+                    existingTask?.verificationResult != null -> specTasksService.clearVerificationResult(
+                        workflowId = workflowId,
+                        taskId = taskId,
+                        auditContext = auditContext,
+                    )
+                }
+            },
+            onSuccess = {
+                val statusKey = if (verificationResult == null) {
+                    "spec.toolwindow.tasks.verification.cleared"
+                } else {
+                    "spec.toolwindow.tasks.verification.updated"
+                }
+                setStatusText(SpecCodingBundle.message(statusKey, taskId))
+                reloadCurrentWorkflow()
+            },
+        )
+    }
+
+    private fun buildTaskAuditContext(taskId: String, action: String): Map<String, String> {
+        val task = currentStructuredTasks.firstOrNull { candidate -> candidate.id == taskId }
+        val workbenchState = currentWorkbenchState
+        val binding = workbenchState?.artifactBinding
+        val summary = binding?.previewContent
+            ?.lineSequence()
+            ?.map(String::trim)
+            ?.firstOrNull { line -> line.isNotEmpty() && !line.startsWith("#") && !line.startsWith("```") }
+            ?.take(180)
+            .orEmpty()
+
+        return linkedMapOf<String, String>().apply {
+            put("triggerSource", "SPEC_PAGE_TASK_BUTTON")
+            put("taskAction", action)
+            put("currentStage", currentWorkflow?.currentStage?.name ?: "")
+            put("focusedStage", workbenchState?.focusedStage?.name ?: "")
+            put("documentBinding", binding?.fileName ?: binding?.title.orEmpty())
+            put("documentSummary", summary)
+            put("dependsOn", task?.dependsOn?.joinToString(", ").orEmpty())
+        }.filterValues { value -> value.isNotBlank() }
     }
 
     private fun onAdvanceStageRequested() {
@@ -3749,8 +3833,16 @@ class SpecWorkflowPanel(
 
             SpecWorkflowWorkbenchActionKind.START_TASK -> {
                 val taskId = action.taskId ?: return
-                tasksPanel.selectTask(taskId)
-                onTaskStatusTransitionRequested(taskId, TaskStatus.IN_PROGRESS)
+                if (!tasksPanel.requestExecutionForTask(taskId)) {
+                    setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.execute.failed", taskId))
+                }
+            }
+
+            SpecWorkflowWorkbenchActionKind.RESUME_TASK -> {
+                val taskId = action.taskId ?: return
+                if (!tasksPanel.requestExecutionForTask(taskId)) {
+                    setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.execute.failed", taskId))
+                }
             }
 
             SpecWorkflowWorkbenchActionKind.COMPLETE_TASK -> {

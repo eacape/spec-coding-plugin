@@ -267,6 +267,42 @@ class SpecWorkflowOverviewPanelTest {
     }
 
     @Test
+    fun `updateOverview should render resume action for blocked implementation task`() {
+        var actionKind: SpecWorkflowWorkbenchActionKind? = null
+        val panel = SpecWorkflowOverviewPanel(
+            onWorkbenchActionRequested = { action -> actionKind = action.kind },
+        )
+        val overviewState = overviewState(
+            currentStage = StageId.IMPLEMENT,
+            nextStage = StageId.VERIFY,
+            gateStatus = null,
+            gateSummary = null,
+        )
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = overviewWorkflow(documents = emptyMap(), currentStage = StageId.IMPLEMENT),
+            overviewState = overviewState,
+            tasks = listOf(
+                task(id = "T-001", status = TaskStatus.COMPLETED, relatedFiles = listOf("src/main/kotlin/App.kt")),
+                task(id = "T-002", status = TaskStatus.BLOCKED, dependsOn = listOf("T-001")),
+            ),
+            gateResult = null,
+        )
+
+        panel.updateOverview(overviewState, workbenchState)
+
+        val snapshot = panel.snapshotForTest()
+        assertEquals("true", snapshot.getValue("primaryActionVisible"))
+        assertEquals("true", snapshot.getValue("primaryActionEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.resumeTask", "T-002"),
+            snapshot.getValue("primaryActionText"),
+        )
+
+        panel.clickPrimaryActionForTest()
+        assertEquals(SpecWorkflowWorkbenchActionKind.RESUME_TASK, actionKind)
+    }
+
+    @Test
     fun `updateOverview should render archive focus details and archive action`() {
         var actionKind: SpecWorkflowWorkbenchActionKind? = null
         val panel = SpecWorkflowOverviewPanel(
@@ -478,12 +514,16 @@ class SpecWorkflowOverviewPanelTest {
     private fun task(
         id: String = "T-001",
         status: TaskStatus = TaskStatus.PENDING,
+        dependsOn: List<String> = emptyList(),
+        relatedFiles: List<String> = emptyList(),
     ): StructuredTask {
         return StructuredTask(
             id = id,
             title = "Task $id",
             status = status,
             priority = TaskPriority.P1,
+            dependsOn = dependsOn,
+            relatedFiles = relatedFiles,
         )
     }
 

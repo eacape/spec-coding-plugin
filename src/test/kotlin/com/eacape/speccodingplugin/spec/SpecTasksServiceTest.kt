@@ -359,6 +359,10 @@ class SpecTasksServiceTest {
             taskId = "t-001",
             to = TaskStatus.IN_PROGRESS,
             reason = "  started work  ",
+            auditContext = mapOf(
+                "triggerSource" to "SPEC_PAGE_TASK_BUTTON",
+                "focusedStage" to "IMPLEMENT",
+            ),
         )
 
         val persisted = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
@@ -373,6 +377,8 @@ class SpecTasksServiceTest {
         assertEquals("PENDING", auditEvent.details["fromStatus"])
         assertEquals("IN_PROGRESS", auditEvent.details["toStatus"])
         assertEquals("started work", auditEvent.details["reason"])
+        assertEquals("SPEC_PAGE_TASK_BUTTON", auditEvent.details["triggerSource"])
+        assertEquals("IMPLEMENT", auditEvent.details["focusedStage"])
     }
 
     @Test
@@ -532,6 +538,10 @@ class SpecTasksServiceTest {
                 tempDir.resolve("docs/../README.md").toString(),
                 "src/main/kotlin/App.kt",
             ),
+            auditContext = mapOf(
+                "documentBinding" to "tasks.md",
+                "taskAction" to "COMPLETE",
+            ),
         )
         val persisted = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
         val auditEvent = storage.listAuditEvents(workflowId).getOrThrow().last()
@@ -547,6 +557,8 @@ class SpecTasksServiceTest {
         assertEquals("First task", auditEvent.details["title"])
         assertEquals("2", auditEvent.details["fileCount"])
         assertEquals("README.md, src/main/kotlin/App.kt", auditEvent.details["relatedFiles"])
+        assertEquals("tasks.md", auditEvent.details["documentBinding"])
+        assertEquals("COMPLETE", auditEvent.details["taskAction"])
     }
 
     @Test
@@ -647,6 +659,10 @@ class SpecTasksServiceTest {
                 summary = "  Warning: flaky assertion\nNeeds manual follow-up  ",
                 at = " 2026-03-09T10:11:12Z ",
             ),
+            auditContext = mapOf(
+                "documentSummary" to "Ship implementation changes",
+                "triggerSource" to "SPEC_PAGE_TASK_BUTTON",
+            ),
         )
         val persisted = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
         val reparsedTask = tasksService.parse(workflowId).single()
@@ -681,6 +697,8 @@ class SpecTasksServiceTest {
         assertEquals("WARN", auditEvent.details["conclusion"])
         assertEquals("run-verify-001", auditEvent.details["runId"])
         assertEquals("2026-03-09T10:11:12Z", auditEvent.details["at"])
+        assertEquals("Ship implementation changes", auditEvent.details["documentSummary"])
+        assertEquals("SPEC_PAGE_TASK_BUTTON", auditEvent.details["triggerSource"])
     }
 
     @Test

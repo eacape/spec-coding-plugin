@@ -21,6 +21,32 @@ class ImprovedChatPanelCollapsePlannerTest {
     }
 
     @Test
+    fun `should remove duplicated raw pasted text when marker is also present`() {
+        val marker = "[Pasted text #1 +60 lines]"
+        val rawText = buildLargeText(lines = 60, prefix = "alpha")
+
+        val cleaned = ImprovedChatPanel.deduplicatePastedTextMarkerDisplay(
+            currentInput = "$rawText\n$marker",
+            markerPayloads = mapOf(marker to rawText),
+        )
+
+        assertEquals(marker, cleaned)
+    }
+
+    @Test
+    fun `should keep follow up text after marker untouched during deduplication`() {
+        val marker = "[Pasted text #1 +60 lines]"
+        val rawText = buildLargeText(lines = 60, prefix = "alpha")
+
+        val cleaned = ImprovedChatPanel.deduplicatePastedTextMarkerDisplay(
+            currentInput = "$marker\nfollow-up summary",
+            markerPayloads = mapOf(marker to rawText),
+        )
+
+        assertNull(cleaned)
+    }
+
+    @Test
     fun `pasting another large block should only collapse the inserted block`() {
         val marker = "[Pasted text #1 +60 lines]"
         val previousSnapshot = "$marker\nnote\n"

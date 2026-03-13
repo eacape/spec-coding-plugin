@@ -429,6 +429,36 @@ class SpecWorkflowOverviewPresenterTest {
     }
 
     @Test
+    fun `workbench builder should surface resume-task action during implement stage when a task is blocked`() {
+        val workflow = workflow(currentStage = StageId.IMPLEMENT)
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            tasks = listOf(
+                task(id = "T-001", status = TaskStatus.COMPLETED, relatedFiles = listOf("src/main/kotlin/App.kt")),
+                task(id = "T-002", status = TaskStatus.BLOCKED, dependsOn = listOf("T-001")),
+            ),
+        )
+
+        assertEquals(SpecWorkflowWorkbenchActionKind.RESUME_TASK, workbenchState.primaryAction?.kind)
+        assertEquals("T-002", workbenchState.primaryAction?.taskId)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.resumeTask", "T-002"),
+            workbenchState.primaryAction?.label,
+        )
+        assertEquals("T-002", workbenchState.implementationFocus?.taskId)
+        assertEquals(TaskStatus.BLOCKED, workbenchState.implementationFocus?.status)
+        assertTrue(workbenchState.primaryAction?.enabled == true)
+    }
+
+    @Test
     fun `workbench builder should surface continue-check action during implement stage after tasks are settled`() {
         val workflow = workflow(currentStage = StageId.IMPLEMENT, verifyEnabled = true)
         val overviewState = SpecWorkflowOverviewPresenter.buildState(

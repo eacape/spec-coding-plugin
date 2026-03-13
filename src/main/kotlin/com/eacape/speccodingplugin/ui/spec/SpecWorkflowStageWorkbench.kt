@@ -17,6 +17,7 @@ internal enum class SpecWorkflowWorkbenchActionKind {
     JUMP,
     ROLLBACK,
     START_TASK,
+    RESUME_TASK,
     COMPLETE_TASK,
     RUN_VERIFY,
     PREVIEW_VERIFY_PLAN,
@@ -335,7 +336,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
             )
 
             TaskStatus.BLOCKED -> SpecWorkflowWorkbenchAction(
-                kind = SpecWorkflowWorkbenchActionKind.START_TASK,
+                kind = SpecWorkflowWorkbenchActionKind.RESUME_TASK,
                 label = SpecCodingBundle.message(
                     "spec.toolwindow.overview.primary.implement.resumeTask",
                     implementationFocus.taskId,
