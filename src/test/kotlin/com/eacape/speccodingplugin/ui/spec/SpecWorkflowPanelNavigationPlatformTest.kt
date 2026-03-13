@@ -471,7 +471,6 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         )
         tasksService.updateRelatedFiles(workflow.id, "T-001", listOf("src/main/kotlin/Dependency.kt"))
         tasksService.transitionStatus(workflow.id, "T-001", TaskStatus.COMPLETED)
-        tasksService.transitionStatus(workflow.id, blockedTask.id, TaskStatus.IN_PROGRESS)
         tasksService.transitionStatus(workflow.id, blockedTask.id, TaskStatus.BLOCKED)
         stageWorkflow(
             workflowId = workflow.id,

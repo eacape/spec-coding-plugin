@@ -611,9 +611,9 @@ enum class TaskStatus {
 
     fun canTransitionTo(next: TaskStatus): Boolean {
         return when (this) {
-            PENDING -> next == IN_PROGRESS || next == CANCELLED
-            IN_PROGRESS -> next == COMPLETED || next == BLOCKED || next == CANCELLED
-            BLOCKED -> next == IN_PROGRESS || next == CANCELLED
+            PENDING -> next == BLOCKED || next == COMPLETED || next == CANCELLED
+            IN_PROGRESS -> next == PENDING || next == BLOCKED || next == COMPLETED || next == CANCELLED
+            BLOCKED -> next == PENDING || next == COMPLETED || next == CANCELLED
             COMPLETED -> false
             CANCELLED -> false
         }
@@ -737,7 +737,35 @@ data class StructuredTask(
     val dependsOn: List<String> = emptyList(),
     val relatedFiles: List<String> = emptyList(),
     val verificationResult: TaskVerificationResult? = null,
-)
+    val activeExecutionRun: TaskExecutionRun? = null,
+) {
+    val displayStatus: TaskStatus
+        get() = when {
+            status == TaskStatus.COMPLETED || status == TaskStatus.CANCELLED -> status
+            hasExecutionInFlight -> TaskStatus.IN_PROGRESS
+            else -> status
+        }
+
+    val hasExecutionInFlight: Boolean
+        get() = activeExecutionRun?.status?.isTerminal() == false
+
+    val awaitingCompletionConfirmation: Boolean
+        get() = activeExecutionRun?.status == TaskExecutionRunStatus.WAITING_CONFIRMATION
+}
+
+fun List<StructuredTask>.attachActiveExecutionRuns(runs: List<TaskExecutionRun>): List<StructuredTask> {
+    if (isEmpty()) {
+        return emptyList()
+    }
+    val activeRunsByTaskId = runs
+        .asSequence()
+        .filter { run -> !run.status.isTerminal() }
+        .sortedBy(TaskExecutionRun::startedAt)
+        .associateBy(TaskExecutionRun::taskId)
+    return map { task ->
+        task.copy(activeExecutionRun = activeRunsByTaskId[task.id])
+    }
+}
 
 sealed class WorkflowDomainError(message: String) : IllegalStateException(message)
 

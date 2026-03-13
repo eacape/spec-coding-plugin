@@ -1,7 +1,10 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskExecutionRun
+import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskVerificationResult
 import com.eacape.speccodingplugin.spec.TaskStatus
@@ -29,10 +32,17 @@ class SpecWorkflowTasksPanelTest {
                 StructuredTask(
                     id = "T-002",
                     title = "Second",
-                    status = TaskStatus.IN_PROGRESS,
+                    status = TaskStatus.PENDING,
                     priority = TaskPriority.P1,
                     dependsOn = listOf("T-001"),
                     relatedFiles = listOf("src/main.kt"),
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-1",
+                        taskId = "T-002",
+                        status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-13T12:00:00Z",
+                    ),
                 ),
             ),
             refreshedAtMillis = 1_710_000_000_000,
@@ -42,6 +52,7 @@ class SpecWorkflowTasksPanelTest {
         val snapshot = panel.snapshotForTest()
         assertEquals("wf-1", snapshot.getValue("workflowId"))
         assertTrue(snapshot.getValue("tasks").contains("T-001:PENDING:P0"))
+        assertTrue(snapshot.getValue("tasks").contains("T-002:IN_PROGRESS:P1"))
         assertEquals("T-001", snapshot.getValue("selectedTaskId"))
         assertEquals("28", snapshot.getValue("statusComboHeight"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"), snapshot.getValue("executeText"))
@@ -158,6 +169,38 @@ class SpecWorkflowTasksPanelTest {
         assertTrue(panel.requestExecutionForTask("T-002"))
 
         assertEquals(listOf("T-001:false", "T-002:true"), executions)
+    }
+
+    @Test
+    fun `updateTasks should derive in progress from active execution run`() {
+        val panel = SpecWorkflowTasksPanel()
+
+        panel.updateTasks(
+            workflowId = "wf-run",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-010",
+                    title = "Derived progress",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-10",
+                        taskId = "T-010",
+                        status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-13T12:00:00Z",
+                    ),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        panel.selectTaskForTest("T-010")
+        val snapshot = panel.snapshotForTest()
+
+        assertTrue(snapshot.getValue("tasks").contains("T-010:IN_PROGRESS:P0"))
+        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete"), snapshot.getValue("executeText"))
+        assertEquals("true", snapshot.getValue("executeEnabled"))
     }
 
     @Test

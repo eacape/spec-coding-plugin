@@ -92,16 +92,6 @@ class SpecStrongConstraintWorkflowRegressionTest {
             priority = TaskPriority.P1,
         )
 
-        tasksService.transitionStatus(
-            workflowId = workflow.id,
-            taskId = createdTask.id,
-            to = TaskStatus.IN_PROGRESS,
-            auditContext = mapOf(
-                "triggerSource" to "SPEC_PAGE_TASK_BUTTON",
-                "focusedStage" to "IMPLEMENT",
-                "taskAction" to "START",
-            ),
-        )
         tasksService.updateRelatedFiles(
             workflowId = workflow.id,
             taskId = createdTask.id,
@@ -161,15 +151,14 @@ class SpecStrongConstraintWorkflowRegressionTest {
         assertTrue(persisted.contains("runId: verify-task-70"))
         assertEquals(
             listOf(
-                SpecAuditEventType.TASK_STATUS_CHANGED,
                 SpecAuditEventType.RELATED_FILES_UPDATED,
                 SpecAuditEventType.TASK_VERIFICATION_RESULT_UPDATED,
                 SpecAuditEventType.TASK_STATUS_CHANGED,
             ),
-            taskEvents.takeLast(4).map(SpecAuditEvent::eventType),
+            taskEvents.takeLast(3).map(SpecAuditEvent::eventType),
         )
-        assertTrue(taskEvents.takeLast(4).all { it.details["taskId"] == createdTask.id })
-        assertTrue(taskEvents.takeLast(4).all { it.details["triggerSource"] == "SPEC_PAGE_TASK_BUTTON" })
+        assertTrue(taskEvents.takeLast(3).all { it.details["taskId"] == createdTask.id })
+        assertTrue(taskEvents.takeLast(3).all { it.details["triggerSource"] == "SPEC_PAGE_TASK_BUTTON" })
     }
 
     @Test

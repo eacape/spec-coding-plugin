@@ -186,7 +186,7 @@ internal class SpecWorkflowTasksPanel(
     internal fun snapshotForTest(): Map<String, String> {
         val tasks = (0 until listModel.size()).joinToString(" | ") { index ->
             val task = listModel[index]
-            "${task.id}:${task.status.name}:${task.priority.name}"
+            "${task.id}:${task.displayStatus.name}:${task.priority.name}"
         }
         val selectedId = tasksList.selectedValue?.id.orEmpty()
         return mapOf(
@@ -422,7 +422,7 @@ internal class SpecWorkflowTasksPanel(
     }
 
     private fun updateExecuteButtonPresentation(selected: StructuredTask) {
-        val presentation = when (selected.status) {
+        val presentation = when (selected.displayStatus) {
             TaskStatus.PENDING -> TaskExecutionPresentation(
                 text = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", selected.id),
@@ -486,7 +486,7 @@ internal class SpecWorkflowTasksPanel(
 
     private fun requestExecutionForSelection(): Boolean {
         val selectedTask = tasksList.selectedValue ?: return false
-        when (selectedTask.status) {
+        when (selectedTask.displayStatus) {
             TaskStatus.PENDING,
             -> onExecuteTask(selectedTask.id, false)
 
@@ -641,8 +641,8 @@ internal class SpecWorkflowTasksPanel(
             panel.background = background
             titleLabel.text = "${value.id}: ${value.title}"
             metaLabel.text = "${value.priority.name} | dependsOn=${value.dependsOn.size}, relatedFiles=${value.relatedFiles.size}"
-            statusChipLabel.text = value.status.name
-            applyChipStyle(statusChipLabel, value.status, isSelected)
+            statusChipLabel.text = value.displayStatus.name
+            applyChipStyle(statusChipLabel, value.displayStatus, isSelected)
             return panel
         }
 

@@ -1504,15 +1504,16 @@ class SpecWorkflowPanel(
                     )
                     detailPanel.updateWorkflow(wf)
                     tasksResult.onSuccess { tasks ->
+                        val decoratedTasks = tasks.attachActiveExecutionRuns(wf.taskExecutionRuns)
                         tasksPanel.updateTasks(
                             workflowId = workflowId,
-                            tasks = tasks,
+                            tasks = decoratedTasks,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
-                            tasks = tasks,
+                            tasks = decoratedTasks,
                             verifyDeltaState = snapshot.verifyDeltaState,
                             gateResult = snapshot.gateResult,
                         )
@@ -2775,6 +2776,13 @@ class SpecWorkflowPanel(
                         auditContext = auditContext,
                     )
                 }
+                if (existingTask?.awaitingCompletionConfirmation == true) {
+                    specTaskExecutionService.resolveWaitingConfirmationRun(
+                        workflowId = workflowId,
+                        taskId = taskId,
+                        summary = "Completed from spec workflow task action.",
+                    )
+                }
                 specTasksService.transitionStatus(
                     workflowId = workflowId,
                     taskId = taskId,
@@ -2906,6 +2914,10 @@ class SpecWorkflowPanel(
             put("focusedStage", workbenchState?.focusedStage?.name ?: "")
             put("documentBinding", binding?.fileName ?: binding?.title.orEmpty())
             put("documentSummary", summary)
+            put("taskLifecycleStatus", task?.status?.name ?: "")
+            put("taskDisplayStatus", task?.displayStatus?.name ?: "")
+            put("taskExecutionRunId", task?.activeExecutionRun?.runId ?: "")
+            put("taskExecutionRunStatus", task?.activeExecutionRun?.status?.name ?: "")
             put("dependsOn", task?.dependsOn?.joinToString(", ").orEmpty())
         }.filterValues { value -> value.isNotBlank() }
     }
@@ -3643,15 +3655,16 @@ class SpecWorkflowPanel(
                     )
                     detailPanel.updateWorkflow(wf, followCurrentPhase = followCurrentPhase)
                     tasksResult.onSuccess { tasks ->
+                        val decoratedTasks = tasks.attachActiveExecutionRuns(wf.taskExecutionRuns)
                         tasksPanel.updateTasks(
                             workflowId = wf.id,
-                            tasks = tasks,
+                            tasks = decoratedTasks,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
-                            tasks = tasks,
+                            tasks = decoratedTasks,
                             verifyDeltaState = snapshot.verifyDeltaState,
                             gateResult = snapshot.gateResult,
                         )

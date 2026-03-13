@@ -98,6 +98,7 @@ class SpecTaskExecutionServiceTest {
         )
         val secondMigration = executionService.migrateLegacyInProgressTasks(firstMigration.workflow)
         val runs = executionService.listRuns(workflowId, "T-001")
+        val migratedTask = tasksService.parse(workflowId).single()
 
         assertTrue(firstMigration.migrated)
         assertEquals(1, firstMigration.migratedRuns.size)
@@ -105,6 +106,7 @@ class SpecTaskExecutionServiceTest {
         assertEquals(1, runs.size)
         assertEquals(TaskExecutionRunStatus.WAITING_CONFIRMATION, runs.single().status)
         assertEquals(ExecutionTrigger.SYSTEM_RECOVERY, runs.single().trigger)
+        assertEquals(TaskStatus.PENDING, migratedTask.status)
 
         val recoveryAudit = storage.listAuditEvents(workflowId).getOrThrow()
             .last { event -> event.eventType == SpecAuditEventType.TASK_EXECUTION_RUN_CREATED }
@@ -230,7 +232,7 @@ class SpecTaskExecutionServiceTest {
             TaskExecutionRunStatus.WAITING_CONFIRMATION,
             loadedWorkflow.taskExecutionRuns.single { run -> run.taskId == "T-002" }.status,
         )
-        assertEquals(TaskStatus.IN_PROGRESS, latestTask.status)
+        assertEquals(TaskStatus.PENDING, latestTask.status)
         assertEquals(workflowId, session.specTaskId)
         assertTrue(session.title.contains("T-002"))
         assertEquals(listOf(ConversationRole.USER, ConversationRole.ASSISTANT), messages.map { it.role })
@@ -348,13 +350,40 @@ class SpecTaskExecutionServiceTest {
         assertEquals(2, runs.size)
         assertEquals(ExecutionTrigger.USER_RETRY, result.run.trigger)
         assertEquals(TaskExecutionRunStatus.WAITING_CONFIRMATION, result.run.status)
-        assertEquals(TaskStatus.IN_PROGRESS, latestTask.status)
+        assertEquals(TaskStatus.PENDING, latestTask.status)
         assertTrue(userMessage.content.contains("Previous run ID: ${previousRun.runId}"))
         assertTrue(userMessage.content.contains("Previous summary: First attempt failed."))
         assertEquals(previousRun.runId, userMetadata.previousRunId)
         assertEquals(previousRun.runId, result.previousRunId)
         assertNotNull(capturedRequest)
         assertTrue(capturedRequest!!.userInput.contains("RETRY_EXECUTION"))
+    }
+
+    @Test
+    fun `resolveWaitingConfirmationRun should mark latest pending confirmation run as succeeded`() {
+        val workflowId = "wf-run-resolve"
+        seedWorkflow(workflowId)
+        val executionService = newExecutionService()
+        val waitingRun = executionService.createRun(
+            workflowId = workflowId,
+            taskId = "T-001",
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            trigger = ExecutionTrigger.USER_EXECUTE,
+            startedAt = "2026-03-13T12:00:00Z",
+            summary = "Ready for completion",
+        )
+
+        val resolvedRun = executionService.resolveWaitingConfirmationRun(
+            workflowId = workflowId,
+            taskId = "T-001",
+            summary = "Completed from test",
+        )
+
+        val runs = executionService.listRuns(workflowId, "T-001")
+        assertEquals(waitingRun.runId, resolvedRun?.runId)
+        assertEquals(TaskExecutionRunStatus.SUCCEEDED, resolvedRun?.status)
+        assertEquals(TaskExecutionRunStatus.SUCCEEDED, runs.single().status)
+        assertEquals("Completed from test", runs.single().summary)
     }
 
     private fun newExecutionService(
