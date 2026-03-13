@@ -18,6 +18,12 @@ internal enum class SpecWorkflowWorkbenchActionKind {
     ROLLBACK,
     START_TASK,
     COMPLETE_TASK,
+    RUN_VERIFY,
+    PREVIEW_VERIFY_PLAN,
+    OPEN_VERIFICATION,
+    SHOW_DELTA,
+    COMPLETE_WORKFLOW,
+    ARCHIVE_WORKFLOW,
 }
 
 internal enum class SpecWorkflowWorkbenchDocumentMode {
@@ -73,6 +79,7 @@ internal data class SpecWorkflowStageWorkbenchState(
     val primaryAction: SpecWorkflowWorkbenchAction?,
     val overflowActions: List<SpecWorkflowWorkbenchAction>,
     val blockers: List<String>,
+    val focusDetails: List<String> = emptyList(),
     val artifactBinding: SpecWorkflowStageArtifactBinding,
     val implementationFocus: SpecWorkflowImplementationFocus? = null,
     val visibleSections: Set<SpecWorkflowWorkspaceSectionId>,
@@ -135,14 +142,26 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 completionChecks = completionChecks,
             ),
             primaryAction = buildPrimaryAction(
+                workflow = workflow,
                 overviewState = overviewState,
                 focusedStage = resolvedFocusedStage,
                 tasks = tasks,
+                verifyDeltaState = verifyDeltaState,
                 implementationFocus = implementationFocus,
                 blockers = blockers,
             ),
-            overflowActions = buildOverflowActions(overviewState, resolvedFocusedStage),
+            overflowActions = buildOverflowActions(
+                overviewState = overviewState,
+                focusedStage = resolvedFocusedStage,
+                verifyDeltaState = verifyDeltaState,
+            ),
             blockers = blockers,
+            focusDetails = buildFocusDetails(
+                workflow = workflow,
+                overviewState = overviewState,
+                focusedStage = resolvedFocusedStage,
+                verifyDeltaState = verifyDeltaState,
+            ),
             artifactBinding = buildArtifactBinding(workflow, resolvedFocusedStage),
             implementationFocus = implementationFocus,
             visibleSections = SpecWorkflowWorkspaceLayout.visibleSections(
@@ -153,20 +172,44 @@ internal object SpecWorkflowStageWorkbenchBuilder {
     }
 
     private fun buildPrimaryAction(
+        workflow: SpecWorkflow,
         overviewState: SpecWorkflowOverviewState,
         focusedStage: StageId,
         tasks: List<StructuredTask>,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState?,
         implementationFocus: SpecWorkflowImplementationFocus?,
         blockers: List<String>,
     ): SpecWorkflowWorkbenchAction? {
-        if (overviewState.currentStage == StageId.ARCHIVE || overviewState.status == WorkflowStatus.COMPLETED) {
-            return null
+        if (overviewState.status == WorkflowStatus.COMPLETED) {
+            return if (focusedStage == StageId.ARCHIVE) {
+                SpecWorkflowWorkbenchAction(
+                    kind = SpecWorkflowWorkbenchActionKind.ARCHIVE_WORKFLOW,
+                    label = SpecCodingBundle.message("spec.toolwindow.overview.primary.archive"),
+                    enabled = true,
+                )
+            } else {
+                null
+            }
         }
         if (focusedStage == overviewState.currentStage && focusedStage == StageId.IMPLEMENT) {
             buildImplementPrimaryAction(
                 overviewState = overviewState,
                 tasks = tasks,
                 implementationFocus = implementationFocus,
+            )?.let { return it }
+        }
+        if (focusedStage == overviewState.currentStage && focusedStage == StageId.VERIFY) {
+            buildVerifyPrimaryAction(
+                workflow = workflow,
+                overviewState = overviewState,
+                verifyDeltaState = verifyDeltaState,
+                blockers = blockers,
+            )?.let { return it }
+        }
+        if (focusedStage == StageId.ARCHIVE) {
+            buildArchivePrimaryAction(
+                overviewState = overviewState,
+                blockers = blockers,
             )?.let { return it }
         }
         return when {
@@ -180,6 +223,59 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 } ?: SpecCodingBundle.message("spec.action.advance.text"),
                 enabled = overviewState.stageStepper.canAdvance && blockers.isEmpty(),
                 targetStage = overviewState.nextStage,
+            )
+
+            else -> null
+        }
+    }
+
+    private fun buildVerifyPrimaryAction(
+        workflow: SpecWorkflow,
+        overviewState: SpecWorkflowOverviewState,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState?,
+        blockers: List<String>,
+    ): SpecWorkflowWorkbenchAction? {
+        val verifyEnabled = verifyDeltaState?.verifyEnabled == true ||
+            workflow.stageStates[StageId.VERIFY]?.active == true
+        val verificationReady = verifyEnabled &&
+            verifyDeltaState?.verificationHistory?.isNotEmpty() == true &&
+            verifyDeltaState?.verificationDocumentAvailable == true
+        return if (verificationReady && overviewState.stageStepper.canAdvance && blockers.isEmpty()) {
+            SpecWorkflowWorkbenchAction(
+                kind = SpecWorkflowWorkbenchActionKind.ADVANCE,
+                label = overviewState.nextStage?.let { nextStage ->
+                    SpecCodingBundle.message(
+                        "spec.toolwindow.overview.primary.advance",
+                        SpecWorkflowOverviewPresenter.stageLabel(nextStage),
+                    )
+                } ?: SpecCodingBundle.message("spec.action.advance.text"),
+                enabled = true,
+                targetStage = overviewState.nextStage,
+            )
+        } else {
+            SpecWorkflowWorkbenchAction(
+                kind = SpecWorkflowWorkbenchActionKind.RUN_VERIFY,
+                label = SpecCodingBundle.message("spec.toolwindow.overview.primary.verify.run"),
+                enabled = verifyEnabled,
+            )
+        }
+    }
+
+    private fun buildArchivePrimaryAction(
+        overviewState: SpecWorkflowOverviewState,
+        blockers: List<String>,
+    ): SpecWorkflowWorkbenchAction? {
+        return when {
+            overviewState.status == WorkflowStatus.COMPLETED -> SpecWorkflowWorkbenchAction(
+                kind = SpecWorkflowWorkbenchActionKind.ARCHIVE_WORKFLOW,
+                label = SpecCodingBundle.message("spec.toolwindow.overview.primary.archive"),
+                enabled = true,
+            )
+
+            focusedStageRequiresCompletion(overviewState) -> SpecWorkflowWorkbenchAction(
+                kind = SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW,
+                label = SpecCodingBundle.message("spec.toolwindow.overview.primary.archive.complete"),
+                enabled = blockers.isEmpty(),
             )
 
             else -> null
@@ -248,10 +344,65 @@ internal object SpecWorkflowStageWorkbenchBuilder {
     private fun buildOverflowActions(
         overviewState: SpecWorkflowOverviewState,
         focusedStage: StageId,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState?,
     ): List<SpecWorkflowWorkbenchAction> {
         val jumpTarget = focusedStage.takeIf { stageId -> stageId in overviewState.stageStepper.jumpTargets }
         val rollbackTarget = focusedStage.takeIf { stageId -> stageId in overviewState.stageStepper.rollbackTargets }
         return buildList {
+            when (focusedStage) {
+                StageId.VERIFY -> {
+                    if (verifyDeltaState?.verifyEnabled == true) {
+                        add(
+                            SpecWorkflowWorkbenchAction(
+                                kind = SpecWorkflowWorkbenchActionKind.PREVIEW_VERIFY_PLAN,
+                                label = SpecCodingBundle.message("spec.toolwindow.overview.more.previewVerifyPlan"),
+                                enabled = true,
+                            ),
+                        )
+                    }
+                    if (verifyDeltaState?.verificationDocumentAvailable == true) {
+                        add(
+                            SpecWorkflowWorkbenchAction(
+                                kind = SpecWorkflowWorkbenchActionKind.OPEN_VERIFICATION,
+                                label = SpecCodingBundle.message("spec.toolwindow.overview.more.openVerification"),
+                                enabled = true,
+                            ),
+                        )
+                    }
+                    if (verifyDeltaState?.baselineChoices?.isNotEmpty() == true) {
+                        add(
+                            SpecWorkflowWorkbenchAction(
+                                kind = SpecWorkflowWorkbenchActionKind.SHOW_DELTA,
+                                label = SpecCodingBundle.message("spec.toolwindow.overview.more.showDelta"),
+                                enabled = true,
+                            ),
+                        )
+                    }
+                }
+
+                StageId.ARCHIVE -> {
+                    if (verifyDeltaState?.verificationDocumentAvailable == true) {
+                        add(
+                            SpecWorkflowWorkbenchAction(
+                                kind = SpecWorkflowWorkbenchActionKind.OPEN_VERIFICATION,
+                                label = SpecCodingBundle.message("spec.toolwindow.overview.more.openVerification"),
+                                enabled = true,
+                            ),
+                        )
+                    }
+                    if (verifyDeltaState?.baselineChoices?.isNotEmpty() == true) {
+                        add(
+                            SpecWorkflowWorkbenchAction(
+                                kind = SpecWorkflowWorkbenchActionKind.SHOW_DELTA,
+                                label = SpecCodingBundle.message("spec.toolwindow.overview.more.showDelta"),
+                                enabled = true,
+                            ),
+                        )
+                    }
+                }
+
+                else -> Unit
+            }
             if (overviewState.stageStepper.jumpTargets.isNotEmpty()) {
                 add(
                     SpecWorkflowWorkbenchAction(
@@ -282,6 +433,109 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                     ),
                 )
             }
+        }
+    }
+
+    private fun buildFocusDetails(
+        workflow: SpecWorkflow,
+        overviewState: SpecWorkflowOverviewState,
+        focusedStage: StageId,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState?,
+    ): List<String> {
+        return when (focusedStage) {
+            StageId.VERIFY -> buildVerifyFocusDetails(workflow, verifyDeltaState)
+            StageId.ARCHIVE -> buildArchiveFocusDetails(workflow, overviewState, verifyDeltaState)
+            else -> emptyList()
+        }
+    }
+
+    private fun buildVerifyFocusDetails(
+        workflow: SpecWorkflow,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState?,
+    ): List<String> {
+        val verifyEnabled = verifyDeltaState?.verifyEnabled == true ||
+            workflow.stageStates[StageId.VERIFY]?.active == true
+        val latestRun = verifyDeltaState?.verificationHistory?.firstOrNull()
+        val planLine = when {
+            !verifyEnabled -> SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.verify.plan.disabled")
+            latestRun != null -> SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.detail.verify.plan.latest",
+                latestRun.planId,
+                latestRun.commandCount,
+            )
+
+            else -> SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.verify.plan.ready")
+        }
+        val latestLine = when {
+            latestRun != null -> SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.detail.verify.latest",
+                verificationStatusText(latestRun.conclusion),
+                latestRun.runId,
+                compactSummary(latestRun.summary),
+            )
+
+            verifyEnabled -> SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.verify.latest.none")
+            else -> SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.verify.latest.disabled")
+        }
+        return listOf(planLine, latestLine, buildDeltaFocusLine(verifyDeltaState))
+    }
+
+    private fun buildArchiveFocusDetails(
+        workflow: SpecWorkflow,
+        overviewState: SpecWorkflowOverviewState,
+        verifyDeltaState: SpecWorkflowVerifyDeltaState?,
+    ): List<String> {
+        val archiveLine = when {
+            workflow.status == WorkflowStatus.COMPLETED -> {
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.ready")
+            }
+
+            overviewState.currentStage == StageId.ARCHIVE -> {
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.completeFirst")
+            }
+
+            else -> {
+                SpecCodingBundle.message(
+                    "spec.toolwindow.overview.focus.detail.archive.waiting",
+                    SpecWorkflowOverviewPresenter.stageLabel(overviewState.currentStage),
+                )
+            }
+        }
+        val latestRun = verifyDeltaState?.verificationHistory?.firstOrNull()
+        val verificationLine = when {
+            latestRun != null -> SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.detail.archive.verification.latest",
+                verificationStatusText(latestRun.conclusion),
+                latestRun.runId,
+            )
+
+            verifyDeltaState?.verifyEnabled == true && verifyDeltaState.verificationDocumentAvailable -> {
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.verification.documentOnly")
+            }
+
+            verifyDeltaState?.verifyEnabled == true -> {
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.verification.pending")
+            }
+
+            else -> SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.verification.disabled")
+        }
+        return listOf(archiveLine, verificationLine, buildDeltaFocusLine(verifyDeltaState))
+    }
+
+    private fun buildDeltaFocusLine(verifyDeltaState: SpecWorkflowVerifyDeltaState?): String {
+        val deltaSummary = verifyDeltaState?.deltaSummary?.takeIf { it.isNotBlank() }
+        return when {
+            deltaSummary != null -> SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.detail.delta.available",
+                deltaSummary,
+            )
+
+            verifyDeltaState?.baselineChoices?.isNotEmpty() == true -> SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.detail.delta.baselines",
+                verifyDeltaState.baselineChoices.size,
+            )
+
+            else -> SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.delta.none")
         }
     }
 
@@ -755,6 +1009,34 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         return task.dependsOn.all { dependencyId ->
             tasksById[dependencyId]?.status == TaskStatus.COMPLETED
         }
+    }
+
+    private fun focusedStageRequiresCompletion(overviewState: SpecWorkflowOverviewState): Boolean {
+        return overviewState.currentStage == StageId.ARCHIVE
+    }
+
+    private fun verificationStatusText(conclusion: com.eacape.speccodingplugin.spec.VerificationConclusion): String {
+        return when (conclusion) {
+            com.eacape.speccodingplugin.spec.VerificationConclusion.PASS ->
+                SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.pass")
+
+            com.eacape.speccodingplugin.spec.VerificationConclusion.WARN ->
+                SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.warn")
+
+            com.eacape.speccodingplugin.spec.VerificationConclusion.FAIL ->
+                SpecCodingBundle.message("spec.toolwindow.verifyDelta.status.fail")
+        }
+    }
+
+    private fun compactSummary(summary: String, maxLength: Int = 72): String {
+        val normalized = summary
+            .replace('\n', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (normalized.length <= maxLength) {
+            return normalized
+        }
+        return normalized.take(maxLength - 3).trimEnd() + "..."
     }
 
     private val REQUIRED_REQUIREMENTS_SECTIONS = listOf(

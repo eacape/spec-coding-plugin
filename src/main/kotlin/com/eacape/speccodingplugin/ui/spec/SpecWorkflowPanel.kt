@@ -3610,12 +3610,31 @@ class SpecWorkflowPanel(
             logger.debug("Unable to inspect workflow snapshots for ${workflow.id}", error)
             false
         }
+        val deltaSummary = baselineChoices.firstOrNull()?.let { preferredChoice ->
+            runCatching {
+                when (preferredChoice) {
+                    is SpecWorkflowReferenceBaselineChoice -> specDeltaService.compareByWorkflowId(
+                        baselineWorkflowId = preferredChoice.workflowId,
+                        targetWorkflowId = workflow.id,
+                    )
+
+                    is SpecWorkflowPinnedDeltaBaselineChoice -> specDeltaService.compareByDeltaBaseline(
+                        workflowId = workflow.id,
+                        baselineId = preferredChoice.baseline.baselineId,
+                    )
+                }.getOrThrow()
+            }.map(::buildPreferredDeltaSummary).getOrElse { error ->
+                logger.debug("Unable to build delta summary for workflow ${workflow.id}", error)
+                null
+            }
+        }
         return SpecWorkflowVerifyDeltaState(
             workflowId = workflow.id,
             verifyEnabled = workflow.verifyEnabled || workflow.stageStates[StageId.VERIFY]?.active == true,
             verificationDocumentAvailable = hasVerificationArtifact(workflow.id),
             verificationHistory = verificationHistory,
             baselineChoices = baselineChoices,
+            deltaSummary = deltaSummary,
             preferredBaselineChoiceId = baselineChoices.firstOrNull()?.stableId,
             canPinBaseline = canPinBaseline,
             refreshedAtMillis = refreshedAtMillis,
@@ -3779,7 +3798,59 @@ class SpecWorkflowPanel(
                     setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.complete.failed", taskId))
                 }
             }
+
+            SpecWorkflowWorkbenchActionKind.RUN_VERIFY -> {
+                val workflowId = currentWorkflow?.id ?: return
+                onRunVerificationRequested(workflowId)
+            }
+
+            SpecWorkflowWorkbenchActionKind.PREVIEW_VERIFY_PLAN -> {
+                val workflowId = currentWorkflow?.id ?: return
+                onPreviewVerificationPlanRequested(workflowId)
+            }
+
+            SpecWorkflowWorkbenchActionKind.OPEN_VERIFICATION -> {
+                val workflowId = currentWorkflow?.id ?: return
+                onOpenVerificationRequested(workflowId)
+            }
+
+            SpecWorkflowWorkbenchActionKind.SHOW_DELTA -> onShowDelta()
+
+            SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW -> onComplete()
+
+            SpecWorkflowWorkbenchActionKind.ARCHIVE_WORKFLOW -> onArchiveWorkflow()
         }
+    }
+
+    private fun onPreviewVerificationPlanRequested(workflowId: String) {
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.verify.preview"),
+            task = {
+                val plan = specVerificationService.preview(workflowId)
+                val scopeTasks = specTasksService.parse(workflowId).sortedBy(StructuredTask::id)
+                SpecWorkflowActionSupport.verificationPlanSummary(plan, scopeTasks)
+            },
+            onSuccess = { summary ->
+                SpecWorkflowActionSupport.showInfo(
+                    project = project,
+                    title = SpecCodingBundle.message("spec.action.verify.confirm.title"),
+                    message = summary,
+                )
+            },
+        )
+    }
+
+    private fun buildPreferredDeltaSummary(delta: SpecWorkflowDelta): String {
+        return SpecCodingBundle.message(
+            "spec.delta.summary",
+            delta.baselineWorkflowId,
+            delta.targetWorkflowId,
+            delta.count(SpecDeltaStatus.ADDED),
+            delta.count(SpecDeltaStatus.MODIFIED),
+            delta.count(SpecDeltaStatus.REMOVED),
+            delta.count(SpecDeltaStatus.UNCHANGED),
+        )
     }
 
     internal fun focusedStageForTest(): StageId? = currentWorkbenchState?.focusedStage

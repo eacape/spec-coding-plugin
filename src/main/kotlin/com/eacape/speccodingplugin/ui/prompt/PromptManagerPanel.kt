@@ -6,6 +6,7 @@ import com.eacape.speccodingplugin.i18n.LocaleChangedListener
 import com.eacape.speccodingplugin.prompt.PromptManager
 import com.eacape.speccodingplugin.prompt.PromptScope
 import com.eacape.speccodingplugin.prompt.PromptTemplate
+import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
@@ -42,12 +43,14 @@ class PromptManagerPanel(
     private val promptManager = PromptManager.getInstance(project)
     private val listModel = DefaultListModel<PromptTemplate>()
     private val promptList = JBList(listModel)
+    private val promptListCellRenderer = PromptListCellRenderer()
     private val newBtn = JButton()
 
     @Volatile
     private var isDisposed = false
 
     init {
+        isOpaque = false
         border = JBUI.Borders.empty(8)
         setupUI()
         subscribeToLocaleEvents()
@@ -59,8 +62,9 @@ class PromptManagerPanel(
         styleActionButton(newBtn)
 
         promptList.selectionMode = ListSelectionModel.SINGLE_SELECTION
-        promptList.cellRenderer = PromptListCellRenderer()
+        promptList.cellRenderer = promptListCellRenderer
         promptList.isOpaque = false
+        promptList.background = LIST_SECTION_BG
         promptList.fixedCellHeight = -1
         promptList.addMouseListener(
             object : MouseAdapter() {
@@ -84,6 +88,7 @@ class PromptManagerPanel(
         val scrollPane = JBScrollPane(promptList).apply {
             border = JBUI.Borders.empty()
             viewport.isOpaque = false
+            viewport.background = LIST_SECTION_BG
             isOpaque = false
         }
 
@@ -91,7 +96,14 @@ class PromptManagerPanel(
             isOpaque = true
             background = LIST_SECTION_BG
             border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(LIST_SECTION_BORDER, 1),
+                SpecUiStyle.roundedCardBorder(
+                    lineColor = LIST_SECTION_BORDER,
+                    arc = JBUI.scale(12),
+                    top = 1,
+                    left = 1,
+                    bottom = 1,
+                    right = 1,
+                ),
                 JBUI.Borders.empty(2),
             )
             add(scrollPane, BorderLayout.CENTER)
@@ -147,7 +159,7 @@ class PromptManagerPanel(
             return
         }
         val selected = listModel.getElementAt(index)
-        val action = PromptListCellRenderer.resolveRowAction(cellBounds, point)
+        val action = promptListCellRenderer.resolveRowAction(promptList, index, point)
         val clickable = when (action) {
             PromptListCellRenderer.RowAction.DELETE -> selected.scope == PromptScope.PROJECT
             PromptListCellRenderer.RowAction.EDIT -> true
@@ -171,7 +183,7 @@ class PromptManagerPanel(
         }
         val selected = listModel.getElementAt(index)
         promptList.selectedIndex = index
-        when (PromptListCellRenderer.resolveRowAction(cellBounds, point)) {
+        when (promptListCellRenderer.resolveRowAction(promptList, index, point)) {
             PromptListCellRenderer.RowAction.EDIT -> onEdit(selected)
             PromptListCellRenderer.RowAction.DELETE -> if (selected.scope == PromptScope.PROJECT) onDelete(selected)
             null -> if (clickCount >= 2) onEdit(selected)
@@ -320,10 +332,10 @@ class PromptManagerPanel(
     }
 
     companion object {
-        private val LIST_SECTION_BG = JBColor(Color(247, 249, 252), Color(44, 48, 55))
-        private val LIST_SECTION_BORDER = JBColor(Color(209, 219, 234), Color(79, 86, 97))
-        private val ACTION_BUTTON_BG = JBColor(Color(245, 248, 253), Color(62, 67, 77))
-        private val ACTION_BUTTON_BORDER = JBColor(Color(194, 206, 224), Color(95, 106, 123))
-        private val ACTION_BUTTON_FG = JBColor(Color(58, 78, 107), Color(199, 211, 230))
+        private val LIST_SECTION_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
+        private val LIST_SECTION_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val ACTION_BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
+        private val ACTION_BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
+        private val ACTION_BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
     }
 }

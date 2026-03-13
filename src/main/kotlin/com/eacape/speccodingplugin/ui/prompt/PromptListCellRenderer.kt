@@ -9,6 +9,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Container
 import java.awt.Font
 import java.awt.FlowLayout
 import java.awt.Graphics
@@ -20,6 +21,7 @@ import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.ListCellRenderer
+import javax.swing.SwingUtilities
 
 /**
  * Prompt 列表项渲染器
@@ -163,28 +165,12 @@ class PromptListCellRenderer : ListCellRenderer<PromptTemplate> {
         private val ACTION_ICON_SIZE = JBUI.scale(16)
         private val ACTION_ICON_GAP = JBUI.scale(6)
         private val ACTION_RIGHT_PAD = JBUI.scale(10)
+        private val ACTION_HIT_SLOP = JBUI.scale(3)
 
-        fun resolveRowAction(cellBounds: Rectangle, point: Point): RowAction? {
-            if (!cellBounds.contains(point)) {
-                return null
-            }
-            val centerY = cellBounds.y + cellBounds.height / 2
-            val topY = centerY - ACTION_ICON_SIZE / 2
-            val deleteX = cellBounds.x + cellBounds.width - ACTION_RIGHT_PAD - ACTION_ICON_SIZE
-            val editX = deleteX - ACTION_ICON_GAP - ACTION_ICON_SIZE
-            val editRect = Rectangle(editX, topY, ACTION_ICON_SIZE, ACTION_ICON_SIZE)
-            val deleteRect = Rectangle(deleteX, topY, ACTION_ICON_SIZE, ACTION_ICON_SIZE)
-            return when {
-                deleteRect.contains(point) -> RowAction.DELETE
-                editRect.contains(point) -> RowAction.EDIT
-                else -> null
-            }
-        }
-
-        private val CARD_BG_DEFAULT = JBColor(Color(247, 249, 252), Color(55, 59, 67))
-        private val CARD_BORDER_DEFAULT = JBColor(Color(219, 226, 238), Color(74, 80, 90))
-        private val CARD_BG_SELECTED = JBColor(Color(220, 234, 253), Color(67, 86, 112))
-        private val CARD_BORDER_SELECTED = JBColor(Color(129, 167, 225), Color(100, 130, 167))
+        private val CARD_BG_DEFAULT = JBColor(Color(245, 249, 255), Color(58, 64, 74))
+        private val CARD_BORDER_DEFAULT = JBColor(Color(202, 214, 234), Color(91, 101, 117))
+        private val CARD_BG_SELECTED = JBColor(Color(224, 237, 255), Color(74, 86, 103))
+        private val CARD_BORDER_SELECTED = JBColor(Color(145, 175, 219), Color(120, 140, 168))
         private val TITLE_FG_DEFAULT = JBColor(Color(22, 24, 29), Color(224, 224, 224))
         private val TITLE_FG_SELECTED = JBColor(Color(25, 41, 64), Color(224, 234, 247))
         private val SCOPE_BADGE_BG = JBColor(Color(232, 244, 233), Color(74, 107, 81))
@@ -192,5 +178,59 @@ class PromptListCellRenderer : ListCellRenderer<PromptTemplate> {
         private val SCOPE_BADGE_FG = JBColor(Color(44, 96, 56), Color(204, 236, 210))
         private val SCOPE_BADGE_FG_SELECTED = JBColor(Color(37, 70, 118), Color(214, 227, 246))
         private val TAG_TEXT_FG = JBColor(Color(88, 112, 144), Color(169, 196, 229))
+    }
+
+    fun resolveRowAction(
+        list: JList<out PromptTemplate>,
+        index: Int,
+        point: Point,
+    ): RowAction? {
+        val cellBounds = list.getCellBounds(index, index) ?: return null
+        if (!cellBounds.contains(point)) {
+            return null
+        }
+
+        val value = list.model.getElementAt(index) ?: return null
+        val selected = list.selectedIndex == index
+        val rendererComponent = getListCellRendererComponent(list, value, index, selected, false)
+        rendererComponent.setBounds(0, 0, cellBounds.width, cellBounds.height)
+        layoutRecursively(rendererComponent)
+
+        val editRect = SwingUtilities.convertRectangle(
+            editActionLabel.parent,
+            editActionLabel.bounds,
+            rendererComponent,
+        )
+        val deleteRect = SwingUtilities.convertRectangle(
+            deleteActionLabel.parent,
+            deleteActionLabel.bounds,
+            rendererComponent,
+        )
+
+        val listEditRect = Rectangle(
+            cellBounds.x + editRect.x - ACTION_HIT_SLOP,
+            cellBounds.y + editRect.y - ACTION_HIT_SLOP,
+            editRect.width + ACTION_HIT_SLOP * 2,
+            editRect.height + ACTION_HIT_SLOP * 2,
+        )
+        val listDeleteRect = Rectangle(
+            cellBounds.x + deleteRect.x - ACTION_HIT_SLOP,
+            cellBounds.y + deleteRect.y - ACTION_HIT_SLOP,
+            deleteRect.width + ACTION_HIT_SLOP * 2,
+            deleteRect.height + ACTION_HIT_SLOP * 2,
+        )
+        return when {
+            listDeleteRect.contains(point) -> RowAction.DELETE
+            listEditRect.contains(point) -> RowAction.EDIT
+            else -> null
+        }
+    }
+
+    private fun layoutRecursively(component: Component) {
+        if (component !is Container) {
+            return
+        }
+        component.doLayout()
+        component.components.forEach(::layoutRecursively)
     }
 }

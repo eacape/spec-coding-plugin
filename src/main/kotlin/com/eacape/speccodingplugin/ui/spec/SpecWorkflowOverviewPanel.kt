@@ -47,6 +47,8 @@ internal class SpecWorkflowOverviewPanel(
     private val focusTitleLabel = JBLabel()
     private val focusMetaLabel = createBodyLabel(VALUE_SECONDARY_FG)
     private val focusSummaryLabel = createBodyLabel(FOCUS_SUMMARY_FG)
+    private val focusDetailLabels = List(3) { createBodyLabel(VALUE_SECONDARY_FG) }
+    private val focusDetailsPanel = JPanel()
     private val blockersTitleLabel = createSectionTitleLabel().apply {
         foreground = BLOCKER_TITLE_FG
     }
@@ -175,6 +177,9 @@ internal class SpecWorkflowOverviewPanel(
         val blockers = blockerLabels
             .mapNotNull { label -> label.text?.trim()?.takeIf { it.isNotEmpty() } }
             .joinToString(" | ")
+        val focusDetails = focusDetailLabels
+            .mapNotNull { label -> label.text?.trim()?.takeIf { it.isNotEmpty() } }
+            .joinToString(" | ")
         return mapOf(
             "workflow" to workflowValueLabel.text.orEmpty(),
             "status" to statusValueLabel.text.orEmpty(),
@@ -215,6 +220,7 @@ internal class SpecWorkflowOverviewPanel(
             "focusTitle" to focusTitleLabel.text.orEmpty(),
             "focusMeta" to focusMetaLabel.text.orEmpty(),
             "focusSummary" to focusSummaryLabel.text.orEmpty(),
+            "focusDetails" to focusDetails,
             "blockers" to blockers,
             "checklist" to checklist,
             "primaryActionVisible" to primaryActionButton.isVisible.toString(),
@@ -253,6 +259,14 @@ internal class SpecWorkflowOverviewPanel(
         focusTitleLabel.foreground = VALUE_TEXT_FG
         blockersPanel.layout = BoxLayout(blockersPanel, BoxLayout.Y_AXIS)
         blockersPanel.isOpaque = false
+        focusDetailsPanel.layout = BoxLayout(focusDetailsPanel, BoxLayout.Y_AXIS)
+        focusDetailsPanel.isOpaque = false
+        focusDetailLabels.forEachIndexed { index, label ->
+            if (index > 0) {
+                focusDetailsPanel.add(Box.createVerticalStrut(JBUI.scale(3)))
+            }
+            focusDetailsPanel.add(label)
+        }
         blockerLabels.forEachIndexed { index, label ->
             if (index > 0) {
                 blockersPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
@@ -330,6 +344,8 @@ internal class SpecWorkflowOverviewPanel(
                     isOpaque = false
                     add(focusSummaryLabel)
                     add(Box.createVerticalStrut(JBUI.scale(6)))
+                    add(focusDetailsPanel)
+                    add(Box.createVerticalStrut(JBUI.scale(6)))
                     add(blockersTitleLabel)
                     add(Box.createVerticalStrut(JBUI.scale(4)))
                     add(blockersPanel)
@@ -395,6 +411,7 @@ internal class SpecWorkflowOverviewPanel(
         focusTitleLabel.text = guidance.headline
         focusMetaLabel.text = buildFocusMetaText(state, workbenchState)
         focusSummaryLabel.text = guidance.summary
+        updateFocusDetails(workbenchState.focusDetails)
         updateBlockers(workbenchState.blockers)
         updateChecklist(guidance.checklist)
         updatePrimaryAction(workbenchState.primaryAction)
@@ -444,6 +461,7 @@ internal class SpecWorkflowOverviewPanel(
         focusTitleLabel.text = ""
         focusMetaLabel.text = ""
         focusSummaryLabel.text = ""
+        updateFocusDetails(emptyList())
         updateBlockers(emptyList())
         updateChecklist(emptyList())
         updatePrimaryAction(null)
@@ -499,6 +517,7 @@ internal class SpecWorkflowOverviewPanel(
             primaryAction = null,
             overflowActions = emptyList(),
             blockers = emptyList(),
+            focusDetails = emptyList(),
             artifactBinding = SpecWorkflowStageArtifactBinding(
                 stageId = state.currentStage,
                 title = SpecWorkflowOverviewPresenter.stageLabel(state.currentStage),
@@ -576,6 +595,16 @@ internal class SpecWorkflowOverviewPanel(
         blockersPanel.isVisible = visible
         blockerLabels.forEachIndexed { index, label ->
             val value = blockers.getOrNull(index).orEmpty()
+            label.text = value
+            label.isVisible = value.isNotBlank()
+        }
+    }
+
+    private fun updateFocusDetails(details: List<String>) {
+        val visible = details.isNotEmpty()
+        focusDetailsPanel.isVisible = visible
+        focusDetailLabels.forEachIndexed { index, label ->
+            val value = details.getOrNull(index).orEmpty()
             label.text = value
             label.isVisible = value.isNotBlank()
         }

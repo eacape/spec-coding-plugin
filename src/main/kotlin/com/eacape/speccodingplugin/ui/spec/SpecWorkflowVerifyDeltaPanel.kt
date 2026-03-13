@@ -54,6 +54,7 @@ internal data class SpecWorkflowVerifyDeltaState(
     val verificationDocumentAvailable: Boolean,
     val verificationHistory: List<VerifyRunHistoryEntry>,
     val baselineChoices: List<SpecWorkflowDeltaBaselineChoice>,
+    val deltaSummary: String? = null,
     val preferredBaselineChoiceId: String?,
     val canPinBaseline: Boolean,
     val refreshedAtMillis: Long,

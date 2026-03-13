@@ -17,6 +17,8 @@ import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
 import com.eacape.speccodingplugin.spec.ValidationResult
+import com.eacape.speccodingplugin.spec.VerificationConclusion
+import com.eacape.speccodingplugin.spec.VerifyRunHistoryEntry
 import com.eacape.speccodingplugin.spec.Violation
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
@@ -447,6 +449,150 @@ class SpecWorkflowOverviewPresenterTest {
         assertNull(workbenchState.primaryAction?.taskId)
         assertNull(workbenchState.implementationFocus)
         assertTrue(workbenchState.primaryAction?.enabled == true)
+    }
+
+    @Test
+    fun `workbench builder should surface verify focus details and actions`() {
+        val workflow = workflow(currentStage = StageId.VERIFY, verifyEnabled = true)
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            verifyDeltaState = SpecWorkflowVerifyDeltaState(
+                workflowId = workflow.id,
+                verifyEnabled = true,
+                verificationDocumentAvailable = false,
+                verificationHistory = emptyList(),
+                baselineChoices = listOf(
+                    SpecWorkflowReferenceBaselineChoice(
+                        workflowId = "wf-base",
+                        title = "Baseline",
+                    ),
+                ),
+                deltaSummary = "Baseline: wf-base | Current: wf-toolwindow | Added: 1, Modified: 0, Removed: 0, Unchanged: 3",
+                preferredBaselineChoiceId = "workflow:wf-base",
+                canPinBaseline = true,
+                refreshedAtMillis = 1_710_000_000_000,
+            ),
+        )
+
+        assertEquals(StageId.VERIFY, workbenchState.currentStage)
+        assertEquals(StageId.VERIFY, workbenchState.focusedStage)
+        assertEquals(SpecWorkflowWorkbenchActionKind.RUN_VERIFY, workbenchState.primaryAction?.kind)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.verify.run"),
+            workbenchState.primaryAction?.label,
+        )
+        assertTrue(
+            workbenchState.overflowActions.any { action ->
+                action.kind == SpecWorkflowWorkbenchActionKind.PREVIEW_VERIFY_PLAN
+            },
+        )
+        assertTrue(
+            workbenchState.overflowActions.any { action ->
+                action.kind == SpecWorkflowWorkbenchActionKind.SHOW_DELTA
+            },
+        )
+        assertEquals(
+            listOf(
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.verify.plan.ready"),
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.verify.latest.none"),
+                SpecCodingBundle.message(
+                    "spec.toolwindow.overview.focus.detail.delta.available",
+                    "Baseline: wf-base | Current: wf-toolwindow | Added: 1, Modified: 0, Removed: 0, Unchanged: 3",
+                ),
+            ),
+            workbenchState.focusDetails,
+        )
+    }
+
+    @Test
+    fun `workbench builder should expose archive completion then archive action`() {
+        val archiveWorkflow = workflow(currentStage = StageId.ARCHIVE, verifyEnabled = true)
+        val archiveOverview = SpecWorkflowOverviewPresenter.buildState(
+            workflow = archiveWorkflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+        val verifyState = SpecWorkflowVerifyDeltaState(
+            workflowId = archiveWorkflow.id,
+            verifyEnabled = true,
+            verificationDocumentAvailable = true,
+            verificationHistory = listOf(
+                VerifyRunHistoryEntry(
+                    runId = "verify-run-1",
+                    planId = "verify-plan-1",
+                    executedAt = "2026-03-12T10:00:00Z",
+                    occurredAtEpochMs = 1_710_000_000_000,
+                    currentStage = StageId.VERIFY,
+                    conclusion = VerificationConclusion.PASS,
+                    summary = "Verification passed with archived evidence.",
+                    commandCount = 2,
+                ),
+            ),
+            baselineChoices = listOf(
+                SpecWorkflowReferenceBaselineChoice(
+                    workflowId = "wf-base",
+                    title = "Baseline",
+                ),
+            ),
+            deltaSummary = "Baseline: wf-base | Current: wf-toolwindow | Added: 0, Modified: 2, Removed: 0, Unchanged: 2",
+            preferredBaselineChoiceId = "workflow:wf-base",
+            canPinBaseline = true,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val inProgressArchiveState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = archiveWorkflow,
+            overviewState = archiveOverview,
+            verifyDeltaState = verifyState,
+        )
+        assertEquals(SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW, inProgressArchiveState.primaryAction?.kind)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.archive.complete"),
+            inProgressArchiveState.primaryAction?.label,
+        )
+        assertTrue(
+            inProgressArchiveState.focusDetails.any { detail ->
+                detail == SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.completeFirst")
+            },
+        )
+
+        val completedWorkflow = archiveWorkflow.copy(status = WorkflowStatus.COMPLETED)
+        val completedOverview = SpecWorkflowOverviewPresenter.buildState(
+            workflow = completedWorkflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+        val completedArchiveState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = completedWorkflow,
+            overviewState = completedOverview,
+            verifyDeltaState = verifyState,
+            focusedStage = StageId.ARCHIVE,
+        )
+
+        assertEquals(SpecWorkflowWorkbenchActionKind.ARCHIVE_WORKFLOW, completedArchiveState.primaryAction?.kind)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.archive"),
+            completedArchiveState.primaryAction?.label,
+        )
+        assertTrue(
+            completedArchiveState.overflowActions.any { action ->
+                action.kind == SpecWorkflowWorkbenchActionKind.SHOW_DELTA
+            },
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.ready"),
+            completedArchiveState.focusDetails.first(),
+        )
     }
 
     private fun workflow(

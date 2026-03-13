@@ -29,6 +29,7 @@ internal object SpecWorkflowStageGuidanceBuilder {
             primaryAction = null,
             overflowActions = emptyList(),
             blockers = emptyList(),
+            focusDetails = emptyList(),
             artifactBinding = SpecWorkflowStageArtifactBinding(
                 stageId = state.currentStage,
                 title = SpecWorkflowOverviewPresenter.stageLabel(state.currentStage),
