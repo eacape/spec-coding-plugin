@@ -1,6 +1,9 @@
 package com.eacape.speccodingplugin.ui
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.SpecEngine
+import com.eacape.speccodingplugin.spec.SpecTasksService
+import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowPanel
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.wm.RegisterToolWindowTask
@@ -64,6 +67,75 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertTrue(toolWindow.contentManager.contents.any(ChatToolWindowFactory::isSpecContent))
     }
 
+    fun `test task panel should open chat with workflow and task binding chips`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Chat Binding",
+            description = "task 79",
+        ).getOrThrow()
+        val task = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Discuss task scope",
+            priority = TaskPriority.P1,
+        )
+        val toolWindow = registerSpecCodeToolWindow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val specPanel = currentSpecPanel(toolWindow)
+        val chatPanel = currentChatPanel(toolWindow)
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.openWorkflowForTest(workflow.id)
+        }
+        waitUntil {
+            specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(task.id)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(specPanel.selectTaskForTest(task.id))
+            specPanel.clickOpenWorkflowChatForSelectedTaskForTest()
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        waitUntil {
+            ChatToolWindowFactory.isChatContent(toolWindow.contentManager.selectedContent) &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("workflowId") == workflow.id &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == task.id &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("taskChipVisible") == "true"
+        }
+
+        val snapshot = chatPanel.workflowBindingSnapshotForTest()
+        assertEquals("SPEC", snapshot.getValue("mode"))
+        assertEquals("true", snapshot.getValue("workflowChipVisible"))
+        assertTrue(snapshot.getValue("workflowChipText").contains(workflow.title))
+        assertEquals("true", snapshot.getValue("taskChipVisible"))
+        assertEquals(
+            SpecCodingBundle.message("toolwindow.workflow.binding.task", task.id),
+            snapshot.getValue("taskChipText"),
+        )
+        assertEquals("true", snapshot.getValue("taskClearVisible"))
+        assertFalse(snapshot.getValue("sessionId").isBlank())
+
+        ApplicationManager.getApplication().invokeAndWait {
+            chatPanel.clearTaskBindingForTest()
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("taskChipVisible") == "false"
+        }
+
+        val clearedSnapshot = chatPanel.workflowBindingSnapshotForTest()
+        assertEquals(workflow.id, clearedSnapshot.getValue("workflowId"))
+        assertEquals("", clearedSnapshot.getValue("taskId"))
+        assertEquals("true", clearedSnapshot.getValue("workflowChipVisible"))
+        assertEquals("false", clearedSnapshot.getValue("taskChipVisible"))
+    }
+
     private fun registerSpecCodeToolWindow(): ToolWindow {
         var toolWindow: ToolWindow? = null
         ApplicationManager.getApplication().invokeAndWait {
@@ -75,5 +147,29 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             )
         }
         return toolWindow ?: error("Failed to register test tool window")
+    }
+
+    private fun currentChatPanel(toolWindow: ToolWindow): ImprovedChatPanel {
+        return toolWindow.contentManager.contents
+            .first(ChatToolWindowFactory::isChatContent)
+            .component as ImprovedChatPanel
+    }
+
+    private fun currentSpecPanel(toolWindow: ToolWindow): SpecWorkflowPanel {
+        return toolWindow.contentManager.contents
+            .first(ChatToolWindowFactory::isSpecContent)
+            .component as SpecWorkflowPanel
+    }
+
+    private fun waitUntil(timeoutMs: Long = 5_000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            UIUtil.dispatchAllInvocationEvents()
+            if (condition()) {
+                return
+            }
+            Thread.sleep(50)
+        }
+        fail("Condition was not met within ${timeoutMs}ms")
     }
 }

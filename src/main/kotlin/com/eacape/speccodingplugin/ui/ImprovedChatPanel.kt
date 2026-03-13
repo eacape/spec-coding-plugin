@@ -46,6 +46,7 @@ import com.eacape.speccodingplugin.session.canonicalizeWorkflowChatCommand
 import com.eacape.speccodingplugin.session.canonicalizeWorkflowChatModeKey
 import com.eacape.speccodingplugin.session.displayWorkflowChatCommand
 import com.eacape.speccodingplugin.session.isWorkflowChatCommand
+import com.eacape.speccodingplugin.session.normalizedOrNull
 import com.eacape.speccodingplugin.session.resolvedWorkflowChatBinding
 import com.eacape.speccodingplugin.session.workflowChatCommandArgs
 import com.eacape.speccodingplugin.skill.SkillExecutor
@@ -77,8 +78,11 @@ import com.eacape.speccodingplugin.ui.input.ImageAttachmentPreviewPanel
 import com.eacape.speccodingplugin.ui.input.SmartInputField
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.spec.EditSpecWorkflowDialog
+import com.eacape.speccodingplugin.ui.spec.SpecToolWindowControlListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedEvent
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedListener
+import com.eacape.speccodingplugin.ui.spec.SpecWorkflowIcons
+import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.window.WindowSessionIsolationService
 import com.eacape.speccodingplugin.window.WindowStateStore
 import com.intellij.icons.AllIcons
@@ -144,9 +148,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.imageio.ImageIO
 import javax.swing.AbstractAction
+import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.DefaultListCellRenderer
 import javax.swing.JButton
+import javax.swing.Icon
 import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.JPanel
@@ -231,6 +237,10 @@ class ImprovedChatPanel(
     private val contextPreviewPanel = ContextPreviewPanel(project)
     private val imageAttachmentPreviewPanel = ImageAttachmentPreviewPanel(onRemove = ::removeTransientClipboardImageIfNeeded)
     private val composerHintLabel = JBLabel(SpecCodingBundle.message("toolwindow.composer.hint"))
+    private val workflowBindingStrip = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+    private val workflowBindingChip = JButton()
+    private val taskBindingChip = JButton()
+    private val clearTaskBindingButton = JButton()
     private val specModeComboForeground = JBColor(
         Color(0x4A4F59), // #4A4F59
         Color(0xC6CBD3),
@@ -267,6 +277,7 @@ class ImprovedChatPanel(
     private var activeLlmRequest: ActiveLlmRequest? = null
     private val stopRequested = AtomicBoolean(false)
     private var activeSpecWorkflowId: String? = null
+    private var activeWorkflowChatBinding: WorkflowChatBinding? = null
     private var specSidebarVisible = false
     private var specSidebarDividerLocation = SPEC_SIDEBAR_DEFAULT_DIVIDER
     @Volatile
@@ -407,6 +418,15 @@ class ImprovedChatPanel(
                 override fun onOpenHistoryRequested() {
                     requestOpenHistoryFromTitleAction()
                 }
+
+                override fun onOpenWorkflowChatRequested(request: WorkflowChatOpenRequest) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) {
+                            return@invokeLater
+                        }
+                        openWorkflowChatBinding(request)
+                    }
+                }
             },
         )
     }
@@ -419,13 +439,19 @@ class ImprovedChatPanel(
                     ApplicationManager.getApplication().invokeLater {
                         if (project.isDisposed || _isDisposed) return@invokeLater
                         val workflowId = event.workflowId?.trim()?.ifBlank { null }
+                        val previousSource = resolvedActiveWorkflowChatBinding()?.source ?: WorkflowChatEntrySource.SPEC_PAGE
                         val isWorkflowSelected =
                             event.reason == SpecWorkflowChangedListener.REASON_WORKFLOW_SELECTED &&
                                 currentInteractionMode() == ChatInteractionMode.SPEC &&
                                 workflowId != null
                         if (isWorkflowSelected) {
                             startNewSession()
-                            activeSpecWorkflowId = workflowId
+                            setExplicitWorkflowChatBinding(
+                                buildWorkflowChatBinding(
+                                    workflowId = workflowId,
+                                    source = previousSource,
+                                ),
+                            )
                             if (specSidebarVisible) {
                                 specSidebarPanel.focusWorkflow(workflowId)
                             }
@@ -441,6 +467,7 @@ class ImprovedChatPanel(
                         }
 
                         refreshSpecWorkflowComboBox(selectWorkflowId = workflowId)
+                        updateWorkflowBindingUi()
                     }
                 }
             },
@@ -480,6 +507,7 @@ class ImprovedChatPanel(
         updateInteractionModeComboSize()
         refreshHistoryContentTitle()
         updateComboTooltips()
+        updateWorkflowBindingUi()
         if (isGenerating || isRestoringSession) {
             showBusyStatus()
         }
@@ -620,6 +648,7 @@ class ImprovedChatPanel(
         statusLabel.foreground = JBColor.GRAY
         statusLabel.font = JBUI.Fonts.smallFont()
         statusLabel.isVisible = false
+        configureWorkflowBindingStrip()
         configureActionButtons()
         configureCompactButton()
         configureClipboardImagePaste()
@@ -678,7 +707,13 @@ class ImprovedChatPanel(
         val composerMetaRow = JPanel(BorderLayout(JBUI.scale(8), 0))
         composerMetaRow.isOpaque = false
         composerMetaRow.border = JBUI.Borders.emptyTop(5)
-        composerMetaRow.add(composerHintLabel, BorderLayout.CENTER)
+        val composerMetaInfoPanel = JPanel()
+        composerMetaInfoPanel.layout = BoxLayout(composerMetaInfoPanel, BoxLayout.Y_AXIS)
+        composerMetaInfoPanel.isOpaque = false
+        composerMetaInfoPanel.add(composerHintLabel)
+        composerMetaInfoPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
+        composerMetaInfoPanel.add(workflowBindingStrip)
+        composerMetaRow.add(composerMetaInfoPanel, BorderLayout.CENTER)
         val composerMetaActions = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
         composerMetaActions.isOpaque = false
         composerMetaActions.add(specWorkflowComboBox)
@@ -741,6 +776,214 @@ class ImprovedChatPanel(
         content.add(bottomPanel, BorderLayout.SOUTH)
 
         add(content, BorderLayout.CENTER)
+    }
+
+    private fun configureWorkflowBindingStrip() {
+        workflowBindingStrip.isOpaque = false
+        workflowBindingStrip.border = JBUI.Borders.empty()
+        workflowBindingStrip.isVisible = false
+        configureWorkflowBindingChip(workflowBindingChip, icon = SpecWorkflowIcons.Branch, clearAction = false)
+        configureWorkflowBindingChip(taskBindingChip, icon = SpecWorkflowIcons.Execute, clearAction = false)
+        configureWorkflowBindingChip(clearTaskBindingButton, icon = SpecWorkflowIcons.Close, clearAction = true)
+        workflowBindingChip.addActionListener { handleWorkflowBindingChipClicked() }
+        taskBindingChip.addActionListener { handleWorkflowBindingChipClicked() }
+        clearTaskBindingButton.addActionListener { clearActiveTaskBinding() }
+        workflowBindingStrip.add(workflowBindingChip)
+        workflowBindingStrip.add(taskBindingChip)
+        workflowBindingStrip.add(clearTaskBindingButton)
+        updateWorkflowBindingUi()
+    }
+
+    private fun configureWorkflowBindingChip(button: JButton, icon: Icon, clearAction: Boolean) {
+        button.icon = icon
+        button.isFocusable = true
+        button.isFocusPainted = false
+        button.isBorderPainted = false
+        button.isContentAreaFilled = true
+        button.isOpaque = true
+        button.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        button.horizontalAlignment = JButton.LEFT
+        button.iconTextGap = JBUI.scale(4)
+        button.margin = if (clearAction) JBUI.insets(3, 3, 3, 3) else JBUI.insets(3, 9, 3, 9)
+        button.font = JBUI.Fonts.smallFont()
+        button.foreground = JBColor(Color(0x34516D), Color(0xC7D7F1))
+        button.background = JBColor(Color(0xEAF2FB), Color(0x39434F))
+        SpecUiStyle.applyRoundRect(button, arc = 12)
+    }
+
+    private fun resolvedActiveWorkflowChatBinding(): WorkflowChatBinding? {
+        val explicitBinding = activeWorkflowChatBinding?.normalizedOrNull()
+        val activeWorkflowId = activeSpecWorkflowId?.trim()?.ifBlank { null }
+        return when {
+            explicitBinding != null && (activeWorkflowId == null || explicitBinding.workflowId == activeWorkflowId) ->
+                explicitBinding
+
+            !activeWorkflowId.isNullOrBlank() -> WorkflowChatBinding(
+                workflowId = activeWorkflowId,
+                focusedStage = explicitBinding?.focusedStage,
+                source = explicitBinding?.source ?: WorkflowChatEntrySource.MODE_SWITCH,
+                actionIntent = explicitBinding?.actionIntent ?: WorkflowChatActionIntent.DISCUSS,
+            )
+
+            else -> explicitBinding
+        }
+    }
+
+    private fun setExplicitWorkflowChatBinding(
+        binding: WorkflowChatBinding?,
+        updateActiveWorkflowId: Boolean = true,
+    ) {
+        activeWorkflowChatBinding = binding?.normalizedOrNull()
+        if (updateActiveWorkflowId) {
+            activeSpecWorkflowId = activeWorkflowChatBinding?.workflowId
+        }
+        updateWorkflowBindingUi()
+    }
+
+    private fun updateWorkflowBindingUi() {
+        val binding = resolvedActiveWorkflowChatBinding()
+        val specMode = currentInteractionMode() == ChatInteractionMode.SPEC
+        val visible = specMode && binding != null
+        workflowBindingStrip.isVisible = visible
+        if (!specMode || binding == null) {
+            workflowBindingChip.isVisible = false
+            workflowBindingChip.text = ""
+            workflowBindingChip.toolTipText = null
+            taskBindingChip.isVisible = false
+            taskBindingChip.text = ""
+            taskBindingChip.toolTipText = null
+            clearTaskBindingButton.toolTipText = null
+            clearTaskBindingButton.isVisible = false
+            workflowBindingStrip.revalidate()
+            workflowBindingStrip.repaint()
+            return
+        }
+
+        workflowBindingChip.isVisible = true
+        val workflowLabel = resolveWorkflowBindingLabel(binding.workflowId)
+        workflowBindingChip.text = SpecCodingBundle.message("toolwindow.workflow.binding.workflow", workflowLabel)
+        workflowBindingChip.toolTipText = SpecCodingBundle.message(
+            "toolwindow.workflow.binding.workflow.tooltip",
+            binding.workflowId,
+        )
+
+        val taskId = binding.taskId?.trim()?.ifBlank { null }
+        taskBindingChip.isVisible = taskId != null
+        clearTaskBindingButton.isVisible = taskId != null
+        if (taskId != null) {
+            taskBindingChip.text = SpecCodingBundle.message("toolwindow.workflow.binding.task", taskId)
+            taskBindingChip.toolTipText = SpecCodingBundle.message("toolwindow.workflow.binding.task.tooltip", taskId)
+            clearTaskBindingButton.text = ""
+            clearTaskBindingButton.toolTipText = SpecCodingBundle.message(
+                "toolwindow.workflow.binding.task.clear.tooltip",
+                taskId,
+            )
+            clearTaskBindingButton.accessibleContext.accessibleName =
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.clear")
+            clearTaskBindingButton.accessibleContext.accessibleDescription =
+                clearTaskBindingButton.toolTipText
+        } else {
+            taskBindingChip.text = ""
+            taskBindingChip.toolTipText = null
+            clearTaskBindingButton.toolTipText = null
+        }
+
+        workflowBindingChip.accessibleContext.accessibleName = workflowBindingChip.text
+        workflowBindingChip.accessibleContext.accessibleDescription = workflowBindingChip.toolTipText
+        taskBindingChip.accessibleContext.accessibleName = taskBindingChip.text
+        taskBindingChip.accessibleContext.accessibleDescription = taskBindingChip.toolTipText
+        workflowBindingStrip.revalidate()
+        workflowBindingStrip.repaint()
+    }
+
+    private fun resolveWorkflowBindingLabel(workflowId: String): String {
+        val selectedOption = specWorkflowComboBox.selectedItem as? SpecWorkflowOption
+        if (selectedOption?.workflowId == workflowId) {
+            return selectedOption.title.trim().ifBlank { workflowId }
+        }
+        return specEngine.loadWorkflow(workflowId)
+            .getOrNull()
+            ?.title
+            ?.trim()
+            ?.ifBlank { workflowId }
+            ?: workflowId
+    }
+
+    private fun handleWorkflowBindingChipClicked() {
+        val binding = resolvedActiveWorkflowChatBinding() ?: return
+        openSpecTab()
+        project.messageBus.syncPublisher(SpecToolWindowControlListener.TOPIC)
+            .onSelectWorkflowRequested(binding.workflowId)
+    }
+
+    private fun clearActiveTaskBinding() {
+        val binding = resolvedActiveWorkflowChatBinding() ?: return
+        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
+        val clearedBinding = binding.copy(
+            taskId = null,
+            actionIntent = WorkflowChatActionIntent.DISCUSS,
+        )
+        setExplicitWorkflowChatBinding(clearedBinding)
+        currentSessionId?.let { sessionId ->
+            sessionManager.clearWorkflowChatTaskBinding(sessionId)
+                .onFailure { error ->
+                    logger.warn("Failed to clear workflow chat task binding for session $sessionId", error)
+                }
+        }
+        showStatus(
+            SpecCodingBundle.message("toolwindow.workflow.binding.status.taskCleared", taskId),
+            autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+        )
+    }
+
+    private fun openWorkflowChatBinding(request: WorkflowChatOpenRequest) {
+        val binding = request.binding.normalizedOrNull() ?: return
+        if (request.preferNewSession) {
+            startNewSession()
+        }
+        setInteractionMode(
+            mode = ChatInteractionMode.SPEC,
+            resetSessionOnSpecSwitch = false,
+            emitHook = true,
+        )
+        setExplicitWorkflowChatBinding(binding)
+        refreshSpecWorkflowComboBox(selectWorkflowId = binding.workflowId)
+        val providerId = providerComboBox.selectedItem as? String
+        val sessionId = ensureActiveSpecSession(
+            titleSeed = buildWorkflowChatSessionTitle(binding),
+            providerId = providerId,
+            specTaskId = binding.workflowId,
+        )
+        sessionId?.let { id ->
+            sessionManager.updateWorkflowChatBinding(id, binding)
+                .onFailure { error ->
+                    logger.warn("Failed to persist workflow chat binding for session $id", error)
+                }
+        }
+        if (specSidebarVisible) {
+            specSidebarPanel.focusWorkflow(binding.workflowId)
+        }
+        val statusKey = if (binding.taskId.isNullOrBlank()) {
+            "toolwindow.workflow.binding.status.workflowBound"
+        } else {
+            "toolwindow.workflow.binding.status.taskBound"
+        }
+        val statusText = if (binding.taskId.isNullOrBlank()) {
+            SpecCodingBundle.message(statusKey, binding.workflowId)
+        } else {
+            SpecCodingBundle.message(statusKey, binding.workflowId, binding.taskId)
+        }
+        showStatus(statusText, autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS)
+    }
+
+    private fun buildWorkflowChatSessionTitle(binding: WorkflowChatBinding): String {
+        val workflowLabel = resolveWorkflowBindingLabel(binding.workflowId)
+        val taskId = binding.taskId?.trim()?.ifBlank { null }
+        return if (taskId == null) {
+            workflowLabel
+        } else {
+            "$workflowLabel · $taskId"
+        }
     }
 
     private fun switchActiveSpecWorkflowFromUser(workflowId: String) {
@@ -813,6 +1056,7 @@ class ImprovedChatPanel(
 
                 updateSpecWorkflowComboSize()
                 updateComboTooltips()
+                updateWorkflowBindingUi()
             }
         }
     }
@@ -3141,6 +3385,7 @@ class ImprovedChatPanel(
         userMessageRawContent.clear()
         currentSessionId = null
         activeSpecWorkflowId = null
+        activeWorkflowChatBinding = null
         sessionIsolationService.clearActiveSession()
         specSidebarPanel.clearFocusedWorkflow()
         messagesPanel.clearAll()
@@ -3148,6 +3393,7 @@ class ImprovedChatPanel(
         clearImageAttachments()
         clearComposerInput()
         currentAssistantPanel = null
+        updateWorkflowBindingUi()
     }
 
     private fun loadSession(sessionId: String) {
@@ -3192,8 +3438,10 @@ class ImprovedChatPanel(
                     resetSessionOnSpecSwitch = false,
                     emitHook = false,
                 )
-                activeSpecWorkflowId = session.resolvedWorkflowChatBinding()?.workflowId
+                val restoredBinding = session.resolvedWorkflowChatBinding()
+                activeSpecWorkflowId = restoredBinding?.workflowId
                     ?: session.specTaskId?.trim()?.ifBlank { null }
+                activeWorkflowChatBinding = restoredBinding
                 restoreSessionMessages(messages)
                 currentSessionId = session.id
                 sessionIsolationService.activateSession(session.id)
@@ -3203,6 +3451,7 @@ class ImprovedChatPanel(
                     }
                 }
                 refreshSpecWorkflowComboBox(selectWorkflowId = activeSpecWorkflowId)
+                updateWorkflowBindingUi()
                 showStatus(
                     text = SpecCodingBundle.message("toolwindow.status.session.loaded.short"),
                     tooltip = SpecCodingBundle.message("toolwindow.status.session.loaded", session.title),
@@ -3342,12 +3591,16 @@ class ImprovedChatPanel(
         val title = (workflowTitle ?: titleSeed.lines().firstOrNull().orEmpty().trim())
             .ifBlank { SpecCodingBundle.message("toolwindow.session.defaultTitle") }
             .take(80)
+        val effectiveBinding = resolvedActiveWorkflowChatBinding()
+            ?.takeIf { binding ->
+                normalizedSpecTaskId == null || binding.workflowId == normalizedSpecTaskId
+            }
 
         val created = sessionManager.createSession(
             title = title,
             specTaskId = normalizedSpecTaskId,
             modelProvider = providerId,
-            workflowChatBinding = normalizedSpecTaskId?.let { workflowId ->
+            workflowChatBinding = effectiveBinding ?: normalizedSpecTaskId?.let { workflowId ->
                 buildWorkflowChatBinding(
                     workflowId = workflowId,
                     source = WorkflowChatEntrySource.MODE_SWITCH,
@@ -3417,18 +3670,21 @@ class ImprovedChatPanel(
         val normalizedWorkflowId = workflowId?.trim()?.ifBlank { null } ?: return
         val existingBinding = sessionManager.getSession(normalizedSessionId)
             ?.resolvedWorkflowChatBinding()
-        if (existingBinding?.workflowId == normalizedWorkflowId) {
-            return
-        }
-        sessionManager.updateWorkflowChatBinding(
-            normalizedSessionId,
-            buildWorkflowChatBinding(
+        val desiredBinding = resolvedActiveWorkflowChatBinding()
+            ?.takeIf { binding -> binding.workflowId == normalizedWorkflowId }
+            ?: buildWorkflowChatBinding(
                 workflowId = normalizedWorkflowId,
                 source = existingBinding?.source ?: WorkflowChatEntrySource.MODE_SWITCH,
                 taskId = existingBinding?.taskId,
                 actionIntent = existingBinding?.actionIntent ?: WorkflowChatActionIntent.DISCUSS,
                 focusedStage = existingBinding?.focusedStage,
-            ),
+            )
+        if (existingBinding == desiredBinding) {
+            return
+        }
+        sessionManager.updateWorkflowChatBinding(
+            normalizedSessionId,
+            desiredBinding,
         )
             .onFailure { error ->
                 logger.warn("Failed to bind session to spec workflow: $normalizedWorkflowId", error)
@@ -4429,6 +4685,7 @@ class ImprovedChatPanel(
         refreshContinueActions(mode)
         specSidebarToggleButton.isVisible = mode == ChatInteractionMode.SPEC
         specWorkflowComboBox.isVisible = mode == ChatInteractionMode.SPEC && specWorkflowComboBox.itemCount > 0
+        updateWorkflowBindingUi()
         if (mode != ChatInteractionMode.SPEC) {
             applySpecSidebarVisibility(visible = false, persist = false)
             return
@@ -5870,6 +6127,27 @@ class ImprovedChatPanel(
         }
         val token = args.substringBefore(" ").trim().lowercase(Locale.ROOT)
         return token !in setOf("status", "open", "next", "back", "generate", "complete")
+    }
+
+    internal fun workflowBindingSnapshotForTest(): Map<String, String> {
+        return mapOf(
+            "mode" to currentInteractionMode().name,
+            "workflowId" to resolvedActiveWorkflowChatBinding()?.workflowId.orEmpty(),
+            "taskId" to resolvedActiveWorkflowChatBinding()?.taskId.orEmpty(),
+            "workflowChipVisible" to workflowBindingChip.isVisible.toString(),
+            "workflowChipText" to workflowBindingChip.text.orEmpty(),
+            "workflowChipTooltip" to workflowBindingChip.toolTipText.orEmpty(),
+            "taskChipVisible" to taskBindingChip.isVisible.toString(),
+            "taskChipText" to taskBindingChip.text.orEmpty(),
+            "taskChipTooltip" to taskBindingChip.toolTipText.orEmpty(),
+            "taskClearVisible" to clearTaskBindingButton.isVisible.toString(),
+            "taskClearTooltip" to clearTaskBindingButton.toolTipText.orEmpty(),
+            "sessionId" to currentSessionId.orEmpty(),
+        )
+    }
+
+    internal fun clearTaskBindingForTest() {
+        clearTaskBindingButton.doClick()
     }
 
     companion object {

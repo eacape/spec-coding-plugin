@@ -39,6 +39,7 @@ import javax.swing.SwingConstants
 internal class SpecWorkflowTasksPanel(
     private val onTransitionStatus: (taskId: String, to: TaskStatus) -> Unit = { _, _ -> },
     private val onExecuteTask: (taskId: String, retry: Boolean) -> Unit = { _, _ -> },
+    private val onOpenWorkflowChat: (workflowId: String, taskId: String) -> Unit = { _, _ -> },
     private val onUpdateDependsOn: (taskId: String, dependsOn: List<String>) -> Unit = { _, _ -> },
     private val onUpdateRelatedFiles: (taskId: String, files: List<String>) -> Unit = { _, _ -> },
     private val onCompleteWithRelatedFiles: (
@@ -77,6 +78,9 @@ internal class SpecWorkflowTasksPanel(
 
     private val executeTaskButton = createIconActionButton {
         handleExecuteTask()
+    }
+    private val openWorkflowChatButton = createIconActionButton {
+        handleOpenWorkflowChat()
     }
     private val secondaryActionsButton = createIconActionButton {
         showSecondaryActionsMenu()
@@ -196,6 +200,15 @@ internal class SpecWorkflowTasksPanel(
             "executeTooltip" to executeTaskButton.toolTipText.orEmpty(),
             "executeAccessibleName" to executeTaskButton.accessibleContext.accessibleName.orEmpty(),
             "executeAccessibleDescription" to executeTaskButton.accessibleContext.accessibleDescription.orEmpty(),
+            "chatText" to openWorkflowChatButton.text.orEmpty(),
+            "chatIconId" to SpecWorkflowIcons.debugId(openWorkflowChatButton.icon),
+            "chatHasIcon" to (openWorkflowChatButton.icon != null).toString(),
+            "chatRolloverEnabled" to openWorkflowChatButton.isRolloverEnabled.toString(),
+            "chatFocusable" to openWorkflowChatButton.isFocusable.toString(),
+            "chatEnabled" to openWorkflowChatButton.isEnabled.toString(),
+            "chatTooltip" to openWorkflowChatButton.toolTipText.orEmpty(),
+            "chatAccessibleName" to openWorkflowChatButton.accessibleContext.accessibleName.orEmpty(),
+            "chatAccessibleDescription" to openWorkflowChatButton.accessibleContext.accessibleDescription.orEmpty(),
             "secondaryText" to secondaryActionsButton.text.orEmpty(),
             "secondaryIconId" to SpecWorkflowIcons.debugId(secondaryActionsButton.icon),
             "secondaryTooltip" to secondaryActionsButton.toolTipText.orEmpty(),
@@ -270,6 +283,10 @@ internal class SpecWorkflowTasksPanel(
         executeTaskButton.doClick()
     }
 
+    internal fun clickOpenWorkflowChatForTest() {
+        openWorkflowChatButton.doClick()
+    }
+
     internal fun triggerSecondaryActionForTest(targetStatus: TaskStatus): Boolean {
         val selectedTask = tasksList.selectedValue ?: return false
         val action = buildSecondaryActions(selectedTask).firstOrNull { it.targetStatus == targetStatus } ?: return false
@@ -296,6 +313,7 @@ internal class SpecWorkflowTasksPanel(
             isOpaque = false
             border = JBUI.Borders.emptyTop(4)
             add(executeTaskButton)
+            add(openWorkflowChatButton)
             add(secondaryActionsButton)
             add(editVerificationResultButton)
             add(editDependsOnButton)
@@ -318,6 +336,7 @@ internal class SpecWorkflowTasksPanel(
 
     private fun applyActionButtonPresentation() {
         updateExecuteButtonPresentation(tasksList.selectedValue)
+        updateOpenWorkflowChatButtonPresentation(tasksList.selectedValue)
         updateSecondaryActionsButtonPresentation(tasksList.selectedValue)
         updateVerificationButtonPresentation(tasksList.selectedValue)
         updateDependsOnButtonPresentation(tasksList.selectedValue)
@@ -350,6 +369,7 @@ internal class SpecWorkflowTasksPanel(
         val selected = tasksList.selectedValue
         if (selected == null) {
             updateExecuteButtonPresentation(null)
+            updateOpenWorkflowChatButtonPresentation(null)
             updateSecondaryActionsButtonPresentation(null)
             updateVerificationButtonPresentation(null)
             updateDependsOnButtonPresentation(null)
@@ -358,6 +378,7 @@ internal class SpecWorkflowTasksPanel(
         }
 
         updateExecuteButtonPresentation(selected)
+        updateOpenWorkflowChatButtonPresentation(selected)
         updateSecondaryActionsButtonPresentation(selected)
         updateVerificationButtonPresentation(selected)
         updateDependsOnButtonPresentation(selected)
@@ -413,6 +434,26 @@ internal class SpecWorkflowTasksPanel(
             )
         }
         SpecUiStyle.applyIconActionPresentation(executeTaskButton, presentation)
+    }
+
+    private fun updateOpenWorkflowChatButtonPresentation(selected: StructuredTask?) {
+        val workflowId = currentWorkflowId?.trim().orEmpty()
+        val taskId = selected?.id.orEmpty()
+        val disabledReason = when {
+            selected == null -> SpecCodingBundle.message("spec.toolwindow.tasks.chat.open.disabled")
+            workflowId.isBlank() -> SpecCodingBundle.message("spec.toolwindow.tasks.chat.open.disabled.noWorkflow")
+            else -> null
+        }
+        SpecUiStyle.applyIconActionPresentation(
+            button = openWorkflowChatButton,
+            presentation = SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.OpenToolWindow,
+                tooltip = disabledReason ?: SpecCodingBundle.message("spec.toolwindow.tasks.chat.open.tooltip", taskId),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.chat.open"),
+                enabled = disabledReason == null,
+                disabledReason = disabledReason,
+            ),
+        )
     }
 
     private fun updateVerificationButtonPresentation(selected: StructuredTask?) {
@@ -525,6 +566,12 @@ internal class SpecWorkflowTasksPanel(
 
     private fun handleExecuteTask() {
         requestExecutionForSelection()
+    }
+
+    private fun handleOpenWorkflowChat() {
+        val selectedTask = tasksList.selectedValue ?: return
+        val workflowId = currentWorkflowId?.trim()?.ifBlank { null } ?: return
+        onOpenWorkflowChat(workflowId, selectedTask.id)
     }
 
     private fun requestExecutionForSelection(): Boolean {

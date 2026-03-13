@@ -14,9 +14,15 @@ import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.llm.MockLlmProvider
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
+import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
+import com.eacape.speccodingplugin.session.WorkflowChatBinding
+import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
 import com.eacape.speccodingplugin.spec.*
+import com.eacape.speccodingplugin.ui.ChatToolWindowControlListener
+import com.eacape.speccodingplugin.ui.ChatToolWindowFactory
 import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.RefreshFeedback
+import com.eacape.speccodingplugin.ui.WorkflowChatOpenRequest
 import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
@@ -34,6 +40,7 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
@@ -106,6 +113,7 @@ class SpecWorkflowPanel(
     private val tasksPanel = SpecWorkflowTasksPanel(
         onTransitionStatus = ::onTaskStatusTransitionRequested,
         onExecuteTask = ::onTaskExecutionRequested,
+        onOpenWorkflowChat = ::onTaskWorkflowChatRequested,
         onUpdateDependsOn = ::onTaskDependsOnUpdateRequested,
         onUpdateRelatedFiles = ::onTaskRelatedFilesUpdateRequested,
         onCompleteWithRelatedFiles = ::onTaskCompleteRequested,
@@ -2826,6 +2834,31 @@ class SpecWorkflowPanel(
         )
     }
 
+    private fun onTaskWorkflowChatRequested(workflowId: String, taskId: String) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(ChatToolWindowFactory.TOOL_WINDOW_ID) ?: return
+        val request = WorkflowChatOpenRequest(
+            binding = WorkflowChatBinding(
+                workflowId = workflowId,
+                taskId = taskId,
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.TASK_PANEL,
+                actionIntent = WorkflowChatActionIntent.DISCUSS,
+            ),
+        )
+        ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
+        if (!ChatToolWindowFactory.selectChatContent(toolWindow, project)) {
+            return
+        }
+        toolWindow.activate(null)
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || _isDisposed) {
+                return@invokeLater
+            }
+            project.messageBus.syncPublisher(ChatToolWindowControlListener.TOPIC)
+                .onOpenWorkflowChatRequested(request)
+        }
+    }
+
     private fun onTaskVerificationResultUpdateRequested(taskId: String, verificationResult: TaskVerificationResult?) {
         val workflowId = selectedWorkflowId ?: return
         val existingTask = currentStructuredTasks.firstOrNull { task -> task.id == taskId }
@@ -4022,6 +4055,12 @@ class SpecWorkflowPanel(
     }
 
     internal fun tasksSnapshotForTest(): Map<String, String> = tasksPanel.snapshotForTest()
+
+    internal fun selectTaskForTest(taskId: String): Boolean = tasksPanel.selectTask(taskId)
+
+    internal fun clickOpenWorkflowChatForSelectedTaskForTest() {
+        tasksPanel.clickOpenWorkflowChatForTest()
+    }
 
     internal fun toolbarSnapshotForTest(): Map<String, String> {
         fun snapshot(button: JButton) = mapOf(

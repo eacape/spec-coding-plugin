@@ -72,6 +72,24 @@ class SpecWorkflowTasksPanelTest {
             SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", "T-001"),
             snapshot.getValue("executeAccessibleDescription"),
         )
+        assertEquals("", snapshot.getValue("chatText"))
+        assertEquals("openToolWindow", snapshot.getValue("chatIconId"))
+        assertEquals("true", snapshot.getValue("chatHasIcon"))
+        assertEquals("true", snapshot.getValue("chatRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("chatFocusable"))
+        assertEquals("true", snapshot.getValue("chatEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.chat.open.tooltip", "T-001"),
+            snapshot.getValue("chatTooltip"),
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.chat.open"),
+            snapshot.getValue("chatAccessibleName"),
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.chat.open.tooltip", "T-001"),
+            snapshot.getValue("chatAccessibleDescription"),
+        )
         assertEquals("", snapshot.getValue("secondaryText"))
         assertEquals("overflow", snapshot.getValue("secondaryIconId"))
         assertEquals(
@@ -137,6 +155,8 @@ class SpecWorkflowTasksPanelTest {
                 SpecCodingBundle.message("spec.toolwindow.tasks.execute.done.tooltip", "T-010"),
             snapshot.getValue("executeAccessibleDescription"),
         )
+        assertEquals("true", snapshot.getValue("chatEnabled"))
+        assertEquals("true", snapshot.getValue("chatFocusable"))
         assertEquals("false", snapshot.getValue("secondaryEnabled"))
         assertEquals("true", snapshot.getValue("secondaryFocusable"))
         assertEquals(
@@ -285,6 +305,32 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("", snapshot.getValue("executeText"))
         assertEquals("complete", snapshot.getValue("executeIconId"))
         assertEquals("true", snapshot.getValue("executeEnabled"))
+    }
+
+    @Test
+    fun `open workflow chat button should route selected task binding`() {
+        val bindings = mutableListOf<String>()
+        val panel = SpecWorkflowTasksPanel(
+            onOpenWorkflowChat = { workflowId, taskId -> bindings += "$workflowId:$taskId" },
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-chat",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-321",
+                    title = "Chat binding task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.selectTask("T-321"))
+        panel.clickOpenWorkflowChatForTest()
+
+        assertEquals(listOf("wf-chat:T-321"), bindings)
     }
 
     @Test
