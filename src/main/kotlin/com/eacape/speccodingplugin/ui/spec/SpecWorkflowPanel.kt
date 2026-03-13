@@ -1745,6 +1745,7 @@ class SpecWorkflowPanel(
                 input = effectiveInput,
                 options = context.options.copy(
                     confirmedContext = pendingRetry.confirmedContext,
+                    clarificationWriteback = pendingRetry.toWritebackPayload(),
                 ),
             )
             return
@@ -1804,10 +1805,14 @@ class SpecWorkflowPanel(
             clarificationRound = pendingClarificationRetryByWorkflowId[context.workflowId]?.clarificationRound,
             confirmed = true,
         )
+        val pendingRetry = pendingClarificationRetryByWorkflowId[context.workflowId]
         runGeneration(
             workflowId = context.workflowId,
             input = input,
-            options = context.options.copy(confirmedContext = confirmedContext),
+            options = context.options.copy(
+                confirmedContext = confirmedContext,
+                clarificationWriteback = pendingRetry.toWritebackPayload(confirmedContext = confirmedContext),
+            ),
         )
     }
 
@@ -2298,6 +2303,21 @@ class SpecWorkflowPanel(
         val providerId: String?,
         val requestId: String,
     )
+
+    private fun ClarificationRetryPayload?.toWritebackPayload(
+        confirmedContext: String? = null,
+    ): ConfirmedClarificationPayload? {
+        val context = normalizeRetryText(confirmedContext ?: this?.confirmedContext.orEmpty())
+        if (context.isBlank()) {
+            return null
+        }
+        return ConfirmedClarificationPayload(
+            confirmedContext = context,
+            questionsMarkdown = this?.questionsMarkdown.orEmpty(),
+            structuredQuestions = this?.structuredQuestions.orEmpty(),
+            clarificationRound = this?.clarificationRound ?: 1,
+        )
+    }
 
     private fun rememberClarificationRetry(
         workflowId: String,

@@ -586,32 +586,43 @@ class SpecEngine(private val project: Project) {
                     emit(SpecGenerationProgress.Generating(workflow.currentPhase, 0.7))
 
                     // 保存文档
-                    storageDelegate.saveDocument(workflowId, result.document).getOrThrow()
+                    val savedDocument = persistGeneratedDocumentWithClarificationWriteback(
+                        workflowId = workflowId,
+                        phase = workflow.currentPhase,
+                        document = result.document,
+                        options = effectiveOptions,
+                    )
 
                     // 更新工作流
                     val updatedWorkflow = workflow.copy(
-                        documents = workflow.documents + (workflow.currentPhase to result.document),
+                        documents = workflow.documents + (workflow.currentPhase to savedDocument),
                         clarificationRetryState = null,
                         updatedAt = System.currentTimeMillis()
                     )
                     activeWorkflows[workflowId] = updatedWorkflow
                     storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
-                    emit(SpecGenerationProgress.Completed(result.document))
+                    emit(SpecGenerationProgress.Completed(savedDocument))
                 }
 
                 is SpecGenerationResult.ValidationFailed -> {
                     // 保存文档（即使验证失败）
-                    storageDelegate.saveDocument(workflowId, result.document).getOrThrow()
+                    val savedDocument = persistGeneratedDocumentWithClarificationWriteback(
+                        workflowId = workflowId,
+                        phase = workflow.currentPhase,
+                        document = result.document,
+                        options = effectiveOptions,
+                    )
+                    val validation = savedDocument.validationResult ?: result.validation
 
                     val updatedWorkflow = workflow.copy(
-                        documents = workflow.documents + (workflow.currentPhase to result.document),
+                        documents = workflow.documents + (workflow.currentPhase to savedDocument),
                         updatedAt = System.currentTimeMillis()
                     )
                     activeWorkflows[workflowId] = updatedWorkflow
                     storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
 
-                    emit(SpecGenerationProgress.ValidationFailed(result.document, result.validation))
+                    emit(SpecGenerationProgress.ValidationFailed(savedDocument, validation))
                 }
 
                 is SpecGenerationResult.Failure -> {
@@ -785,6 +796,71 @@ class SpecEngine(private val project: Project) {
             clarificationRound = clarificationRound.coerceAtLeast(1),
             lastError = normalizedLastError,
         )
+    }
+
+    private fun persistGeneratedDocumentWithClarificationWriteback(
+        workflowId: String,
+        phase: SpecPhase,
+        document: SpecDocument,
+        options: GenerationOptions,
+    ): SpecDocument {
+        val payload = options.clarificationWriteback
+        if (payload == null) {
+            storageDelegate.saveDocument(workflowId, document).getOrThrow()
+            return document
+        }
+
+        val now = System.currentTimeMillis()
+        val writeback = SpecClarificationWriteback.apply(
+            phase = phase,
+            existingContent = document.content,
+            payload = payload,
+            atMillis = now,
+        )
+        if (writeback == null) {
+            storageDelegate.saveDocument(workflowId, document).getOrThrow()
+            return document
+        }
+
+        val candidate = document.copy(
+            content = writeback.content,
+            metadata = document.metadata.copy(updatedAt = now),
+        )
+        val validated = candidate.copy(validationResult = SpecValidator.validate(candidate))
+        storageDelegate.saveDocument(workflowId, validated).getOrThrow()
+        appendClarificationWritebackAudit(
+            workflowId = workflowId,
+            phase = phase,
+            payload = payload,
+            result = writeback,
+        )
+        return validated
+    }
+
+    private fun appendClarificationWritebackAudit(
+        workflowId: String,
+        phase: SpecPhase,
+        payload: ConfirmedClarificationPayload,
+        result: SpecClarificationWritebackResult,
+    ) {
+        storageDelegate.appendAuditEvent(
+            workflowId = workflowId,
+            eventType = SpecAuditEventType.CLARIFICATION_CONFIRMED,
+            details = buildMap {
+                put("phase", phase.name)
+                put("file", phase.outputFileName)
+                put("section", result.sectionTitle)
+                put("clarificationRound", payload.clarificationRound.toString())
+                put("structuredQuestionCount", payload.structuredQuestions.size.toString())
+                put("confirmedCount", result.confirmedCount.toString())
+                put("notApplicableCount", result.notApplicableCount.toString())
+                if (payload.questionsMarkdown.isNotBlank()) {
+                    put("questionsMarkdown", payload.questionsMarkdown)
+                }
+                put("confirmedContext", payload.confirmedContext)
+                put("summary", result.summary)
+            },
+        ).getOrThrow()
     }
 
     fun advanceWorkflow(
@@ -1623,6 +1699,14 @@ class SpecEngine(private val project: Project) {
                         ),
                     )
                 }
+                if (hasPendingClarification(workflow, currentStage)) {
+                    add(
+                        completionViolation(
+                            fileName = StageId.REQUIREMENTS.artifactFileName.orEmpty(),
+                            message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.clarificationPending"),
+                        ),
+                    )
+                }
             }
 
             StageId.DESIGN -> buildList {
@@ -1634,6 +1718,14 @@ class SpecEngine(private val project: Project) {
                         ),
                     )
                 }
+                if (hasPendingClarification(workflow, currentStage)) {
+                    add(
+                        completionViolation(
+                            fileName = StageId.DESIGN.artifactFileName.orEmpty(),
+                            message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.clarificationPending"),
+                        ),
+                    )
+                }
             }
 
             StageId.TASKS -> buildList {
@@ -1642,6 +1734,14 @@ class SpecEngine(private val project: Project) {
                         completionViolation(
                             fileName = StageId.TASKS.artifactFileName.orEmpty(),
                             message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.structured"),
+                        ),
+                    )
+                }
+                if (hasPendingClarification(workflow, currentStage)) {
+                    add(
+                        completionViolation(
+                            fileName = StageId.TASKS.artifactFileName.orEmpty(),
+                            message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.clarificationPending"),
                         ),
                     )
                 }
@@ -1719,6 +1819,20 @@ class SpecEngine(private val project: Project) {
             message = message,
             fixHint = message,
         )
+    }
+
+    private fun hasPendingClarification(
+        workflow: SpecWorkflow,
+        stageId: StageId,
+    ): Boolean {
+        val state = workflow.clarificationRetryState ?: return false
+        if (state.confirmed) {
+            return false
+        }
+        if (workflow.currentPhase.toStageId() != stageId) {
+            return false
+        }
+        return state.questionsMarkdown.isNotBlank() || state.structuredQuestions.isNotEmpty()
     }
 
     private fun hasRequirementsSections(content: String): Boolean {
@@ -2244,7 +2358,12 @@ class SpecEngine(private val project: Project) {
             listOf("## Technology Choices", "## 技术选型"),
             listOf("## Data Model", "## 数据模型"),
             listOf("## API Design", "## API 设计"),
-            listOf("## Non-Functional Design", "## 非功能设计"),
+            listOf(
+                "## Non-Functional Design",
+                "## 非功能设计",
+                "## Non-Functional Requirements",
+                "## 非功能需求",
+            ),
         )
         private const val MAX_KEY_FILE_SNIPPET_CHARS = 4000
         private const val SOURCE_SNAPSHOT_DEPTH = 4

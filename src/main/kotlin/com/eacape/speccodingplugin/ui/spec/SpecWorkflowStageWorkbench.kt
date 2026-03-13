@@ -11,6 +11,7 @@ import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StructuredTask
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.WorkflowStatus
+import com.eacape.speccodingplugin.spec.toStageId
 
 internal enum class SpecWorkflowWorkbenchActionKind {
     ADVANCE,
@@ -740,6 +741,10 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         val tasksDocument = workflow.documents[SpecPhase.IMPLEMENT]
         val requirementsDocument = workflow.documents[SpecPhase.SPECIFY]
         val designDocument = workflow.documents[SpecPhase.DESIGN]
+        val clarificationPending = hasPendingClarificationForFocusedStage(
+            workflow = workflow,
+            focusedStage = focusedStage,
+        )
         val gateReady = isGateReady(
             overviewState = overviewState,
             focusedStage = focusedStage,
@@ -783,6 +788,16 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                         completed = validation?.hasErrors() == false,
                         blockerMessage = if (requirementsDocument != null && validation?.hasErrors() == true) {
                             SpecCodingBundle.message("spec.toolwindow.overview.blockers.requirements.validation")
+                        } else {
+                            null
+                        },
+                    ),
+                    SpecWorkflowStageCompletionCheck(
+                        id = "requirements-clarification",
+                        label = SpecCodingBundle.message("spec.toolwindow.overview.check.common.clarification"),
+                        completed = !clarificationPending,
+                        blockerMessage = if (clarificationPending) {
+                            SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.clarificationPending")
                         } else {
                             null
                         },
@@ -833,6 +848,16 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                         },
                     ),
                     SpecWorkflowStageCompletionCheck(
+                        id = "design-clarification",
+                        label = SpecCodingBundle.message("spec.toolwindow.overview.check.common.clarification"),
+                        completed = !clarificationPending,
+                        blockerMessage = if (clarificationPending) {
+                            SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.clarificationPending")
+                        } else {
+                            null
+                        },
+                    ),
+                    SpecWorkflowStageCompletionCheck(
                         id = "design-gate",
                         label = SpecCodingBundle.message("spec.toolwindow.overview.check.common.gate"),
                         completed = gateReady,
@@ -872,6 +897,16 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                         completed = hasValidDependencies,
                         blockerMessage = if (tasks.isNotEmpty() && !hasValidDependencies) {
                             SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.dependencies")
+                        } else {
+                            null
+                        },
+                    ),
+                    SpecWorkflowStageCompletionCheck(
+                        id = "tasks-clarification",
+                        label = SpecCodingBundle.message("spec.toolwindow.overview.check.common.clarification"),
+                        completed = !clarificationPending,
+                        blockerMessage = if (clarificationPending) {
+                            SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.clarificationPending")
                         } else {
                             null
                         },
@@ -1072,6 +1107,20 @@ internal object SpecWorkflowStageWorkbenchBuilder {
 
     private fun hasDesignSections(content: String): Boolean {
         return REQUIRED_DESIGN_SECTIONS.all { markers -> containsAnyMarker(content, markers) }
+    }
+
+    private fun hasPendingClarificationForFocusedStage(
+        workflow: SpecWorkflow,
+        focusedStage: StageId,
+    ): Boolean {
+        val state = workflow.clarificationRetryState ?: return false
+        if (state.confirmed) {
+            return false
+        }
+        if (workflow.currentPhase.toStageId() != focusedStage) {
+            return false
+        }
+        return state.questionsMarkdown.isNotBlank() || state.structuredQuestions.isNotEmpty()
     }
 
     private fun containsAnyMarker(content: String, markers: List<String>): Boolean {

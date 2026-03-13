@@ -301,9 +301,17 @@ data class GenerationOptions(
     val includeExamples: Boolean = true,
     val validateOutput: Boolean = true,
     val confirmedContext: String? = null,
+    val clarificationWriteback: ConfirmedClarificationPayload? = null,
     val clarificationQuestionBudget: Int = 5,
     val workingDirectory: String? = null,
     val operationMode: String? = null,
+)
+
+data class ConfirmedClarificationPayload(
+    val confirmedContext: String,
+    val questionsMarkdown: String = "",
+    val structuredQuestions: List<String> = emptyList(),
+    val clarificationRound: Int = 1,
 )
 
 /**

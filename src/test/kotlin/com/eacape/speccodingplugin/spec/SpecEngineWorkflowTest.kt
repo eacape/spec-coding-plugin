@@ -6,6 +6,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -514,6 +515,74 @@ class SpecEngineWorkflowTest {
         }
 
         assertEquals("API 必须支持幂等 key；数据库使用 PostgreSQL", capturedConfirmedContext)
+    }
+
+    @Test
+    fun `generateCurrentPhase should write confirmed clarification into artifact and audit`() {
+        val engine = SpecEngine(project, storage, generationHandler = { request ->
+            val content = """
+                ## Functional Requirements
+                - Users can create tasks.
+
+                ## Non-Functional Requirements
+                - Response time should stay under 1 second.
+
+                ## User Stories
+                As a user, I want to create tasks, so that I can track work.
+            """.trimIndent()
+            val candidate = SpecDocument(
+                id = "doc-specify",
+                phase = request.phase,
+                content = content,
+                metadata = SpecMetadata(
+                    title = "${request.phase.displayName} Document",
+                    description = "Generated ${request.phase.displayName} document",
+                ),
+            )
+            SpecGenerationResult.Success(candidate.copy(validationResult = SpecValidator.validate(candidate)))
+        })
+
+        val workflow = engine.createWorkflow(
+            title = "Clarification Writeback",
+            description = "write clarification to requirements",
+        ).getOrThrow()
+
+        val payload = ConfirmedClarificationPayload(
+            confirmedContext = """
+                **Confirmed Clarification Points**
+                - Do we need offline mode?
+                  - Detail: Support local fallback when the network is unavailable
+            """.trimIndent(),
+            questionsMarkdown = "1. Do we need offline mode?",
+            structuredQuestions = listOf("Do we need offline mode?"),
+            clarificationRound = 2,
+        )
+
+        runBlocking {
+            engine.generateCurrentPhase(
+                workflowId = workflow.id,
+                input = "build a todo app",
+                options = GenerationOptions(
+                    confirmedContext = payload.confirmedContext,
+                    clarificationWriteback = payload,
+                ),
+            ).collect()
+        }
+
+        val reloaded = engine.reloadWorkflow(workflow.id).getOrThrow()
+        val savedContent = reloaded.getDocument(SpecPhase.SPECIFY)?.content.orEmpty()
+        assertTrue(savedContent.contains("## Clarifications"))
+        assertTrue(savedContent.contains("- Do we need offline mode: Support local fallback when the network is unavailable"))
+        assertFalse(savedContent.contains("**Confirmed Clarification Points**"))
+
+        val auditEvent = storage.listAuditEvents(workflow.id).getOrThrow()
+            .last { it.eventType == SpecAuditEventType.CLARIFICATION_CONFIRMED }
+        assertEquals("SPECIFY", auditEvent.details["phase"])
+        assertEquals("requirements.md", auditEvent.details["file"])
+        assertEquals("Clarifications", auditEvent.details["section"])
+        assertEquals("2", auditEvent.details["clarificationRound"])
+        assertTrue(auditEvent.details.getValue("confirmedContext").contains("offline mode"))
+        assertTrue(auditEvent.details.getValue("questionsMarkdown").contains("offline mode"))
     }
 
     @Test

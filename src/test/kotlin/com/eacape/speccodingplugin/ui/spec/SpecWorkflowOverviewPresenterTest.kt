@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.SpecDocument
+import com.eacape.speccodingplugin.spec.ClarificationRetryState
 import com.eacape.speccodingplugin.spec.SpecMetadata
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
@@ -198,8 +199,8 @@ class SpecWorkflowOverviewPresenterTest {
         assertEquals(StageId.TASKS, workbenchState.focusedStage)
         assertEquals(3, workbenchState.progress.stepIndex)
         assertEquals(5, workbenchState.progress.totalSteps)
-        assertEquals(4, workbenchState.progress.completedCheckCount)
-        assertEquals(4, workbenchState.progress.totalCheckCount)
+        assertEquals(5, workbenchState.progress.completedCheckCount)
+        assertEquals(5, workbenchState.progress.totalCheckCount)
         assertEquals(SpecWorkflowWorkbenchActionKind.ADVANCE, workbenchState.primaryAction?.kind)
         assertEquals(
             SpecCodingBundle.message(
@@ -241,8 +242,8 @@ class SpecWorkflowOverviewPresenterTest {
         )
 
         assertEquals(StageId.TASKS, workbenchState.focusedStage)
-        assertEquals(0, workbenchState.progress.completedCheckCount)
-        assertEquals(4, workbenchState.progress.totalCheckCount)
+        assertEquals(1, workbenchState.progress.completedCheckCount)
+        assertEquals(5, workbenchState.progress.totalCheckCount)
         assertFalse(workbenchState.primaryAction?.enabled ?: true)
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document"),
@@ -262,6 +263,69 @@ class SpecWorkflowOverviewPresenterTest {
                 SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.tasks.workspace"),
             ),
             workbenchState.focusDetails,
+        )
+    }
+
+    @Test
+    fun `workbench builder should surface pending clarification as current-stage blocker`() {
+        val workflow = workflow(
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = """
+                        ## Functional Requirements
+                        - Offline support
+
+                        ## Non-Functional Requirements
+                        - Response time < 1s
+
+                        ## User Stories
+                        As a user, I want offline support.
+                    """.trimIndent(),
+                ),
+            ),
+            currentStage = StageId.REQUIREMENTS,
+            clarificationRetryState = ClarificationRetryState(
+                input = "generate requirements",
+                confirmedContext = "Need to confirm offline mode",
+                questionsMarkdown = "1. Do we need offline mode?",
+                structuredQuestions = listOf("Do we need offline mode?"),
+                clarificationRound = 1,
+                confirmed = false,
+            ),
+        )
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = GateResult.fromViolations(emptyList()).let { gateResult ->
+                StageTransitionGatePreview(
+                    workflowId = workflow.id,
+                    transitionType = StageTransitionType.ADVANCE,
+                    fromStage = StageId.REQUIREMENTS,
+                    targetStage = StageId.DESIGN,
+                    evaluatedStages = listOf(StageId.REQUIREMENTS),
+                    gateResult = gateResult,
+                )
+            },
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            gateResult = GateResult.fromViolations(emptyList()),
+        )
+
+        assertEquals(4, workbenchState.progress.completedCheckCount)
+        assertEquals(5, workbenchState.progress.totalCheckCount)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.clarificationPending"),
+            workbenchState.primaryAction?.disabledReason,
+        )
+        assertTrue(
+            workbenchState.blockers.contains(
+                SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.clarificationPending"),
+            ),
         )
     }
 
@@ -307,8 +371,8 @@ class SpecWorkflowOverviewPresenterTest {
             gateResult = gateResult,
         )
 
-        assertEquals(2, workbenchState.progress.completedCheckCount)
-        assertEquals(4, workbenchState.progress.totalCheckCount)
+        assertEquals(3, workbenchState.progress.completedCheckCount)
+        assertEquals(5, workbenchState.progress.totalCheckCount)
         assertFalse(workbenchState.primaryAction?.enabled ?: true)
         assertEquals(
             listOf(
@@ -639,6 +703,7 @@ class SpecWorkflowOverviewPresenterTest {
         verifyEnabled: Boolean = false,
         documents: Map<SpecPhase, SpecDocument> = emptyMap(),
         currentStage: StageId = StageId.TASKS,
+        clarificationRetryState: ClarificationRetryState? = null,
     ): SpecWorkflow {
         val orderedStages = listOf(
             StageId.REQUIREMENTS,
@@ -673,6 +738,7 @@ class SpecWorkflowOverviewPresenterTest {
             ),
             currentStage = currentStage,
             verifyEnabled = verifyEnabled,
+            clarificationRetryState = clarificationRetryState,
             createdAt = 1L,
             updatedAt = 2L,
         )

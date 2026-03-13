@@ -101,6 +101,43 @@ class SpecEngineStageTransitionTest {
     }
 
     @Test
+    fun `advanceWorkflow should block when current stage has pending clarification`() {
+        val engine = SpecEngine(project, storage, generationHandler = ::generateValidDocument)
+        val created = engine.createWorkflow(
+            title = "Clarification Block Workflow",
+            description = "pending clarification should block advance",
+        ).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(created.id, "generate requirements").collect()
+        }
+        engine.saveClarificationRetryState(
+            workflowId = created.id,
+            state = ClarificationRetryState(
+                input = "generate requirements",
+                confirmedContext = "Need to confirm offline mode",
+                questionsMarkdown = "1. Do we need offline mode?",
+                structuredQuestions = listOf("Do we need offline mode?"),
+                clarificationRound = 1,
+                confirmed = false,
+            ),
+        ).getOrThrow()
+
+        val blocked = engine.advanceWorkflow(created.id)
+
+        assertTrue(blocked.isFailure)
+        val error = blocked.exceptionOrNull()
+        assertTrue(error is StageTransitionBlockedByGateError)
+        val gateResult = (error as StageTransitionBlockedByGateError).gateResult
+        val completionRule = gateResult.ruleResults.first { it.ruleId == "stage-completion-checks" }
+        assertTrue(
+            completionRule.violations.any { violation ->
+                violation.message == SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.clarificationPending")
+            },
+        )
+    }
+
+    @Test
     fun `previewStageTransition should expose structured warning result without mutating workflow`() {
         val warningGate = SpecStageGateEvaluator {
             GateResult.fromViolations(
