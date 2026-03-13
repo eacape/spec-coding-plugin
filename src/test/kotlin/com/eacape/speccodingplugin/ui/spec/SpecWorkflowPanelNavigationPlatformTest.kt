@@ -2,14 +2,26 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecArtifactService
+import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecEngine
+import com.eacape.speccodingplugin.spec.SpecMetadata
+import com.eacape.speccodingplugin.spec.SpecPhase
+import com.eacape.speccodingplugin.spec.SpecStorage
+import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.StageId
+import com.eacape.speccodingplugin.spec.StageProgress
+import com.eacape.speccodingplugin.spec.StageState
+import com.eacape.speccodingplugin.spec.TaskPriority
+import com.eacape.speccodingplugin.spec.TaskStatus
+import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.util.ui.UIUtil
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 
 class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
@@ -198,6 +210,196 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertTrue(panel.currentDocumentPreviewTextForTest().contains("# Verification Document"))
     }
 
+    fun `test clicking stage chip should sync overview progress primary action documents and workspace sections`() {
+        val engine = SpecEngine.getInstance(project)
+        val tasksService = SpecTasksService(project)
+        val artifactService = SpecArtifactService(project)
+        val workflow = engine.createWorkflow(
+            title = "Stage Sync",
+            description = "task 65 stage click regression",
+        ).getOrThrow()
+        tasksService.addTask(workflow.id, "Wire stage workbench", TaskPriority.P1)
+        artifactService.writeArtifact(
+            workflow.id,
+            StageId.VERIFY,
+            """
+                # Verification Document
+
+                ## Result
+                conclusion: PASS
+                summary: verification preview
+            """.trimIndent(),
+        )
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.TASKS,
+            verifyEnabled = true,
+            includeTasksDocument = true,
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.ADVANCE &&
+                panel.selectedDocumentPhaseForTest() == SpecPhase.IMPLEMENT.name
+        }
+
+        val tasksSnapshot = panel.overviewSnapshotForTest()
+        val tasksProgress = tasksSnapshot.getValue("progress")
+        assertEquals(StageId.TASKS.name, tasksSnapshot.getValue("focusedStage"))
+        assertFalse(panel.visibleWorkspaceSectionIdsForTest().contains(SpecWorkflowWorkspaceSectionId.VERIFY))
+        assertEquals(SpecWorkflowWorkbenchActionKind.ADVANCE, panel.currentPrimaryActionKindForTest())
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickOverviewStageForTest(StageId.VERIFY)
+        }
+
+        waitUntil {
+            panel.focusedStageForTest() == StageId.VERIFY &&
+                panel.selectedDocumentPhaseForTest() == null &&
+                panel.currentDocumentPreviewTextForTest().contains("verification preview")
+        }
+
+        val verifySnapshot = panel.overviewSnapshotForTest()
+        assertEquals(StageId.VERIFY.name, verifySnapshot.getValue("focusedStage"))
+        assertTrue(verifySnapshot.getValue("focusTitle").contains(SpecWorkflowOverviewPresenter.stageLabel(StageId.VERIFY)))
+        assertNotEquals(tasksProgress, verifySnapshot.getValue("progress"))
+        assertNull(panel.currentPrimaryActionKindForTest())
+        assertTrue(panel.visibleWorkspaceSectionIdsForTest().contains(SpecWorkflowWorkspaceSectionId.VERIFY))
+        assertEquals("verification.md", panel.currentDocumentMetaTextForTest())
+    }
+
+    fun `test implement workbench primary action should follow task lifecycle states`() {
+        val engine = SpecEngine.getInstance(project)
+        val tasksService = SpecTasksService(project)
+        val workflow = engine.createWorkflow(
+            title = "Implement Action States",
+            description = "task 65 implement states",
+        ).getOrThrow()
+        val task = tasksService.addTask(workflow.id, "Ship stage workbench", TaskPriority.P1)
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = true,
+            includeTasksDocument = true,
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.START_TASK
+        }
+
+        assertEquals(task.id, panel.tasksSnapshotForTest().getValue("selectedTaskId"))
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickOverviewPrimaryActionForTest()
+        }
+
+        waitUntil {
+            panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK &&
+                panel.tasksSnapshotForTest().getValue("tasks").contains("${task.id}:IN_PROGRESS")
+        }
+
+        assertEquals(task.id, panel.tasksSnapshotForTest().getValue("selectedTaskId"))
+
+        tasksService.updateRelatedFiles(workflow.id, task.id, listOf("src/main/kotlin/App.kt"))
+        tasksService.transitionStatus(workflow.id, task.id, TaskStatus.COMPLETED)
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = true,
+            includeTasksDocument = true,
+        )
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.ADVANCE &&
+                panel.tasksSnapshotForTest().getValue("tasks").contains("${task.id}:COMPLETED")
+        }
+
+        assertEquals(SpecWorkflowWorkbenchActionKind.ADVANCE, panel.currentPrimaryActionKindForTest())
+        assertEquals("true", panel.overviewSnapshotForTest().getValue("primaryActionEnabled"))
+    }
+
+    fun `test jump and rollback should stay in overflow while current stage keeps the primary path`() {
+        val engine = SpecEngine.getInstance(project)
+        val tasksService = SpecTasksService(project)
+        val workflow = engine.createWorkflow(
+            title = "Overflow Navigation",
+            description = "task 65 overflow actions",
+        ).getOrThrow()
+        tasksService.addTask(workflow.id, "Protect primary path", TaskPriority.P1)
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.TASKS,
+            verifyEnabled = true,
+            includeTasksDocument = true,
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.ADVANCE
+        }
+
+        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.JUMP))
+        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.ROLLBACK))
+        assertEquals("true", panel.overviewSnapshotForTest().getValue("primaryActionVisible"))
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickOverviewStageForTest(StageId.IMPLEMENT)
+        }
+
+        waitUntil {
+            panel.focusedStageForTest() == StageId.IMPLEMENT
+        }
+
+        assertNull(panel.currentPrimaryActionKindForTest())
+        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.JUMP))
+        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.ROLLBACK))
+        assertEquals("false", panel.overviewSnapshotForTest().getValue("primaryActionVisible"))
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickOverviewStageForTest(StageId.TASKS)
+        }
+
+        waitUntil {
+            panel.focusedStageForTest() == StageId.TASKS &&
+                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.ADVANCE
+        }
+    }
+
     private fun createPanel(): SpecWorkflowPanel {
         var panel: SpecWorkflowPanel? = null
         ApplicationManager.getApplication().invokeAndWait {
@@ -205,6 +407,89 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             Disposer.register(testRootDisposable, panel!!)
         }
         return panel ?: error("Failed to create SpecWorkflowPanel")
+    }
+
+    private fun stageWorkflow(
+        workflowId: String,
+        currentStage: StageId,
+        verifyEnabled: Boolean,
+        includeTasksDocument: Boolean,
+    ) {
+        val storage = SpecStorage.getInstance(project)
+        val current = storage.loadWorkflow(workflowId).getOrThrow()
+        storage.saveWorkflow(
+            current.copy(
+                currentPhase = phaseForStage(currentStage),
+                currentStage = currentStage,
+                verifyEnabled = verifyEnabled,
+                stageStates = buildStageStates(current.stageStates, currentStage, verifyEnabled),
+                documents = buildDocuments(workflowId, includeTasksDocument),
+                status = WorkflowStatus.IN_PROGRESS,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        ).getOrThrow()
+    }
+
+    private fun buildDocuments(workflowId: String, includeTasksDocument: Boolean): Map<SpecPhase, SpecDocument> {
+        if (!includeTasksDocument) {
+            return emptyMap()
+        }
+        val tasksContent = SpecArtifactService(project).readArtifact(workflowId, StageId.TASKS)
+            ?: return emptyMap()
+        return mapOf(
+            SpecPhase.IMPLEMENT to SpecDocument(
+                id = "$workflowId-tasks",
+                phase = SpecPhase.IMPLEMENT,
+                content = tasksContent,
+                metadata = SpecMetadata(
+                    title = "tasks.md",
+                    description = "Structured tasks for $workflowId",
+                ),
+            ),
+        )
+    }
+
+    private fun buildStageStates(
+        existing: Map<StageId, StageState>,
+        currentStage: StageId,
+        verifyEnabled: Boolean,
+    ): Map<StageId, StageState> {
+        val marker = "2026-03-13T00:00:00Z"
+        return StageId.entries.associateWith { stageId ->
+            val active = when (stageId) {
+                StageId.VERIFY -> verifyEnabled
+                else -> existing[stageId]?.active ?: true
+            }
+            when {
+                !active -> StageState(active = false, status = StageProgress.NOT_STARTED)
+                stageId.ordinal < currentStage.ordinal -> StageState(
+                    active = true,
+                    status = StageProgress.DONE,
+                    enteredAt = marker,
+                    completedAt = marker,
+                )
+
+                stageId == currentStage -> StageState(
+                    active = true,
+                    status = StageProgress.IN_PROGRESS,
+                    enteredAt = marker,
+                )
+
+                else -> StageState(active = true, status = StageProgress.NOT_STARTED)
+            }
+        }
+    }
+
+    private fun phaseForStage(stageId: StageId): SpecPhase {
+        return when (stageId) {
+            StageId.REQUIREMENTS -> SpecPhase.SPECIFY
+            StageId.DESIGN -> SpecPhase.DESIGN
+            StageId.TASKS,
+            StageId.IMPLEMENT,
+            StageId.VERIFY,
+            StageId.ARCHIVE,
+            -> SpecPhase.IMPLEMENT
+        }
     }
 
     private fun waitUntil(timeoutMs: Long = 5_000, condition: () -> Boolean) {

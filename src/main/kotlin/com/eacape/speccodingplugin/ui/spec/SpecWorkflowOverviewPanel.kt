@@ -4,13 +4,11 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
-import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
 import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.ui.ComboBox
-import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
@@ -39,8 +37,7 @@ import javax.swing.SwingConstants
 internal class SpecWorkflowOverviewPanel(
     private val onStageSelected: (StageId) -> Unit = {},
     private val onWorkbenchActionRequested: (SpecWorkflowWorkbenchAction) -> Unit = {},
-    onTemplateSwitchRequested: (WorkflowTemplate) -> Unit = {},
-    onTemplateRollbackRequested: (TemplateSwitchHistoryEntry) -> Unit = {},
+    onTemplateCloneRequested: (WorkflowTemplate) -> Unit = {},
 ) : JPanel(BorderLayout(JBUI.scale(8), JBUI.scale(8))) {
     private val emptyLabel = JBLabel()
     private val contentPanel = JPanel()
@@ -70,7 +67,7 @@ internal class SpecWorkflowOverviewPanel(
     private val workflowValueLabel = createValueLabel()
     private val statusValueLabel = createValueLabel()
     private val templateValueLabel = createValueLabel()
-    private val templateHistoryValueLabel = createBodyLabel(VALUE_SECONDARY_FG)
+    private val templateLockSummaryValueLabel = createBodyLabel(VALUE_SECONDARY_FG)
     private val currentStageValueLabel = createValueLabel()
     private val progressValueLabel = createValueLabel()
     private val activeStagesValueLabel = createValueLabel()
@@ -87,13 +84,9 @@ internal class SpecWorkflowOverviewPanel(
                 ?: SpecCodingBundle.message("spec.toolwindow.overview.template.target.none")
         }
     }
-    private val templateSwitchButton = createIconActionButton {
+    private val templateCloneButton = createIconActionButton {
         val targetTemplate = templateTargetComboBox.selectedItem as? WorkflowTemplate ?: return@createIconActionButton
-        onTemplateSwitchRequested(targetTemplate)
-    }
-    private val templateRollbackButton = createIconActionButton {
-        val historyEntry = currentState?.latestTemplateSwitch ?: return@createIconActionButton
-        onTemplateRollbackRequested(historyEntry)
+        onTemplateCloneRequested(targetTemplate)
     }
     private val templateValuePanel = JPanel(BorderLayout(0, JBUI.scale(6)))
     private val stageStepperPanel = SpecWorkflowStageStepperPanel(onStageSelected = onStageSelected)
@@ -184,17 +177,12 @@ internal class SpecWorkflowOverviewPanel(
             "workflow" to workflowValueLabel.text.orEmpty(),
             "status" to statusValueLabel.text.orEmpty(),
             "template" to templateValueLabel.text.orEmpty(),
-            "templateHistory" to templateHistoryValueLabel.text.orEmpty(),
-            "templateSwitchEnabled" to templateSwitchButton.isEnabled.toString(),
-            "templateSwitchText" to templateSwitchButton.text.orEmpty(),
-            "templateSwitchTooltip" to templateSwitchButton.toolTipText.orEmpty(),
-            "templateSwitchHasIcon" to (templateSwitchButton.icon != null).toString(),
-            "templateSwitchRolloverEnabled" to templateSwitchButton.isRolloverEnabled.toString(),
-            "templateRollbackEnabled" to templateRollbackButton.isEnabled.toString(),
-            "templateRollbackText" to templateRollbackButton.text.orEmpty(),
-            "templateRollbackTooltip" to templateRollbackButton.toolTipText.orEmpty(),
-            "templateRollbackHasIcon" to (templateRollbackButton.icon != null).toString(),
-            "templateRollbackRolloverEnabled" to templateRollbackButton.isRolloverEnabled.toString(),
+            "templateLockSummary" to templateLockSummaryValueLabel.text.orEmpty(),
+            "templateCloneEnabled" to templateCloneButton.isEnabled.toString(),
+            "templateCloneText" to templateCloneButton.text.orEmpty(),
+            "templateCloneTooltip" to templateCloneButton.toolTipText.orEmpty(),
+            "templateCloneHasIcon" to (templateCloneButton.icon != null).toString(),
+            "templateCloneRolloverEnabled" to templateCloneButton.isRolloverEnabled.toString(),
             "currentStage" to currentStageValueLabel.text.orEmpty(),
             "progress" to progressValueLabel.text.orEmpty(),
             "activeStages" to activeStagesValueLabel.text.orEmpty(),
@@ -298,7 +286,7 @@ internal class SpecWorkflowOverviewPanel(
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 add(templateValueLabel)
                 add(Box.createVerticalStrut(JBUI.scale(2)))
-                add(templateHistoryValueLabel)
+                add(templateLockSummaryValueLabel)
             },
             BorderLayout.NORTH,
         )
@@ -306,8 +294,7 @@ internal class SpecWorkflowOverviewPanel(
             JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
                 isOpaque = false
                 add(templateTargetComboBox)
-                add(templateSwitchButton)
-                add(templateRollbackButton)
+                add(templateCloneButton)
             },
             BorderLayout.CENTER,
         )
@@ -426,16 +413,9 @@ internal class SpecWorkflowOverviewPanel(
             "spec.toolwindow.overview.template.current",
             SpecWorkflowOverviewPresenter.templateLabel(state.template),
         )
-        templateHistoryValueLabel.text = state.latestTemplateSwitch?.let { latestSwitch ->
-            SpecCodingBundle.message(
-                "spec.toolwindow.overview.template.history.last",
-                SpecWorkflowOverviewPresenter.templateLabel(latestSwitch.fromTemplate),
-                SpecWorkflowOverviewPresenter.templateLabel(latestSwitch.toTemplate),
-            )
-        } ?: SpecCodingBundle.message("spec.toolwindow.overview.template.history.none")
-        updateTemplateTargets(state.switchableTemplates)
-        templateSwitchButton.isEnabled = state.switchableTemplates.isNotEmpty()
-        templateRollbackButton.isEnabled = state.latestTemplateSwitch != null
+        templateLockSummaryValueLabel.text = state.templateLockedSummary
+        updateTemplateTargets(state.templateCloneTargets)
+        templateCloneButton.isEnabled = state.templateCloneTargets.isNotEmpty()
         currentStageValueLabel.text = SpecWorkflowOverviewPresenter.stageLabel(state.currentStage)
         progressValueLabel.text = buildProgressText(workbenchState)
         activeStagesValueLabel.text = state.activeStages.joinToString(" -> ") { stage ->
@@ -470,7 +450,7 @@ internal class SpecWorkflowOverviewPanel(
         workflowValueLabel.text = ""
         statusValueLabel.text = ""
         templateValueLabel.text = ""
-        templateHistoryValueLabel.text = ""
+        templateLockSummaryValueLabel.text = ""
         currentStageValueLabel.text = ""
         progressValueLabel.text = ""
         activeStagesValueLabel.text = ""
@@ -480,8 +460,7 @@ internal class SpecWorkflowOverviewPanel(
         gateSummaryValueLabel.text = ""
         refreshedValueLabel.text = ""
         updateTemplateTargets(emptyList())
-        templateSwitchButton.isEnabled = false
-        templateRollbackButton.isEnabled = false
+        templateCloneButton.isEnabled = false
         stageStepperPanel.clear()
         revalidate()
         repaint()
@@ -665,14 +644,9 @@ internal class SpecWorkflowOverviewPanel(
     }
     private fun applyTemplateButtonPresentation() {
         SpecUiStyle.configureIconActionButton(
-            button = templateSwitchButton,
-            icon = TEMPLATE_SWITCH_ICON,
-            tooltip = SpecCodingBundle.message("spec.toolwindow.overview.template.switch"),
-        )
-        SpecUiStyle.configureIconActionButton(
-            button = templateRollbackButton,
-            icon = TEMPLATE_ROLLBACK_ICON,
-            tooltip = SpecCodingBundle.message("spec.toolwindow.overview.template.rollback"),
+            button = templateCloneButton,
+            icon = AllIcons.Actions.Copy,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.overview.template.clone"),
         )
     }
 
@@ -803,8 +777,6 @@ internal class SpecWorkflowOverviewPanel(
         private val PRIMARY_ACTION_BG = JBColor(Color(237, 245, 255), Color(68, 79, 96))
         private val PRIMARY_ACTION_BORDER = JBColor(Color(127, 168, 230), Color(124, 158, 205))
         private val PRIMARY_ACTION_FG = JBColor(Color(40, 72, 129), Color(219, 229, 244))
-        private val TEMPLATE_SWITCH_ICON = IconLoader.getIcon("/icons/spec-workflow-template-switch.svg", SpecWorkflowOverviewPanel::class.java)
-        private val TEMPLATE_ROLLBACK_ICON = IconLoader.getIcon("/icons/spec-workflow-template-rollback.svg", SpecWorkflowOverviewPanel::class.java)
         private val OVERFLOW_ICON = AllIcons.General.GearPlain
         private val PASS_FG = JBColor(Color(39, 94, 57), Color(194, 232, 204))
         private val WARN_FG = JBColor(Color(150, 96, 0), Color(245, 212, 152))

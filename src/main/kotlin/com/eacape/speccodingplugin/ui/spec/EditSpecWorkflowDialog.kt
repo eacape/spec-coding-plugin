@@ -16,6 +16,7 @@ import javax.swing.JScrollPane
 class EditSpecWorkflowDialog(
     initialTitle: String,
     initialDescription: String,
+    private val dialogTitle: String = SpecCodingBundle.message("spec.dialog.editWorkflow.title"),
 ) : DialogWrapper(true) {
 
     private val titleField = JBTextField(initialTitle)
@@ -28,7 +29,7 @@ class EditSpecWorkflowDialog(
 
     init {
         init()
-        title = SpecCodingBundle.message("spec.dialog.editWorkflow.title")
+        title = dialogTitle
     }
 
     override fun createCenterPanel(): JComponent {
@@ -76,4 +77,3 @@ class EditSpecWorkflowDialog(
 
     override fun getPreferredFocusedComponent() = titleField
 }
-

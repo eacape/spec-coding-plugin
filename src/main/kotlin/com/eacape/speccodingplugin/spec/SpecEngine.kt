@@ -278,34 +278,37 @@ class SpecEngine(private val project: Project) {
             )
             pendingTemplateSwitchPreviews[preview.previewId] = preview
             logger.info(
-                "Prepared template switch preview ${preview.previewId} for workflow=$workflowId " +
+                "Prepared template migration preview ${preview.previewId} for workflow=$workflowId " +
                     "${workflow.template} -> $toTemplate",
             )
             preview
         }
     }
 
-    fun applyTemplateSwitch(
+    fun cloneWorkflowWithTemplate(
         workflowId: String,
         previewId: String,
-    ): Result<TemplateSwitchApplyResult> {
+        title: String? = null,
+        description: String? = null,
+    ): Result<TemplateCloneResult> {
         return runCatching {
             val preview = pendingTemplateSwitchPreviews[previewId]
                 ?: throw MissingTemplateSwitchPreviewError(previewId)
-            val workflow = activeWorkflows[workflowId]
+            val sourceWorkflow = activeWorkflows[workflowId]
                 ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            activeWorkflows[workflowId] = workflow
+            activeWorkflows[workflowId] = sourceWorkflow
 
             if (
                 preview.workflowId != workflowId ||
-                preview.fromTemplate != workflow.template ||
-                preview.currentStage != workflow.currentStage
+                preview.fromTemplate != sourceWorkflow.template ||
+                preview.currentStage != sourceWorkflow.currentStage
             ) {
                 pendingTemplateSwitchPreviews.remove(previewId)
                 throw StaleTemplateSwitchPreviewError(previewId, workflowId)
             }
 
             val projectConfig = projectConfigDelegate.load()
+            val configPin = projectConfigDelegate.createConfigPin(projectConfig)
             val targetPolicy = projectConfig.policyFor(preview.toTemplate)
             val currentImpacts = artifactServiceDelegate.previewRequiredArtifacts(
                 workflowId = workflowId,
@@ -317,115 +320,112 @@ class SpecEngine(private val project: Project) {
             }
             if (blockedImpact != null) {
                 throw StageTransitionPolicyError(
-                    "Template switch blocked by missing non-scaffoldable artifact ${blockedImpact.fileName} for ${blockedImpact.stageId}",
+                    "Template migration blocked by missing non-scaffoldable artifact ${blockedImpact.fileName} for ${blockedImpact.stageId}",
                 )
             }
 
+            val clonedWorkflowId = generateWorkflowId()
+            val createdAt = System.currentTimeMillis()
+            val targetStagePlan = targetPolicy.defaultStagePlan()
+            val targetStage = targetStagePlan.resolveCurrentStage(sourceWorkflow.currentStage)
+            val stageMetadata = applyTemplateSwitchMetadata(
+                workflow = sourceWorkflow,
+                targetStagePlan = targetStagePlan,
+                targetStage = targetStage,
+                timestampMillis = createdAt,
+            )
+            val clonedWorkflow = sourceWorkflow.copy(
+                id = clonedWorkflowId,
+                currentPhase = initialPhaseForStage(stageMetadata.currentStage),
+                documents = sourceWorkflow.documents.mapValues { (phase, document) ->
+                    document.copy(id = "$clonedWorkflowId-${phase.name.lowercase()}")
+                },
+                status = WorkflowStatus.IN_PROGRESS,
+                title = title?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: defaultClonedWorkflowTitle(sourceWorkflow, preview.toTemplate),
+                description = description?.trim() ?: sourceWorkflow.description,
+                template = preview.toTemplate,
+                stageStates = stageMetadata.stageStates,
+                currentStage = stageMetadata.currentStage,
+                verifyEnabled = stageMetadata.verifyEnabled,
+                configPinHash = configPin.hash,
+                clarificationRetryState = sourceWorkflow.clarificationRetryState,
+                createdAt = createdAt,
+                updatedAt = createdAt,
+            )
+
+            storageDelegate.saveConfigPinSnapshot(clonedWorkflowId, configPin).getOrThrow()
+
+            val copiedArtifacts = artifactServiceDelegate.listWorkflowMarkdownArtifacts(workflowId)
+                .map { sourcePath ->
+                    val fileName = sourcePath.fileName.toString()
+                    val content = Files.readString(sourcePath, Charsets.UTF_8)
+                    artifactServiceDelegate.writeArtifact(clonedWorkflowId, fileName, content)
+                    fileName
+                }
+                .distinct()
+                .sorted()
+
             val generatedArtifacts = artifactServiceDelegate.ensureMissingArtifacts(
-                workflowId = workflowId,
+                workflowId = clonedWorkflowId,
                 template = preview.toTemplate,
                 templatePolicy = targetPolicy,
             )
                 .filter { write -> write.created }
                 .map { write -> write.path.fileName.toString() }
+                .distinct()
+                .sorted()
 
-            val targetStagePlan = targetPolicy.defaultStagePlan()
-            val updatedAt = System.currentTimeMillis()
-            val targetStage = targetStagePlan.resolveCurrentStage(workflow.currentStage)
-            val stageMetadata = applyTemplateSwitchMetadata(
-                workflow = workflow,
-                targetStagePlan = targetStagePlan,
-                targetStage = targetStage,
-                timestampMillis = updatedAt,
-            )
-            val switchId = templateSwitchIdGenerator.nextId()
-            val updatedWorkflow = workflow.copy(
-                currentPhase = initialPhaseForStage(stageMetadata.currentStage),
-                template = preview.toTemplate,
-                stageStates = stageMetadata.stageStates,
-                currentStage = stageMetadata.currentStage,
-                verifyEnabled = stageMetadata.verifyEnabled,
-                updatedAt = updatedAt,
-            )
-
-            val saveResult = storageDelegate.saveWorkflowTransition(
-                workflow = updatedWorkflow,
-                eventType = SpecAuditEventType.TEMPLATE_SWITCHED,
-                details = buildTemplateSwitchAuditDetails(
+            storageDelegate.saveWorkflowTransition(
+                workflow = clonedWorkflow,
+                eventType = SpecAuditEventType.WORKFLOW_CLONED_WITH_TEMPLATE,
+                details = buildTemplateCloneAuditDetails(
+                    sourceWorkflow = sourceWorkflow,
+                    clonedWorkflow = clonedWorkflow,
                     preview = preview,
-                    switchId = switchId,
+                    copiedArtifacts = copiedArtifacts,
                     generatedArtifacts = generatedArtifacts,
                 ),
             ).getOrThrow()
 
+            storageDelegate.appendAuditEvent(
+                workflowId = workflowId,
+                eventType = SpecAuditEventType.WORKFLOW_CLONED_WITH_TEMPLATE,
+                details = buildSourceWorkflowCloneAuditDetails(
+                    sourceWorkflow = sourceWorkflow,
+                    clonedWorkflow = clonedWorkflow,
+                    preview = preview,
+                ),
+            ).getOrThrow()
+
             clearTemplateSwitchPreviews(workflowId)
-            val reloadedWorkflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            activeWorkflows[workflowId] = reloadedWorkflow
+            val reloadedWorkflow = storageDelegate.loadWorkflow(clonedWorkflowId).getOrThrow()
+            activeWorkflows[clonedWorkflowId] = reloadedWorkflow
             logger.info(
-                "Workflow $workflowId applied template switch $switchId: ${preview.fromTemplate} -> ${preview.toTemplate}",
+                "Workflow $workflowId created migrated copy $clonedWorkflowId: ${preview.fromTemplate} -> ${preview.toTemplate}",
             )
-            TemplateSwitchApplyResult(
-                switchId = switchId,
+            TemplateCloneResult(
+                sourceWorkflowId = workflowId,
                 previewId = preview.previewId,
                 workflow = reloadedWorkflow,
+                copiedArtifacts = copiedArtifacts,
                 generatedArtifacts = generatedArtifacts,
-                beforeSnapshotId = saveResult.beforeSnapshotId,
-                afterSnapshotId = saveResult.afterSnapshotId,
             )
         }
+    }
+
+    fun applyTemplateSwitch(
+        workflowId: String,
+        previewId: String,
+    ): Result<TemplateSwitchApplyResult> {
+        return Result.failure(TemplateMutationLockedError(workflowId))
     }
 
     fun rollbackTemplateSwitch(
         workflowId: String,
         switchId: String,
     ): Result<TemplateSwitchRollbackResult> {
-        return runCatching {
-            val currentWorkflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            val switchEvent = storageDelegate.listAuditEvents(workflowId).getOrThrow()
-                .asReversed()
-                .firstOrNull { event ->
-                    event.eventType == SpecAuditEventType.TEMPLATE_SWITCHED &&
-                        event.details["switchId"] == switchId
-                }
-                ?: throw MissingTemplateSwitchHistoryError(workflowId, switchId)
-
-            val rollbackSnapshotId = switchEvent.details["beforeSnapshotId"]
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-                ?: throw IllegalStateException("Template switch $switchId does not contain a rollback snapshot id")
-            val snapshotWorkflow = storageDelegate.loadWorkflowSnapshot(workflowId, rollbackSnapshotId).getOrThrow()
-            val restoredWorkflow = snapshotWorkflow.copy(
-                id = workflowId,
-                documents = currentWorkflow.documents,
-                updatedAt = System.currentTimeMillis(),
-            )
-
-            val saveResult = storageDelegate.saveWorkflowTransition(
-                workflow = restoredWorkflow,
-                eventType = SpecAuditEventType.TEMPLATE_SWITCH_ROLLED_BACK,
-                details = buildTemplateSwitchRollbackAuditDetails(
-                    currentWorkflow = currentWorkflow,
-                    restoredWorkflow = restoredWorkflow,
-                    switchId = switchId,
-                    rollbackSnapshotId = rollbackSnapshotId,
-                    switchEvent = switchEvent,
-                ),
-            ).getOrThrow()
-
-            clearTemplateSwitchPreviews(workflowId)
-            val reloadedWorkflow = storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            activeWorkflows[workflowId] = reloadedWorkflow
-            logger.info(
-                "Workflow $workflowId rolled back template switch $switchId to ${reloadedWorkflow.template}",
-            )
-            TemplateSwitchRollbackResult(
-                switchId = switchId,
-                workflow = reloadedWorkflow,
-                restoredFromSnapshotId = rollbackSnapshotId,
-                beforeSnapshotId = saveResult.beforeSnapshotId,
-                afterSnapshotId = saveResult.afterSnapshotId,
-            )
-        }
+        return Result.failure(TemplateMutationLockedError(workflowId))
     }
 
     fun listTemplateSwitchHistory(workflowId: String): Result<List<TemplateSwitchHistoryEntry>> {
@@ -1439,6 +1439,55 @@ class SpecEngine(private val project: Project) {
         return details
     }
 
+    private fun buildTemplateCloneAuditDetails(
+        sourceWorkflow: SpecWorkflow,
+        clonedWorkflow: SpecWorkflow,
+        preview: TemplateSwitchPreview,
+        copiedArtifacts: List<String>,
+        generatedArtifacts: List<String>,
+    ): Map<String, String> {
+        val details = linkedMapOf(
+            "cloneRole" to "TARGET",
+            "sourceWorkflowId" to sourceWorkflow.id,
+            "sourceTemplate" to sourceWorkflow.template.name,
+            "targetTemplate" to clonedWorkflow.template.name,
+            "previewId" to preview.previewId,
+            "fromStage" to sourceWorkflow.currentStage.name,
+            "toStage" to clonedWorkflow.currentStage.name,
+            "currentStageChanged" to preview.currentStageChanged.toString(),
+        )
+        if (copiedArtifacts.isNotEmpty()) {
+            details["copiedArtifacts"] = copiedArtifacts.joinToString(",")
+        }
+        if (generatedArtifacts.isNotEmpty()) {
+            details["generatedArtifacts"] = generatedArtifacts.joinToString(",")
+        }
+        if (preview.addedActiveStages.isNotEmpty()) {
+            details["addedActiveStages"] = preview.addedActiveStages.joinToString(",") { stage -> stage.name }
+        }
+        if (preview.deactivatedStages.isNotEmpty()) {
+            details["deactivatedStages"] = preview.deactivatedStages.joinToString(",") { stage -> stage.name }
+        }
+        return details
+    }
+
+    private fun buildSourceWorkflowCloneAuditDetails(
+        sourceWorkflow: SpecWorkflow,
+        clonedWorkflow: SpecWorkflow,
+        preview: TemplateSwitchPreview,
+    ): Map<String, String> {
+        return linkedMapOf(
+            "cloneRole" to "SOURCE",
+            "targetWorkflowId" to clonedWorkflow.id,
+            "sourceTemplate" to sourceWorkflow.template.name,
+            "targetTemplate" to clonedWorkflow.template.name,
+            "previewId" to preview.previewId,
+            "fromStage" to sourceWorkflow.currentStage.name,
+            "toStage" to clonedWorkflow.currentStage.name,
+            "currentStageChanged" to preview.currentStageChanged.toString(),
+        )
+    }
+
     private fun buildTemplateSwitchRollbackAuditDetails(
         currentWorkflow: SpecWorkflow,
         restoredWorkflow: SpecWorkflow,
@@ -1507,6 +1556,14 @@ class SpecEngine(private val project: Project) {
         pendingTemplateSwitchPreviews.entries.removeIf { (_, preview) ->
             preview.workflowId == workflowId
         }
+    }
+
+    private fun defaultClonedWorkflowTitle(
+        sourceWorkflow: SpecWorkflow,
+        targetTemplate: WorkflowTemplate,
+    ): String {
+        val baseTitle = sourceWorkflow.title.ifBlank { sourceWorkflow.id }
+        return "$baseTitle (${targetTemplate.name})"
     }
 
     private fun transitionAuditEventType(transitionType: StageTransitionType): SpecAuditEventType {

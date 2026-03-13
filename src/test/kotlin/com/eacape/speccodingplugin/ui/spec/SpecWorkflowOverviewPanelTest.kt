@@ -73,23 +73,18 @@ class SpecWorkflowOverviewPanelTest {
             ),
             snapshot.getValue("template"),
         )
-        assertTrue(snapshot.getValue("templateHistory").contains(SpecWorkflowOverviewPresenter.templateLabel(WorkflowTemplate.FULL_SPEC)))
-        assertEquals("true", snapshot.getValue("templateSwitchEnabled"))
-        assertEquals("", snapshot.getValue("templateSwitchText"))
         assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.template.switch"),
-            snapshot.getValue("templateSwitchTooltip"),
+            SpecCodingBundle.message("spec.toolwindow.overview.template.locked"),
+            snapshot.getValue("templateLockSummary"),
         )
-        assertEquals("true", snapshot.getValue("templateSwitchHasIcon"))
-        assertEquals("true", snapshot.getValue("templateSwitchRolloverEnabled"))
-        assertEquals("true", snapshot.getValue("templateRollbackEnabled"))
-        assertEquals("", snapshot.getValue("templateRollbackText"))
+        assertEquals("true", snapshot.getValue("templateCloneEnabled"))
+        assertEquals("", snapshot.getValue("templateCloneText"))
         assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.template.rollback"),
-            snapshot.getValue("templateRollbackTooltip"),
+            SpecCodingBundle.message("spec.toolwindow.overview.template.clone"),
+            snapshot.getValue("templateCloneTooltip"),
         )
-        assertEquals("true", snapshot.getValue("templateRollbackHasIcon"))
-        assertEquals("true", snapshot.getValue("templateRollbackRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("templateCloneHasIcon"))
+        assertEquals("true", snapshot.getValue("templateCloneRolloverEnabled"))
         assertEquals(SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS), snapshot.getValue("currentStage"))
         assertEquals(
             SpecCodingBundle.message(
@@ -231,7 +226,7 @@ class SpecWorkflowOverviewPanelTest {
             panel.snapshotForTest().getValue("empty"),
         )
         assertEquals("false", panel.snapshotForTest().getValue("primaryActionVisible"))
-        assertEquals("false", panel.snapshotForTest().getValue("templateSwitchEnabled"))
+        assertEquals("false", panel.snapshotForTest().getValue("templateCloneEnabled"))
     }
 
     @Test
@@ -373,6 +368,12 @@ class SpecWorkflowOverviewPanelTest {
                 occurredAt = "2026-03-11T10:00:00Z",
                 occurredAtEpochMs = 1_710_152_400_000,
             ),
+            templateCloneTargets = listOf(
+                WorkflowTemplate.QUICK_TASK,
+                WorkflowTemplate.DESIGN_REVIEW,
+                WorkflowTemplate.DIRECT_IMPLEMENT,
+            ),
+            templateLockedSummary = SpecCodingBundle.message("spec.toolwindow.overview.template.locked"),
             currentStage = currentStage,
             activeStages = listOf(
                 StageId.REQUIREMENTS,

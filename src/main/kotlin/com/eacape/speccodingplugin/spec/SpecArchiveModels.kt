@@ -19,6 +19,7 @@ data class SpecArchiveReadOnlySummary(
 enum class SpecAuditEventType {
     WORKFLOW_CREATED,
     WORKFLOW_OPENED,
+    WORKFLOW_CLONED_WITH_TEMPLATE,
     TEMPLATE_SELECTED,
     TEMPLATE_SWITCHED,
     TEMPLATE_SWITCH_ROLLED_BACK,

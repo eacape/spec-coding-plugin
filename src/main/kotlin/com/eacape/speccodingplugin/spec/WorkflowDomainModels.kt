@@ -527,6 +527,14 @@ data class TemplateSwitchRollbackResult(
     val afterSnapshotId: String? = null,
 )
 
+data class TemplateCloneResult(
+    val sourceWorkflowId: String,
+    val previewId: String,
+    val workflow: SpecWorkflow,
+    val copiedArtifacts: List<String>,
+    val generatedArtifacts: List<String>,
+)
+
 data class TemplateSwitchHistoryEntry(
     val switchId: String,
     val previewId: String? = null,
@@ -789,3 +797,8 @@ class StaleTemplateSwitchPreviewError(previewId: String, workflowId: String) :
 
 class MissingTemplateSwitchHistoryError(workflowId: String, switchId: String) :
     WorkflowDomainError("Template switch $switchId not found for workflow $workflowId")
+
+class TemplateMutationLockedError(workflowId: String) :
+    WorkflowDomainError(
+        "Workflow $workflowId locks its template after creation; create a migrated copy instead of switching in place",
+    )

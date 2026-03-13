@@ -125,7 +125,7 @@ class SpecWorkflowOverviewPresenterTest {
     }
 
     @Test
-    fun `buildState should expose switchable templates and latest template switch`() {
+    fun `buildState should expose clone targets and locked template summary`() {
         val workflow = workflow()
         val latestSwitch = TemplateSwitchHistoryEntry(
             switchId = "switch-1",
@@ -152,7 +152,12 @@ class SpecWorkflowOverviewPresenterTest {
             ),
             state.switchableTemplates,
         )
+        assertEquals(state.switchableTemplates, state.templateCloneTargets)
         assertEquals(latestSwitch, state.latestTemplateSwitch)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.template.locked"),
+            state.templateLockedSummary,
+        )
     }
 
     @Test

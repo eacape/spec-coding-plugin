@@ -4,7 +4,6 @@ import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -27,7 +26,7 @@ class SpecEngineTemplateSwitchHistoryTest {
     }
 
     @Test
-    fun `listTemplateSwitchHistory should surface latest apply details`() {
+    fun `listTemplateSwitchHistory should stay empty for template clone migrations`() {
         val engine = SpecEngine(project, storage) { SpecGenerationResult.Failure("unused") }
         val created = engine.createWorkflow(
             title = "History Workflow",
@@ -35,34 +34,40 @@ class SpecEngineTemplateSwitchHistoryTest {
         ).getOrThrow()
 
         val preview = engine.previewTemplateSwitch(created.id, WorkflowTemplate.DIRECT_IMPLEMENT).getOrThrow()
-        engine.applyTemplateSwitch(created.id, preview.previewId).getOrThrow()
+        val cloned = engine.cloneWorkflowWithTemplate(
+            workflowId = created.id,
+            previewId = preview.previewId,
+        ).getOrThrow()
 
-        val history = engine.listTemplateSwitchHistory(created.id).getOrThrow()
+        val sourceHistory = engine.listTemplateSwitchHistory(created.id).getOrThrow()
+        val clonedHistory = engine.listTemplateSwitchHistory(cloned.workflow.id).getOrThrow()
 
-        assertEquals(1, history.size)
-        val entry = history.single()
-        assertEquals(WorkflowTemplate.FULL_SPEC, entry.fromTemplate)
-        assertEquals(WorkflowTemplate.DIRECT_IMPLEMENT, entry.toTemplate)
-        assertEquals(preview.previewId, entry.previewId)
-        assertFalse(entry.rolledBack)
-        assertTrue(entry.beforeSnapshotId?.isNotBlank() == true)
+        assertTrue(sourceHistory.isEmpty())
+        assertTrue(clonedHistory.isEmpty())
     }
 
     @Test
-    fun `listTemplateSwitchHistory should mark switch as rolled back after rollback`() {
+    fun `cloneWorkflowWithTemplate should record source and target workflow ids in audit trail`() {
         val engine = SpecEngine(project, storage) { SpecGenerationResult.Failure("unused") }
         val created = engine.createWorkflow(
-            title = "Rollback History Workflow",
-            description = "rollback history",
+            title = "Audit Workflow",
+            description = "clone audit",
         ).getOrThrow()
 
         val preview = engine.previewTemplateSwitch(created.id, WorkflowTemplate.DIRECT_IMPLEMENT).getOrThrow()
-        val applied = engine.applyTemplateSwitch(created.id, preview.previewId).getOrThrow()
-        engine.rollbackTemplateSwitch(created.id, applied.switchId).getOrThrow()
+        val cloned = engine.cloneWorkflowWithTemplate(
+            workflowId = created.id,
+            previewId = preview.previewId,
+        ).getOrThrow()
 
-        val history = engine.listTemplateSwitchHistory(created.id).getOrThrow()
+        val sourceAudit = storage.listAuditEvents(created.id).getOrThrow()
+            .last { it.eventType == SpecAuditEventType.WORKFLOW_CLONED_WITH_TEMPLATE }
+        val clonedAudit = storage.listAuditEvents(cloned.workflow.id).getOrThrow()
+            .last { it.eventType == SpecAuditEventType.WORKFLOW_CLONED_WITH_TEMPLATE }
 
-        assertEquals(1, history.size)
-        assertTrue(history.single().rolledBack)
+        assertEquals(cloned.workflow.id, sourceAudit.details["targetWorkflowId"])
+        assertEquals(created.id, clonedAudit.details["sourceWorkflowId"])
+        assertEquals("SOURCE", sourceAudit.details["cloneRole"])
+        assertEquals("TARGET", clonedAudit.details["cloneRole"])
     }
 }

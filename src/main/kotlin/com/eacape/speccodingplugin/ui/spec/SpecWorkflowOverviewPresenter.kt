@@ -34,6 +34,8 @@ internal data class SpecWorkflowOverviewState(
     val template: WorkflowTemplate,
     val switchableTemplates: List<WorkflowTemplate>,
     val latestTemplateSwitch: TemplateSwitchHistoryEntry?,
+    val templateCloneTargets: List<WorkflowTemplate>,
+    val templateLockedSummary: String,
     val currentStage: StageId,
     val activeStages: List<StageId>,
     val nextStage: StageId?,
@@ -47,7 +49,7 @@ internal object SpecWorkflowOverviewPresenter {
     fun buildState(
         workflow: SpecWorkflow,
         gatePreview: StageTransitionGatePreview?,
-        latestTemplateSwitch: TemplateSwitchHistoryEntry?,
+        latestTemplateSwitch: TemplateSwitchHistoryEntry? = null,
         refreshedAtMillis: Long,
     ): SpecWorkflowOverviewState {
         val stageOverrides = workflow.stageStates
@@ -73,6 +75,8 @@ internal object SpecWorkflowOverviewPresenter {
             template = workflow.template,
             switchableTemplates = WorkflowTemplate.entries.filterNot { template -> template == workflow.template },
             latestTemplateSwitch = latestTemplateSwitch,
+            templateCloneTargets = WorkflowTemplate.entries.filterNot { template -> template == workflow.template },
+            templateLockedSummary = SpecCodingBundle.message("spec.toolwindow.overview.template.locked"),
             currentStage = workflow.currentStage,
             activeStages = activeStages,
             nextStage = nextStage,

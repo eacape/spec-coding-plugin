@@ -5,6 +5,7 @@ import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -29,7 +30,7 @@ class SpecEngineTemplateSwitchApplyTest {
     }
 
     @Test
-    fun `applyTemplateSwitch should scaffold missing artifacts and persist rollback snapshot`() {
+    fun `cloneWorkflowWithTemplate should create a migrated copy and keep source workflow unchanged`() {
         writeProjectConfig(
             """
             schemaVersion: 1
@@ -39,84 +40,75 @@ class SpecEngineTemplateSwitchApplyTest {
         val engine = SpecEngine(project, storage) { SpecGenerationResult.Failure("unused") }
         val created = engine.createWorkflow(
             title = "Direct implement workflow",
-            description = "switch apply",
+            description = "clone apply",
         ).getOrThrow()
 
         val preview = engine.previewTemplateSwitch(created.id, WorkflowTemplate.FULL_SPEC).getOrThrow()
-        val applied = engine.applyTemplateSwitch(created.id, preview.previewId).getOrThrow()
-        val workflowDir = workflowDirFor(created.id)
+        val cloned = engine.cloneWorkflowWithTemplate(
+            workflowId = created.id,
+            previewId = preview.previewId,
+            title = "Migrated full spec workflow",
+            description = "created by task 66",
+        ).getOrThrow()
+        val sourceWorkflowDir = workflowDirFor(created.id)
+        val clonedWorkflowDir = workflowDirFor(cloned.workflow.id)
 
-        assertTrue(WorkflowIdGenerator.isValid(applied.switchId, prefix = "switch"))
-        assertEquals(preview.previewId, applied.previewId)
-        assertEquals(WorkflowTemplate.FULL_SPEC, applied.workflow.template)
-        assertEquals(StageId.IMPLEMENT, applied.workflow.currentStage)
-        assertTrue(applied.workflow.stageStates.getValue(StageId.REQUIREMENTS).active)
-        assertTrue(applied.workflow.stageStates.getValue(StageId.DESIGN).active)
-        assertTrue(applied.workflow.stageStates.getValue(StageId.TASKS).active)
-        assertEquals(StageProgress.NOT_STARTED, applied.workflow.stageStates.getValue(StageId.REQUIREMENTS).status)
-        assertEquals(StageProgress.NOT_STARTED, applied.workflow.stageStates.getValue(StageId.DESIGN).status)
-        assertEquals(StageProgress.IN_PROGRESS, applied.workflow.stageStates.getValue(StageId.IMPLEMENT).status)
-        assertEquals(setOf("requirements.md", "design.md"), applied.generatedArtifacts.toSet())
-        assertTrue(Files.exists(workflowDir.resolve("requirements.md")))
-        assertTrue(Files.exists(workflowDir.resolve("design.md")))
-        assertTrue(Files.exists(workflowDir.resolve("tasks.md")))
-        assertNotNull(applied.beforeSnapshotId)
-        assertNotNull(applied.afterSnapshotId)
+        assertEquals(created.id, cloned.sourceWorkflowId)
+        assertEquals(preview.previewId, cloned.previewId)
+        assertNotEquals(created.id, cloned.workflow.id)
+        assertEquals("Migrated full spec workflow", cloned.workflow.title)
+        assertEquals("created by task 66", cloned.workflow.description)
+        assertEquals(WorkflowTemplate.FULL_SPEC, cloned.workflow.template)
+        assertEquals(StageId.IMPLEMENT, cloned.workflow.currentStage)
+        assertTrue(cloned.workflow.stageStates.getValue(StageId.REQUIREMENTS).active)
+        assertTrue(cloned.workflow.stageStates.getValue(StageId.DESIGN).active)
+        assertEquals(setOf("tasks.md"), cloned.copiedArtifacts.toSet())
+        assertEquals(setOf("requirements.md", "design.md"), cloned.generatedArtifacts.toSet())
+        assertTrue(Files.exists(clonedWorkflowDir.resolve("requirements.md")))
+        assertTrue(Files.exists(clonedWorkflowDir.resolve("design.md")))
+        assertTrue(Files.exists(clonedWorkflowDir.resolve("tasks.md")))
+        assertFalse(Files.exists(sourceWorkflowDir.resolve("requirements.md")))
+        assertFalse(Files.exists(sourceWorkflowDir.resolve("design.md")))
 
-        val event = loadAuditEvents(created.id)
-            .last { it.eventType == SpecAuditEventType.TEMPLATE_SWITCHED }
-        assertEquals(applied.switchId, event.details["switchId"])
-        assertEquals(preview.previewId, event.details["previewId"])
-        assertEquals("DIRECT_IMPLEMENT", event.details["fromTemplate"])
-        assertEquals("FULL_SPEC", event.details["toTemplate"])
-        assertEquals("requirements.md,design.md", event.details["generatedArtifacts"])
+        val sourceReloaded = engine.reloadWorkflow(created.id).getOrThrow()
+        assertEquals(WorkflowTemplate.DIRECT_IMPLEMENT, sourceReloaded.template)
+        assertFalse(sourceReloaded.stageStates.getValue(StageId.REQUIREMENTS).active)
+        assertFalse(sourceReloaded.stageStates.getValue(StageId.DESIGN).active)
 
-        val rollbackSnapshotId = event.details["beforeSnapshotId"]
-        assertNotNull(rollbackSnapshotId)
-        val snapshotWorkflow = storage.loadWorkflowSnapshot(created.id, rollbackSnapshotId!!).getOrThrow()
-        assertEquals(WorkflowTemplate.DIRECT_IMPLEMENT, snapshotWorkflow.template)
-        assertFalse(snapshotWorkflow.stageStates.getValue(StageId.REQUIREMENTS).active)
+        val clonedEvent = loadAuditEvents(cloned.workflow.id)
+            .last { it.eventType == SpecAuditEventType.WORKFLOW_CLONED_WITH_TEMPLATE }
+        assertEquals(created.id, clonedEvent.details["sourceWorkflowId"])
+        assertEquals("DIRECT_IMPLEMENT", clonedEvent.details["sourceTemplate"])
+        assertEquals("FULL_SPEC", clonedEvent.details["targetTemplate"])
+        assertEquals("TARGET", clonedEvent.details["cloneRole"])
+        assertEquals("tasks.md", clonedEvent.details["copiedArtifacts"])
+        assertEquals(
+            setOf("requirements.md", "design.md"),
+            clonedEvent.details["generatedArtifacts"].orEmpty().split(',').filter(String::isNotBlank).toSet(),
+        )
+
+        val sourceEvent = loadAuditEvents(created.id)
+            .last { it.eventType == SpecAuditEventType.WORKFLOW_CLONED_WITH_TEMPLATE }
+        assertEquals(cloned.workflow.id, sourceEvent.details["targetWorkflowId"])
+        assertEquals("SOURCE", sourceEvent.details["cloneRole"])
     }
 
     @Test
-    fun `rollbackTemplateSwitch should restore previous metadata without deleting scaffolded artifacts`() {
-        writeProjectConfig(
-            """
-            schemaVersion: 1
-            defaultTemplate: DIRECT_IMPLEMENT
-            """.trimIndent() + "\n",
-        )
+    fun `applyTemplateSwitch and rollbackTemplateSwitch should fail because templates are locked`() {
         val engine = SpecEngine(project, storage) { SpecGenerationResult.Failure("unused") }
         val created = engine.createWorkflow(
-            title = "Direct implement workflow",
-            description = "switch rollback",
+            title = "Locked workflow",
+            description = "template locked",
         ).getOrThrow()
 
-        val preview = engine.previewTemplateSwitch(created.id, WorkflowTemplate.FULL_SPEC).getOrThrow()
-        val applied = engine.applyTemplateSwitch(created.id, preview.previewId).getOrThrow()
-        val rolledBack = engine.rollbackTemplateSwitch(created.id, applied.switchId).getOrThrow()
-        val workflowDir = workflowDirFor(created.id)
+        val preview = engine.previewTemplateSwitch(created.id, WorkflowTemplate.DIRECT_IMPLEMENT).getOrThrow()
+        val applyFailure = engine.applyTemplateSwitch(created.id, preview.previewId).exceptionOrNull()
+        val rollbackFailure = engine.rollbackTemplateSwitch(created.id, "switch-1").exceptionOrNull()
 
-        assertEquals(applied.switchId, rolledBack.switchId)
-        assertEquals(applied.beforeSnapshotId, rolledBack.restoredFromSnapshotId)
-        assertEquals(WorkflowTemplate.DIRECT_IMPLEMENT, rolledBack.workflow.template)
-        assertEquals(StageId.IMPLEMENT, rolledBack.workflow.currentStage)
-        assertFalse(rolledBack.workflow.stageStates.getValue(StageId.REQUIREMENTS).active)
-        assertFalse(rolledBack.workflow.stageStates.getValue(StageId.DESIGN).active)
-        assertTrue(Files.exists(workflowDir.resolve("requirements.md")))
-        assertTrue(Files.exists(workflowDir.resolve("design.md")))
-
-        val reloaded = engine.reloadWorkflow(created.id).getOrThrow()
-        assertEquals(WorkflowTemplate.DIRECT_IMPLEMENT, reloaded.template)
-        assertFalse(reloaded.stageStates.getValue(StageId.REQUIREMENTS).active)
-        assertFalse(reloaded.stageStates.getValue(StageId.DESIGN).active)
-
-        val event = loadAuditEvents(created.id)
-            .last { it.eventType == SpecAuditEventType.TEMPLATE_SWITCH_ROLLED_BACK }
-        assertEquals(applied.switchId, event.details["switchId"])
-        assertEquals(applied.beforeSnapshotId, event.details["restoredFromSnapshotId"])
-        assertEquals("FULL_SPEC", event.details["fromTemplate"])
-        assertEquals("DIRECT_IMPLEMENT", event.details["toTemplate"])
+        assertTrue(applyFailure is TemplateMutationLockedError)
+        assertTrue(rollbackFailure is TemplateMutationLockedError)
+        assertTrue(applyFailure?.message.orEmpty().contains(created.id))
+        assertTrue(rollbackFailure?.message.orEmpty().contains(created.id))
     }
 
     private fun writeProjectConfig(content: String) {
@@ -136,6 +128,7 @@ class SpecEngineTemplateSwitchApplyTest {
         val auditPath = workflowDirFor(workflowId)
             .resolve(".history")
             .resolve("audit.yaml")
+        assertTrue(Files.exists(auditPath))
         return SpecAuditLogCodec.decodeDocuments(Files.readString(auditPath))
     }
 }
