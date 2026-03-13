@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.SpecDocument
@@ -14,6 +15,8 @@ import com.eacape.speccodingplugin.spec.StageState
 import com.eacape.speccodingplugin.spec.StageTransitionGatePreview
 import com.eacape.speccodingplugin.spec.StageTransitionType
 import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskExecutionRun
+import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
@@ -476,7 +479,17 @@ class SpecWorkflowOverviewPresenterTest {
             workflow = workflow,
             overviewState = overviewState,
             tasks = listOf(
-                task(id = "T-001", status = TaskStatus.IN_PROGRESS),
+                task(
+                    id = "T-001",
+                    status = TaskStatus.PENDING,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-1",
+                        taskId = "T-001",
+                        status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-13T12:00:00Z",
+                    ),
+                ),
                 task(id = "T-002", status = TaskStatus.PENDING),
             ),
         )
@@ -766,6 +779,7 @@ class SpecWorkflowOverviewPresenterTest {
         dependsOn: List<String> = emptyList(),
         status: TaskStatus = TaskStatus.PENDING,
         relatedFiles: List<String> = emptyList(),
+        activeExecutionRun: TaskExecutionRun? = null,
     ): StructuredTask {
         return StructuredTask(
             id = id,
@@ -774,6 +788,7 @@ class SpecWorkflowOverviewPresenterTest {
             priority = TaskPriority.P1,
             dependsOn = dependsOn,
             relatedFiles = relatedFiles,
+            activeExecutionRun = activeExecutionRun,
         )
     }
 

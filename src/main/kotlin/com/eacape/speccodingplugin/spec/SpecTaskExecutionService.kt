@@ -219,6 +219,30 @@ class SpecTaskExecutionService(private val project: Project) {
         return updatedRun
     }
 
+    fun resolveWaitingConfirmationRun(
+        workflowId: String,
+        taskId: String,
+        summary: String? = null,
+    ): TaskExecutionRun? {
+        val workflow = storage.loadWorkflow(workflowId).getOrThrow()
+        val normalizedTaskId = normalizeTaskId(taskId)
+        val run = workflow.taskExecutionRuns
+            .asSequence()
+            .filter { candidate ->
+                candidate.taskId == normalizedTaskId &&
+                    candidate.status == TaskExecutionRunStatus.WAITING_CONFIRMATION
+            }
+            .sortedBy(TaskExecutionRun::startedAt)
+            .lastOrNull()
+            ?: return null
+        return updateRunStatus(
+            workflowId = workflowId,
+            runId = run.runId,
+            status = TaskExecutionRunStatus.SUCCEEDED,
+            summary = summary,
+        )
+    }
+
     fun migrateLegacyInProgressTasks(workflow: SpecWorkflow): LegacyTaskExecutionMigrationResult {
         val tasks = tasksService.parse(workflow.id)
         if (tasks.isEmpty()) {
@@ -230,21 +254,24 @@ class SpecTaskExecutionService(private val project: Project) {
         tasks.filter { task -> task.status == TaskStatus.IN_PROGRESS }
             .sortedBy(StructuredTask::id)
             .forEach { task ->
-                if (currentWorkflow.taskExecutionRuns.any { run ->
-                        run.taskId == task.id && !run.status.isTerminal()
-                    }
-                ) {
-                    return@forEach
+                val existingActiveRun = currentWorkflow.taskExecutionRuns.any { run ->
+                    run.taskId == task.id && !run.status.isTerminal()
                 }
-                val (updatedWorkflow, run) = createRun(
-                    workflow = currentWorkflow,
+                if (!existingActiveRun) {
+                    val (updatedWorkflow, run) = createRun(
+                        workflow = currentWorkflow,
+                        taskId = task.id,
+                        status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                        trigger = ExecutionTrigger.SYSTEM_RECOVERY,
+                        summary = "Recovered from legacy task status IN_PROGRESS.",
+                    )
+                    currentWorkflow = updatedWorkflow
+                    migratedRuns += run
+                }
+                normalizeLegacyInProgressTask(
+                    workflowId = workflow.id,
                     taskId = task.id,
-                    status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
-                    trigger = ExecutionTrigger.SYSTEM_RECOVERY,
-                    summary = "Recovered from legacy task status IN_PROGRESS.",
                 )
-                currentWorkflow = updatedWorkflow
-                migratedRuns += run
             }
         return LegacyTaskExecutionMigrationResult(
             workflow = currentWorkflow,
@@ -313,7 +340,7 @@ class SpecTaskExecutionService(private val project: Project) {
             previousRunId = previousRun?.runId,
         )
 
-        transitionTaskToInProgress(workflowId, task, executionAuditContext)
+        normalizeTaskLifecycleForExecution(workflowId, task, executionAuditContext)
 
         return try {
             updateRunStatus(
@@ -718,16 +745,16 @@ class SpecTaskExecutionService(private val project: Project) {
         ).getOrThrow()
     }
 
-    private fun transitionTaskToInProgress(
+    private fun normalizeTaskLifecycleForExecution(
         workflowId: String,
         task: StructuredTask,
         auditContext: Map<String, String>,
     ) {
-        if (task.status == TaskStatus.PENDING || task.status == TaskStatus.BLOCKED) {
+        if (task.status == TaskStatus.BLOCKED || task.status == TaskStatus.IN_PROGRESS) {
             tasksService.transitionStatus(
                 workflowId = workflowId,
                 taskId = task.id,
-                to = TaskStatus.IN_PROGRESS,
+                to = TaskStatus.PENDING,
                 auditContext = auditContext,
             )
         }
@@ -740,7 +767,7 @@ class SpecTaskExecutionService(private val project: Project) {
         auditContext: Map<String, String>,
     ) {
         val currentTask = resolveTask(workflowId, taskId)
-        if (currentTask.status == TaskStatus.IN_PROGRESS) {
+        if (currentTask.status == TaskStatus.PENDING || currentTask.status == TaskStatus.IN_PROGRESS) {
             tasksService.transitionStatus(
                 workflowId = workflowId,
                 taskId = taskId,
@@ -774,6 +801,25 @@ class SpecTaskExecutionService(private val project: Project) {
             modelId?.takeIf(String::isNotBlank)?.let { put("modelId", it.trim()) }
             previousRunId?.takeIf(String::isNotBlank)?.let { put("previousRunId", it.trim()) }
         }
+    }
+
+    private fun normalizeLegacyInProgressTask(
+        workflowId: String,
+        taskId: String,
+    ) {
+        val currentTask = resolveTask(workflowId, taskId)
+        if (currentTask.status != TaskStatus.IN_PROGRESS) {
+            return
+        }
+        tasksService.transitionStatus(
+            workflowId = workflowId,
+            taskId = taskId,
+            to = TaskStatus.PENDING,
+            reason = "Recovered legacy IN_PROGRESS status into execution run state.",
+            auditContext = mapOf(
+                "taskExecutionAction" to ExecutionTrigger.SYSTEM_RECOVERY.toExecutionActionName(),
+            ),
+        )
     }
 
     private fun resolvePreviousRun(

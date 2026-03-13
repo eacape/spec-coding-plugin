@@ -59,6 +59,18 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals("${SpecCodingBundle.message("spec.toolwindow.section.verify")}:", summary.getValue("verifyTitle"))
         assertFalse(summary.getValue("verifyValue").isBlank())
 
+        val toolbar = panel.toolbarSnapshotForTest()
+        assertEquals("", toolbar.getValue("back.text"))
+        assertEquals("back", toolbar.getValue("back.iconId"))
+        assertEquals("", toolbar.getValue("refresh.text"))
+        assertEquals("refresh", toolbar.getValue("refresh.iconId"))
+        assertEquals("", toolbar.getValue("delta.text"))
+        assertEquals("history", toolbar.getValue("delta.iconId"))
+        assertEquals("", toolbar.getValue("codeGraph.text"))
+        assertEquals("openToolWindow", toolbar.getValue("codeGraph.iconId"))
+        assertEquals("", toolbar.getValue("archive.text"))
+        assertEquals("save", toolbar.getValue("archive.iconId"))
+
         ApplicationManager.getApplication().invokeAndWait {
             panel.clickBackToListForTest()
         }
@@ -471,7 +483,6 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         )
         tasksService.updateRelatedFiles(workflow.id, "T-001", listOf("src/main/kotlin/Dependency.kt"))
         tasksService.transitionStatus(workflow.id, "T-001", TaskStatus.COMPLETED)
-        tasksService.transitionStatus(workflow.id, blockedTask.id, TaskStatus.IN_PROGRESS)
         tasksService.transitionStatus(workflow.id, blockedTask.id, TaskStatus.BLOCKED)
         stageWorkflow(
             workflowId = workflow.id,
@@ -496,10 +507,8 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         }
 
         assertEquals(blockedTask.id, panel.tasksSnapshotForTest().getValue("selectedTaskId"))
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"),
-            panel.tasksSnapshotForTest().getValue("executeText"),
-        )
+        assertEquals("", panel.tasksSnapshotForTest().getValue("executeText"))
+        assertEquals("refresh", panel.tasksSnapshotForTest().getValue("executeIconId"))
 
         ApplicationManager.getApplication().invokeAndWait {
             panel.clickOverviewPrimaryActionForTest()

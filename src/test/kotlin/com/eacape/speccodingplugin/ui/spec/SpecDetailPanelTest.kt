@@ -80,13 +80,20 @@ class SpecDetailPanelTest {
 
         val states = panel.buttonStatesForTest()
         assertTrue(states["generateEnabled"] as Boolean)
+        assertEquals("execute", states["generateIconId"])
         assertTrue(states["nextEnabled"] as Boolean)
+        assertEquals("advance", states["nextIconId"])
         assertFalse(states["goBackEnabled"] as Boolean)
+        assertEquals("back", states["goBackIconId"])
         assertFalse(states["completeEnabled"] as Boolean)
+        assertEquals("complete", states["completeIconId"])
         assertTrue(states["pauseResumeEnabled"] as Boolean)
         assertEquals(SpecCodingBundle.message("spec.detail.pause"), states["pauseResumeText"])
+        assertEquals("pause", states["pauseResumeIconId"])
         assertTrue(states["openEditorEnabled"] as Boolean)
+        assertEquals("openToolWindow", states["openEditorIconId"])
         assertTrue(states["historyDiffEnabled"] as Boolean)
+        assertEquals("history", states["historyDiffIconId"])
     }
 
     @Test
@@ -535,7 +542,8 @@ class SpecDetailPanelTest {
         assertFalse(states["goBackEnabled"] as Boolean)
         assertFalse(states["completeEnabled"] as Boolean)
         assertTrue(states["pauseResumeEnabled"] as Boolean)
-        assertEquals("Resume", states["pauseResumeText"])
+        assertEquals(SpecCodingBundle.message("spec.detail.resume"), states["pauseResumeText"])
+        assertEquals("resume", states["pauseResumeIconId"])
         assertTrue(states["historyDiffEnabled"] as Boolean)
     }
 
@@ -578,7 +586,11 @@ class SpecDetailPanelTest {
             suggestedDetails = "build a todo app",
         )
 
-        assertTrue(panel.currentValidationTextForTest().contains("Generating clarification questions..."))
+        assertTrue(
+            panel.currentValidationTextForTest().contains(
+                SpecCodingBundle.message("spec.workflow.clarify.generating"),
+            ),
+        )
         assertFalse(panel.isClarificationPreviewVisibleForTest())
         val generatingStates = panel.buttonStatesForTest()
         assertFalse(generatingStates["confirmGenerateEnabled"] as Boolean)
@@ -594,7 +606,7 @@ class SpecDetailPanelTest {
         )
 
         val readyStatus = panel.currentValidationTextForTest()
-        assertTrue(readyStatus.contains("Review clarification questions"))
+        assertTrue(readyStatus.contains(SpecCodingBundle.message("spec.workflow.clarify.hint")))
         assertFalse(readyStatus.contains("◐"))
         assertTrue(panel.isClarificationPreviewVisibleForTest())
         assertTrue(panel.isInputSectionVisibleForTest())
@@ -650,20 +662,32 @@ class SpecDetailPanelTest {
         assertTrue(panel.isBottomCollapsedForChecklistForTest())
         panel.clickConfirmGenerateForTest()
         assertEquals(null, confirmedContext)
-        assertTrue(panel.currentValidationTextForTest().contains("Please add confirmed details"))
+        assertTrue(
+            panel.currentValidationTextForTest().contains(
+                SpecCodingBundle.message("spec.detail.clarify.detailsRequired"),
+            ),
+        )
 
         panel.toggleClarificationQuestionForTest(0)
         panel.clickConfirmGenerateForTest()
         assertEquals(null, confirmedContext)
-        assertTrue(panel.currentValidationTextForTest().contains("Please add details for confirmed item"))
+        assertTrue(
+            panel.currentValidationTextForTest().contains(
+                SpecCodingBundle.message("spec.detail.clarify.checklist.detail.required", "是否需要多机房容灾？"),
+            ),
+        )
 
         panel.setClarificationQuestionDetailForTest(0, "至少两地三中心，RPO<5s，RTO<30s")
         panel.clickConfirmGenerateForTest()
 
         assertEquals("RunnerGo needs redis nodes support", confirmedInput)
-        assertTrue((confirmedContext ?: "").contains("**Confirmed Clarification Points**"))
+        assertTrue((confirmedContext ?: "").contains("**${SpecCodingBundle.message("spec.detail.clarify.confirmed.title")}**"))
         assertTrue((confirmedContext ?: "").contains("是否需要多机房容灾？"))
-        assertTrue((confirmedContext ?: "").contains("Detail: 至少两地三中心，RPO<5s，RTO<30s"))
+        assertTrue(
+            (confirmedContext ?: "").contains(
+                "${SpecCodingBundle.message("spec.detail.clarify.checklist.detail.exportPrefix")}: 至少两地三中心，RPO<5s，RTO<30s",
+            ),
+        )
         assertFalse((confirmedContext ?: "").contains("## "))
     }
 
@@ -714,10 +738,14 @@ class SpecDetailPanelTest {
         panel.clickConfirmGenerateForTest()
 
         val context = confirmedContext ?: ""
-        assertTrue(context.contains("**Confirmed Clarification Points**"))
+        assertTrue(context.contains("**${SpecCodingBundle.message("spec.detail.clarify.confirmed.title")}**"))
         assertTrue(context.contains("是否要求跨区域容灾？"))
-        assertTrue(context.contains("Detail: 容灾等级按 P0 执行"))
-        assertTrue(context.contains("**Not Applicable Clarification Points**"))
+        assertTrue(
+            context.contains(
+                "${SpecCodingBundle.message("spec.detail.clarify.checklist.detail.exportPrefix")}: 容灾等级按 P0 执行",
+            ),
+        )
+        assertTrue(context.contains("**${SpecCodingBundle.message("spec.detail.clarify.notApplicable.title")}**"))
         assertTrue(context.contains("目标吞吐量是多少？"))
         assertFalse(context.contains("[x]"))
         assertFalse(context.contains("[ ]"))
@@ -1059,7 +1087,11 @@ class SpecDetailPanelTest {
         panel.setClarificationQuestionDetailForTest(0, "需要，按租户维度做资源与权限隔离")
 
         assertTrue(autosaveCalls > 0)
-        assertTrue(autosavedContext.contains("Detail: 需要，按租户维度做资源与权限隔离"))
+        assertTrue(
+            autosavedContext.contains(
+                "${SpecCodingBundle.message("spec.detail.clarify.checklist.detail.exportPrefix")}: 需要，按租户维度做资源与权限隔离",
+            ),
+        )
         assertEquals(2, autosavedQuestions.size)
     }
 
@@ -1122,7 +1154,7 @@ class SpecDetailPanelTest {
         panel.clickGenerateForTest()
 
         assertEquals(0, generateCallCount)
-        assertEquals("Please provide requirements before generating.", panel.currentValidationTextForTest())
+        assertEquals(SpecCodingBundle.message("spec.detail.input.required"), panel.currentValidationTextForTest())
         assertEquals("", panel.currentInputTextForTest())
     }
 
@@ -1189,10 +1221,10 @@ class SpecDetailPanelTest {
             ),
         )
 
-        assertTrue(panel.currentValidationTextForTest().contains("Validation: FAILED"))
+        assertTrue(panel.currentValidationTextForTest().contains(SpecCodingBundle.message("spec.detail.validation.failed")))
         val preview = panel.currentPreviewTextForTest()
         assertTrue(preview.contains("draft tasks"))
-        assertTrue(preview.contains("Validation Issues"))
+        assertTrue(preview.contains(SpecCodingBundle.message("spec.detail.validation.issues.errors")))
         assertTrue(preview.contains("Implementation Steps"))
         assertTrue(preview.contains("Task count is low"))
 

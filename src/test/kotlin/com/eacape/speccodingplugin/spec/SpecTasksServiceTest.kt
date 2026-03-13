@@ -327,7 +327,7 @@ class SpecTasksServiceTest {
 
             ### T-001: First task
             ```spec-task
-            status: IN_PROGRESS
+            status: BLOCKED
             priority: P0
             dependsOn:
               - T-002
@@ -357,8 +357,8 @@ class SpecTasksServiceTest {
         tasksService.transitionStatus(
             workflowId = workflowId,
             taskId = "t-001",
-            to = TaskStatus.IN_PROGRESS,
-            reason = "  started work  ",
+            to = TaskStatus.BLOCKED,
+            reason = "  waiting for follow-up  ",
             auditContext = mapOf(
                 "triggerSource" to "SPEC_PAGE_TASK_BUTTON",
                 "focusedStage" to "IMPLEMENT",
@@ -370,13 +370,13 @@ class SpecTasksServiceTest {
         val auditEvent = storage.listAuditEvents(workflowId).getOrThrow().last()
 
         assertEquals("$expected\n", persisted)
-        assertEquals(TaskStatus.IN_PROGRESS, updatedTask.status)
+        assertEquals(TaskStatus.BLOCKED, updatedTask.status)
         assertEquals(SpecAuditEventType.TASK_STATUS_CHANGED, auditEvent.eventType)
         assertEquals("T-001", auditEvent.details["taskId"])
         assertEquals("First task", auditEvent.details["title"])
         assertEquals("PENDING", auditEvent.details["fromStatus"])
-        assertEquals("IN_PROGRESS", auditEvent.details["toStatus"])
-        assertEquals("started work", auditEvent.details["reason"])
+        assertEquals("BLOCKED", auditEvent.details["toStatus"])
+        assertEquals("waiting for follow-up", auditEvent.details["reason"])
         assertEquals("SPEC_PAGE_TASK_BUTTON", auditEvent.details["triggerSource"])
         assertEquals("IMPLEMENT", auditEvent.details["focusedStage"])
     }
@@ -407,12 +407,12 @@ class SpecTasksServiceTest {
             tasksService.transitionStatus(
                 workflowId = workflowId,
                 taskId = "T-001",
-                to = TaskStatus.COMPLETED,
+                to = TaskStatus.IN_PROGRESS,
             )
         }
 
         assertEquals(
-            "Invalid task state transition for T-001: PENDING -> COMPLETED",
+            "Invalid task state transition for T-001: PENDING -> IN_PROGRESS",
             error.message,
         )
         assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))

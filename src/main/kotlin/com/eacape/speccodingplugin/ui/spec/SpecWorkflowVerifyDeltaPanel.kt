@@ -100,25 +100,25 @@ internal class SpecWorkflowVerifyDeltaPanel(
     private val runVerifyButton = JButton().apply {
         isFocusable = false
         isEnabled = false
-        SpecUiStyle.applyRoundRect(this, 14)
+        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 12)
         addActionListener { handleRunVerify() }
     }
     private val openVerificationButton = JButton().apply {
         isFocusable = false
         isEnabled = false
-        SpecUiStyle.applyRoundRect(this, 14)
+        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 12)
         addActionListener { handleOpenVerification() }
     }
     private val compareButton = JButton().apply {
         isFocusable = false
         isEnabled = false
-        SpecUiStyle.applyRoundRect(this, 14)
+        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 12)
         addActionListener { handleCompareBaseline() }
     }
     private val pinBaselineButton = JButton().apply {
         isFocusable = false
         isEnabled = false
-        SpecUiStyle.applyRoundRect(this, 14)
+        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 12)
         addActionListener { handlePinBaseline() }
     }
 
@@ -176,10 +176,7 @@ internal class SpecWorkflowVerifyDeltaPanel(
     fun refreshLocalizedTexts() {
         headerTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.title")
         baselineLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.baseline.label")
-        runVerifyButton.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.run")
-        openVerificationButton.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.open")
-        compareButton.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare")
-        pinBaselineButton.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin")
+        applyActionButtonPresentation()
         updateHeader()
         updateDetail()
         baselineComboBox.repaint()
@@ -251,6 +248,45 @@ internal class SpecWorkflowVerifyDeltaPanel(
             "workflowId" to currentState?.workflowId.orEmpty(),
             "historyCount" to historyListModel.size().toString(),
             "emptyText" to historyList.emptyText.text.orEmpty(),
+            "runText" to runVerifyButton.text.orEmpty(),
+            "runTooltip" to runVerifyButton.toolTipText.orEmpty(),
+            "runHasIcon" to (runVerifyButton.icon != null).toString(),
+            "runIconId" to SpecWorkflowIcons.debugId(runVerifyButton.icon),
+            "openText" to openVerificationButton.text.orEmpty(),
+            "openTooltip" to openVerificationButton.toolTipText.orEmpty(),
+            "openHasIcon" to (openVerificationButton.icon != null).toString(),
+            "openIconId" to SpecWorkflowIcons.debugId(openVerificationButton.icon),
+            "compareText" to compareButton.text.orEmpty(),
+            "compareTooltip" to compareButton.toolTipText.orEmpty(),
+            "compareHasIcon" to (compareButton.icon != null).toString(),
+            "compareIconId" to SpecWorkflowIcons.debugId(compareButton.icon),
+            "pinText" to pinBaselineButton.text.orEmpty(),
+            "pinTooltip" to pinBaselineButton.toolTipText.orEmpty(),
+            "pinHasIcon" to (pinBaselineButton.icon != null).toString(),
+            "pinIconId" to SpecWorkflowIcons.debugId(pinBaselineButton.icon),
+        )
+    }
+
+    private fun applyActionButtonPresentation() {
+        SpecUiStyle.configureIconActionButton(
+            button = runVerifyButton,
+            icon = SpecWorkflowIcons.Execute,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.run"),
+        )
+        SpecUiStyle.configureIconActionButton(
+            button = openVerificationButton,
+            icon = SpecWorkflowIcons.OpenDocument,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.open"),
+        )
+        SpecUiStyle.configureIconActionButton(
+            button = compareButton,
+            icon = SpecWorkflowIcons.History,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare"),
+        )
+        SpecUiStyle.configureIconActionButton(
+            button = pinBaselineButton,
+            icon = SpecWorkflowIcons.Save,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin"),
         )
     }
 

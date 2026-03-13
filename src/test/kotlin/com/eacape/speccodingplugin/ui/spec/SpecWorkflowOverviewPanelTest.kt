@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.SpecDocument
@@ -11,6 +12,8 @@ import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageState
 import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskExecutionRun
+import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.TemplateSwitchHistoryEntry
@@ -123,12 +126,16 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals("", snapshot.getValue("blockers"))
         assertEquals("true", snapshot.getValue("primaryActionVisible"))
         assertEquals("true", snapshot.getValue("primaryActionEnabled"))
+        assertEquals("", snapshot.getValue("primaryActionText"))
+        assertEquals("advance", snapshot.getValue("primaryActionIconId"))
+        assertEquals("true", snapshot.getValue("primaryActionHasIcon"))
+        assertEquals("true", snapshot.getValue("primaryActionRolloverEnabled"))
         assertEquals(
             SpecCodingBundle.message(
                 "spec.toolwindow.overview.primary.advance",
                 SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
             ),
-            snapshot.getValue("primaryActionText"),
+            snapshot.getValue("primaryActionTooltip"),
         )
         assertEquals("false", snapshot.getValue("overflowVisible"))
         assertEquals("false", snapshot.getValue("overflowEnabled"))
@@ -237,7 +244,17 @@ class SpecWorkflowOverviewPanelTest {
             workflow = overviewWorkflow(documents = emptyMap(), currentStage = StageId.IMPLEMENT),
             overviewState = overviewState,
             tasks = listOf(
-                task(id = "T-001", status = TaskStatus.IN_PROGRESS),
+                task(
+                    id = "T-001",
+                    status = TaskStatus.PENDING,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-1",
+                        taskId = "T-001",
+                        status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-13T12:00:00Z",
+                    ),
+                ),
                 task(id = "T-002", status = TaskStatus.PENDING),
             ),
             gateResult = null,
@@ -248,9 +265,11 @@ class SpecWorkflowOverviewPanelTest {
         val snapshot = panel.snapshotForTest()
         assertEquals("true", snapshot.getValue("primaryActionVisible"))
         assertEquals("true", snapshot.getValue("primaryActionEnabled"))
+        assertEquals("", snapshot.getValue("primaryActionText"))
+        assertEquals("complete", snapshot.getValue("primaryActionIconId"))
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.completeTask", "T-001"),
-            snapshot.getValue("primaryActionText"),
+            snapshot.getValue("primaryActionTooltip"),
         )
         assertEquals(
             SpecCodingBundle.message(
@@ -293,9 +312,11 @@ class SpecWorkflowOverviewPanelTest {
         val snapshot = panel.snapshotForTest()
         assertEquals("true", snapshot.getValue("primaryActionVisible"))
         assertEquals("true", snapshot.getValue("primaryActionEnabled"))
+        assertEquals("", snapshot.getValue("primaryActionText"))
+        assertEquals("refresh", snapshot.getValue("primaryActionIconId"))
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.resumeTask", "T-002"),
-            snapshot.getValue("primaryActionText"),
+            snapshot.getValue("primaryActionTooltip"),
         )
 
         panel.clickPrimaryActionForTest()
@@ -354,10 +375,9 @@ class SpecWorkflowOverviewPanelTest {
 
         val snapshot = panel.snapshotForTest()
         assertEquals("true", snapshot.getValue("primaryActionVisible"))
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.primary.archive"),
-            snapshot.getValue("primaryActionText"),
-        )
+        assertEquals("", snapshot.getValue("primaryActionText"))
+        assertEquals("save", snapshot.getValue("primaryActionIconId"))
+        assertEquals(SpecCodingBundle.message("spec.toolwindow.overview.primary.archive"), snapshot.getValue("primaryActionTooltip"))
         assertTrue(snapshot.getValue("focusDetails").contains("wf-base"))
         assertTrue(snapshot.getValue("focusDetails").contains("verify-run-1"))
 
@@ -516,6 +536,7 @@ class SpecWorkflowOverviewPanelTest {
         status: TaskStatus = TaskStatus.PENDING,
         dependsOn: List<String> = emptyList(),
         relatedFiles: List<String> = emptyList(),
+        activeExecutionRun: TaskExecutionRun? = null,
     ): StructuredTask {
         return StructuredTask(
             id = id,
@@ -524,6 +545,7 @@ class SpecWorkflowOverviewPanelTest {
             priority = TaskPriority.P1,
             dependsOn = dependsOn,
             relatedFiles = relatedFiles,
+            activeExecutionRun = activeExecutionRun,
         )
     }
 

@@ -9,7 +9,6 @@ import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
-import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
@@ -23,7 +22,6 @@ import java.awt.Color
 import java.awt.Component
 import java.awt.Cursor
 import java.awt.FlowLayout
-import java.awt.Font
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -34,7 +32,6 @@ import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
-import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
@@ -88,7 +85,7 @@ internal class SpecWorkflowTasksPanel(
     private val applyStatusButton = createIconActionButton {
         handleApplyStatus()
     }
-    private val executeTaskButton = createTextActionButton {
+    private val executeTaskButton = createIconActionButton {
         handleExecuteTask()
     }
     private val editDependsOnButton = createIconActionButton {
@@ -97,7 +94,7 @@ internal class SpecWorkflowTasksPanel(
     private val editRelatedFilesButton = createIconActionButton {
         handleEditRelatedFiles()
     }
-    private val editVerificationResultButton = createTextActionButton {
+    private val editVerificationResultButton = createIconActionButton {
         handleEditVerificationResult()
     }
 
@@ -186,7 +183,7 @@ internal class SpecWorkflowTasksPanel(
     internal fun snapshotForTest(): Map<String, String> {
         val tasks = (0 until listModel.size()).joinToString(" | ") { index ->
             val task = listModel[index]
-            "${task.id}:${task.status.name}:${task.priority.name}"
+            "${task.id}:${task.displayStatus.name}:${task.priority.name}"
         }
         val selectedId = tasksList.selectedValue?.id.orEmpty()
         return mapOf(
@@ -199,21 +196,30 @@ internal class SpecWorkflowTasksPanel(
             "selectedTaskId" to selectedId,
             "statusComboHeight" to statusComboBox.preferredSize.height.toString(),
             "executeText" to executeTaskButton.text.orEmpty(),
+            "executeIconId" to SpecWorkflowIcons.debugId(executeTaskButton.icon),
+            "executeHasIcon" to (executeTaskButton.icon != null).toString(),
+            "executeRolloverEnabled" to executeTaskButton.isRolloverEnabled.toString(),
             "executeEnabled" to executeTaskButton.isEnabled.toString(),
             "executeTooltip" to executeTaskButton.toolTipText.orEmpty(),
             "applyText" to applyStatusButton.text.orEmpty(),
+            "applyIconId" to SpecWorkflowIcons.debugId(applyStatusButton.icon),
             "applyTooltip" to applyStatusButton.toolTipText.orEmpty(),
             "applyHasIcon" to (applyStatusButton.icon != null).toString(),
             "applyRolloverEnabled" to applyStatusButton.isRolloverEnabled.toString(),
             "dependsOnText" to editDependsOnButton.text.orEmpty(),
+            "dependsOnIconId" to SpecWorkflowIcons.debugId(editDependsOnButton.icon),
             "dependsOnTooltip" to editDependsOnButton.toolTipText.orEmpty(),
             "dependsOnHasIcon" to (editDependsOnButton.icon != null).toString(),
             "dependsOnRolloverEnabled" to editDependsOnButton.isRolloverEnabled.toString(),
             "relatedFilesText" to editRelatedFilesButton.text.orEmpty(),
+            "relatedFilesIconId" to SpecWorkflowIcons.debugId(editRelatedFilesButton.icon),
             "relatedFilesTooltip" to editRelatedFilesButton.toolTipText.orEmpty(),
             "relatedFilesHasIcon" to (editRelatedFilesButton.icon != null).toString(),
             "relatedFilesRolloverEnabled" to editRelatedFilesButton.isRolloverEnabled.toString(),
             "verificationText" to editVerificationResultButton.text.orEmpty(),
+            "verificationIconId" to SpecWorkflowIcons.debugId(editVerificationResultButton.icon),
+            "verificationHasIcon" to (editVerificationResultButton.icon != null).toString(),
+            "verificationRolloverEnabled" to editVerificationResultButton.isRolloverEnabled.toString(),
             "verificationEnabled" to editVerificationResultButton.isEnabled.toString(),
             "verificationTooltip" to editVerificationResultButton.toolTipText.orEmpty(),
             "applyEnabled" to applyStatusButton.isEnabled.toString(),
@@ -311,62 +317,24 @@ internal class SpecWorkflowTasksPanel(
         }
     }
 
-    private fun createTextActionButton(onClick: () -> Unit): JButton {
-        return JButton().apply {
-            isEnabled = false
-            isFocusable = false
-            addActionListener { onClick() }
-            styleTextActionButton(this)
-        }
-    }
-
     private fun applyActionButtonPresentation() {
         SpecUiStyle.configureIconActionButton(
             button = applyStatusButton,
-            icon = APPLY_STATUS_ICON,
+            icon = SpecWorkflowIcons.Advance,
             tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.status.apply"),
         )
         SpecUiStyle.configureIconActionButton(
             button = editDependsOnButton,
-            icon = EDIT_DEPENDS_ON_ICON,
+            icon = SpecWorkflowIcons.Edit,
             tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.edit"),
         )
         SpecUiStyle.configureIconActionButton(
             button = editRelatedFilesButton,
-            icon = EDIT_RELATED_FILES_ICON,
+            icon = SpecWorkflowIcons.Edit,
             tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"),
         )
+        updateExecuteButtonPresentation(tasksList.selectedValue)
         updateVerificationButtonPresentation(tasksList.selectedValue)
-    }
-
-    private fun styleTextActionButton(button: JButton) {
-        button.isFocusable = false
-        button.isFocusPainted = false
-        button.isContentAreaFilled = true
-        button.isOpaque = true
-        button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        button.margin = JBUI.insets(1, 4, 1, 4)
-        button.foreground = ACTION_BUTTON_FG
-        button.background = ACTION_BUTTON_BG
-        button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(ACTION_BUTTON_BORDER, JBUI.scale(12)),
-            JBUI.Borders.empty(1, 8, 1, 8),
-        )
-        SpecUiStyle.applyRoundRect(button, arc = 12)
-        updateTextButtonSize(button)
-    }
-
-    private fun updateTextButtonSize(button: JButton) {
-        val textWidth = button.getFontMetrics(button.font).stringWidth(button.text.orEmpty())
-        val insets = button.insets
-        val lafWidth = button.preferredSize?.width ?: 0
-        val width = maxOf(
-            lafWidth,
-            textWidth + insets.left + insets.right + JBUI.scale(16),
-            JBUI.scale(72),
-        )
-        button.preferredSize = JBUI.size(width, JBUI.scale(28))
-        button.minimumSize = button.preferredSize
     }
 
     private fun updateHeader() {
@@ -396,15 +364,9 @@ internal class SpecWorkflowTasksPanel(
         if (selected == null) {
             statusComboBox.model = DefaultComboBoxModel()
             statusComboBox.isEnabled = false
-            executeTaskButton.text = SpecCodingBundle.message("spec.toolwindow.tasks.execute.none")
-            executeTaskButton.toolTipText = SpecCodingBundle.message("spec.toolwindow.tasks.execute.unavailable")
-            updateTextButtonSize(executeTaskButton)
-            executeTaskButton.isEnabled = false
+            updateExecuteButtonPresentation(null)
             applyStatusButton.isEnabled = false
-            editVerificationResultButton.text = SpecCodingBundle.message("spec.toolwindow.tasks.verification.button")
-            editVerificationResultButton.toolTipText = SpecCodingBundle.message("spec.toolwindow.tasks.verification.unavailable")
-            updateTextButtonSize(editVerificationResultButton)
-            editVerificationResultButton.isEnabled = false
+            updateVerificationButtonPresentation(null)
             editDependsOnButton.isEnabled = false
             editRelatedFilesButton.isEnabled = false
             return
@@ -421,57 +383,66 @@ internal class SpecWorkflowTasksPanel(
         editRelatedFilesButton.isEnabled = true
     }
 
-    private fun updateExecuteButtonPresentation(selected: StructuredTask) {
-        val presentation = when (selected.status) {
+    private fun updateExecuteButtonPresentation(selected: StructuredTask?) {
+        val taskId = selected?.id.orEmpty()
+        val presentation = when (selected?.displayStatus) {
+            null -> TaskExecutionPresentation(
+                icon = SpecWorkflowIcons.Execute,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.unavailable"),
+                enabled = false,
+            )
+
             TaskStatus.PENDING -> TaskExecutionPresentation(
-                text = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", selected.id),
+                icon = SpecWorkflowIcons.Execute,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
                 enabled = true,
             )
 
             TaskStatus.BLOCKED -> TaskExecutionPresentation(
-                text = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"),
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", selected.id),
+                icon = SpecWorkflowIcons.Refresh,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
                 enabled = true,
             )
 
             TaskStatus.IN_PROGRESS -> TaskExecutionPresentation(
-                text = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete"),
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", selected.id),
+                icon = SpecWorkflowIcons.Complete,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
                 enabled = true,
             )
 
             TaskStatus.COMPLETED -> TaskExecutionPresentation(
-                text = SpecCodingBundle.message("spec.toolwindow.tasks.execute.done"),
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.done.tooltip", selected.id),
+                icon = SpecWorkflowIcons.Complete,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.done.tooltip", taskId),
                 enabled = false,
             )
 
             TaskStatus.CANCELLED -> TaskExecutionPresentation(
-                text = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelled"),
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelled.tooltip", selected.id),
+                icon = SpecWorkflowIcons.Close,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelled.tooltip", taskId),
                 enabled = false,
             )
         }
-        executeTaskButton.text = presentation.text
-        executeTaskButton.toolTipText = presentation.tooltip
-        updateTextButtonSize(executeTaskButton)
+        SpecUiStyle.configureIconActionButton(
+            button = executeTaskButton,
+            icon = presentation.icon,
+            tooltip = presentation.tooltip,
+        )
         executeTaskButton.isEnabled = presentation.enabled
     }
 
     private fun updateVerificationButtonPresentation(selected: StructuredTask?) {
         val hasVerification = selected?.verificationResult != null
-        editVerificationResultButton.text = if (hasVerification) {
-            SpecCodingBundle.message("spec.toolwindow.tasks.verification.edit")
-        } else {
-            SpecCodingBundle.message("spec.toolwindow.tasks.verification.button")
-        }
-        editVerificationResultButton.toolTipText = when {
+        val taskId = selected?.id.orEmpty()
+        val tooltip = when {
             selected == null -> SpecCodingBundle.message("spec.toolwindow.tasks.verification.unavailable")
-            hasVerification -> SpecCodingBundle.message("spec.toolwindow.tasks.verification.edit.tooltip", selected.id)
-            else -> SpecCodingBundle.message("spec.toolwindow.tasks.verification.record.tooltip", selected.id)
+            hasVerification -> SpecCodingBundle.message("spec.toolwindow.tasks.verification.edit.tooltip", taskId)
+            else -> SpecCodingBundle.message("spec.toolwindow.tasks.verification.record.tooltip", taskId)
         }
-        updateTextButtonSize(editVerificationResultButton)
+        SpecUiStyle.configureIconActionButton(
+            button = editVerificationResultButton,
+            icon = if (hasVerification) SpecWorkflowIcons.Edit else SpecWorkflowIcons.Add,
+            tooltip = tooltip,
+        )
         editVerificationResultButton.isEnabled = selected != null && selected.status != TaskStatus.CANCELLED
     }
 
@@ -486,7 +457,7 @@ internal class SpecWorkflowTasksPanel(
 
     private fun requestExecutionForSelection(): Boolean {
         val selectedTask = tasksList.selectedValue ?: return false
-        when (selectedTask.status) {
+        when (selectedTask.displayStatus) {
             TaskStatus.PENDING,
             -> onExecuteTask(selectedTask.id, false)
 
@@ -641,8 +612,8 @@ internal class SpecWorkflowTasksPanel(
             panel.background = background
             titleLabel.text = "${value.id}: ${value.title}"
             metaLabel.text = "${value.priority.name} | dependsOn=${value.dependsOn.size}, relatedFiles=${value.relatedFiles.size}"
-            statusChipLabel.text = value.status.name
-            applyChipStyle(statusChipLabel, value.status, isSelected)
+            statusChipLabel.text = value.displayStatus.name
+            applyChipStyle(statusChipLabel, value.displayStatus, isSelected)
             return panel
         }
 
@@ -907,7 +878,7 @@ internal class SpecWorkflowTasksPanel(
     }
 
     private data class TaskExecutionPresentation(
-        val text: String,
+        val icon: javax.swing.Icon,
         val tooltip: String,
         val enabled: Boolean,
     )
@@ -916,14 +887,5 @@ internal class SpecWorkflowTasksPanel(
         private val HEADER_FG = JBColor(Color(35, 40, 47), Color(222, 226, 232))
         private val HEADER_SECONDARY_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
         private val REFRESHED_AT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-        private val ACTION_BUTTON_BG = JBColor(Color(236, 244, 255), Color(66, 72, 84))
-        private val ACTION_BUTTON_BORDER = JBColor(Color(176, 194, 222), Color(104, 116, 134))
-        private val ACTION_BUTTON_FG = JBColor(Color(42, 66, 104), Color(205, 217, 236))
-        private val APPLY_STATUS_ICON: Icon =
-            IconLoader.getIcon("/icons/spec-task-status-apply.svg", SpecWorkflowTasksPanel::class.java)
-        private val EDIT_DEPENDS_ON_ICON: Icon =
-            IconLoader.getIcon("/icons/spec-task-depends-edit.svg", SpecWorkflowTasksPanel::class.java)
-        private val EDIT_RELATED_FILES_ICON: Icon =
-            IconLoader.getIcon("/icons/spec-task-related-files-edit.svg", SpecWorkflowTasksPanel::class.java)
     }
 }

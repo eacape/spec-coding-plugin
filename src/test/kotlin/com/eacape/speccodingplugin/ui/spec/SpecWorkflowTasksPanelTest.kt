@@ -1,7 +1,10 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskExecutionRun
+import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskVerificationResult
 import com.eacape.speccodingplugin.spec.TaskStatus
@@ -29,10 +32,17 @@ class SpecWorkflowTasksPanelTest {
                 StructuredTask(
                     id = "T-002",
                     title = "Second",
-                    status = TaskStatus.IN_PROGRESS,
+                    status = TaskStatus.PENDING,
                     priority = TaskPriority.P1,
                     dependsOn = listOf("T-001"),
                     relatedFiles = listOf("src/main.kt"),
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-1",
+                        taskId = "T-002",
+                        status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-13T12:00:00Z",
+                    ),
                 ),
             ),
             refreshedAtMillis = 1_710_000_000_000,
@@ -42,27 +52,37 @@ class SpecWorkflowTasksPanelTest {
         val snapshot = panel.snapshotForTest()
         assertEquals("wf-1", snapshot.getValue("workflowId"))
         assertTrue(snapshot.getValue("tasks").contains("T-001:PENDING:P0"))
+        assertTrue(snapshot.getValue("tasks").contains("T-002:IN_PROGRESS:P1"))
         assertEquals("T-001", snapshot.getValue("selectedTaskId"))
         assertEquals("28", snapshot.getValue("statusComboHeight"))
-        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"), snapshot.getValue("executeText"))
+        assertEquals("", snapshot.getValue("executeText"))
+        assertEquals("execute", snapshot.getValue("executeIconId"))
+        assertEquals("true", snapshot.getValue("executeHasIcon"))
+        assertEquals("true", snapshot.getValue("executeRolloverEnabled"))
         assertEquals("true", snapshot.getValue("executeEnabled"))
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", "T-001"),
             snapshot.getValue("executeTooltip"),
         )
         assertEquals("", snapshot.getValue("applyText"))
+        assertEquals("advance", snapshot.getValue("applyIconId"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.status.apply"), snapshot.getValue("applyTooltip"))
         assertEquals("true", snapshot.getValue("applyHasIcon"))
         assertEquals("true", snapshot.getValue("applyRolloverEnabled"))
         assertEquals("", snapshot.getValue("dependsOnText"))
+        assertEquals("edit", snapshot.getValue("dependsOnIconId"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.edit"), snapshot.getValue("dependsOnTooltip"))
         assertEquals("true", snapshot.getValue("dependsOnHasIcon"))
         assertEquals("true", snapshot.getValue("dependsOnRolloverEnabled"))
         assertEquals("", snapshot.getValue("relatedFilesText"))
+        assertEquals("edit", snapshot.getValue("relatedFilesIconId"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"), snapshot.getValue("relatedFilesTooltip"))
         assertEquals("true", snapshot.getValue("relatedFilesHasIcon"))
         assertEquals("true", snapshot.getValue("relatedFilesRolloverEnabled"))
-        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.verification.button"), snapshot.getValue("verificationText"))
+        assertEquals("", snapshot.getValue("verificationText"))
+        assertEquals("add", snapshot.getValue("verificationIconId"))
+        assertEquals("true", snapshot.getValue("verificationHasIcon"))
+        assertEquals("true", snapshot.getValue("verificationRolloverEnabled"))
         assertEquals("true", snapshot.getValue("verificationEnabled"))
         assertEquals("true", snapshot.getValue("applyEnabled"))
         assertEquals("true", snapshot.getValue("dependsOnEnabled"))
@@ -89,7 +109,8 @@ class SpecWorkflowTasksPanelTest {
 
         panel.selectTaskForTest("T-010")
         val snapshot = panel.snapshotForTest()
-        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.execute.done"), snapshot.getValue("executeText"))
+        assertEquals("", snapshot.getValue("executeText"))
+        assertEquals("complete", snapshot.getValue("executeIconId"))
         assertEquals("false", snapshot.getValue("executeEnabled"))
         assertEquals("false", snapshot.getValue("applyEnabled"))
         assertEquals("false", snapshot.getValue("dependsOnEnabled"))
@@ -161,6 +182,39 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
+    fun `updateTasks should derive in progress from active execution run`() {
+        val panel = SpecWorkflowTasksPanel()
+
+        panel.updateTasks(
+            workflowId = "wf-run",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-010",
+                    title = "Derived progress",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-10",
+                        taskId = "T-010",
+                        status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-13T12:00:00Z",
+                    ),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        panel.selectTaskForTest("T-010")
+        val snapshot = panel.snapshotForTest()
+
+        assertTrue(snapshot.getValue("tasks").contains("T-010:IN_PROGRESS:P0"))
+        assertEquals("", snapshot.getValue("executeText"))
+        assertEquals("complete", snapshot.getValue("executeIconId"))
+        assertEquals("true", snapshot.getValue("executeEnabled"))
+    }
+
+    @Test
     fun `updateTasks should show resume and verification edit presentation for blocked verified tasks`() {
         val panel = SpecWorkflowTasksPanel()
 
@@ -186,9 +240,11 @@ class SpecWorkflowTasksPanelTest {
         panel.selectTaskForTest("T-100")
         val snapshot = panel.snapshotForTest()
 
-        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"), snapshot.getValue("executeText"))
+        assertEquals("", snapshot.getValue("executeText"))
+        assertEquals("refresh", snapshot.getValue("executeIconId"))
         assertEquals("true", snapshot.getValue("executeEnabled"))
-        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.verification.edit"), snapshot.getValue("verificationText"))
+        assertEquals("", snapshot.getValue("verificationText"))
+        assertEquals("edit", snapshot.getValue("verificationIconId"))
         assertEquals("true", snapshot.getValue("verificationEnabled"))
         assertFalse(snapshot.getValue("verificationTooltip").isBlank())
     }

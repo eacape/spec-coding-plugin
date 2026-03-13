@@ -22,7 +22,6 @@ import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
 import com.eacape.speccodingplugin.worktree.WorktreeStatus
-import com.intellij.icons.AllIcons
 import com.intellij.CommonBundle
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -236,7 +235,7 @@ class SpecWorkflowPanel(
 
         configureToolbarIconButton(
             button = backToListButton,
-            icon = AllIcons.Actions.Back,
+            icon = SpecWorkflowIcons.Back,
             tooltipKey = "spec.workflow.backToList",
         )
         styleToolbarButton(backToListButton)
@@ -713,14 +712,10 @@ class SpecWorkflowPanel(
         button.isOpaque = true
         button.foreground = BUTTON_FG
         SpecUiStyle.applyRoundRect(button, arc = 10)
-        installToolbarButtonCursorTracking(button)
         if (iconOnly) {
-            installToolbarIconButtonStateTracking(button)
-            applyToolbarIconButtonVisualState(button)
-            val size = JBUI.scale(22)
-            button.preferredSize = JBUI.size(size, size)
-            button.minimumSize = button.preferredSize
+            SpecUiStyle.styleIconActionButton(button, size = 22, arc = 10)
         } else {
+            installToolbarButtonCursorTracking(button)
             button.background = BUTTON_BG
             button.border = BorderFactory.createCompoundBorder(
                 SpecUiStyle.roundedLineBorder(BUTTON_BORDER, JBUI.scale(10)),
@@ -739,14 +734,6 @@ class SpecWorkflowPanel(
         }
     }
 
-    private fun installToolbarIconButtonStateTracking(button: JButton) {
-        if (button.getClientProperty("spec.toolbar.iconStyleInstalled") == true) return
-        button.putClientProperty("spec.toolbar.iconStyleInstalled", true)
-        button.isRolloverEnabled = true
-        button.addChangeListener { applyToolbarIconButtonVisualState(button) }
-        button.addPropertyChangeListener("enabled") { applyToolbarIconButtonVisualState(button) }
-    }
-
     private fun installToolbarButtonCursorTracking(button: JButton) {
         if (button.getClientProperty("spec.toolbar.cursorTrackingInstalled") == true) return
         button.putClientProperty("spec.toolbar.cursorTrackingInstalled", true)
@@ -762,57 +749,35 @@ class SpecWorkflowPanel(
         }
     }
 
-    private fun applyToolbarIconButtonVisualState(button: JButton) {
-        val model = button.model
-        val background = when {
-            !button.isEnabled -> ICON_BUTTON_BG_DISABLED
-            model.isPressed || model.isSelected -> ICON_BUTTON_BG_ACTIVE
-            model.isRollover -> ICON_BUTTON_BG_HOVER
-            else -> ICON_BUTTON_BG
-        }
-        val borderColor = when {
-            !button.isEnabled -> ICON_BUTTON_BORDER_DISABLED
-            model.isPressed || model.isSelected -> ICON_BUTTON_BORDER_ACTIVE
-            model.isRollover -> ICON_BUTTON_BORDER_HOVER
-            else -> ICON_BUTTON_BORDER
-        }
-        val borderThickness = if (model.isPressed || model.isSelected) JBUI.scale(2) else 1
-        button.background = background
-        button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10), thickness = borderThickness),
-            JBUI.Borders.empty(1, 1, 1, 1),
-        )
-    }
-
     private fun applyToolbarButtonPresentation() {
         configureToolbarIconButton(
             button = refreshButton,
-            icon = AllIcons.General.InlineRefresh,
+            icon = SpecWorkflowIcons.Refresh,
             tooltipKey = "spec.workflow.refresh",
         )
         configureToolbarIconButton(
             button = createWorktreeButton,
-            icon = WORKFLOW_ICON_CREATE_WORKTREE,
+            icon = SpecWorkflowIcons.Branch,
             tooltipKey = "spec.workflow.createWorktree",
         )
         configureToolbarIconButton(
             button = mergeWorktreeButton,
-            icon = WORKFLOW_ICON_MERGE_WORKTREE,
+            icon = SpecWorkflowIcons.Complete,
             tooltipKey = "spec.workflow.mergeWorktree",
         )
         configureToolbarIconButton(
             button = deltaButton,
-            icon = WORKFLOW_ICON_DELTA,
+            icon = SpecWorkflowIcons.History,
             tooltipKey = "spec.workflow.delta",
         )
         configureToolbarIconButton(
             button = codeGraphButton,
-            icon = WORKFLOW_ICON_GRAPH,
+            icon = SpecWorkflowIcons.OpenToolWindow,
             tooltipKey = "spec.workflow.codeGraph",
         )
         configureToolbarIconButton(
             button = archiveButton,
-            icon = WORKFLOW_ICON_ARCHIVE,
+            icon = SpecWorkflowIcons.Save,
             tooltipKey = "spec.workflow.archive",
         )
     }
@@ -1504,15 +1469,16 @@ class SpecWorkflowPanel(
                     )
                     detailPanel.updateWorkflow(wf)
                     tasksResult.onSuccess { tasks ->
+                        val decoratedTasks = tasks.attachActiveExecutionRuns(wf.taskExecutionRuns)
                         tasksPanel.updateTasks(
                             workflowId = workflowId,
-                            tasks = tasks,
+                            tasks = decoratedTasks,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
-                            tasks = tasks,
+                            tasks = decoratedTasks,
                             verifyDeltaState = snapshot.verifyDeltaState,
                             gateResult = snapshot.gateResult,
                         )
@@ -2775,6 +2741,13 @@ class SpecWorkflowPanel(
                         auditContext = auditContext,
                     )
                 }
+                if (existingTask?.awaitingCompletionConfirmation == true) {
+                    specTaskExecutionService.resolveWaitingConfirmationRun(
+                        workflowId = workflowId,
+                        taskId = taskId,
+                        summary = "Completed from spec workflow task action.",
+                    )
+                }
                 specTasksService.transitionStatus(
                     workflowId = workflowId,
                     taskId = taskId,
@@ -2906,6 +2879,10 @@ class SpecWorkflowPanel(
             put("focusedStage", workbenchState?.focusedStage?.name ?: "")
             put("documentBinding", binding?.fileName ?: binding?.title.orEmpty())
             put("documentSummary", summary)
+            put("taskLifecycleStatus", task?.status?.name ?: "")
+            put("taskDisplayStatus", task?.displayStatus?.name ?: "")
+            put("taskExecutionRunId", task?.activeExecutionRun?.runId ?: "")
+            put("taskExecutionRunStatus", task?.activeExecutionRun?.status?.name ?: "")
             put("dependsOn", task?.dependsOn?.joinToString(", ").orEmpty())
         }.filterValues { value -> value.isNotBlank() }
     }
@@ -3643,15 +3620,16 @@ class SpecWorkflowPanel(
                     )
                     detailPanel.updateWorkflow(wf, followCurrentPhase = followCurrentPhase)
                     tasksResult.onSuccess { tasks ->
+                        val decoratedTasks = tasks.attachActiveExecutionRuns(wf.taskExecutionRuns)
                         tasksPanel.updateTasks(
                             workflowId = wf.id,
-                            tasks = tasks,
+                            tasks = decoratedTasks,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
-                            tasks = tasks,
+                            tasks = decoratedTasks,
                             verifyDeltaState = snapshot.verifyDeltaState,
                             gateResult = snapshot.gateResult,
                         )
@@ -4045,6 +4023,24 @@ class SpecWorkflowPanel(
 
     internal fun tasksSnapshotForTest(): Map<String, String> = tasksPanel.snapshotForTest()
 
+    internal fun toolbarSnapshotForTest(): Map<String, String> {
+        fun snapshot(button: JButton) = mapOf(
+            "text" to button.text.orEmpty(),
+            "iconId" to SpecWorkflowIcons.debugId(button.icon),
+            "tooltip" to button.toolTipText.orEmpty(),
+            "enabled" to button.isEnabled.toString(),
+            "visible" to button.isVisible.toString(),
+        )
+
+        return buildMap {
+            snapshot(backToListButton).forEach { (key, value) -> put("back.$key", value) }
+            snapshot(refreshButton).forEach { (key, value) -> put("refresh.$key", value) }
+            snapshot(deltaButton).forEach { (key, value) -> put("delta.$key", value) }
+            snapshot(codeGraphButton).forEach { (key, value) -> put("codeGraph.$key", value) }
+            snapshot(archiveButton).forEach { (key, value) -> put("archive.$key", value) }
+        }
+    }
+
     internal fun selectedDocumentPhaseForTest(): String? = detailPanel.selectedPhaseNameForTest()
 
     internal fun currentDocumentPreviewTextForTest(): String = detailPanel.currentPreviewTextForTest()
@@ -4089,14 +4085,6 @@ class SpecWorkflowPanel(
         private val WORKSPACE_WARNING_CHIP_FG = JBColor(Color(140, 96, 28), Color(239, 210, 146))
         private val WORKSPACE_ERROR_CHIP_FG = JBColor(Color(152, 52, 52), Color(244, 182, 182))
         private val WORKSPACE_MUTED_CHIP_FG = JBColor(Color(98, 109, 126), Color(173, 181, 194))
-        private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
-        private val ICON_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(104, 116, 134))
-        private val ICON_BUTTON_BG_HOVER = JBColor(Color(236, 246, 255), Color(76, 86, 100))
-        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(124, 167, 229), Color(124, 158, 205))
-        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 255), Color(84, 97, 116))
-        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(89, 136, 208), Color(143, 182, 232))
-        private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
-        private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
@@ -4113,11 +4101,6 @@ class SpecWorkflowPanel(
         private val DETAIL_SECTION_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
         private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
         private const val WORKSPACE_SECTION_CARD_PADDING = 12
-        private val WORKFLOW_ICON_CREATE_WORKTREE = IconLoader.getIcon("/icons/spec-workflow-create-worktree.svg", SpecWorkflowPanel::class.java)
-        private val WORKFLOW_ICON_MERGE_WORKTREE = IconLoader.getIcon("/icons/spec-workflow-merge-worktree.svg", SpecWorkflowPanel::class.java)
-        private val WORKFLOW_ICON_DELTA = IconLoader.getIcon("/icons/spec-workflow-diff.svg", SpecWorkflowPanel::class.java)
-        private val WORKFLOW_ICON_GRAPH = IconLoader.getIcon("/icons/spec-workflow-graphql-tool-window.svg", SpecWorkflowPanel::class.java)
-        private val WORKFLOW_ICON_ARCHIVE = IconLoader.getIcon("/icons/spec-workflow-archive.svg", SpecWorkflowPanel::class.java)
         private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")

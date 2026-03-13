@@ -8,7 +8,6 @@ import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.ui.chat.MarkdownRenderer
-import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -484,67 +483,67 @@ class SpecDetailPanel(
     private fun applyActionButtonPresentation() {
         configureIconActionButton(
             button = generateButton,
-            icon = SPEC_DETAIL_GENERATE_ICON,
+            icon = SpecWorkflowIcons.Execute,
             tooltipKey = "spec.detail.generate",
         )
         configureIconActionButton(
             button = nextPhaseButton,
-            icon = AllIcons.General.ArrowRight,
+            icon = SpecWorkflowIcons.Advance,
             tooltipKey = "spec.detail.nextPhase",
         )
         configureIconActionButton(
             button = goBackButton,
-            icon = AllIcons.General.ArrowLeft,
+            icon = SpecWorkflowIcons.Back,
             tooltipKey = "spec.detail.goBack",
         )
         configureIconActionButton(
             button = completeButton,
-            icon = AllIcons.General.GreenCheckmark,
+            icon = SpecWorkflowIcons.Complete,
             tooltipKey = "spec.detail.complete",
         )
         configureIconActionButton(
             button = openEditorButton,
-            icon = AllIcons.General.OpenInToolWindow,
+            icon = SpecWorkflowIcons.OpenToolWindow,
             tooltipKey = "spec.detail.openInEditor",
         )
         configureIconActionButton(
             button = historyDiffButton,
-            icon = AllIcons.Vcs.HistoryInline,
+            icon = SpecWorkflowIcons.History,
             tooltipKey = "spec.detail.historyDiff",
         )
         configureIconActionButton(
             button = editButton,
-            icon = AllIcons.General.Inline_edit,
+            icon = SpecWorkflowIcons.Edit,
             tooltipKey = "spec.detail.edit",
         )
         configureIconActionButton(
             button = saveButton,
-            icon = AllIcons.General.OpenDisk,
+            icon = SpecWorkflowIcons.Save,
             tooltipKey = "spec.detail.save",
         )
         configureIconActionButton(
             button = cancelEditButton,
-            icon = AllIcons.Actions.Close,
+            icon = SpecWorkflowIcons.Close,
             tooltipKey = "spec.detail.cancel",
         )
         configureIconActionButton(
             button = confirmGenerateButton,
-            icon = SPEC_DETAIL_GENERATE_ICON,
+            icon = SpecWorkflowIcons.Execute,
             tooltipKey = "spec.detail.clarify.confirmGenerate",
         )
         configureIconActionButton(
             button = regenerateClarificationButton,
-            icon = AllIcons.General.InlineRefresh,
+            icon = SpecWorkflowIcons.Refresh,
             tooltipKey = "spec.detail.clarify.regenerate",
         )
         configureIconActionButton(
             button = skipClarificationButton,
-            icon = AllIcons.Actions.Forward,
+            icon = SpecWorkflowIcons.Forward,
             tooltipKey = "spec.detail.clarify.skip",
         )
         configureIconActionButton(
             button = cancelClarificationButton,
-            icon = AllIcons.Actions.Close,
+            icon = SpecWorkflowIcons.Close,
             tooltipKey = "spec.detail.clarify.cancel",
         )
         updatePauseResumeButtonPresentation(currentWorkflow?.status)
@@ -562,7 +561,7 @@ class SpecDetailPanel(
     private fun updatePauseResumeButtonPresentation(status: WorkflowStatus?) {
         val isPaused = status == WorkflowStatus.PAUSED
         val tooltipKey = if (isPaused) "spec.detail.resume" else "spec.detail.pause"
-        val icon = if (isPaused) AllIcons.Actions.Resume else AllIcons.General.InspectionsPause
+        val icon = if (isPaused) SpecWorkflowIcons.Resume else SpecWorkflowIcons.Pause
         configureIconActionButton(
             button = pauseResumeButton,
             icon = icon,
@@ -1262,11 +1261,7 @@ class SpecDetailPanel(
         button.foreground = BUTTON_FG
         SpecUiStyle.applyRoundRect(button, arc = 10)
         if (iconOnly) {
-            installActionIconButtonStateTracking(button)
-            applyActionIconButtonVisualState(button)
-            val size = JBUI.scale(22)
-            button.preferredSize = JBUI.size(size, size)
-            button.minimumSize = button.preferredSize
+            SpecUiStyle.styleIconActionButton(button, size = 22, arc = 10)
         } else {
             button.background = BUTTON_BG
             button.border = BorderFactory.createCompoundBorder(
@@ -1285,39 +1280,6 @@ class SpecDetailPanel(
             button.minimumSize = button.preferredSize
         }
         updateButtonCursor(button)
-    }
-
-    private fun installActionIconButtonStateTracking(button: JButton) {
-        if (button.getClientProperty("spec.detail.iconStyleInstalled") == true) return
-        button.putClientProperty("spec.detail.iconStyleInstalled", true)
-        button.isRolloverEnabled = true
-        button.addChangeListener { applyActionIconButtonVisualState(button) }
-        button.addPropertyChangeListener("enabled") {
-            applyActionIconButtonVisualState(button)
-            updateButtonCursor(button)
-        }
-    }
-
-    private fun applyActionIconButtonVisualState(button: JButton) {
-        val model = button.model
-        val background = when {
-            !button.isEnabled -> ICON_BUTTON_BG_DISABLED
-            model.isPressed || model.isSelected -> ICON_BUTTON_BG_ACTIVE
-            model.isRollover -> ICON_BUTTON_BG_HOVER
-            else -> ICON_BUTTON_BG
-        }
-        val borderColor = when {
-            !button.isEnabled -> ICON_BUTTON_BORDER_DISABLED
-            model.isPressed || model.isSelected -> ICON_BUTTON_BORDER_ACTIVE
-            model.isRollover -> ICON_BUTTON_BORDER_HOVER
-            else -> ICON_BUTTON_BORDER
-        }
-        val borderThickness = if (model.isPressed || model.isSelected) JBUI.scale(2) else 1
-        button.background = background
-        button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(borderColor, JBUI.scale(10), thickness = borderThickness),
-            JBUI.Borders.empty(1, 1, 1, 1),
-        )
     }
 
     private fun updateButtonCursor(button: JButton) {
@@ -3675,17 +3637,28 @@ class SpecDetailPanel(
     internal fun buttonStatesForTest(): Map<String, Any> {
         return mapOf(
             "generateEnabled" to generateButton.isEnabled,
+            "generateIconId" to SpecWorkflowIcons.debugId(generateButton.icon),
             "nextEnabled" to nextPhaseButton.isEnabled,
+            "nextIconId" to SpecWorkflowIcons.debugId(nextPhaseButton.icon),
             "goBackEnabled" to goBackButton.isEnabled,
+            "goBackIconId" to SpecWorkflowIcons.debugId(goBackButton.icon),
             "completeEnabled" to completeButton.isEnabled,
+            "completeIconId" to SpecWorkflowIcons.debugId(completeButton.icon),
             "pauseResumeEnabled" to pauseResumeButton.isEnabled,
+            "pauseResumeIconId" to SpecWorkflowIcons.debugId(pauseResumeButton.icon),
             "pauseResumeText" to (pauseResumeButton.toolTipText ?: pauseResumeButton.text),
             "openEditorEnabled" to openEditorButton.isEnabled,
+            "openEditorIconId" to SpecWorkflowIcons.debugId(openEditorButton.icon),
             "historyDiffEnabled" to historyDiffButton.isEnabled,
+            "historyDiffIconId" to SpecWorkflowIcons.debugId(historyDiffButton.icon),
             "confirmGenerateEnabled" to confirmGenerateButton.isEnabled,
+            "confirmGenerateIconId" to SpecWorkflowIcons.debugId(confirmGenerateButton.icon),
             "regenerateClarificationEnabled" to regenerateClarificationButton.isEnabled,
+            "regenerateClarificationIconId" to SpecWorkflowIcons.debugId(regenerateClarificationButton.icon),
             "skipClarificationEnabled" to skipClarificationButton.isEnabled,
+            "skipClarificationIconId" to SpecWorkflowIcons.debugId(skipClarificationButton.icon),
             "cancelClarificationEnabled" to cancelClarificationButton.isEnabled,
+            "cancelClarificationIconId" to SpecWorkflowIcons.debugId(cancelClarificationButton.icon),
         )
     }
 
@@ -3942,14 +3915,6 @@ class SpecDetailPanel(
         private val TREE_STATUS_DRAFT_TEXT_SELECTED = JBColor(Color(124, 102, 77), Color(246, 223, 187))
         private val TREE_STATUS_PENDING_TEXT = JBColor(Color(120, 132, 149), Color(196, 210, 230))
         private val TREE_STATUS_PENDING_TEXT_SELECTED = JBColor(Color(100, 113, 131), Color(215, 224, 239))
-        private val ICON_BUTTON_BG = JBColor(Color(246, 250, 255), Color(68, 75, 87))
-        private val ICON_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(104, 116, 134))
-        private val ICON_BUTTON_BG_HOVER = JBColor(Color(236, 246, 255), Color(76, 86, 100))
-        private val ICON_BUTTON_BORDER_HOVER = JBColor(Color(124, 167, 229), Color(124, 158, 205))
-        private val ICON_BUTTON_BG_ACTIVE = JBColor(Color(226, 239, 255), Color(84, 97, 116))
-        private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(89, 136, 208), Color(143, 182, 232))
-        private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
-        private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
         private val BUTTON_BG = JBColor(Color(239, 246, 255), Color(64, 70, 81))
         private val BUTTON_BORDER = JBColor(Color(179, 197, 224), Color(102, 114, 132))
         private val BUTTON_FG = JBColor(Color(44, 68, 108), Color(204, 216, 236))
@@ -3965,7 +3930,6 @@ class SpecDetailPanel(
         private val DOCUMENT_TAB_TEXT_AVAILABLE = JBColor(Color(69, 92, 126), Color(210, 222, 238))
         private val DOCUMENT_TAB_TEXT_CURRENT = JBColor(Color(45, 79, 128), Color(223, 233, 246))
         private val DOCUMENT_TAB_TEXT_SELECTED = JBColor(Color(34, 68, 113), Color(236, 242, 251))
-        private val SPEC_DETAIL_GENERATE_ICON = IconLoader.getIcon("/icons/spec-detail-generate-run-all.svg", SpecDetailPanel::class.java)
         private val SECTION_TITLE_FG = JBColor(Color(36, 60, 101), Color(212, 223, 241))
         private val COLLAPSE_TOGGLE_TEXT_ACTIVE = JBColor(Color(86, 115, 158), Color(187, 205, 230))
         private const val MAX_PROCESS_TIMELINE_ENTRIES = 18

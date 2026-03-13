@@ -478,7 +478,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         tasks: List<StructuredTask>,
     ): List<String> {
         val completedCount = tasks.count { it.status == TaskStatus.COMPLETED }
-        val inProgressCount = tasks.count { it.status == TaskStatus.IN_PROGRESS }
+        val inProgressCount = tasks.count { it.displayStatus == TaskStatus.IN_PROGRESS }
         val tasksLine = when {
             !workflow.documents.containsKey(SpecPhase.IMPLEMENT) -> artifactStateLine("tasks.md", false)
             tasks.isEmpty() -> SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.tasks.none")
@@ -498,8 +498,10 @@ internal object SpecWorkflowStageWorkbenchBuilder {
 
     private fun buildImplementFocusDetails(tasks: List<StructuredTask>): List<String> {
         val completedCount = tasks.count { it.status == TaskStatus.COMPLETED }
-        val inProgressCount = tasks.count { it.status == TaskStatus.IN_PROGRESS }
-        val pendingCount = tasks.count { it.status == TaskStatus.PENDING || it.status == TaskStatus.BLOCKED }
+        val inProgressCount = tasks.count { it.displayStatus == TaskStatus.IN_PROGRESS }
+        val pendingCount = tasks.count { task ->
+            task.displayStatus == TaskStatus.PENDING || task.displayStatus == TaskStatus.BLOCKED
+        }
         val tasksLine = if (tasks.isEmpty()) {
             SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.implement.none")
         } else {
@@ -921,7 +923,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
             }
 
             StageId.IMPLEMENT -> {
-                val hasExecutionInFlight = tasks.any { it.status == TaskStatus.IN_PROGRESS }
+                val hasExecutionInFlight = tasks.any(StructuredTask::hasExecutionInFlight)
                 val allWorkSettled = tasks.isNotEmpty() && tasks.all(::isImplementationTaskSettled)
                 val relatedFilesConfirmed = completedTasks.isEmpty() || completedTasks.all { task ->
                     task.relatedFiles.isNotEmpty()
@@ -1056,7 +1058,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
             return null
         }
         val tasksById = tasks.associateBy(StructuredTask::id)
-        val focusedTask = tasks.firstOrNull { it.status == TaskStatus.IN_PROGRESS }
+        val focusedTask = tasks.firstOrNull { it.displayStatus == TaskStatus.IN_PROGRESS }
             ?: tasks.firstOrNull { task ->
                 task.status == TaskStatus.PENDING && dependenciesCompleted(task, tasksById)
             }
@@ -1067,7 +1069,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         return SpecWorkflowImplementationFocus(
             taskId = focusedTask.id,
             title = focusedTask.title,
-            status = focusedTask.status,
+            status = focusedTask.displayStatus,
         )
     }
 

@@ -7,7 +7,6 @@ import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
 import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
-import com.intellij.icons.AllIcons
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
@@ -16,7 +15,6 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
-import java.awt.Cursor
 import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.GridBagConstraints
@@ -29,6 +27,7 @@ import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
+import javax.swing.Icon
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
@@ -54,6 +53,7 @@ internal class SpecWorkflowOverviewPanel(
     private val primaryActionButton = JButton().apply {
         isFocusable = false
         addActionListener { currentWorkbenchState?.primaryAction?.let(onWorkbenchActionRequested) }
+        SpecUiStyle.styleIconActionButton(this, size = 24, arc = 12)
     }
     private val overflowActionsButton = JButton().apply {
         isFocusable = false
@@ -214,9 +214,13 @@ internal class SpecWorkflowOverviewPanel(
             "primaryActionVisible" to primaryActionButton.isVisible.toString(),
             "primaryActionEnabled" to primaryActionButton.isEnabled.toString(),
             "primaryActionText" to primaryActionButton.text.orEmpty(),
+            "primaryActionIconId" to SpecWorkflowIcons.debugId(primaryActionButton.icon),
+            "primaryActionHasIcon" to (primaryActionButton.icon != null).toString(),
+            "primaryActionRolloverEnabled" to primaryActionButton.isRolloverEnabled.toString(),
             "primaryActionTooltip" to primaryActionButton.toolTipText.orEmpty(),
             "overflowEnabled" to overflowActionsButton.isEnabled.toString(),
             "overflowVisible" to overflowActionsButton.isVisible.toString(),
+            "overflowIconId" to SpecWorkflowIcons.debugId(overflowActionsButton.icon),
             "overflowTooltip" to overflowActionsButton.toolTipText.orEmpty(),
             "overflowActions" to currentWorkbenchState
                 ?.overflowActions
@@ -262,7 +266,6 @@ internal class SpecWorkflowOverviewPanel(
             }
             blockersPanel.add(label)
         }
-        stylePrimaryActionButton(primaryActionButton)
         gateChipLabel.horizontalAlignment = SwingConstants.LEFT
         gateChipLabel.verticalAlignment = SwingConstants.TOP
         gateChipLabel.border = JBUI.Borders.empty()
@@ -595,16 +598,22 @@ internal class SpecWorkflowOverviewPanel(
             primaryActionButton.isVisible = false
             primaryActionButton.isEnabled = false
             primaryActionButton.text = ""
+            primaryActionButton.icon = null
+            primaryActionButton.disabledIcon = null
             primaryActionButton.toolTipText = null
             return
         }
+        val tooltip = if (action.enabled) action.label else action.disabledReason ?: action.label
+        SpecUiStyle.configureIconActionButton(
+            button = primaryActionButton,
+            icon = primaryActionIcon(action),
+            tooltip = tooltip,
+        )
         primaryActionButton.isVisible = true
         primaryActionButton.isEnabled = action.enabled
-        primaryActionButton.text = action.label
-        primaryActionButton.toolTipText = if (action.enabled) action.label else action.disabledReason ?: action.label
-        primaryActionButton.accessibleContext?.accessibleName = action.label
+        primaryActionButton.accessibleContext?.accessibleName = tooltip
         primaryActionButton.accessibleContext?.accessibleDescription =
-            if (action.enabled) action.label else action.disabledReason ?: action.label
+            tooltip
     }
 
     private fun updateOverflowActions(actions: List<SpecWorkflowWorkbenchAction>) {
@@ -645,7 +654,7 @@ internal class SpecWorkflowOverviewPanel(
     private fun applyTemplateButtonPresentation() {
         SpecUiStyle.configureIconActionButton(
             button = templateCloneButton,
-            icon = AllIcons.Actions.Copy,
+            icon = SpecWorkflowIcons.Clone,
             tooltip = SpecCodingBundle.message("spec.toolwindow.overview.template.clone"),
         )
     }
@@ -653,9 +662,22 @@ internal class SpecWorkflowOverviewPanel(
     private fun applyOverflowButtonPresentation() {
         SpecUiStyle.configureIconActionButton(
             button = overflowActionsButton,
-            icon = OVERFLOW_ICON,
+            icon = SpecWorkflowIcons.Overflow,
             tooltip = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
         )
+    }
+
+    private fun primaryActionIcon(action: SpecWorkflowWorkbenchAction): Icon {
+        return when (action.kind) {
+            SpecWorkflowWorkbenchActionKind.ADVANCE -> SpecWorkflowIcons.Advance
+            SpecWorkflowWorkbenchActionKind.START_TASK -> SpecWorkflowIcons.Execute
+            SpecWorkflowWorkbenchActionKind.RESUME_TASK -> SpecWorkflowIcons.Refresh
+            SpecWorkflowWorkbenchActionKind.COMPLETE_TASK -> SpecWorkflowIcons.Complete
+            SpecWorkflowWorkbenchActionKind.RUN_VERIFY -> SpecWorkflowIcons.Execute
+            SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW -> SpecWorkflowIcons.Complete
+            SpecWorkflowWorkbenchActionKind.ARCHIVE_WORKFLOW -> SpecWorkflowIcons.Save
+            else -> SpecWorkflowIcons.Overflow
+        }
     }
 
     private fun workflowStatusText(status: WorkflowStatus): String {
@@ -744,23 +766,6 @@ internal class SpecWorkflowOverviewPanel(
         }
     }
 
-    private fun stylePrimaryActionButton(button: JButton) {
-        button.isFocusable = false
-        button.isFocusPainted = false
-        button.isContentAreaFilled = true
-        button.isOpaque = true
-        button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        button.margin = JBUI.insets(1, 8, 1, 8)
-        button.foreground = PRIMARY_ACTION_FG
-        button.background = PRIMARY_ACTION_BG
-        button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(PRIMARY_ACTION_BORDER, JBUI.scale(10)),
-            JBUI.Borders.empty(2, 6, 2, 6),
-        )
-        SpecUiStyle.applyRoundRect(button, arc = 10)
-        button.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-    }
-
     companion object {
         private val REFRESHED_AT_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
         private val KEY_TEXT_FG = JBColor(Color(110, 118, 131), Color(140, 149, 163))
@@ -774,10 +779,6 @@ internal class SpecWorkflowOverviewPanel(
         private val BLOCKER_FG = JBColor(Color(161, 73, 73), Color(244, 203, 203))
         private val CARD_BG = JBColor(Color(250, 252, 255), Color(55, 61, 71))
         private val CARD_BORDER = JBColor(Color(209, 220, 237), Color(85, 96, 111))
-        private val PRIMARY_ACTION_BG = JBColor(Color(237, 245, 255), Color(68, 79, 96))
-        private val PRIMARY_ACTION_BORDER = JBColor(Color(127, 168, 230), Color(124, 158, 205))
-        private val PRIMARY_ACTION_FG = JBColor(Color(40, 72, 129), Color(219, 229, 244))
-        private val OVERFLOW_ICON = AllIcons.General.GearPlain
         private val PASS_FG = JBColor(Color(39, 94, 57), Color(194, 232, 204))
         private val WARN_FG = JBColor(Color(150, 96, 0), Color(245, 212, 152))
         private val ERROR_FG = JBColor(Color(166, 53, 60), Color(250, 196, 200))

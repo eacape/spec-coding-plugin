@@ -154,14 +154,37 @@ class WorkflowDomainModelsTest {
 
     @Test
     fun `task status should follow state machine`() {
-        assertTrue(TaskStatus.PENDING.canTransitionTo(TaskStatus.IN_PROGRESS))
+        assertTrue(TaskStatus.PENDING.canTransitionTo(TaskStatus.BLOCKED))
+        assertTrue(TaskStatus.PENDING.canTransitionTo(TaskStatus.COMPLETED))
         assertTrue(TaskStatus.PENDING.canTransitionTo(TaskStatus.CANCELLED))
+        assertTrue(TaskStatus.IN_PROGRESS.canTransitionTo(TaskStatus.PENDING))
         assertTrue(TaskStatus.IN_PROGRESS.canTransitionTo(TaskStatus.BLOCKED))
-        assertTrue(TaskStatus.BLOCKED.canTransitionTo(TaskStatus.IN_PROGRESS))
+        assertTrue(TaskStatus.BLOCKED.canTransitionTo(TaskStatus.PENDING))
 
-        assertFalse(TaskStatus.PENDING.canTransitionTo(TaskStatus.COMPLETED))
+        assertFalse(TaskStatus.PENDING.canTransitionTo(TaskStatus.IN_PROGRESS))
         assertFalse(TaskStatus.COMPLETED.canTransitionTo(TaskStatus.IN_PROGRESS))
         assertFalse(TaskStatus.CANCELLED.canTransitionTo(TaskStatus.PENDING))
+    }
+
+    @Test
+    fun `structured task should derive in progress from active execution run`() {
+        val task = StructuredTask(
+            id = "T-001",
+            title = "Demo",
+            status = TaskStatus.PENDING,
+            priority = TaskPriority.P1,
+            activeExecutionRun = TaskExecutionRun(
+                runId = "run-1",
+                taskId = "T-001",
+                status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                trigger = ExecutionTrigger.USER_EXECUTE,
+                startedAt = "2026-03-13T12:00:00Z",
+            ),
+        )
+
+        assertEquals(TaskStatus.IN_PROGRESS, task.displayStatus)
+        assertTrue(task.hasExecutionInFlight)
+        assertTrue(task.awaitingCompletionConfirmation)
     }
 
     @Test
