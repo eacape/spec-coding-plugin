@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.VerificationConclusion
 import com.eacape.speccodingplugin.spec.VerifyRunHistoryEntry
@@ -89,5 +90,42 @@ class SpecWorkflowVerifyDeltaPanelTest {
         assertFalse(snapshot.getValue("openTooltip").isBlank())
         assertFalse(snapshot.getValue("compareTooltip").isBlank())
         assertFalse(snapshot.getValue("pinTooltip").isBlank())
+        assertEquals(snapshot.getValue("runTooltip"), snapshot.getValue("runAccessibleDescription"))
+        assertEquals(snapshot.getValue("openTooltip"), snapshot.getValue("openAccessibleDescription"))
+        assertEquals(snapshot.getValue("compareTooltip"), snapshot.getValue("compareAccessibleDescription"))
+        assertEquals(snapshot.getValue("pinTooltip"), snapshot.getValue("pinAccessibleDescription"))
+    }
+
+    @Test
+    fun `verify panel should expose disabled reasons for unavailable icon actions`() {
+        val panel = SpecWorkflowVerifyDeltaPanel(showHeader = false)
+
+        panel.updateState(
+            SpecWorkflowVerifyDeltaState(
+                workflowId = "wf-verify",
+                verifyEnabled = false,
+                verificationDocumentAvailable = false,
+                verificationHistory = emptyList(),
+                baselineChoices = emptyList(),
+                preferredBaselineChoiceId = null,
+                canPinBaseline = false,
+                refreshedAtMillis = 1_710_000_000_000,
+            ),
+        )
+
+        val snapshot = panel.snapshotForTest()
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.verifyDelta.run.disabled.verifyOff"),
+            snapshot.getValue("runTooltip"),
+        )
+        assertEquals(
+            "${SpecCodingBundle.message("spec.toolwindow.verifyDelta.run")}. " +
+                SpecCodingBundle.message("spec.toolwindow.verifyDelta.run.disabled.verifyOff"),
+            snapshot.getValue("runAccessibleDescription"),
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare.disabled.noBaseline"),
+            snapshot.getValue("compareTooltip"),
+        )
     }
 }

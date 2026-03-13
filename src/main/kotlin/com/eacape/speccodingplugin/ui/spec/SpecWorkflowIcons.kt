@@ -1,50 +1,97 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.spec.TaskStatus
 import com.intellij.icons.AllIcons
 import javax.swing.Icon
 
+internal enum class SpecWorkflowActionIcon(
+    val debugId: String,
+    val icon: Icon,
+) {
+    ADVANCE("advance", AllIcons.General.ArrowRight),
+    EXECUTE("execute", AllIcons.Actions.Execute),
+    RETRY("refresh", AllIcons.General.InlineRefresh),
+    COMPLETE("complete", AllIcons.General.GreenCheckmark),
+    PAUSE("pause", AllIcons.General.InspectionsPause),
+    RESUME("resume", AllIcons.Actions.Resume),
+    OPEN_DOCUMENT("openDocument", AllIcons.Actions.MenuOpen),
+    HISTORY("history", AllIcons.Vcs.HistoryInline),
+    SAVE("save", AllIcons.General.OpenDisk),
+    EDIT("edit", AllIcons.Actions.Edit),
+    ADD("add", AllIcons.General.Add),
+    BACK("back", AllIcons.Actions.Back),
+    FORWARD("forward", AllIcons.Actions.Forward),
+    CLONE("clone", AllIcons.Actions.Copy),
+    OVERFLOW("overflow", AllIcons.General.GearPlain),
+    CANCEL("close", AllIcons.Actions.Close),
+    BRANCH("branch", AllIcons.Vcs.Branch),
+    OPEN_TOOL_WINDOW("openToolWindow", AllIcons.General.OpenInToolWindow),
+}
+
 internal object SpecWorkflowIcons {
-    val Advance: Icon = AllIcons.General.ArrowRight
-    val Execute: Icon = AllIcons.Actions.Execute
-    val Refresh: Icon = AllIcons.General.InlineRefresh
-    val Complete: Icon = AllIcons.General.GreenCheckmark
-    val Pause: Icon = AllIcons.General.InspectionsPause
-    val Resume: Icon = AllIcons.Actions.Resume
-    val OpenDocument: Icon = AllIcons.Actions.MenuOpen
-    val History: Icon = AllIcons.Vcs.HistoryInline
-    val Save: Icon = AllIcons.General.OpenDisk
-    val Edit: Icon = AllIcons.Actions.Edit
-    val Add: Icon = AllIcons.General.Add
-    val Back: Icon = AllIcons.Actions.Back
-    val Forward: Icon = AllIcons.Actions.Forward
-    val Clone: Icon = AllIcons.Actions.Copy
-    val Overflow: Icon = AllIcons.General.GearPlain
-    val Close: Icon = AllIcons.Actions.Close
-    val Branch: Icon = AllIcons.Vcs.Branch
-    val OpenToolWindow: Icon = AllIcons.General.OpenInToolWindow
+    val Advance: Icon = SpecWorkflowActionIcon.ADVANCE.icon
+    val Execute: Icon = SpecWorkflowActionIcon.EXECUTE.icon
+    val Refresh: Icon = SpecWorkflowActionIcon.RETRY.icon
+    val Complete: Icon = SpecWorkflowActionIcon.COMPLETE.icon
+    val Pause: Icon = SpecWorkflowActionIcon.PAUSE.icon
+    val Resume: Icon = SpecWorkflowActionIcon.RESUME.icon
+    val OpenDocument: Icon = SpecWorkflowActionIcon.OPEN_DOCUMENT.icon
+    val History: Icon = SpecWorkflowActionIcon.HISTORY.icon
+    val Save: Icon = SpecWorkflowActionIcon.SAVE.icon
+    val Edit: Icon = SpecWorkflowActionIcon.EDIT.icon
+    val Add: Icon = SpecWorkflowActionIcon.ADD.icon
+    val Back: Icon = SpecWorkflowActionIcon.BACK.icon
+    val Forward: Icon = SpecWorkflowActionIcon.FORWARD.icon
+    val Clone: Icon = SpecWorkflowActionIcon.CLONE.icon
+    val Overflow: Icon = SpecWorkflowActionIcon.OVERFLOW.icon
+    val Close: Icon = SpecWorkflowActionIcon.CANCEL.icon
+    val Branch: Icon = SpecWorkflowActionIcon.BRANCH.icon
+    val OpenToolWindow: Icon = SpecWorkflowActionIcon.OPEN_TOOL_WINDOW.icon
+
+    fun icon(action: SpecWorkflowActionIcon): Icon = action.icon
+
+    fun workbenchAction(kind: SpecWorkflowWorkbenchActionKind): Icon {
+        return when (kind) {
+            SpecWorkflowWorkbenchActionKind.ADVANCE,
+            SpecWorkflowWorkbenchActionKind.JUMP,
+            -> Advance
+
+            SpecWorkflowWorkbenchActionKind.ROLLBACK -> Back
+            SpecWorkflowWorkbenchActionKind.START_TASK,
+            SpecWorkflowWorkbenchActionKind.RUN_VERIFY,
+            SpecWorkflowWorkbenchActionKind.PREVIEW_VERIFY_PLAN,
+            -> Execute
+
+            SpecWorkflowWorkbenchActionKind.RESUME_TASK -> Refresh
+            SpecWorkflowWorkbenchActionKind.COMPLETE_TASK,
+            SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW,
+            -> Complete
+
+            SpecWorkflowWorkbenchActionKind.OPEN_VERIFICATION -> OpenDocument
+            SpecWorkflowWorkbenchActionKind.SHOW_DELTA -> History
+            SpecWorkflowWorkbenchActionKind.ARCHIVE_WORKFLOW -> Save
+        }
+    }
+
+    fun taskPrimaryAction(displayStatus: TaskStatus): Icon {
+        return when (displayStatus) {
+            TaskStatus.PENDING -> Execute
+            TaskStatus.BLOCKED -> Refresh
+            TaskStatus.IN_PROGRESS,
+            TaskStatus.COMPLETED,
+            -> Complete
+
+            TaskStatus.CANCELLED -> Close
+        }
+    }
 
     fun debugId(icon: Icon?): String {
         return when (icon) {
             null -> ""
-            Advance -> "advance"
-            Execute -> "execute"
-            Refresh -> "refresh"
-            Complete -> "complete"
-            Pause -> "pause"
-            Resume -> "resume"
-            OpenDocument -> "openDocument"
-            History -> "history"
-            Save -> "save"
-            Edit -> "edit"
-            Add -> "add"
-            Back -> "back"
-            Forward -> "forward"
-            Clone -> "clone"
-            Overflow -> "overflow"
-            Close -> "close"
-            Branch -> "branch"
-            OpenToolWindow -> "openToolWindow"
-            else -> icon::class.java.name
+            else -> SpecWorkflowActionIcon.entries
+                .firstOrNull { action -> action.icon == icon }
+                ?.debugId
+                ?: icon::class.java.name
         }
     }
 }

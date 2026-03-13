@@ -54,7 +54,6 @@ class SpecWorkflowTasksPanelTest {
         assertTrue(snapshot.getValue("tasks").contains("T-001:PENDING:P0"))
         assertTrue(snapshot.getValue("tasks").contains("T-002:IN_PROGRESS:P1"))
         assertEquals("T-001", snapshot.getValue("selectedTaskId"))
-        assertEquals("28", snapshot.getValue("statusComboHeight"))
         assertEquals("", snapshot.getValue("executeText"))
         assertEquals("execute", snapshot.getValue("executeIconId"))
         assertEquals("true", snapshot.getValue("executeHasIcon"))
@@ -64,11 +63,27 @@ class SpecWorkflowTasksPanelTest {
             SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", "T-001"),
             snapshot.getValue("executeTooltip"),
         )
-        assertEquals("", snapshot.getValue("applyText"))
-        assertEquals("advance", snapshot.getValue("applyIconId"))
-        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.status.apply"), snapshot.getValue("applyTooltip"))
-        assertEquals("true", snapshot.getValue("applyHasIcon"))
-        assertEquals("true", snapshot.getValue("applyRolloverEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
+            snapshot.getValue("executeAccessibleName"),
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", "T-001"),
+            snapshot.getValue("executeAccessibleDescription"),
+        )
+        assertEquals("", snapshot.getValue("secondaryText"))
+        assertEquals("overflow", snapshot.getValue("secondaryIconId"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.secondary.tooltip", "T-001"),
+            snapshot.getValue("secondaryTooltip"),
+        )
+        assertEquals("true", snapshot.getValue("secondaryHasIcon"))
+        assertEquals("true", snapshot.getValue("secondaryRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("secondaryEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.secondary.button"),
+            snapshot.getValue("secondaryAccessibleName"),
+        )
         assertEquals("", snapshot.getValue("dependsOnText"))
         assertEquals("edit", snapshot.getValue("dependsOnIconId"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.edit"), snapshot.getValue("dependsOnTooltip"))
@@ -84,7 +99,6 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("true", snapshot.getValue("verificationHasIcon"))
         assertEquals("true", snapshot.getValue("verificationRolloverEnabled"))
         assertEquals("true", snapshot.getValue("verificationEnabled"))
-        assertEquals("true", snapshot.getValue("applyEnabled"))
         assertEquals("true", snapshot.getValue("dependsOnEnabled"))
         assertEquals("true", snapshot.getValue("relatedFilesEnabled"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.emptyForWorkflow"), snapshot.getValue("emptyText"))
@@ -112,7 +126,11 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("", snapshot.getValue("executeText"))
         assertEquals("complete", snapshot.getValue("executeIconId"))
         assertEquals("false", snapshot.getValue("executeEnabled"))
-        assertEquals("false", snapshot.getValue("applyEnabled"))
+        assertEquals("false", snapshot.getValue("secondaryEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.secondary.none", "T-010"),
+            snapshot.getValue("secondaryTooltip"),
+        )
         assertEquals("false", snapshot.getValue("dependsOnEnabled"))
         assertEquals("true", snapshot.getValue("relatedFilesEnabled"))
         assertEquals("true", snapshot.getValue("verificationEnabled"))
@@ -182,6 +200,44 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
+    fun `triggerSecondaryActionForTest should route lifecycle secondary actions without status apply button`() {
+        val transitions = mutableListOf<String>()
+        val panel = SpecWorkflowTasksPanel(
+            onTransitionStatus = { taskId, to -> transitions += "$taskId:${to.name}" },
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-secondary",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "Pending",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+                StructuredTask(
+                    id = "T-002",
+                    title = "Blocked",
+                    status = TaskStatus.BLOCKED,
+                    priority = TaskPriority.P1,
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.selectTask("T-001"))
+        assertTrue(panel.triggerSecondaryActionForTest(TaskStatus.BLOCKED))
+        assertTrue(panel.selectTask("T-002"))
+        assertTrue(panel.triggerSecondaryActionForTest(TaskStatus.PENDING))
+        assertTrue(panel.triggerSecondaryActionForTest(TaskStatus.CANCELLED))
+
+        assertEquals(
+            listOf("T-001:BLOCKED", "T-002:PENDING", "T-002:CANCELLED"),
+            transitions,
+        )
+    }
+
+    @Test
     fun `updateTasks should derive in progress from active execution run`() {
         val panel = SpecWorkflowTasksPanel()
 
@@ -243,6 +299,7 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("", snapshot.getValue("executeText"))
         assertEquals("refresh", snapshot.getValue("executeIconId"))
         assertEquals("true", snapshot.getValue("executeEnabled"))
+        assertEquals("true", snapshot.getValue("secondaryEnabled"))
         assertEquals("", snapshot.getValue("verificationText"))
         assertEquals("edit", snapshot.getValue("verificationIconId"))
         assertEquals("true", snapshot.getValue("verificationEnabled"))

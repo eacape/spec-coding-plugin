@@ -27,7 +27,6 @@ import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
-import javax.swing.Icon
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
@@ -181,6 +180,8 @@ internal class SpecWorkflowOverviewPanel(
             "templateCloneEnabled" to templateCloneButton.isEnabled.toString(),
             "templateCloneText" to templateCloneButton.text.orEmpty(),
             "templateCloneTooltip" to templateCloneButton.toolTipText.orEmpty(),
+            "templateCloneAccessibleName" to templateCloneButton.accessibleContext.accessibleName.orEmpty(),
+            "templateCloneAccessibleDescription" to templateCloneButton.accessibleContext.accessibleDescription.orEmpty(),
             "templateCloneHasIcon" to (templateCloneButton.icon != null).toString(),
             "templateCloneRolloverEnabled" to templateCloneButton.isRolloverEnabled.toString(),
             "currentStage" to currentStageValueLabel.text.orEmpty(),
@@ -218,10 +219,14 @@ internal class SpecWorkflowOverviewPanel(
             "primaryActionHasIcon" to (primaryActionButton.icon != null).toString(),
             "primaryActionRolloverEnabled" to primaryActionButton.isRolloverEnabled.toString(),
             "primaryActionTooltip" to primaryActionButton.toolTipText.orEmpty(),
+            "primaryActionAccessibleName" to primaryActionButton.accessibleContext.accessibleName.orEmpty(),
+            "primaryActionAccessibleDescription" to primaryActionButton.accessibleContext.accessibleDescription.orEmpty(),
             "overflowEnabled" to overflowActionsButton.isEnabled.toString(),
             "overflowVisible" to overflowActionsButton.isVisible.toString(),
             "overflowIconId" to SpecWorkflowIcons.debugId(overflowActionsButton.icon),
             "overflowTooltip" to overflowActionsButton.toolTipText.orEmpty(),
+            "overflowAccessibleName" to overflowActionsButton.accessibleContext.accessibleName.orEmpty(),
+            "overflowAccessibleDescription" to overflowActionsButton.accessibleContext.accessibleDescription.orEmpty(),
             "overflowActions" to currentWorkbenchState
                 ?.overflowActions
                 ?.joinToString(" | ") { action -> action.label }
@@ -418,7 +423,15 @@ internal class SpecWorkflowOverviewPanel(
         )
         templateLockSummaryValueLabel.text = state.templateLockedSummary
         updateTemplateTargets(state.templateCloneTargets)
-        templateCloneButton.isEnabled = state.templateCloneTargets.isNotEmpty()
+        SpecUiStyle.setIconActionEnabled(
+            button = templateCloneButton,
+            enabled = state.templateCloneTargets.isNotEmpty(),
+            disabledReason = if (state.templateCloneTargets.isEmpty()) {
+                SpecCodingBundle.message("spec.toolwindow.overview.template.clone.unavailable")
+            } else {
+                null
+            },
+        )
         currentStageValueLabel.text = SpecWorkflowOverviewPresenter.stageLabel(state.currentStage)
         progressValueLabel.text = buildProgressText(workbenchState)
         activeStagesValueLabel.text = state.activeStages.joinToString(" -> ") { stage ->
@@ -463,7 +476,11 @@ internal class SpecWorkflowOverviewPanel(
         gateSummaryValueLabel.text = ""
         refreshedValueLabel.text = ""
         updateTemplateTargets(emptyList())
-        templateCloneButton.isEnabled = false
+        SpecUiStyle.setIconActionEnabled(
+            button = templateCloneButton,
+            enabled = false,
+            disabledReason = SpecCodingBundle.message("spec.toolwindow.overview.template.clone.selectWorkflow"),
+        )
         stageStepperPanel.clear()
         revalidate()
         repaint()
@@ -476,7 +493,11 @@ internal class SpecWorkflowOverviewPanel(
         actions.forEach { action ->
             menu.add(
                 javax.swing.JMenuItem(action.label).apply {
+                    icon = SpecWorkflowIcons.workbenchAction(action.kind)
                     isEnabled = action.enabled
+                    toolTipText = if (action.enabled) action.label else action.disabledReason ?: action.label
+                    accessibleContext.accessibleName = action.label
+                    accessibleContext.accessibleDescription = toolTipText
                     addActionListener { onWorkbenchActionRequested(action) }
                 },
             )
@@ -601,24 +622,41 @@ internal class SpecWorkflowOverviewPanel(
             primaryActionButton.icon = null
             primaryActionButton.disabledIcon = null
             primaryActionButton.toolTipText = null
+            primaryActionButton.accessibleContext?.accessibleName = null
+            primaryActionButton.accessibleContext?.accessibleDescription = null
             return
         }
-        val tooltip = if (action.enabled) action.label else action.disabledReason ?: action.label
-        SpecUiStyle.configureIconActionButton(
+        SpecUiStyle.applyIconActionPresentation(
             button = primaryActionButton,
-            icon = primaryActionIcon(action),
-            tooltip = tooltip,
+            presentation = SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.workbenchAction(action.kind),
+                tooltip = action.label,
+                accessibleName = action.label,
+                enabled = action.enabled,
+                disabledReason = action.disabledReason,
+            ),
         )
         primaryActionButton.isVisible = true
-        primaryActionButton.isEnabled = action.enabled
-        primaryActionButton.accessibleContext?.accessibleName = tooltip
-        primaryActionButton.accessibleContext?.accessibleDescription =
-            tooltip
     }
 
     private fun updateOverflowActions(actions: List<SpecWorkflowWorkbenchAction>) {
         overflowActionsButton.isVisible = actions.isNotEmpty()
-        overflowActionsButton.isEnabled = actions.any { it.enabled }
+        val disabledReason = when {
+            actions.isEmpty() -> SpecCodingBundle.message("spec.toolwindow.overview.more.unavailable")
+            actions.any { it.enabled } -> null
+            else -> actions.firstNotNullOfOrNull { action -> action.disabledReason }
+                ?: SpecCodingBundle.message("spec.toolwindow.overview.more.unavailable")
+        }
+        SpecUiStyle.applyIconActionPresentation(
+            button = overflowActionsButton,
+            presentation = SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.Overflow,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
+                enabled = actions.any { it.enabled },
+                disabledReason = disabledReason,
+            ),
+        )
     }
 
     private fun addDetailRow(
@@ -652,32 +690,29 @@ internal class SpecWorkflowOverviewPanel(
         return row + 1
     }
     private fun applyTemplateButtonPresentation() {
-        SpecUiStyle.configureIconActionButton(
+        SpecUiStyle.applyIconActionPresentation(
             button = templateCloneButton,
-            icon = SpecWorkflowIcons.Clone,
-            tooltip = SpecCodingBundle.message("spec.toolwindow.overview.template.clone"),
+            presentation = SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.Clone,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.overview.template.clone"),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.overview.template.clone"),
+                enabled = false,
+                disabledReason = SpecCodingBundle.message("spec.toolwindow.overview.template.clone.selectWorkflow"),
+            ),
         )
     }
 
     private fun applyOverflowButtonPresentation() {
-        SpecUiStyle.configureIconActionButton(
+        SpecUiStyle.applyIconActionPresentation(
             button = overflowActionsButton,
-            icon = SpecWorkflowIcons.Overflow,
-            tooltip = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
+            presentation = SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.Overflow,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
+                enabled = false,
+                disabledReason = SpecCodingBundle.message("spec.toolwindow.overview.more.unavailable"),
+            ),
         )
-    }
-
-    private fun primaryActionIcon(action: SpecWorkflowWorkbenchAction): Icon {
-        return when (action.kind) {
-            SpecWorkflowWorkbenchActionKind.ADVANCE -> SpecWorkflowIcons.Advance
-            SpecWorkflowWorkbenchActionKind.START_TASK -> SpecWorkflowIcons.Execute
-            SpecWorkflowWorkbenchActionKind.RESUME_TASK -> SpecWorkflowIcons.Refresh
-            SpecWorkflowWorkbenchActionKind.COMPLETE_TASK -> SpecWorkflowIcons.Complete
-            SpecWorkflowWorkbenchActionKind.RUN_VERIFY -> SpecWorkflowIcons.Execute
-            SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW -> SpecWorkflowIcons.Complete
-            SpecWorkflowWorkbenchActionKind.ARCHIVE_WORKFLOW -> SpecWorkflowIcons.Save
-            else -> SpecWorkflowIcons.Overflow
-        }
     }
 
     private fun workflowStatusText(status: WorkflowStatus): String {

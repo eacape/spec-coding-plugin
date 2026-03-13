@@ -252,41 +252,69 @@ internal class SpecWorkflowVerifyDeltaPanel(
             "runTooltip" to runVerifyButton.toolTipText.orEmpty(),
             "runHasIcon" to (runVerifyButton.icon != null).toString(),
             "runIconId" to SpecWorkflowIcons.debugId(runVerifyButton.icon),
+            "runAccessibleName" to runVerifyButton.accessibleContext.accessibleName.orEmpty(),
+            "runAccessibleDescription" to runVerifyButton.accessibleContext.accessibleDescription.orEmpty(),
             "openText" to openVerificationButton.text.orEmpty(),
             "openTooltip" to openVerificationButton.toolTipText.orEmpty(),
             "openHasIcon" to (openVerificationButton.icon != null).toString(),
             "openIconId" to SpecWorkflowIcons.debugId(openVerificationButton.icon),
+            "openAccessibleName" to openVerificationButton.accessibleContext.accessibleName.orEmpty(),
+            "openAccessibleDescription" to openVerificationButton.accessibleContext.accessibleDescription.orEmpty(),
             "compareText" to compareButton.text.orEmpty(),
             "compareTooltip" to compareButton.toolTipText.orEmpty(),
             "compareHasIcon" to (compareButton.icon != null).toString(),
             "compareIconId" to SpecWorkflowIcons.debugId(compareButton.icon),
+            "compareAccessibleName" to compareButton.accessibleContext.accessibleName.orEmpty(),
+            "compareAccessibleDescription" to compareButton.accessibleContext.accessibleDescription.orEmpty(),
             "pinText" to pinBaselineButton.text.orEmpty(),
             "pinTooltip" to pinBaselineButton.toolTipText.orEmpty(),
             "pinHasIcon" to (pinBaselineButton.icon != null).toString(),
             "pinIconId" to SpecWorkflowIcons.debugId(pinBaselineButton.icon),
+            "pinAccessibleName" to pinBaselineButton.accessibleContext.accessibleName.orEmpty(),
+            "pinAccessibleDescription" to pinBaselineButton.accessibleContext.accessibleDescription.orEmpty(),
         )
     }
 
     private fun applyActionButtonPresentation() {
-        SpecUiStyle.configureIconActionButton(
+        SpecUiStyle.applyIconActionPresentation(
             button = runVerifyButton,
-            icon = SpecWorkflowIcons.Execute,
-            tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.run"),
+            presentation = SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.Execute,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.run"),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.verifyDelta.run"),
+                enabled = false,
+                disabledReason = SpecCodingBundle.message("spec.toolwindow.verifyDelta.run.disabled.noWorkflow"),
+            ),
         )
-        SpecUiStyle.configureIconActionButton(
+        SpecUiStyle.applyIconActionPresentation(
             button = openVerificationButton,
-            icon = SpecWorkflowIcons.OpenDocument,
-            tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.open"),
+            presentation = SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.OpenDocument,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.open"),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.verifyDelta.open"),
+                enabled = false,
+                disabledReason = SpecCodingBundle.message("spec.toolwindow.verifyDelta.open.disabled.noWorkflow"),
+            ),
         )
-        SpecUiStyle.configureIconActionButton(
+        SpecUiStyle.applyIconActionPresentation(
             button = compareButton,
-            icon = SpecWorkflowIcons.History,
-            tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare"),
+            presentation = SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.History,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare"),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare"),
+                enabled = false,
+                disabledReason = SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare.disabled.noWorkflow"),
+            ),
         )
-        SpecUiStyle.configureIconActionButton(
+        SpecUiStyle.applyIconActionPresentation(
             button = pinBaselineButton,
-            icon = SpecWorkflowIcons.Save,
-            tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin"),
+            presentation = SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.Save,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin"),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin"),
+                enabled = false,
+                disabledReason = SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin.disabled.noWorkflow"),
+            ),
         )
     }
 
@@ -408,10 +436,30 @@ internal class SpecWorkflowVerifyDeltaPanel(
         val state = currentState
         val workflowId = state?.workflowId
         val selectedBaseline = baselineComboBox.selectedItem as? SpecWorkflowDeltaBaselineChoice
-        runVerifyButton.isEnabled = state?.verifyEnabled == true && !workflowId.isNullOrBlank()
-        openVerificationButton.isEnabled = state?.verificationDocumentAvailable == true && !workflowId.isNullOrBlank()
-        compareButton.isEnabled = !workflowId.isNullOrBlank() && selectedBaseline != null
-        pinBaselineButton.isEnabled = state?.canPinBaseline == true && !workflowId.isNullOrBlank()
+        val runDisabledReason = when {
+            workflowId.isNullOrBlank() -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.run.disabled.noWorkflow")
+            state?.verifyEnabled != true -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.run.disabled.verifyOff")
+            else -> null
+        }
+        val openDisabledReason = when {
+            workflowId.isNullOrBlank() -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.open.disabled.noWorkflow")
+            state?.verificationDocumentAvailable != true -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.open.disabled.noDocument")
+            else -> null
+        }
+        val compareDisabledReason = when {
+            workflowId.isNullOrBlank() -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare.disabled.noWorkflow")
+            selectedBaseline == null -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare.disabled.noBaseline")
+            else -> null
+        }
+        val pinDisabledReason = when {
+            workflowId.isNullOrBlank() -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin.disabled.noWorkflow")
+            state?.canPinBaseline != true -> SpecCodingBundle.message("spec.toolwindow.verifyDelta.pin.unavailable")
+            else -> null
+        }
+        SpecUiStyle.setIconActionEnabled(runVerifyButton, enabled = runDisabledReason == null, disabledReason = runDisabledReason)
+        SpecUiStyle.setIconActionEnabled(openVerificationButton, enabled = openDisabledReason == null, disabledReason = openDisabledReason)
+        SpecUiStyle.setIconActionEnabled(compareButton, enabled = compareDisabledReason == null, disabledReason = compareDisabledReason)
+        SpecUiStyle.setIconActionEnabled(pinBaselineButton, enabled = pinDisabledReason == null, disabledReason = pinDisabledReason)
     }
 
     private fun updateDetail() {

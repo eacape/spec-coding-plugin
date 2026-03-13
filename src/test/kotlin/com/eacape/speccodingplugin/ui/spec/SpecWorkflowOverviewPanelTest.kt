@@ -86,6 +86,10 @@ class SpecWorkflowOverviewPanelTest {
             SpecCodingBundle.message("spec.toolwindow.overview.template.clone"),
             snapshot.getValue("templateCloneTooltip"),
         )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.template.clone"),
+            snapshot.getValue("templateCloneAccessibleName"),
+        )
         assertEquals("true", snapshot.getValue("templateCloneHasIcon"))
         assertEquals("true", snapshot.getValue("templateCloneRolloverEnabled"))
         assertEquals(SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS), snapshot.getValue("currentStage"))
@@ -137,6 +141,13 @@ class SpecWorkflowOverviewPanelTest {
             ),
             snapshot.getValue("primaryActionTooltip"),
         )
+        assertEquals(
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.primary.advance",
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+            ),
+            snapshot.getValue("primaryActionAccessibleName"),
+        )
         assertEquals("false", snapshot.getValue("overflowVisible"))
         assertEquals("false", snapshot.getValue("overflowEnabled"))
         assertEquals("", snapshot.getValue("overflowActions"))
@@ -179,6 +190,11 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document"),
             snapshot.getValue("primaryActionTooltip"),
+        )
+        assertEquals(
+            "${SpecCodingBundle.message("spec.toolwindow.overview.primary.advance", SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT))}. " +
+                SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document"),
+            snapshot.getValue("primaryActionAccessibleDescription"),
         )
         assertTrue(snapshot.getValue("focusDetails").contains("tasks.md"))
     }
@@ -270,6 +286,10 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.completeTask", "T-001"),
             snapshot.getValue("primaryActionTooltip"),
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.completeTask", "T-001"),
+            snapshot.getValue("primaryActionAccessibleDescription"),
         )
         assertEquals(
             SpecCodingBundle.message(

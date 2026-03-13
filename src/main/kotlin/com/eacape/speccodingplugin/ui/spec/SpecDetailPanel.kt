@@ -12,7 +12,6 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
-import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.ui.Messages
 import com.intellij.util.ui.JBUI
 import java.awt.BasicStroke
@@ -551,11 +550,12 @@ class SpecDetailPanel(
 
     private fun configureIconActionButton(button: JButton, icon: Icon, tooltipKey: String) {
         val tooltip = SpecCodingBundle.message(tooltipKey)
-        button.icon = icon
-        button.disabledIcon = IconLoader.getDisabledIcon(icon)
-        button.text = ""
-        button.toolTipText = tooltip
-        button.accessibleContext.accessibleName = tooltip
+        SpecUiStyle.configureIconActionButton(
+            button = button,
+            icon = icon,
+            tooltip = tooltip,
+            accessibleName = tooltip,
+        )
     }
 
     private fun updatePauseResumeButtonPresentation(status: WorkflowStatus?) {

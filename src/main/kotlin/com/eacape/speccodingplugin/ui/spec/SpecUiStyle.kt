@@ -23,6 +23,14 @@ import javax.swing.border.CompoundBorder
 import javax.swing.plaf.basic.BasicSplitPaneDivider
 import javax.swing.plaf.basic.BasicSplitPaneUI
 
+internal data class SpecIconActionPresentation(
+    val icon: Icon,
+    val tooltip: String,
+    val accessibleName: String = tooltip,
+    val enabled: Boolean = true,
+    val disabledReason: String? = null,
+)
+
 internal object SpecUiStyle {
     fun roundedLineBorder(
         lineColor: Color,
@@ -51,14 +59,43 @@ internal object SpecUiStyle {
         button.putClientProperty("JComponent.roundRectArc", JBUI.scale(arc))
     }
 
-    fun configureIconActionButton(button: JButton, icon: Icon, tooltip: String) {
+    fun configureIconActionButton(
+        button: JButton,
+        icon: Icon,
+        tooltip: String,
+        accessibleName: String = tooltip,
+    ) {
         button.text = ""
         button.icon = icon
         button.disabledIcon = IconLoader.getDisabledIcon(icon)
         button.iconTextGap = 0
-        button.toolTipText = tooltip
-        button.accessibleContext?.accessibleName = tooltip
-        button.accessibleContext?.accessibleDescription = tooltip
+        button.putClientProperty(ICON_ACTION_TOOLTIP_KEY, tooltip)
+        button.putClientProperty(ICON_ACTION_ACCESSIBLE_NAME_KEY, accessibleName)
+        syncIconActionButtonSemantics(button)
+    }
+
+    fun applyIconActionPresentation(button: JButton, presentation: SpecIconActionPresentation) {
+        configureIconActionButton(
+            button = button,
+            icon = presentation.icon,
+            tooltip = presentation.tooltip,
+            accessibleName = presentation.accessibleName,
+        )
+        setIconActionEnabled(
+            button = button,
+            enabled = presentation.enabled,
+            disabledReason = presentation.disabledReason,
+        )
+    }
+
+    fun setIconActionEnabled(
+        button: JButton,
+        enabled: Boolean,
+        disabledReason: String? = null,
+    ) {
+        button.putClientProperty(ICON_ACTION_DISABLED_REASON_KEY, disabledReason)
+        button.isEnabled = enabled
+        syncIconActionButtonSemantics(button)
     }
 
     fun styleIconActionButton(
@@ -161,7 +198,10 @@ internal object SpecUiStyle {
         button.putClientProperty("spec.iconActionButton.stateTrackingInstalled", true)
         button.isRolloverEnabled = true
         button.addChangeListener { applyIconActionButtonVisualState(button) }
-        button.addPropertyChangeListener("enabled") { applyIconActionButtonVisualState(button) }
+        button.addPropertyChangeListener("enabled") {
+            applyIconActionButtonVisualState(button)
+            syncIconActionButtonSemantics(button)
+        }
     }
 
     private fun installIconActionButtonCursorTracking(button: JButton) {
@@ -177,6 +217,24 @@ internal object SpecUiStyle {
         } else {
             Cursor.getDefaultCursor()
         }
+    }
+
+    private fun syncIconActionButtonSemantics(button: JButton) {
+        val enabledTooltip = (button.getClientProperty(ICON_ACTION_TOOLTIP_KEY) as? String).orEmpty()
+        val accessibleName = (button.getClientProperty(ICON_ACTION_ACCESSIBLE_NAME_KEY) as? String)
+            ?.takeIf { it.isNotBlank() }
+            ?: enabledTooltip
+        val disabledReason = (button.getClientProperty(ICON_ACTION_DISABLED_REASON_KEY) as? String)
+            ?.takeIf { it.isNotBlank() }
+        val effectiveTooltip = if (!button.isEnabled && disabledReason != null) disabledReason else enabledTooltip
+        val accessibleDescription = if (!button.isEnabled && disabledReason != null) {
+            "$accessibleName. $disabledReason"
+        } else {
+            enabledTooltip
+        }
+        button.toolTipText = effectiveTooltip.ifBlank { null }
+        button.accessibleContext?.accessibleName = accessibleName.ifBlank { null }
+        button.accessibleContext?.accessibleDescription = accessibleDescription.ifBlank { null }
     }
 
     private fun applyIconActionButtonVisualState(button: JButton) {
@@ -347,4 +405,7 @@ internal object SpecUiStyle {
     private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(89, 136, 208), Color(143, 182, 232))
     private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
     private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
+    private const val ICON_ACTION_TOOLTIP_KEY = "spec.iconActionButton.tooltip"
+    private const val ICON_ACTION_ACCESSIBLE_NAME_KEY = "spec.iconActionButton.accessibleName"
+    private const val ICON_ACTION_DISABLED_REASON_KEY = "spec.iconActionButton.disabledReason"
 }

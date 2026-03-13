@@ -29,7 +29,6 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFileManager
@@ -784,11 +783,12 @@ class SpecWorkflowPanel(
 
     private fun configureToolbarIconButton(button: JButton, icon: Icon, tooltipKey: String) {
         val tooltip = SpecCodingBundle.message(tooltipKey)
-        button.icon = icon
-        button.disabledIcon = IconLoader.getDisabledIcon(icon)
-        button.text = ""
-        button.toolTipText = tooltip
-        button.accessibleContext.accessibleName = tooltip
+        SpecUiStyle.configureIconActionButton(
+            button = button,
+            icon = icon,
+            tooltip = tooltip,
+            accessibleName = tooltip,
+        )
     }
 
     private fun setupGenerationControls() {
