@@ -184,6 +184,7 @@ internal class SpecWorkflowOverviewPanel(
             "templateCloneAccessibleDescription" to templateCloneButton.accessibleContext.accessibleDescription.orEmpty(),
             "templateCloneHasIcon" to (templateCloneButton.icon != null).toString(),
             "templateCloneRolloverEnabled" to templateCloneButton.isRolloverEnabled.toString(),
+            "templateCloneFocusable" to templateCloneButton.isFocusable.toString(),
             "currentStage" to currentStageValueLabel.text.orEmpty(),
             "progress" to progressValueLabel.text.orEmpty(),
             "activeStages" to activeStagesValueLabel.text.orEmpty(),
@@ -218,6 +219,7 @@ internal class SpecWorkflowOverviewPanel(
             "primaryActionIconId" to SpecWorkflowIcons.debugId(primaryActionButton.icon),
             "primaryActionHasIcon" to (primaryActionButton.icon != null).toString(),
             "primaryActionRolloverEnabled" to primaryActionButton.isRolloverEnabled.toString(),
+            "primaryActionFocusable" to primaryActionButton.isFocusable.toString(),
             "primaryActionTooltip" to primaryActionButton.toolTipText.orEmpty(),
             "primaryActionAccessibleName" to primaryActionButton.accessibleContext.accessibleName.orEmpty(),
             "primaryActionAccessibleDescription" to primaryActionButton.accessibleContext.accessibleDescription.orEmpty(),
@@ -225,6 +227,7 @@ internal class SpecWorkflowOverviewPanel(
             "overflowVisible" to overflowActionsButton.isVisible.toString(),
             "overflowIconId" to SpecWorkflowIcons.debugId(overflowActionsButton.icon),
             "overflowTooltip" to overflowActionsButton.toolTipText.orEmpty(),
+            "overflowFocusable" to overflowActionsButton.isFocusable.toString(),
             "overflowAccessibleName" to overflowActionsButton.accessibleContext.accessibleName.orEmpty(),
             "overflowAccessibleDescription" to overflowActionsButton.accessibleContext.accessibleDescription.orEmpty(),
             "overflowActions" to currentWorkbenchState

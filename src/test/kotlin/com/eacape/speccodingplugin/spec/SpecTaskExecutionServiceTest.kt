@@ -99,6 +99,7 @@ class SpecTaskExecutionServiceTest {
         val secondMigration = executionService.migrateLegacyInProgressTasks(firstMigration.workflow)
         val runs = executionService.listRuns(workflowId, "T-001")
         val migratedTask = tasksService.parse(workflowId).single()
+        val persistedTasks = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
 
         assertTrue(firstMigration.migrated)
         assertEquals(1, firstMigration.migratedRuns.size)
@@ -107,6 +108,8 @@ class SpecTaskExecutionServiceTest {
         assertEquals(TaskExecutionRunStatus.WAITING_CONFIRMATION, runs.single().status)
         assertEquals(ExecutionTrigger.SYSTEM_RECOVERY, runs.single().trigger)
         assertEquals(TaskStatus.PENDING, migratedTask.status)
+        assertTrue(persistedTasks.contains("status: PENDING"))
+        assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
 
         val recoveryAudit = storage.listAuditEvents(workflowId).getOrThrow()
             .last { event -> event.eventType == SpecAuditEventType.TASK_EXECUTION_RUN_CREATED }
@@ -223,6 +226,7 @@ class SpecTaskExecutionServiceTest {
 
         val loadedWorkflow = storage.loadWorkflow(workflowId).getOrThrow()
         val latestTask = tasksService.parse(workflowId).first { task -> task.id == "T-002" }
+        val persistedTasks = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
         val session = sessionManager.listSessions().single()
         val messages = sessionManager.listMessages(session.id)
         val userMetadata = TaskExecutionSessionMetadataCodec.decode(messages.first().metadataJson)
@@ -233,6 +237,9 @@ class SpecTaskExecutionServiceTest {
             loadedWorkflow.taskExecutionRuns.single { run -> run.taskId == "T-002" }.status,
         )
         assertEquals(TaskStatus.PENDING, latestTask.status)
+        assertTrue(persistedTasks.contains("### T-002: Execute AI task"))
+        assertTrue(persistedTasks.contains("status: PENDING"))
+        assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
         assertEquals(workflowId, session.specTaskId)
         assertTrue(session.title.contains("T-002"))
         assertEquals(listOf(ConversationRole.USER, ConversationRole.ASSISTANT), messages.map { it.role })

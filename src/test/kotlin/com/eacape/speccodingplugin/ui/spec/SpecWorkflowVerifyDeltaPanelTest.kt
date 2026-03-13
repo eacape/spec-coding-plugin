@@ -80,12 +80,16 @@ class SpecWorkflowVerifyDeltaPanelTest {
         val snapshot = panel.snapshotForTest()
         assertEquals("", snapshot.getValue("runText"))
         assertEquals("execute", snapshot.getValue("runIconId"))
+        assertEquals("true", snapshot.getValue("runFocusable"))
         assertEquals("", snapshot.getValue("openText"))
         assertEquals("openDocument", snapshot.getValue("openIconId"))
+        assertEquals("true", snapshot.getValue("openFocusable"))
         assertEquals("", snapshot.getValue("compareText"))
         assertEquals("history", snapshot.getValue("compareIconId"))
+        assertEquals("true", snapshot.getValue("compareFocusable"))
         assertEquals("", snapshot.getValue("pinText"))
         assertEquals("save", snapshot.getValue("pinIconId"))
+        assertEquals("true", snapshot.getValue("pinFocusable"))
         assertFalse(snapshot.getValue("runTooltip").isBlank())
         assertFalse(snapshot.getValue("openTooltip").isBlank())
         assertFalse(snapshot.getValue("compareTooltip").isBlank())
@@ -118,6 +122,7 @@ class SpecWorkflowVerifyDeltaPanelTest {
             SpecCodingBundle.message("spec.toolwindow.verifyDelta.run.disabled.verifyOff"),
             snapshot.getValue("runTooltip"),
         )
+        assertEquals("true", snapshot.getValue("runFocusable"))
         assertEquals(
             "${SpecCodingBundle.message("spec.toolwindow.verifyDelta.run")}. " +
                 SpecCodingBundle.message("spec.toolwindow.verifyDelta.run.disabled.verifyOff"),

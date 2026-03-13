@@ -4028,6 +4028,9 @@ class SpecWorkflowPanel(
             "text" to button.text.orEmpty(),
             "iconId" to SpecWorkflowIcons.debugId(button.icon),
             "tooltip" to button.toolTipText.orEmpty(),
+            "focusable" to button.isFocusable.toString(),
+            "accessibleName" to button.accessibleContext.accessibleName.orEmpty(),
+            "accessibleDescription" to button.accessibleContext.accessibleDescription.orEmpty(),
             "enabled" to button.isEnabled.toString(),
             "visible" to button.isVisible.toString(),
         )

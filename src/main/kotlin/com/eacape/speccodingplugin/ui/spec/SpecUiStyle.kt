@@ -103,7 +103,8 @@ internal object SpecUiStyle {
         size: Int = 24,
         arc: Int = 10,
     ) {
-        button.isFocusable = false
+        button.isFocusable = true
+        button.isRequestFocusEnabled = true
         button.isFocusPainted = false
         button.isContentAreaFilled = true
         button.isOpaque = true

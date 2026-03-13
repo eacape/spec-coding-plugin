@@ -58,6 +58,7 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("execute", snapshot.getValue("executeIconId"))
         assertEquals("true", snapshot.getValue("executeHasIcon"))
         assertEquals("true", snapshot.getValue("executeRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("executeFocusable"))
         assertEquals("true", snapshot.getValue("executeEnabled"))
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", "T-001"),
@@ -79,6 +80,7 @@ class SpecWorkflowTasksPanelTest {
         )
         assertEquals("true", snapshot.getValue("secondaryHasIcon"))
         assertEquals("true", snapshot.getValue("secondaryRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("secondaryFocusable"))
         assertEquals("true", snapshot.getValue("secondaryEnabled"))
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.tasks.secondary.button"),
@@ -89,15 +91,18 @@ class SpecWorkflowTasksPanelTest {
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.edit"), snapshot.getValue("dependsOnTooltip"))
         assertEquals("true", snapshot.getValue("dependsOnHasIcon"))
         assertEquals("true", snapshot.getValue("dependsOnRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("dependsOnFocusable"))
         assertEquals("", snapshot.getValue("relatedFilesText"))
         assertEquals("edit", snapshot.getValue("relatedFilesIconId"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"), snapshot.getValue("relatedFilesTooltip"))
         assertEquals("true", snapshot.getValue("relatedFilesHasIcon"))
         assertEquals("true", snapshot.getValue("relatedFilesRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("relatedFilesFocusable"))
         assertEquals("", snapshot.getValue("verificationText"))
         assertEquals("add", snapshot.getValue("verificationIconId"))
         assertEquals("true", snapshot.getValue("verificationHasIcon"))
         assertEquals("true", snapshot.getValue("verificationRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("verificationFocusable"))
         assertEquals("true", snapshot.getValue("verificationEnabled"))
         assertEquals("true", snapshot.getValue("dependsOnEnabled"))
         assertEquals("true", snapshot.getValue("relatedFilesEnabled"))
@@ -126,10 +131,22 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("", snapshot.getValue("executeText"))
         assertEquals("complete", snapshot.getValue("executeIconId"))
         assertEquals("false", snapshot.getValue("executeEnabled"))
+        assertEquals("true", snapshot.getValue("executeFocusable"))
+        assertEquals(
+            "${SpecCodingBundle.message("spec.toolwindow.tasks.execute.done")}. " +
+                SpecCodingBundle.message("spec.toolwindow.tasks.execute.done.tooltip", "T-010"),
+            snapshot.getValue("executeAccessibleDescription"),
+        )
         assertEquals("false", snapshot.getValue("secondaryEnabled"))
+        assertEquals("true", snapshot.getValue("secondaryFocusable"))
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.tasks.secondary.none", "T-010"),
             snapshot.getValue("secondaryTooltip"),
+        )
+        assertEquals(
+            "${SpecCodingBundle.message("spec.toolwindow.tasks.secondary.button")}. " +
+                SpecCodingBundle.message("spec.toolwindow.tasks.secondary.none", "T-010"),
+            snapshot.getValue("secondaryAccessibleDescription"),
         )
         assertEquals("false", snapshot.getValue("dependsOnEnabled"))
         assertEquals("true", snapshot.getValue("relatedFilesEnabled"))

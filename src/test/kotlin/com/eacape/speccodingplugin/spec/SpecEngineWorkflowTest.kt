@@ -879,12 +879,15 @@ class SpecEngineWorkflowTest {
         val snapshot = engine.openWorkflow(workflowId).getOrThrow()
         val recoveredRun = snapshot.workflow.taskExecutionRuns.single()
         val recoveredTask = tasksService.parse(workflowId).single()
+        val persistedTasks = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
         val auditEvents = storage.listAuditEvents(workflowId).getOrThrow()
 
         assertEquals(TaskExecutionRunStatus.WAITING_CONFIRMATION, recoveredRun.status)
         assertEquals(ExecutionTrigger.SYSTEM_RECOVERY, recoveredRun.trigger)
         assertEquals("T-001", recoveredRun.taskId)
         assertEquals(TaskStatus.PENDING, recoveredTask.status)
+        assertTrue(persistedTasks.contains("status: PENDING"))
+        assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
         assertTrue(
             auditEvents.any { event ->
                 event.eventType == SpecAuditEventType.TASK_EXECUTION_RUN_CREATED &&

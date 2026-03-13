@@ -92,6 +92,7 @@ class SpecWorkflowOverviewPanelTest {
         )
         assertEquals("true", snapshot.getValue("templateCloneHasIcon"))
         assertEquals("true", snapshot.getValue("templateCloneRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("templateCloneFocusable"))
         assertEquals(SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS), snapshot.getValue("currentStage"))
         assertEquals(
             SpecCodingBundle.message(
@@ -134,6 +135,7 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals("advance", snapshot.getValue("primaryActionIconId"))
         assertEquals("true", snapshot.getValue("primaryActionHasIcon"))
         assertEquals("true", snapshot.getValue("primaryActionRolloverEnabled"))
+        assertEquals("true", snapshot.getValue("primaryActionFocusable"))
         assertEquals(
             SpecCodingBundle.message(
                 "spec.toolwindow.overview.primary.advance",
@@ -150,6 +152,7 @@ class SpecWorkflowOverviewPanelTest {
         )
         assertEquals("false", snapshot.getValue("overflowVisible"))
         assertEquals("false", snapshot.getValue("overflowEnabled"))
+        assertEquals("true", snapshot.getValue("overflowFocusable"))
         assertEquals("", snapshot.getValue("overflowActions"))
         assertFalse(snapshot.getValue("refreshed").isBlank())
         assertEquals(SpecCodingBundle.message("spec.toolwindow.overview.empty"), snapshot.getValue("empty"))
@@ -187,6 +190,7 @@ class SpecWorkflowOverviewPanelTest {
         assertTrue(snapshot.getValue("blockers").contains(SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.gateUnavailable")))
         assertEquals("true", snapshot.getValue("primaryActionVisible"))
         assertEquals("false", snapshot.getValue("primaryActionEnabled"))
+        assertEquals("true", snapshot.getValue("primaryActionFocusable"))
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document"),
             snapshot.getValue("primaryActionTooltip"),

@@ -7,10 +7,13 @@ import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecMetadata
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecStorage
+import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
 import com.eacape.speccodingplugin.spec.SpecTasksService
+import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageState
+import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.WorkflowStatus
@@ -62,14 +65,19 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         val toolbar = panel.toolbarSnapshotForTest()
         assertEquals("", toolbar.getValue("back.text"))
         assertEquals("back", toolbar.getValue("back.iconId"))
+        assertEquals("true", toolbar.getValue("back.focusable"))
         assertEquals("", toolbar.getValue("refresh.text"))
         assertEquals("refresh", toolbar.getValue("refresh.iconId"))
+        assertEquals("true", toolbar.getValue("refresh.focusable"))
         assertEquals("", toolbar.getValue("delta.text"))
         assertEquals("history", toolbar.getValue("delta.iconId"))
+        assertEquals("true", toolbar.getValue("delta.focusable"))
         assertEquals("", toolbar.getValue("codeGraph.text"))
         assertEquals("openToolWindow", toolbar.getValue("codeGraph.iconId"))
+        assertEquals("true", toolbar.getValue("codeGraph.focusable"))
         assertEquals("", toolbar.getValue("archive.text"))
         assertEquals("save", toolbar.getValue("archive.iconId"))
+        assertEquals("true", toolbar.getValue("archive.focusable"))
 
         ApplicationManager.getApplication().invokeAndWait {
             panel.clickBackToListForTest()
@@ -518,6 +526,57 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK &&
                 panel.tasksSnapshotForTest().getValue("tasks").contains("${blockedTask.id}:IN_PROGRESS")
         }
+    }
+
+    fun `test execution run should derive in progress UI state without persisting task status`() {
+        val engine = SpecEngine.getInstance(project)
+        val tasksService = SpecTasksService(project)
+        val executionService = SpecTaskExecutionService.getInstance(project)
+        val artifactService = SpecArtifactService(project)
+        val workflow = engine.createWorkflow(
+            title = "Execution Run Derived State",
+            description = "task 76 derived in progress regression",
+        ).getOrThrow()
+        val task = tasksService.addTask(workflow.id, "Drive UI from run state", TaskPriority.P0)
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+        executionService.createRun(
+            workflowId = workflow.id,
+            taskId = task.id,
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            trigger = ExecutionTrigger.USER_EXECUTE,
+            startedAt = "2026-03-13T12:00:00Z",
+            summary = "Waiting for confirmation",
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.tasksSnapshotForTest().getValue("tasks").contains("${task.id}:IN_PROGRESS:P0") &&
+                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK
+        }
+
+        val tasksSnapshot = panel.tasksSnapshotForTest()
+        val persistedTasks = artifactService.readArtifact(workflow.id, StageId.TASKS).orEmpty()
+
+        assertEquals(task.id, tasksSnapshot.getValue("selectedTaskId"))
+        assertEquals("complete", tasksSnapshot.getValue("executeIconId"))
+        assertEquals("true", tasksSnapshot.getValue("executeFocusable"))
+        assertTrue(persistedTasks.contains("status: PENDING"))
+        assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
     }
 
     private fun createPanel(): SpecWorkflowPanel {
