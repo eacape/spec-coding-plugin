@@ -3399,7 +3399,7 @@ class SpecDetailPanel(
 
         generateButton.isVisible = !clarifying
         nextPhaseButton.isVisible = !clarifying
-        goBackButton.isVisible = !clarifying
+        goBackButton.isVisible = false
         completeButton.isVisible = !clarifying
         pauseResumeButton.isVisible = !clarifying
         openEditorButton.isVisible = !clarifying
@@ -3415,7 +3415,7 @@ class SpecDetailPanel(
 
         generateButton.isEnabled = standardModeEnabled
         nextPhaseButton.isEnabled = workflow.canProceedToNext() && standardModeEnabled
-        goBackButton.isEnabled = workflow.canGoBack() && standardModeEnabled
+        goBackButton.isEnabled = false
         completeButton.isEnabled = workflow.currentPhase == SpecPhase.IMPLEMENT
                 && workflow.getDocument(SpecPhase.IMPLEMENT)?.validationResult?.valid == true
                 && standardModeEnabled

@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.hook.HookEvent
 import com.eacape.speccodingplugin.hook.HookManager
@@ -28,6 +29,8 @@ class SpecEngine(private val project: Project) {
     private val templateSwitchIdGenerator = WorkflowIdGenerator(prefix = "switch")
     private val projectConfigDelegate: SpecProjectConfigService by lazy { SpecProjectConfigService(project) }
     private val artifactServiceDelegate: SpecArtifactService by lazy { SpecArtifactService(project) }
+    private val tasksServiceDelegate: SpecTasksService by lazy { SpecTasksService(project) }
+    private val verificationServiceDelegate: SpecVerificationService by lazy { SpecVerificationService(project) }
     private val gateRuleEngine: SpecGateRuleEngine by lazy {
         SpecGateRuleEngine(
             artifactService = artifactServiceDelegate,
@@ -886,17 +889,7 @@ class SpecEngine(private val project: Project) {
      * 返回上一阶段
      */
     fun goBackToPreviousPhase(workflowId: String): Result<SpecWorkflow> {
-        return runCatching {
-            val workflow = activeWorkflows[workflowId]
-                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
-            val projectConfig = projectConfigDelegate.load()
-            val stagePlan = resolveStagePlan(workflow, projectConfig)
-            val targetStage = stagePlan.previousActiveStage(workflow.currentStage)
-                ?: throw IllegalStateException("Already at the first active stage")
-            rollbackToStage(workflowId, targetStage).getOrThrow()
-            activeWorkflows[workflowId]
-                ?: storageDelegate.loadWorkflow(workflowId).getOrThrow()
-        }
+        return Result.failure(ManualStageMutationLockedError(workflowId, StageTransitionType.ROLLBACK))
     }
 
     /**
@@ -916,7 +909,7 @@ class SpecEngine(private val project: Project) {
             val gateResult = if (transitionType == StageTransitionType.ROLLBACK) {
                 GateResult.fromViolations(emptyList())
             } else {
-                stageGateEvaluator.evaluate(
+                evaluateTransitionGate(
                     buildStageTransitionRequest(
                         workflow = prepared.workflow,
                         transitionType = transitionType,
@@ -1079,7 +1072,7 @@ class SpecEngine(private val project: Project) {
         val gateResult = if (transitionType == StageTransitionType.ROLLBACK) {
             GateResult.fromViolations(emptyList())
         } else {
-            stageGateEvaluator.evaluate(
+            evaluateTransitionGate(
                 buildStageTransitionRequest(
                     workflow = workflow,
                     transitionType = transitionType,
@@ -1581,6 +1574,169 @@ class SpecEngine(private val project: Project) {
         )
     }
 
+    private fun evaluateTransitionGate(request: StageTransitionRequest): GateResult {
+        val gateResult = stageGateEvaluator.evaluate(request)
+        if (request.transitionType != StageTransitionType.ADVANCE) {
+            return gateResult
+        }
+
+        val completionViolations = buildAdvanceCompletionViolations(request)
+        if (completionViolations.isEmpty()) {
+            return gateResult
+        }
+
+        val completionRule = RuleEvaluationResult(
+            ruleId = STAGE_COMPLETION_RULE_ID,
+            description = "Stage completion checks",
+            enabled = true,
+            appliedStages = listOf(request.fromStage),
+            defaultSeverity = GateStatus.ERROR,
+            effectiveSeverity = GateStatus.ERROR,
+            severityOverridden = false,
+            summary = "Completion checks are incomplete for ${request.fromStage.name}.",
+            violations = completionViolations,
+        )
+        return GateResult.fromViolations(
+            violations = gateResult.violations + completionViolations,
+            ruleResults = gateResult.ruleResults + completionRule,
+        )
+    }
+
+    private fun buildAdvanceCompletionViolations(request: StageTransitionRequest): List<Violation> {
+        val workflow = request.workflow
+        val currentStage = request.fromStage
+        val tasks = tasksServiceDelegate.parse(workflow.id)
+        val tasksDocument = workflow.getDocument(SpecPhase.IMPLEMENT)
+        val requirementsDocument = workflow.getDocument(SpecPhase.SPECIFY)
+        val designDocument = workflow.getDocument(SpecPhase.DESIGN)
+        val verifyEnabled = request.stagePlan.isActive(StageId.VERIFY) || workflow.verifyEnabled
+        val verificationDocumentAvailable = artifactServiceDelegate.readArtifact(workflow.id, StageId.VERIFY) != null
+        val hasVerificationRun = verificationServiceDelegate.listRunHistory(workflow.id).isNotEmpty()
+
+        return when (currentStage) {
+            StageId.REQUIREMENTS -> buildList {
+                if (requirementsDocument != null && !hasRequirementsSections(requirementsDocument.content)) {
+                    add(
+                        completionViolation(
+                            fileName = StageId.REQUIREMENTS.artifactFileName.orEmpty(),
+                            message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.requirements.sections"),
+                        ),
+                    )
+                }
+            }
+
+            StageId.DESIGN -> buildList {
+                if (designDocument != null && !hasDesignSections(designDocument.content)) {
+                    add(
+                        completionViolation(
+                            fileName = StageId.DESIGN.artifactFileName.orEmpty(),
+                            message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.design.sections"),
+                        ),
+                    )
+                }
+            }
+
+            StageId.TASKS -> buildList {
+                if (tasks.isEmpty()) {
+                    add(
+                        completionViolation(
+                            fileName = StageId.TASKS.artifactFileName.orEmpty(),
+                            message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.structured"),
+                        ),
+                    )
+                }
+            }
+
+            StageId.IMPLEMENT -> {
+                val completedTasks = tasks.filter { task -> task.status == TaskStatus.COMPLETED }
+                val allWorkSettled = tasks.isNotEmpty() && tasks.all(::isImplementationTaskSettled)
+                val relatedFilesConfirmed = completedTasks.all { task -> task.relatedFiles.isNotEmpty() }
+                buildList {
+                    if (tasksDocument == null || tasks.isEmpty()) {
+                        add(
+                            completionViolation(
+                                fileName = StageId.TASKS.artifactFileName.orEmpty(),
+                                message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.implement.taskSource"),
+                            ),
+                        )
+                    }
+                    if (tasks.isNotEmpty() && !allWorkSettled) {
+                        add(
+                            completionViolation(
+                                fileName = StageId.TASKS.artifactFileName.orEmpty(),
+                                message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.implement.progress"),
+                            ),
+                        )
+                    }
+                    if (completedTasks.isNotEmpty() && !relatedFilesConfirmed) {
+                        add(
+                            completionViolation(
+                                fileName = StageId.TASKS.artifactFileName.orEmpty(),
+                                message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.implement.relatedFiles"),
+                            ),
+                        )
+                    }
+                }
+            }
+
+            StageId.VERIFY -> buildList {
+                if (!verifyEnabled) {
+                    add(
+                        completionViolation(
+                            fileName = StageId.VERIFY.artifactFileName.orEmpty(),
+                            message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.verify.enabled"),
+                        ),
+                    )
+                }
+                if (verifyEnabled && !hasVerificationRun) {
+                    add(
+                        completionViolation(
+                            fileName = StageId.VERIFY.artifactFileName.orEmpty(),
+                            message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.verify.run"),
+                        ),
+                    )
+                }
+                if (verifyEnabled && !verificationDocumentAvailable) {
+                    add(
+                        completionViolation(
+                            fileName = StageId.VERIFY.artifactFileName.orEmpty(),
+                            message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.verify.document"),
+                        ),
+                    )
+                }
+            }
+
+            StageId.ARCHIVE -> emptyList()
+        }
+    }
+
+    private fun completionViolation(fileName: String, message: String): Violation {
+        return Violation(
+            ruleId = STAGE_COMPLETION_RULE_ID,
+            severity = GateStatus.ERROR,
+            fileName = fileName,
+            line = 1,
+            message = message,
+            fixHint = message,
+        )
+    }
+
+    private fun hasRequirementsSections(content: String): Boolean {
+        return REQUIRED_REQUIREMENTS_SECTION_MARKERS.all { markers ->
+            markers.any { marker -> content.contains(marker, ignoreCase = true) }
+        }
+    }
+
+    private fun hasDesignSections(content: String): Boolean {
+        return REQUIRED_DESIGN_SECTION_MARKERS.all { markers ->
+            markers.any { marker -> content.contains(marker, ignoreCase = true) }
+        }
+    }
+
+    private fun isImplementationTaskSettled(task: StructuredTask): Boolean {
+        return task.status == TaskStatus.COMPLETED || task.status == TaskStatus.CANCELLED
+    }
+
     private fun emitSpecStageChangedHook(
         workflowId: String,
         previousPhase: SpecPhase,
@@ -1654,61 +1810,11 @@ class SpecEngine(private val project: Project) {
             }
 
             StageTransitionType.JUMP -> {
-                val targetStage = requestedTargetStage
-                    ?: throw IllegalArgumentException("targetStage is required for jump transitions")
-                if (!projectConfig.gate.allowJump) {
-                    throw StageTransitionPolicyError("Jump transition is disabled by gate policy")
-                }
-                if (!stagePlan.isActive(targetStage)) {
-                    throw InactiveWorkflowStageError(targetStage)
-                }
-                val currentIndex = stagePlan.activeStageIndex(workflow.currentStage)
-                val targetIndex = stagePlan.activeStageIndex(targetStage)
-                if (targetIndex <= currentIndex) {
-                    throw InvalidStageTransitionError(workflow.currentStage, targetStage)
-                }
-                val evaluatedStages = if (projectConfig.gate.jumpRequiresMinimalGate) {
-                    stagePlan.activeStagesBetween(workflow.currentStage, targetStage).dropLast(1)
-                } else {
-                    listOf(workflow.currentStage)
-                }
-                PreparedStageTransition(
-                    workflow = workflow,
-                    stagePlan = stagePlan,
-                    gatePolicy = projectConfig.gate,
-                    targetStage = targetStage,
-                    evaluatedStages = evaluatedStages,
-                )
+                throw ManualStageMutationLockedError(workflowId, StageTransitionType.JUMP)
             }
 
             StageTransitionType.ROLLBACK -> {
-                val targetStage = requestedTargetStage
-                    ?: throw IllegalArgumentException("targetStage is required for rollback transitions")
-                if (!projectConfig.gate.allowRollback) {
-                    throw StageTransitionPolicyError("Rollback transition is disabled by gate policy")
-                }
-                if (!stagePlan.isActive(targetStage)) {
-                    throw InactiveWorkflowStageError(targetStage)
-                }
-                val currentIndex = stagePlan.activeStageIndex(workflow.currentStage)
-                val targetIndex = stagePlan.activeStageIndex(targetStage)
-                if (targetIndex > currentIndex) {
-                    throw InvalidStageTransitionError(workflow.currentStage, targetStage)
-                }
-
-                val targetState = workflow.stageStates[targetStage]
-                if (targetStage != workflow.currentStage && targetState?.status != StageProgress.DONE) {
-                    throw StageTransitionPolicyError(
-                        "Rollback target $targetStage must be a completed or current stage",
-                    )
-                }
-                PreparedStageTransition(
-                    workflow = workflow,
-                    stagePlan = stagePlan,
-                    gatePolicy = projectConfig.gate,
-                    targetStage = targetStage,
-                    evaluatedStages = emptyList(),
-                )
+                throw ManualStageMutationLockedError(workflowId, StageTransitionType.ROLLBACK)
             }
         }
     }
@@ -2126,6 +2232,20 @@ class SpecEngine(private val project: Project) {
         private val DEFAULT_PROJECT_CONTEXT_CHARSET: Charset = Charsets.UTF_8
         private const val MAX_TOP_LEVEL_ENTRIES = 12
         private const val MAX_KEY_FILE_SNIPPET_LINES = 120
+        private const val STAGE_COMPLETION_RULE_ID = "stage-completion-checks"
+        private val REQUIRED_REQUIREMENTS_SECTION_MARKERS = listOf(
+            listOf("## Functional Requirements", "## 功能需求"),
+            listOf("## Non-Functional Requirements", "## 非功能需求"),
+            listOf("## User Stories", "## 用户故事"),
+            listOf("## Acceptance Criteria", "## 验收标准"),
+        )
+        private val REQUIRED_DESIGN_SECTION_MARKERS = listOf(
+            listOf("## Architecture Design", "## 架构设计"),
+            listOf("## Technology Choices", "## 技术选型"),
+            listOf("## Data Model", "## 数据模型"),
+            listOf("## API Design", "## API 设计"),
+            listOf("## Non-Functional Design", "## 非功能设计"),
+        )
         private const val MAX_KEY_FILE_SNIPPET_CHARS = 4000
         private const val SOURCE_SNAPSHOT_DEPTH = 4
         private const val MAX_SOURCE_FILES_PER_DIR = 18

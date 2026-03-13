@@ -1,5 +1,7 @@
 package com.eacape.speccodingplugin.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
+
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
@@ -67,63 +69,35 @@ class SpecEngineStageTransitionTest {
     }
 
     @Test
-    fun `jumpToStage should require warning confirmation and mark skipped stages done`() {
-        val warningGate = SpecStageGateEvaluator {
-            GateResult.fromViolations(
-                listOf(
-                    Violation(
-                        ruleId = "warn-only",
-                        severity = GateStatus.WARNING,
-                        fileName = "requirements.md",
-                        line = 1,
-                        message = "warning for confirmation",
-                    ),
-                ),
-            )
-        }
-        val engine = SpecEngine(
-            project = project,
-            storage = storage,
-            generationHandler = { SpecGenerationResult.Failure("unused") },
-            stageGateEvaluator = warningGate,
-        )
+    fun `jump and rollback should be locked once workflow state is completion driven`() {
+        val engine = SpecEngine(project, storage, generationHandler = ::generateValidDocument)
         val created = engine.createWorkflow(
-            title = "Jump Workflow",
-            description = "warning jump",
+            title = "Locked Stage Mutation Workflow",
+            description = "manual stage changes disabled",
         ).getOrThrow()
 
-        val rejected = engine.jumpToStage(created.id, StageId.TASKS)
-        assertTrue(rejected.isFailure)
-        assertTrue(rejected.exceptionOrNull() is StageWarningConfirmationRequiredError)
-        val warningError = rejected.exceptionOrNull() as StageWarningConfirmationRequiredError
-        assertEquals(GateStatus.WARNING, warningError.gateResult.status)
-        assertNotNull(warningError.gateResult.warningConfirmation)
-        assertEquals(1, warningError.gateResult.aggregation.warningCount)
+        val jumpPreview = engine.previewStageTransition(
+            created.id,
+            transitionType = StageTransitionType.JUMP,
+            targetStage = StageId.TASKS,
+        )
+        assertTrue(jumpPreview.isFailure)
+        assertTrue(jumpPreview.exceptionOrNull() is ManualStageMutationLockedError)
 
-        val result = engine.jumpToStage(created.id, StageId.TASKS) { true }.getOrThrow()
+        val jump = engine.jumpToStage(created.id, StageId.TASKS)
+        assertTrue(jump.isFailure)
+        assertTrue(jump.exceptionOrNull() is ManualStageMutationLockedError)
 
-        assertEquals(StageTransitionType.JUMP, result.transitionType)
-        assertTrue(result.warningConfirmed)
-        assertEquals(GateStatus.WARNING, result.gateResult.status)
-        assertNotNull(result.gateResult.warningConfirmation)
+        val rollback = engine.rollbackToStage(created.id, StageId.REQUIREMENTS)
+        assertTrue(rollback.isFailure)
+        assertTrue(rollback.exceptionOrNull() is ManualStageMutationLockedError)
+
+        val goBack = engine.goBackToPreviousPhase(created.id)
+        assertTrue(goBack.isFailure)
+        assertTrue(goBack.exceptionOrNull() is ManualStageMutationLockedError)
 
         val reloaded = engine.reloadWorkflow(created.id).getOrThrow()
-        assertEquals(StageId.TASKS, reloaded.currentStage)
-        assertEquals(StageProgress.DONE, reloaded.stageStates.getValue(StageId.REQUIREMENTS).status)
-        assertEquals(StageProgress.DONE, reloaded.stageStates.getValue(StageId.DESIGN).status)
-        assertEquals(StageProgress.IN_PROGRESS, reloaded.stageStates.getValue(StageId.TASKS).status)
-
-        val warningAudit = loadAuditEvents(created.id)
-            .last { it.eventType == SpecAuditEventType.GATE_WARNING_CONFIRMED }
-        assertEquals("JUMP", warningAudit.details["transitionType"])
-        assertEquals("1", warningAudit.details["warningCount"])
-        assertEquals("warn-only", warningAudit.details["warningRules"])
-
-        val event = loadAuditEvents(created.id)
-            .last { it.eventType == SpecAuditEventType.STAGE_JUMPED }
-        assertEquals("WARNING", event.details["gateStatus"])
-        assertEquals("true", event.details["warningConfirmed"])
-        assertEquals("REQUIREMENTS,DESIGN", event.details["evaluatedStages"])
+        assertEquals(StageId.REQUIREMENTS, reloaded.currentStage)
     }
 
     @Test
@@ -167,7 +141,7 @@ class SpecEngineStageTransitionTest {
     }
 
     @Test
-    fun `rollbackToStage should reset later stage metadata without deleting artifacts`() {
+    fun `advanceWorkflow should block implement stage until structured tasks are settled`() {
         val passGate = SpecStageGateEvaluator { GateResult.fromViolations(emptyList()) }
         val engine = SpecEngine(
             project = project,
@@ -175,29 +149,36 @@ class SpecEngineStageTransitionTest {
             generationHandler = { SpecGenerationResult.Failure("unused") },
             stageGateEvaluator = passGate,
         )
-        val created = engine.createWorkflow(
-            title = "Rollback Workflow",
-            description = "rollback metadata",
-        ).getOrThrow()
+        val workflowId = "spec-test-implement-completion"
+        persistImplementWorkflow(
+            workflowId = workflowId,
+            tasksMarkdown = """
+                ## Tasks
 
-        engine.jumpToStage(created.id, StageId.IMPLEMENT).getOrThrow()
-        val rolledBack = engine.rollbackToStage(created.id, StageId.DESIGN).getOrThrow()
+                ### T-001: Finish implementation
+                ```spec-task
+                status: IN_PROGRESS
+                priority: P0
+                dependsOn: []
+                relatedFiles: []
+                verificationResult: null
+                ```
+            """.trimIndent() + "\n",
+        )
 
-        assertEquals(StageId.DESIGN, rolledBack.currentStage)
-        val reloaded = engine.reloadWorkflow(created.id).getOrThrow()
-        assertEquals(StageProgress.DONE, reloaded.stageStates.getValue(StageId.REQUIREMENTS).status)
-        assertEquals(StageProgress.IN_PROGRESS, reloaded.stageStates.getValue(StageId.DESIGN).status)
-        assertEquals(StageProgress.NOT_STARTED, reloaded.stageStates.getValue(StageId.TASKS).status)
-        assertEquals(StageProgress.NOT_STARTED, reloaded.stageStates.getValue(StageId.IMPLEMENT).status)
+        val blocked = engine.advanceWorkflow(workflowId)
 
-        val tasksPath = tempDir.resolve(".spec-coding").resolve("specs").resolve(created.id).resolve("tasks.md")
-        assertTrue(Files.exists(tasksPath))
-
-        val event = loadAuditEvents(created.id)
-            .last { it.eventType == SpecAuditEventType.STAGE_ROLLED_BACK }
-        assertEquals("IMPLEMENT", event.details["fromStage"])
-        assertEquals("DESIGN", event.details["toStage"])
-        assertEquals("PASS", event.details["gateStatus"])
+        assertTrue(blocked.isFailure)
+        val error = blocked.exceptionOrNull()
+        assertTrue(error is StageTransitionBlockedByGateError)
+        val gateResult = (error as StageTransitionBlockedByGateError).gateResult
+        assertEquals(GateStatus.ERROR, gateResult.status)
+        val completionRule = gateResult.ruleResults.first { it.ruleId == "stage-completion-checks" }
+        assertTrue(
+            completionRule.violations.any { violation ->
+                violation.message == SpecCodingBundle.message("spec.toolwindow.overview.blockers.implement.progress")
+            },
+        )
     }
 
     @Test
@@ -206,7 +187,7 @@ class SpecEngineStageTransitionTest {
             """
             schemaVersion: 1
             rules:
-              document-validation:
+              artifact-fixed-naming:
                 severity: WARNING
             """.trimIndent(),
         )
@@ -215,10 +196,11 @@ class SpecEngineStageTransitionTest {
             title = "Rule Override Workflow",
             description = "warning override",
         ).getOrThrow()
-
-        storage.saveDocument(created.id, invalidRequirementsDocument()).getOrThrow()
-        val reloaded = engine.reloadWorkflow(created.id).getOrThrow()
-        assertEquals(StageId.REQUIREMENTS, reloaded.currentStage)
+        val workflowDir = tempDir.resolve(".spec-coding").resolve("specs").resolve(created.id)
+        Files.move(
+            workflowDir.resolve("requirements.md"),
+            workflowDir.resolve("requirement.md"),
+        )
 
         val blocked = engine.advanceWorkflow(created.id)
         assertTrue(blocked.isFailure)
@@ -228,7 +210,7 @@ class SpecEngineStageTransitionTest {
 
         assertEquals(GateStatus.WARNING, result.gateResult.status)
         assertFalse(result.gateResult.ruleResults.isEmpty())
-        val ruleResult = result.gateResult.ruleResults.first { it.ruleId == "document-validation" }
+        val ruleResult = result.gateResult.ruleResults.first { it.ruleId == "artifact-fixed-naming" }
         assertTrue(ruleResult.severityOverridden)
         assertEquals(GateStatus.WARNING, ruleResult.effectiveSeverity)
         assertTrue(ruleResult.violations.isNotEmpty())
@@ -325,6 +307,7 @@ class SpecEngineStageTransitionTest {
         val workflowId = "spec-test-verify-downgrade-audit"
         persistVerifyWorkflow(
             workflowId = workflowId,
+            recordVerificationRun = true,
             tasksMarkdown = """
                 ## 任务列表
 
@@ -370,6 +353,52 @@ class SpecEngineStageTransitionTest {
         assertEquals(GateStatus.ERROR, verifyRule.violations.single().originalSeverity)
     }
 
+    @Test
+    fun `advanceWorkflow should block verify stage until verification history exists`() {
+        val passGate = SpecStageGateEvaluator { GateResult.fromViolations(emptyList()) }
+        val engine = SpecEngine(
+            project = project,
+            storage = storage,
+            generationHandler = { SpecGenerationResult.Failure("unused") },
+            stageGateEvaluator = passGate,
+        )
+        val workflowId = "spec-test-verify-completion"
+        persistVerifyWorkflow(
+            workflowId = workflowId,
+            recordVerificationRun = false,
+            tasksMarkdown = """
+                ## Tasks
+
+                ### T-001: Verify workflow
+                ```spec-task
+                status: COMPLETED
+                priority: P0
+                dependsOn: []
+                relatedFiles:
+                  - src/main/kotlin/App.kt
+                verificationResult:
+                  conclusion: PASS
+                  runId: verify-001
+                  summary: verification passed
+                  at: "2026-03-09T12:00:00Z"
+                ```
+            """.trimIndent() + "\n",
+        )
+
+        val blocked = engine.advanceWorkflow(workflowId)
+
+        assertTrue(blocked.isFailure)
+        val error = blocked.exceptionOrNull()
+        assertTrue(error is StageTransitionBlockedByGateError)
+        val gateResult = (error as StageTransitionBlockedByGateError).gateResult
+        val completionRule = gateResult.ruleResults.first { it.ruleId == "stage-completion-checks" }
+        assertTrue(
+            completionRule.violations.any { violation ->
+                violation.message == SpecCodingBundle.message("spec.toolwindow.overview.blockers.verify.run")
+            },
+        )
+    }
+
     private fun loadAuditEvents(workflowId: String): List<SpecAuditEvent> {
         val auditPath = tempDir
             .resolve(".spec-coding")
@@ -386,7 +415,32 @@ class SpecEngineStageTransitionTest {
         Files.writeString(configPath, "$raw\n", StandardCharsets.UTF_8)
     }
 
-    private fun persistVerifyWorkflow(workflowId: String, tasksMarkdown: String) {
+    private fun persistImplementWorkflow(workflowId: String, tasksMarkdown: String) {
+        val stagePlan = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
+            .buildStagePlan(StageActivationOptions.of(verifyEnabled = true))
+        val stageStates = stagePlan.initialStageStates("2026-03-09T00:00:00Z").toMutableMap()
+        stageStates[StageId.REQUIREMENTS] = stageStates.getValue(StageId.REQUIREMENTS).copy(status = StageProgress.DONE)
+        stageStates[StageId.DESIGN] = stageStates.getValue(StageId.DESIGN).copy(status = StageProgress.DONE)
+        stageStates[StageId.TASKS] = stageStates.getValue(StageId.TASKS).copy(status = StageProgress.DONE)
+        stageStates[StageId.IMPLEMENT] = stageStates.getValue(StageId.IMPLEMENT).copy(status = StageProgress.IN_PROGRESS)
+        val workflow = SpecWorkflow(
+            id = workflowId,
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = emptyMap(),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Implement Completion Workflow",
+            description = "implement completion checks",
+            template = WorkflowTemplate.FULL_SPEC,
+            stageStates = stageStates,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = true,
+        )
+        storage.saveWorkflow(workflow).getOrThrow()
+        val workflowDir = tempDir.resolve(".spec-coding").resolve("specs").resolve(workflowId)
+        Files.writeString(workflowDir.resolve("tasks.md"), tasksMarkdown, StandardCharsets.UTF_8)
+    }
+
+    private fun persistVerifyWorkflow(workflowId: String, tasksMarkdown: String, recordVerificationRun: Boolean = false) {
         val stagePlan = WorkflowTemplates.definitionOf(WorkflowTemplate.FULL_SPEC)
             .buildStagePlan(StageActivationOptions.of(verifyEnabled = true))
         val stageStates = stagePlan.initialStageStates("2026-03-09T00:00:00Z").toMutableMap()
@@ -415,16 +469,51 @@ class SpecEngineStageTransitionTest {
             "# Verification Document\n\n## Result\n- FAIL\n",
             StandardCharsets.UTF_8,
         )
+        if (recordVerificationRun) {
+            storage.appendAuditEvent(
+                workflowId = workflowId,
+                eventType = SpecAuditEventType.VERIFICATION_RUN_COMPLETED,
+                details = mapOf(
+                    "planId" to "verify-plan-001",
+                    "runId" to "verify-run-001",
+                    "executedAt" to "2026-03-09T12:00:00Z",
+                    "currentStage" to "VERIFY",
+                    "conclusion" to "PASS",
+                    "commandCount" to "1",
+                    "scopeTaskIds" to "T-001",
+                    "failedCommandIds" to "",
+                    "truncatedCommandIds" to "",
+                    "redactedCommandIds" to "",
+                    "summary" to "Verification completed.",
+                ),
+            ).getOrThrow()
+        }
     }
 
     private fun invalidRequirementsDocument(): SpecDocument {
         return SpecDocument(
             id = "invalid-requirements",
             phase = SpecPhase.SPECIFY,
-            content = "不完整的需求",
+            content = """
+                ## Functional Requirements
+                - Validate warning downgrade handling
+
+                ## Non-Functional Requirements
+                - Keep audit metadata stable
+
+                ## User Stories
+                - As a user, I want validation to fail without bypassing completion checks.
+
+                ## Acceptance Criteria
+                - [ ] Validation still reports an error
+            """.trimIndent(),
             metadata = SpecMetadata(
                 title = "Invalid Requirements",
-                description = "missing required sections",
+                description = "validation error with complete sections",
+            ),
+            validationResult = ValidationResult(
+                valid = false,
+                errors = listOf("Validation failed intentionally for rule severity override testing."),
             ),
         )
     }

@@ -802,3 +802,9 @@ class TemplateMutationLockedError(workflowId: String) :
     WorkflowDomainError(
         "Workflow $workflowId locks its template after creation; create a migrated copy instead of switching in place",
     )
+
+class ManualStageMutationLockedError(workflowId: String, transitionType: StageTransitionType) :
+    WorkflowDomainError(
+        "Workflow $workflowId no longer allows manual ${transitionType.name.lowercase()} stage changes; " +
+            "revise artifacts or tasks and advance through completion checks instead",
+    )

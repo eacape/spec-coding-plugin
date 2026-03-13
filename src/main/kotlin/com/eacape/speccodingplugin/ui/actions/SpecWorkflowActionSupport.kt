@@ -215,17 +215,11 @@ internal object SpecWorkflowActionSupport {
     }
 
     fun jumpTargets(meta: WorkflowMeta): List<StageId> {
-        return StageId.entries.filter { stage ->
-            stage.ordinal > meta.currentStage.ordinal && meta.stageStates[stage]?.active == true
-        }
+        return emptyList()
     }
 
     fun rollbackTargets(meta: WorkflowMeta): List<StageId> {
-        return StageId.entries.filter { stage ->
-            stage.ordinal < meta.currentStage.ordinal &&
-                meta.stageStates[stage]?.active == true &&
-                meta.stageStates[stage]?.status == StageProgress.DONE
-        }
+        return emptyList()
     }
 
     fun workflowLabel(meta: WorkflowMeta): String {

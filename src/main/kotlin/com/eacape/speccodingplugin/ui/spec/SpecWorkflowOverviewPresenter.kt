@@ -96,14 +96,8 @@ internal object SpecWorkflowOverviewPresenter {
                     )
                 },
                 canAdvance = nextStage != null && workflow.currentStage != StageId.ARCHIVE,
-                jumpTargets = stagePlan.orderedStages.filter { stageId ->
-                    stagePlan.isActive(stageId) && stageId.ordinal > workflow.currentStage.ordinal
-                },
-                rollbackTargets = stagePlan.orderedStages.filter { stageId ->
-                    stagePlan.isActive(stageId) &&
-                        stageId.ordinal < workflow.currentStage.ordinal &&
-                        workflow.stageStates[stageId]?.status == StageProgress.DONE
-                },
+                jumpTargets = emptyList(),
+                rollbackTargets = emptyList(),
             ),
             refreshedAtMillis = refreshedAtMillis,
         )

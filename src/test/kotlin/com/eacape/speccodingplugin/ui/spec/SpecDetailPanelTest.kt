@@ -23,7 +23,7 @@ class SpecDetailPanelTest {
         panel.showEmpty()
 
         assertEquals("", panel.currentPreviewTextForTest())
-        assertEquals("Select a workflow to view details", panel.currentValidationTextForTest())
+        assertEquals(SpecCodingBundle.message("spec.detail.noWorkflow"), panel.currentValidationTextForTest())
 
         val states = panel.buttonStatesForTest()
         assertFalse(states["generateEnabled"] as Boolean)
@@ -73,15 +73,18 @@ class SpecDetailPanelTest {
         panel.updateWorkflow(workflow)
 
         assertEquals(designContent, panel.currentPreviewTextForTest())
-        assertEquals("Validation: PASSED", panel.currentValidationTextForTest())
+        assertEquals(
+            SpecCodingBundle.message("spec.detail.validation.passed"),
+            panel.currentValidationTextForTest(),
+        )
 
         val states = panel.buttonStatesForTest()
         assertTrue(states["generateEnabled"] as Boolean)
         assertTrue(states["nextEnabled"] as Boolean)
-        assertTrue(states["goBackEnabled"] as Boolean)
+        assertFalse(states["goBackEnabled"] as Boolean)
         assertFalse(states["completeEnabled"] as Boolean)
         assertTrue(states["pauseResumeEnabled"] as Boolean)
-        assertEquals("Pause", states["pauseResumeText"])
+        assertEquals(SpecCodingBundle.message("spec.detail.pause"), states["pauseResumeText"])
         assertTrue(states["openEditorEnabled"] as Boolean)
         assertTrue(states["historyDiffEnabled"] as Boolean)
     }

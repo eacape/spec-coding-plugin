@@ -378,8 +378,6 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         focusedStage: StageId,
         verifyDeltaState: SpecWorkflowVerifyDeltaState?,
     ): List<SpecWorkflowWorkbenchAction> {
-        val jumpTarget = focusedStage.takeIf { stageId -> stageId in overviewState.stageStepper.jumpTargets }
-        val rollbackTarget = focusedStage.takeIf { stageId -> stageId in overviewState.stageStepper.rollbackTargets }
         return buildList {
             when (focusedStage) {
                 StageId.VERIFY -> {
@@ -434,36 +432,6 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 }
 
                 else -> Unit
-            }
-            if (overviewState.stageStepper.jumpTargets.isNotEmpty()) {
-                add(
-                    SpecWorkflowWorkbenchAction(
-                        kind = SpecWorkflowWorkbenchActionKind.JUMP,
-                        label = jumpTarget?.let { target ->
-                            SpecCodingBundle.message(
-                                "spec.toolwindow.overview.more.jumpTo",
-                                SpecWorkflowOverviewPresenter.stageLabel(target),
-                            )
-                        } ?: SpecCodingBundle.message("spec.action.jump.text"),
-                        enabled = true,
-                        targetStage = jumpTarget,
-                    ),
-                )
-            }
-            if (overviewState.stageStepper.rollbackTargets.isNotEmpty()) {
-                add(
-                    SpecWorkflowWorkbenchAction(
-                        kind = SpecWorkflowWorkbenchActionKind.ROLLBACK,
-                        label = rollbackTarget?.let { target ->
-                            SpecCodingBundle.message(
-                                "spec.toolwindow.overview.more.rollbackTo",
-                                SpecWorkflowOverviewPresenter.stageLabel(target),
-                            )
-                        } ?: SpecCodingBundle.message("spec.action.rollback.text"),
-                        enabled = true,
-                        targetStage = rollbackTarget,
-                    ),
-                )
             }
         }
     }

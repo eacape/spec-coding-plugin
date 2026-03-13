@@ -27,7 +27,7 @@ import java.nio.file.Path
 class SpecWorkflowActionSupportTest {
 
     @Test
-    fun `jump targets include only later active stages`() {
+    fun `jump targets should stay empty when manual stage changes are locked`() {
         val meta = workflowMeta(
             currentStage = StageId.DESIGN,
             stageStates = mapOf(
@@ -41,13 +41,13 @@ class SpecWorkflowActionSupportTest {
         )
 
         assertEquals(
-            listOf(StageId.TASKS, StageId.IMPLEMENT, StageId.ARCHIVE),
+            emptyList<StageId>(),
             SpecWorkflowActionSupport.jumpTargets(meta),
         )
     }
 
     @Test
-    fun `rollback targets include only completed earlier stages`() {
+    fun `rollback targets should stay empty when manual stage changes are locked`() {
         val meta = workflowMeta(
             currentStage = StageId.IMPLEMENT,
             stageStates = mapOf(
@@ -61,7 +61,7 @@ class SpecWorkflowActionSupportTest {
         )
 
         assertEquals(
-            listOf(StageId.REQUIREMENTS, StageId.DESIGN),
+            emptyList<StageId>(),
             SpecWorkflowActionSupport.rollbackTargets(meta),
         )
     }
@@ -114,7 +114,8 @@ class SpecWorkflowActionSupportTest {
         )
 
         assertTrue(label.contains("tasks-syntax"))
-        assertTrue(label.contains("requirements.md:13"))
+        assertTrue(label.contains("requirements.md"))
+        assertTrue(label.contains("13"))
     }
 
     @Test

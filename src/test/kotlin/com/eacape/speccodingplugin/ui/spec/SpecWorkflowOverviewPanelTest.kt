@@ -130,10 +130,9 @@ class SpecWorkflowOverviewPanelTest {
             ),
             snapshot.getValue("primaryActionText"),
         )
-        assertEquals("true", snapshot.getValue("overflowVisible"))
-        assertEquals("true", snapshot.getValue("overflowEnabled"))
-        assertTrue(snapshot.getValue("overflowActions").contains(SpecCodingBundle.message("spec.action.jump.text")))
-        assertTrue(snapshot.getValue("overflowActions").contains(SpecCodingBundle.message("spec.action.rollback.text")))
+        assertEquals("false", snapshot.getValue("overflowVisible"))
+        assertEquals("false", snapshot.getValue("overflowEnabled"))
+        assertEquals("", snapshot.getValue("overflowActions"))
         assertFalse(snapshot.getValue("refreshed").isBlank())
         assertEquals(SpecCodingBundle.message("spec.toolwindow.overview.empty"), snapshot.getValue("empty"))
 
@@ -178,7 +177,7 @@ class SpecWorkflowOverviewPanelTest {
     }
 
     @Test
-    fun `updateOverview should keep jump and rollback inside overflow when viewing another stage`() {
+    fun `updateOverview should keep stage navigation read only when viewing another stage`() {
         val panel = SpecWorkflowOverviewPanel()
         val overviewState = overviewState()
         val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
@@ -200,14 +199,7 @@ class SpecWorkflowOverviewPanelTest {
         val snapshot = panel.snapshotForTest()
         assertEquals(StageId.IMPLEMENT.name, snapshot.getValue("focusedStage"))
         assertEquals("false", snapshot.getValue("primaryActionVisible"))
-        assertTrue(
-            snapshot.getValue("overflowActions").contains(
-                SpecCodingBundle.message(
-                    "spec.toolwindow.overview.more.jumpTo",
-                    SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
-                ),
-            ),
-        )
+        assertEquals("", snapshot.getValue("overflowActions"))
         assertTrue(
             snapshot.getValue("focusTitle").contains(
                 SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),

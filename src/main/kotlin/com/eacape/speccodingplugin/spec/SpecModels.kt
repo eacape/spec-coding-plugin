@@ -210,7 +210,7 @@ data class SpecWorkflow(
      * 是否可以返回上一阶段
      */
     fun canGoBack(): Boolean {
-        return currentPhase.previous() != null
+        return false
     }
 
     /**

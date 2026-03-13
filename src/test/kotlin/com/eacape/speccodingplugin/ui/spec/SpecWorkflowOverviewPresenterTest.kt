@@ -64,8 +64,8 @@ class SpecWorkflowOverviewPresenterTest {
         assertEquals(GateStatus.WARNING, state.gateStatus)
         assertTrue(state.gateSummary.orEmpty().contains("warning", ignoreCase = true))
         assertTrue(state.stageStepper.canAdvance)
-        assertEquals(listOf(StageId.IMPLEMENT, StageId.ARCHIVE), state.stageStepper.jumpTargets)
-        assertEquals(listOf(StageId.REQUIREMENTS, StageId.DESIGN), state.stageStepper.rollbackTargets)
+        assertEquals(emptyList<StageId>(), state.stageStepper.jumpTargets)
+        assertEquals(emptyList<StageId>(), state.stageStepper.rollbackTargets)
     }
 
     @Test
@@ -210,7 +210,7 @@ class SpecWorkflowOverviewPresenterTest {
         )
         assertTrue(workbenchState.primaryAction?.enabled == true)
         assertEquals(StageId.IMPLEMENT, workbenchState.primaryAction?.targetStage)
-        assertEquals(2, workbenchState.overflowActions.size)
+        assertTrue(workbenchState.overflowActions.isEmpty())
         assertTrue(workbenchState.blockers.isEmpty())
         assertEquals("tasks.md", workbenchState.artifactBinding.fileName)
         assertEquals("IMPLEMENT", workbenchState.artifactBinding.documentPhase?.name)
@@ -351,15 +351,7 @@ class SpecWorkflowOverviewPresenterTest {
         assertEquals(StageId.TASKS, workbenchState.currentStage)
         assertEquals(StageId.IMPLEMENT, workbenchState.focusedStage)
         assertNull(workbenchState.primaryAction)
-        assertEquals(SpecWorkflowWorkbenchActionKind.JUMP, workbenchState.overflowActions.first().kind)
-        assertEquals(StageId.IMPLEMENT, workbenchState.overflowActions.first().targetStage)
-        assertEquals(
-            SpecCodingBundle.message(
-                "spec.toolwindow.overview.more.jumpTo",
-                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
-            ),
-            workbenchState.overflowActions.first().label,
-        )
+        assertTrue(workbenchState.overflowActions.isEmpty())
         assertEquals("tasks.md", workbenchState.artifactBinding.fileName)
         assertEquals("IMPLEMENT", workbenchState.artifactBinding.documentPhase?.name)
         assertEquals(

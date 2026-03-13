@@ -1638,68 +1638,17 @@ class ImprovedChatPanel(
             pastedTextSequence = 0
             return
         }
-        if (tryCollapseMixedMarkerComposerInput(currentInput)) {
-            return
-        }
-        val delta = detectInsertedTextDelta(previousSnapshot, currentInput) ?: return
-        val insertedNormalized = normalizeClipboardText(delta.insertedText)
-        if (insertedNormalized.isBlank()) {
-            return
-        }
-        val insertedRawText = expandPendingPastedTextBlocks(insertedNormalized)
-        val lineCount = insertedRawText.lineSequence().count()
-        if (!shouldCollapsePastedText(insertedRawText, lineCount)) {
-            return
-        }
-
-        val previousNormalized = normalizeClipboardText(previousSnapshot)
-        val currentNormalized = normalizeClipboardText(currentInput)
-        val previousLines = if (previousNormalized.isBlank()) 0 else previousNormalized.lineSequence().count()
-        val currentLines = currentNormalized.lineSequence().count()
-        val deltaChars = insertedRawText.length
-        val deltaLines = (currentLines - previousLines).coerceAtLeast(0)
-        if (previousNormalized.isNotBlank() &&
-            deltaChars < INPUT_PASTE_COLLAPSE_ABRUPT_MIN_CHARS &&
-            deltaLines < INPUT_PASTE_COLLAPSE_ABRUPT_MIN_LINES &&
-            !PASTED_TEXT_MARKER_REGEX.containsMatchIn(insertedRawText)
-        ) {
-            return
-        }
-
+        val collapsePlan = planComposerCollapse(
+            previousSnapshot = previousSnapshot,
+            currentInput = currentInput,
+            expandInsertedText = ::expandPendingPastedTextBlocks,
+        ) ?: return
         applyCollapsedMarkerToComposer(
-            rawText = insertedRawText,
-            lineCount = lineCount,
-            replaceStart = delta.start,
-            replaceEndExclusive = delta.endExclusive,
+            rawText = collapsePlan.rawText,
+            lineCount = collapsePlan.lineCount,
+            replaceStart = collapsePlan.replaceStart,
+            replaceEndExclusive = collapsePlan.replaceEndExclusive,
         )
-    }
-
-    private fun tryCollapseMixedMarkerComposerInput(currentInput: String): Boolean {
-        val normalizedInput = normalizeClipboardText(currentInput)
-        if (!PASTED_TEXT_MARKER_REGEX.containsMatchIn(normalizedInput)) {
-            return false
-        }
-        val nonMarkerContentExists = normalizedInput
-            .lineSequence()
-            .map { it.trim() }
-            .any { line ->
-                line.isNotBlank() && !PASTED_TEXT_MARKER_FULL_LINE_REGEX.matches(line)
-            }
-        if (!nonMarkerContentExists) {
-            return false
-        }
-        val expandedRaw = expandPendingPastedTextBlocks(normalizedInput)
-        val lineCount = expandedRaw.lineSequence().count()
-        if (!shouldCollapsePastedText(expandedRaw, lineCount)) {
-            return false
-        }
-        applyCollapsedMarkerToComposer(
-            rawText = expandedRaw,
-            lineCount = lineCount,
-            replaceStart = 0,
-            replaceEndExclusive = currentInput.length,
-        )
-        return true
     }
 
     private fun applyCollapsedMarkerToComposer(
@@ -1726,47 +1675,6 @@ class ImprovedChatPanel(
             suppressComposerAutoCollapse = false
         }
         prunePendingPastedTextBlocks(inputField.text.orEmpty())
-    }
-
-    private data class InsertedTextDelta(
-        val start: Int,
-        val endExclusive: Int,
-        val insertedText: String,
-    )
-
-    private fun detectInsertedTextDelta(previousText: String, currentText: String): InsertedTextDelta? {
-        if (previousText == currentText) {
-            return null
-        }
-        var prefix = 0
-        val sharedPrefixLimit = minOf(previousText.length, currentText.length)
-        while (prefix < sharedPrefixLimit && previousText[prefix] == currentText[prefix]) {
-            prefix += 1
-        }
-
-        var previousSuffix = previousText.length - 1
-        var currentSuffix = currentText.length - 1
-        while (previousSuffix >= prefix &&
-            currentSuffix >= prefix &&
-            previousText[previousSuffix] == currentText[currentSuffix]
-        ) {
-            previousSuffix -= 1
-            currentSuffix -= 1
-        }
-
-        val endExclusive = currentSuffix + 1
-        if (endExclusive <= prefix) {
-            return null
-        }
-        val insertedText = currentText.substring(prefix, endExclusive)
-        if (insertedText.isBlank()) {
-            return null
-        }
-        return InsertedTextDelta(
-            start = prefix,
-            endExclusive = endExclusive,
-            insertedText = insertedText,
-        )
     }
 
     private fun extractImagePathsFromClipboardFiles(transferable: Transferable): List<String> {
@@ -5898,6 +5806,110 @@ class ImprovedChatPanel(
     }
 
     companion object {
+        internal data class ComposerCollapsePlan(
+            val rawText: String,
+            val lineCount: Int,
+            val replaceStart: Int,
+            val replaceEndExclusive: Int,
+        )
+
+        private data class InsertedTextDeltaSnapshot(
+            val start: Int,
+            val endExclusive: Int,
+            val insertedText: String,
+        )
+
+        internal fun planComposerCollapse(
+            previousSnapshot: String,
+            currentInput: String,
+            expandInsertedText: (String) -> String,
+        ): ComposerCollapsePlan? {
+            val delta = detectInsertedTextDeltaForCollapse(previousSnapshot, currentInput) ?: return null
+            val insertedNormalized = normalizeClipboardTextForCollapse(delta.insertedText)
+            if (insertedNormalized.isBlank()) {
+                return null
+            }
+            val insertedRawText = expandInsertedText(insertedNormalized)
+            val lineCount = insertedRawText.lineSequence().count()
+            if (!shouldCollapsePastedTextForCollapse(insertedRawText, lineCount)) {
+                return null
+            }
+
+            val previousNormalized = normalizeClipboardTextForCollapse(previousSnapshot)
+            val currentNormalized = normalizeClipboardTextForCollapse(currentInput)
+            val previousLines = if (previousNormalized.isBlank()) 0 else previousNormalized.lineSequence().count()
+            val currentLines = currentNormalized.lineSequence().count()
+            val deltaChars = insertedRawText.length
+            val deltaLines = (currentLines - previousLines).coerceAtLeast(0)
+            if (previousNormalized.isNotBlank() &&
+                deltaChars < INPUT_PASTE_COLLAPSE_ABRUPT_MIN_CHARS &&
+                deltaLines < INPUT_PASTE_COLLAPSE_ABRUPT_MIN_LINES &&
+                !PASTED_TEXT_MARKER_REGEX.containsMatchIn(insertedRawText)
+            ) {
+                return null
+            }
+
+            return ComposerCollapsePlan(
+                rawText = insertedRawText,
+                lineCount = lineCount,
+                replaceStart = delta.start,
+                replaceEndExclusive = delta.endExclusive,
+            )
+        }
+
+        private fun normalizeClipboardTextForCollapse(text: String): String {
+            return text.replace("\r\n", "\n").replace('\r', '\n')
+        }
+
+        private fun shouldCollapsePastedTextForCollapse(text: String, lineCount: Int): Boolean {
+            if (PASTED_TEXT_MARKER_REGEX.containsMatchIn(text)) {
+                return true
+            }
+            if (lineCount >= INPUT_PASTE_COLLAPSE_MIN_LINES) {
+                return true
+            }
+            return lineCount >= INPUT_PASTE_COLLAPSE_MIN_LINES_SOFT &&
+                text.length >= INPUT_PASTE_COLLAPSE_MIN_CHARS
+        }
+
+        private fun detectInsertedTextDeltaForCollapse(
+            previousText: String,
+            currentText: String,
+        ): InsertedTextDeltaSnapshot? {
+            if (previousText == currentText) {
+                return null
+            }
+            var prefix = 0
+            val sharedPrefixLimit = minOf(previousText.length, currentText.length)
+            while (prefix < sharedPrefixLimit && previousText[prefix] == currentText[prefix]) {
+                prefix += 1
+            }
+
+            var previousSuffix = previousText.length - 1
+            var currentSuffix = currentText.length - 1
+            while (previousSuffix >= prefix &&
+                currentSuffix >= prefix &&
+                previousText[previousSuffix] == currentText[currentSuffix]
+            ) {
+                previousSuffix -= 1
+                currentSuffix -= 1
+            }
+
+            val endExclusive = currentSuffix + 1
+            if (endExclusive <= prefix) {
+                return null
+            }
+            val insertedText = currentText.substring(prefix, endExclusive)
+            if (insertedText.isBlank()) {
+                return null
+            }
+            return InsertedTextDeltaSnapshot(
+                start = prefix,
+                endExclusive = endExclusive,
+                insertedText = insertedText,
+            )
+        }
+
         private val CHAT_CONTEXT_CONFIG = ContextConfig(
             includeCurrentFile = false,
             includeSelectedCode = false,
@@ -6041,7 +6053,6 @@ class ImprovedChatPanel(
         private const val CONTINUE_PROMPT_UNWRAP_MAX_DEPTH = 8
         private val CONTINUE_CODE_LIKE_FOCUS_REGEX = Regex("""^[a-z0-9_.:+\-/]{2,64}$""", RegexOption.IGNORE_CASE)
         private val PASTED_TEXT_MARKER_REGEX = Regex("""\[Pasted text #\d+ \+\d+ lines]""")
-        private val PASTED_TEXT_MARKER_FULL_LINE_REGEX = Regex("""^\[Pasted text #\d+ \+\d+ lines]$""")
         private val CONTINUE_DYNAMIC_ZH_REGEX = Regex(
             """^请承接上一轮输出继续执行，?\s*重点[:：]\s*(.+?)(?:。?\s*避免重复已完成内容.*)?$"""
         )

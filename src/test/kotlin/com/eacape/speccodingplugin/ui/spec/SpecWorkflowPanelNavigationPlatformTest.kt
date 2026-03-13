@@ -343,7 +343,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals("true", panel.overviewSnapshotForTest().getValue("primaryActionEnabled"))
     }
 
-    fun `test jump and rollback should stay in overflow while current stage keeps the primary path`() {
+    fun `test stage navigation should stay read only while current stage keeps the primary path`() {
         val engine = SpecEngine.getInstance(project)
         val tasksService = SpecTasksService(project)
         val workflow = engine.createWorkflow(
@@ -373,8 +373,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
                 panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.ADVANCE
         }
 
-        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.JUMP))
-        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.ROLLBACK))
+        assertTrue(panel.currentOverflowActionKindsForTest().isEmpty())
         assertEquals("true", panel.overviewSnapshotForTest().getValue("primaryActionVisible"))
 
         ApplicationManager.getApplication().invokeAndWait {
@@ -386,8 +385,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         }
 
         assertNull(panel.currentPrimaryActionKindForTest())
-        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.JUMP))
-        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.ROLLBACK))
+        assertTrue(panel.currentOverflowActionKindsForTest().isEmpty())
         assertEquals("false", panel.overviewSnapshotForTest().getValue("primaryActionVisible"))
 
         ApplicationManager.getApplication().invokeAndWait {
