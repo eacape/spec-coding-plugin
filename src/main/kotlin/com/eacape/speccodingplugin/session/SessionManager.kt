@@ -41,16 +41,29 @@ class SessionManager internal constructor(
         parentSessionId: String? = null,
         branchFromMessageId: String? = null,
         branchName: String? = null,
+        workflowChatBinding: WorkflowChatBinding? = null,
     ): Result<ConversationSession> {
         return runCatching {
             val normalizedTitle = title.trim()
             require(normalizedTitle.isNotBlank()) { "Session title cannot be blank" }
+            val normalizedBinding = workflowChatBinding?.normalizedOrNull()
+            val normalizedSpecTaskId = specTaskId?.trim()?.ifBlank { null }
+            require(
+                normalizedBinding == null ||
+                    normalizedSpecTaskId == null ||
+                    normalizedBinding.workflowId == normalizedSpecTaskId,
+            ) { "workflowChatBinding.workflowId must match specTaskId when both are provided" }
+            val effectiveBinding = normalizedBinding ?: legacyWorkflowChatBinding(
+                workflowId = normalizedSpecTaskId,
+                source = WorkflowChatEntrySource.MODE_SWITCH,
+            )
+            val effectiveWorkflowId = normalizedSpecTaskId ?: effectiveBinding?.workflowId
 
             val now = clock()
             val session = ConversationSession(
                 id = idGenerator(),
                 title = normalizedTitle,
-                specTaskId = specTaskId?.trim()?.ifBlank { null },
+                specTaskId = effectiveWorkflowId,
                 worktreeId = worktreeId?.trim()?.ifBlank { null },
                 modelProvider = modelProvider?.trim()?.ifBlank { null },
                 parentSessionId = parentSessionId?.trim()?.ifBlank { null },
@@ -58,6 +71,7 @@ class SessionManager internal constructor(
                 branchName = branchName?.trim()?.ifBlank { null },
                 createdAt = now,
                 updatedAt = now,
+                workflowChatBinding = effectiveBinding,
             )
 
             withConnection { connection ->
@@ -65,10 +79,11 @@ class SessionManager internal constructor(
                     """
                     INSERT INTO sessions(
                         id, title, spec_task_id, worktree_id, model_provider,
+                        workflow_id, task_id, focused_stage, workflow_source, workflow_action_intent,
                         parent_session_id, branch_from_message_id, branch_name,
                         created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """.trimIndent(),
                 ).use { statement ->
                     statement.setString(1, session.id)
@@ -76,11 +91,16 @@ class SessionManager internal constructor(
                     statement.setString(3, session.specTaskId)
                     statement.setString(4, session.worktreeId)
                     statement.setString(5, session.modelProvider)
-                    statement.setString(6, session.parentSessionId)
-                    statement.setString(7, session.branchFromMessageId)
-                    statement.setString(8, session.branchName)
-                    statement.setLong(9, session.createdAt)
-                    statement.setLong(10, session.updatedAt)
+                    statement.setString(6, session.workflowChatBinding?.workflowId)
+                    statement.setString(7, session.workflowChatBinding?.taskId)
+                    statement.setString(8, session.workflowChatBinding?.focusedStage?.name)
+                    statement.setString(9, session.workflowChatBinding?.source?.name)
+                    statement.setString(10, session.workflowChatBinding?.actionIntent?.name)
+                    statement.setString(11, session.parentSessionId)
+                    statement.setString(12, session.branchFromMessageId)
+                    statement.setString(13, session.branchName)
+                    statement.setLong(14, session.createdAt)
+                    statement.setLong(15, session.updatedAt)
                     statement.executeUpdate()
                 }
             }
@@ -119,15 +139,29 @@ class SessionManager internal constructor(
             require(normalizedSessionId.isNotBlank()) { "Session id cannot be blank" }
 
             val normalizedSpecTaskId = specTaskId?.trim()?.ifBlank { null }
+            val normalizedBinding = legacyWorkflowChatBinding(
+                workflowId = normalizedSpecTaskId,
+                source = WorkflowChatEntrySource.MODE_SWITCH,
+            )
             val now = clock()
 
             val updatedCount = withConnection { connection ->
                 connection.prepareStatement(
-                    "UPDATE sessions SET spec_task_id = ?, updated_at = ? WHERE id = ?"
+                    """
+                    UPDATE sessions
+                    SET spec_task_id = ?, workflow_id = ?, task_id = ?, focused_stage = ?,
+                        workflow_source = ?, workflow_action_intent = ?, updated_at = ?
+                    WHERE id = ?
+                    """.trimIndent(),
                 ).use { statement ->
                     statement.setString(1, normalizedSpecTaskId)
-                    statement.setLong(2, now)
-                    statement.setString(3, normalizedSessionId)
+                    statement.setString(2, normalizedBinding?.workflowId)
+                    statement.setString(3, normalizedBinding?.taskId)
+                    statement.setString(4, normalizedBinding?.focusedStage?.name)
+                    statement.setString(5, normalizedBinding?.source?.name)
+                    statement.setString(6, normalizedBinding?.actionIntent?.name)
+                    statement.setLong(7, now)
+                    statement.setString(8, normalizedSessionId)
                     statement.executeUpdate()
                 }
             }
@@ -135,6 +169,59 @@ class SessionManager internal constructor(
 
             getSession(normalizedSessionId)
                 ?: throw IllegalStateException("Failed to load updated session: $normalizedSessionId")
+        }
+    }
+
+    fun updateWorkflowChatBinding(sessionId: String, binding: WorkflowChatBinding): Result<ConversationSession> {
+        return runCatching {
+            val normalizedSessionId = sessionId.trim()
+            require(normalizedSessionId.isNotBlank()) { "Session id cannot be blank" }
+            val normalizedBinding = binding.normalizedOrNull()
+                ?: throw IllegalArgumentException("workflowChatBinding.workflowId cannot be blank")
+            val now = clock()
+
+            val updatedCount = withConnection { connection ->
+                connection.prepareStatement(
+                    """
+                    UPDATE sessions
+                    SET spec_task_id = ?, workflow_id = ?, task_id = ?, focused_stage = ?,
+                        workflow_source = ?, workflow_action_intent = ?, updated_at = ?
+                    WHERE id = ?
+                    """.trimIndent(),
+                ).use { statement ->
+                    statement.setString(1, normalizedBinding.workflowId)
+                    statement.setString(2, normalizedBinding.workflowId)
+                    statement.setString(3, normalizedBinding.taskId)
+                    statement.setString(4, normalizedBinding.focusedStage?.name)
+                    statement.setString(5, normalizedBinding.source.name)
+                    statement.setString(6, normalizedBinding.actionIntent.name)
+                    statement.setLong(7, now)
+                    statement.setString(8, normalizedSessionId)
+                    statement.executeUpdate()
+                }
+            }
+            require(updatedCount > 0) { "Session not found: $normalizedSessionId" }
+
+            getSession(normalizedSessionId)
+                ?: throw IllegalStateException("Failed to load updated session: $normalizedSessionId")
+        }
+    }
+
+    fun clearWorkflowChatTaskBinding(sessionId: String): Result<ConversationSession> {
+        return runCatching {
+            val normalizedSessionId = sessionId.trim()
+            require(normalizedSessionId.isNotBlank()) { "Session id cannot be blank" }
+            val session = getSession(normalizedSessionId)
+                ?: throw IllegalArgumentException("Session not found: $normalizedSessionId")
+            val existingBinding = session.resolvedWorkflowChatBinding()
+                ?: throw IllegalStateException("Workflow chat binding not found for session: $normalizedSessionId")
+            updateWorkflowChatBinding(
+                normalizedSessionId,
+                existingBinding.copy(
+                    taskId = null,
+                    actionIntent = WorkflowChatActionIntent.DISCUSS,
+                ),
+            ).getOrThrow()
         }
     }
 
@@ -163,6 +250,7 @@ class SessionManager internal constructor(
                 """
                 SELECT
                     id, title, spec_task_id, worktree_id, model_provider,
+                    workflow_id, task_id, focused_stage, workflow_source, workflow_action_intent,
                     parent_session_id, branch_from_message_id, branch_name,
                     created_at, updated_at
                 FROM sessions
@@ -188,6 +276,7 @@ class SessionManager internal constructor(
                 """
                 SELECT
                     id, title, spec_task_id, worktree_id, model_provider,
+                    workflow_id, task_id, focused_stage, workflow_source, workflow_action_intent,
                     parent_session_id, branch_from_message_id, branch_name,
                     created_at, updated_at
                 FROM sessions
@@ -324,6 +413,11 @@ class SessionManager internal constructor(
                     s.spec_task_id,
                     s.worktree_id,
                     s.model_provider,
+                    s.workflow_id,
+                    s.task_id,
+                    s.focused_stage,
+                    s.workflow_source,
+                    s.workflow_action_intent,
                     s.parent_session_id,
                     s.branch_name,
                     s.updated_at,
@@ -336,6 +430,8 @@ class SessionManager internal constructor(
             val conditions = mutableListOf<String>()
             val specSessionCondition = """
                 (
+                    (s.workflow_id IS NOT NULL AND TRIM(s.workflow_id) <> '')
+                    OR
                     (s.spec_task_id IS NOT NULL AND TRIM(s.spec_task_id) <> '')
                     OR LOWER(TRIM(s.title)) LIKE '/workflow%'
                     OR LOWER(TRIM(s.title)) LIKE '/spec%'
@@ -350,7 +446,12 @@ class SessionManager internal constructor(
             }
 
             if (hasQuery) {
-                conditions += "(s.title LIKE ? OR s.id LIKE ? OR s.spec_task_id LIKE ? OR s.worktree_id LIKE ? OR s.branch_name LIKE ?)"
+                conditions += """
+                    (
+                        s.title LIKE ? OR s.id LIKE ? OR s.spec_task_id LIKE ? OR s.workflow_id LIKE ? OR
+                        s.task_id LIKE ? OR s.worktree_id LIKE ? OR s.branch_name LIKE ?
+                    )
+                """.trimIndent()
             }
 
             if (conditions.isNotEmpty()) {
@@ -365,7 +466,7 @@ class SessionManager internal constructor(
                 var index = 1
                 if (hasQuery) {
                     val pattern = "%$normalizedQuery%"
-                    repeat(5) {
+                    repeat(7) {
                         statement.setString(index, pattern)
                         index += 1
                     }
@@ -395,6 +496,7 @@ class SessionManager internal constructor(
                 """
                 SELECT
                     id, title, spec_task_id, worktree_id, model_provider,
+                    workflow_id, task_id, focused_stage, workflow_source, workflow_action_intent,
                     parent_session_id, branch_from_message_id, branch_name,
                     created_at, updated_at
                 FROM sessions
@@ -451,6 +553,7 @@ class SessionManager internal constructor(
                 parentSessionId = source.id,
                 branchFromMessageId = targetMessageId,
                 branchName = effectiveBranchName,
+                workflowChatBinding = source.workflowChatBinding,
             ).getOrThrow()
 
             sourceMessages.take(copyUntilExclusive).forEach { message ->
@@ -647,6 +750,7 @@ class SessionManager internal constructor(
                 parentSessionId = source.id,
                 branchFromMessageId = snapshot.messageId,
                 branchName = effectiveBranchName,
+                workflowChatBinding = source.workflowChatBinding,
             ).getOrThrow()
 
             sourceMessages.take(copyUntilExclusive).forEach { message ->
@@ -714,6 +818,8 @@ class SessionManager internal constructor(
             pendingMigrations.forEach { migration ->
                 if (migration.version == 3) {
                     runSessionBranchMigration(connection)
+                } else if (migration.version == 5) {
+                    runWorkflowChatBindingMigration(connection)
                 } else {
                     migration.statements.forEach { sql ->
                         connection.createStatement().use { statement ->
@@ -807,10 +913,19 @@ class SessionManager internal constructor(
     }
 
     private fun ResultSet.toSession(): ConversationSession {
+        val legacySpecTaskId = getString("spec_task_id")
+        val workflowChatBinding = workflowChatBindingFromStorage(
+            workflowId = getString("workflow_id"),
+            taskId = getString("task_id"),
+            focusedStageName = getString("focused_stage"),
+            sourceName = getString("workflow_source"),
+            actionIntentName = getString("workflow_action_intent"),
+            legacyWorkflowId = legacySpecTaskId,
+        )
         return ConversationSession(
             id = getString("id"),
             title = displayWorkflowChatSessionTitle(getString("title")).orEmpty(),
-            specTaskId = getString("spec_task_id"),
+            specTaskId = legacySpecTaskId?.trim()?.ifBlank { null } ?: workflowChatBinding?.workflowId,
             worktreeId = getString("worktree_id"),
             modelProvider = getString("model_provider"),
             parentSessionId = getString("parent_session_id"),
@@ -818,6 +933,7 @@ class SessionManager internal constructor(
             branchName = getString("branch_name"),
             createdAt = getLong("created_at"),
             updatedAt = getLong("updated_at"),
+            workflowChatBinding = workflowChatBinding,
         )
     }
 
@@ -849,16 +965,26 @@ class SessionManager internal constructor(
     }
 
     private fun ResultSet.toSummary(): SessionSummary {
+        val legacySpecTaskId = getString("spec_task_id")
+        val workflowChatBinding = workflowChatBindingFromStorage(
+            workflowId = getString("workflow_id"),
+            taskId = getString("task_id"),
+            focusedStageName = getString("focused_stage"),
+            sourceName = getString("workflow_source"),
+            actionIntentName = getString("workflow_action_intent"),
+            legacyWorkflowId = legacySpecTaskId,
+        )
         return SessionSummary(
             id = getString("id"),
             title = displayWorkflowChatSessionTitle(getString("title")).orEmpty(),
-            specTaskId = getString("spec_task_id"),
+            specTaskId = legacySpecTaskId?.trim()?.ifBlank { null } ?: workflowChatBinding?.workflowId,
             worktreeId = getString("worktree_id"),
             modelProvider = getString("model_provider"),
             parentSessionId = getString("parent_session_id"),
             branchName = getString("branch_name"),
             messageCount = getInt("message_count"),
             updatedAt = getLong("updated_at"),
+            workflowChatBinding = workflowChatBinding,
         )
     }
 
@@ -897,6 +1023,65 @@ class SessionManager internal constructor(
         }
         connection.createStatement().use { statement ->
             statement.execute("CREATE INDEX IF NOT EXISTS idx_sessions_parent_session_id ON sessions(parent_session_id)")
+        }
+    }
+
+    private fun runWorkflowChatBindingMigration(connection: Connection) {
+        if (!hasColumn(connection, "sessions", "workflow_id")) {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE sessions ADD COLUMN workflow_id TEXT")
+            }
+        }
+        if (!hasColumn(connection, "sessions", "task_id")) {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE sessions ADD COLUMN task_id TEXT")
+            }
+        }
+        if (!hasColumn(connection, "sessions", "focused_stage")) {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE sessions ADD COLUMN focused_stage TEXT")
+            }
+        }
+        if (!hasColumn(connection, "sessions", "workflow_source")) {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE sessions ADD COLUMN workflow_source TEXT")
+            }
+        }
+        if (!hasColumn(connection, "sessions", "workflow_action_intent")) {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE sessions ADD COLUMN workflow_action_intent TEXT")
+            }
+        }
+        connection.createStatement().use { statement ->
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_sessions_workflow_id ON sessions(workflow_id)")
+            statement.execute("CREATE INDEX IF NOT EXISTS idx_sessions_task_id ON sessions(task_id)")
+            statement.execute(
+                """
+                UPDATE sessions
+                SET workflow_id = TRIM(spec_task_id)
+                WHERE (workflow_id IS NULL OR TRIM(workflow_id) = '')
+                  AND spec_task_id IS NOT NULL
+                  AND TRIM(spec_task_id) <> ''
+                """.trimIndent(),
+            )
+            statement.execute(
+                """
+                UPDATE sessions
+                SET workflow_source = '${WorkflowChatEntrySource.SESSION_RESTORE.name}'
+                WHERE workflow_id IS NOT NULL
+                  AND TRIM(workflow_id) <> ''
+                  AND (workflow_source IS NULL OR TRIM(workflow_source) = '')
+                """.trimIndent(),
+            )
+            statement.execute(
+                """
+                UPDATE sessions
+                SET workflow_action_intent = '${WorkflowChatActionIntent.DISCUSS.name}'
+                WHERE workflow_id IS NOT NULL
+                  AND TRIM(workflow_id) <> ''
+                  AND (workflow_action_intent IS NULL OR TRIM(workflow_action_intent) = '')
+                """.trimIndent(),
+            )
         }
     }
 
@@ -1055,6 +1240,10 @@ class SessionManager internal constructor(
                     """.trimIndent(),
                     "CREATE INDEX IF NOT EXISTS idx_context_snapshots_session_created_at ON session_context_snapshots(session_id, created_at DESC)",
                 ),
+            ),
+            SessionMigration(
+                version = 5,
+                statements = emptyList(),
             ),
         )
 

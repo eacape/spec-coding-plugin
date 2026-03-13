@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.session
 
+import com.eacape.speccodingplugin.spec.StageId
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -21,6 +22,13 @@ class SessionExporterTest {
             modelProvider = "openai",
             createdAt = 1_700_000_000_000,
             updatedAt = 1_700_000_100_000,
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = "spec-1",
+                taskId = "T-100",
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.TASK_PANEL,
+                actionIntent = WorkflowChatActionIntent.EXECUTE_TASK,
+            ),
         )
         val messages = listOf(
             ConversationMessage(
@@ -54,7 +62,8 @@ class SessionExporterTest {
             val content = Files.readString(result.filePath)
             assertTrue(content.isNotBlank())
             assertTrue(content.contains(session.title))
+            assertTrue(content.contains("spec-1"))
+            assertTrue(content.contains("T-100"))
         }
     }
 }
-

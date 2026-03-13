@@ -107,6 +107,10 @@ object SessionExporter {
             appendLine("- Created At: ${formatTimestamp(session.createdAt)}")
             appendLine("- Updated At: ${formatTimestamp(session.updatedAt)}")
             appendLine("- Spec Task: ${session.specTaskId ?: "-"}")
+            appendLine("- Workflow Binding: ${session.workflowChatBinding?.workflowId ?: "-"}")
+            appendLine("- Bound Task: ${session.workflowChatBinding?.taskId ?: "-"}")
+            appendLine("- Focused Stage: ${session.workflowChatBinding?.focusedStage?.name ?: "-"}")
+            appendLine("- Action Intent: ${session.workflowChatBinding?.actionIntent?.name ?: "-"}")
             appendLine("- Worktree: ${session.worktreeId ?: "-"}")
             appendLine("- Model Provider: ${session.modelProvider ?: "-"}")
             appendLine("- Message Count: ${messages.size}")
@@ -136,6 +140,15 @@ object SessionExporter {
             id = session.id,
             title = session.title,
             specTaskId = session.specTaskId,
+            workflowChatBinding = session.workflowChatBinding?.let { binding ->
+                SessionExportWorkflowChatBinding(
+                    workflowId = binding.workflowId,
+                    taskId = binding.taskId,
+                    focusedStage = binding.focusedStage?.name,
+                    source = binding.source.name,
+                    actionIntent = binding.actionIntent.name,
+                )
+            },
             worktreeId = session.worktreeId,
             modelProvider = session.modelProvider,
             createdAt = session.createdAt,
@@ -164,6 +177,10 @@ object SessionExporter {
             "Created At" to escapeHtml(formatTimestamp(session.createdAt)),
             "Updated At" to escapeHtml(formatTimestamp(session.updatedAt)),
             "Spec Task" to escapeHtml(session.specTaskId ?: "-"),
+            "Workflow Binding" to escapeHtml(session.workflowChatBinding?.workflowId ?: "-"),
+            "Bound Task" to escapeHtml(session.workflowChatBinding?.taskId ?: "-"),
+            "Focused Stage" to escapeHtml(session.workflowChatBinding?.focusedStage?.name ?: "-"),
+            "Action Intent" to escapeHtml(session.workflowChatBinding?.actionIntent?.name ?: "-"),
             "Worktree" to escapeHtml(session.worktreeId ?: "-"),
             "Model Provider" to escapeHtml(session.modelProvider ?: "-"),
             "Message Count" to messages.size.toString(),
@@ -252,11 +269,21 @@ private data class SessionExportPayload(
     val id: String,
     val title: String,
     val specTaskId: String? = null,
+    val workflowChatBinding: SessionExportWorkflowChatBinding? = null,
     val worktreeId: String? = null,
     val modelProvider: String? = null,
     val createdAt: Long,
     val updatedAt: Long,
     val messages: List<SessionExportMessage>,
+)
+
+@Serializable
+private data class SessionExportWorkflowChatBinding(
+    val workflowId: String,
+    val taskId: String? = null,
+    val focusedStage: String? = null,
+    val source: String,
+    val actionIntent: String,
 )
 
 @Serializable
@@ -268,4 +295,3 @@ private data class SessionExportMessage(
     val createdAt: Long,
     val metadataJson: String? = null,
 )
-

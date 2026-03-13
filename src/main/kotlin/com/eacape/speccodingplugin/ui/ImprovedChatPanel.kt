@@ -37,21 +37,26 @@ import com.eacape.speccodingplugin.session.ConversationMessage
 import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.ConversationSession
 import com.eacape.speccodingplugin.session.SessionManager
+import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
+import com.eacape.speccodingplugin.session.WorkflowChatBinding
+import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
 import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_COMMAND_PREFIX
 import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_MODE_KEY
 import com.eacape.speccodingplugin.session.canonicalizeWorkflowChatCommand
 import com.eacape.speccodingplugin.session.canonicalizeWorkflowChatModeKey
 import com.eacape.speccodingplugin.session.displayWorkflowChatCommand
 import com.eacape.speccodingplugin.session.isWorkflowChatCommand
+import com.eacape.speccodingplugin.session.resolvedWorkflowChatBinding
 import com.eacape.speccodingplugin.session.workflowChatCommandArgs
 import com.eacape.speccodingplugin.skill.SkillExecutor
 import com.eacape.speccodingplugin.skill.SkillContext
+import com.eacape.speccodingplugin.spec.DocumentRevisionConflictException
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecGenerationProgress
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
+import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.WorkflowStatus
-import com.eacape.speccodingplugin.spec.DocumentRevisionConflictException
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.stream.ChatTraceKind
 import com.eacape.speccodingplugin.stream.ChatTraceStatus
@@ -3187,7 +3192,8 @@ class ImprovedChatPanel(
                     resetSessionOnSpecSwitch = false,
                     emitHook = false,
                 )
-                activeSpecWorkflowId = session.specTaskId?.trim()?.ifBlank { null }
+                activeSpecWorkflowId = session.resolvedWorkflowChatBinding()?.workflowId
+                    ?: session.specTaskId?.trim()?.ifBlank { null }
                 restoreSessionMessages(messages)
                 currentSessionId = session.id
                 sessionIsolationService.activateSession(session.id)
@@ -3299,7 +3305,7 @@ class ImprovedChatPanel(
         session: ConversationSession,
         messages: List<ConversationMessage>,
     ): ChatInteractionMode {
-        if (!session.specTaskId.isNullOrBlank()) {
+        if (session.resolvedWorkflowChatBinding() != null || !session.specTaskId.isNullOrBlank()) {
             return ChatInteractionMode.SPEC
         }
 
@@ -3341,6 +3347,12 @@ class ImprovedChatPanel(
             title = title,
             specTaskId = normalizedSpecTaskId,
             modelProvider = providerId,
+            workflowChatBinding = normalizedSpecTaskId?.let { workflowId ->
+                buildWorkflowChatBinding(
+                    workflowId = workflowId,
+                    source = WorkflowChatEntrySource.MODE_SWITCH,
+                )
+            },
         )
 
         return created.fold(
@@ -3381,17 +3393,43 @@ class ImprovedChatPanel(
         }.getOrNull()
     }
 
+    private fun buildWorkflowChatBinding(
+        workflowId: String,
+        source: WorkflowChatEntrySource,
+        taskId: String? = null,
+        actionIntent: WorkflowChatActionIntent = WorkflowChatActionIntent.DISCUSS,
+        focusedStage: StageId? = null,
+    ): WorkflowChatBinding {
+        val resolvedFocusedStage = focusedStage ?: specEngine.loadWorkflow(workflowId)
+            .getOrNull()
+            ?.currentStage
+        return WorkflowChatBinding(
+            workflowId = workflowId,
+            taskId = taskId,
+            focusedStage = resolvedFocusedStage,
+            source = source,
+            actionIntent = actionIntent,
+        )
+    }
+
     private fun bindSessionToSpecTaskIfNeeded(sessionId: String?, workflowId: String?) {
         val normalizedSessionId = sessionId?.trim()?.ifBlank { null } ?: return
         val normalizedWorkflowId = workflowId?.trim()?.ifBlank { null } ?: return
-        val currentSpecTaskId = sessionManager.getSession(normalizedSessionId)
-            ?.specTaskId
-            ?.trim()
-            ?.ifBlank { null }
-        if (!currentSpecTaskId.isNullOrBlank()) {
+        val existingBinding = sessionManager.getSession(normalizedSessionId)
+            ?.resolvedWorkflowChatBinding()
+        if (existingBinding?.workflowId == normalizedWorkflowId) {
             return
         }
-        sessionManager.updateSessionSpecTaskId(normalizedSessionId, normalizedWorkflowId)
+        sessionManager.updateWorkflowChatBinding(
+            normalizedSessionId,
+            buildWorkflowChatBinding(
+                workflowId = normalizedWorkflowId,
+                source = existingBinding?.source ?: WorkflowChatEntrySource.MODE_SWITCH,
+                taskId = existingBinding?.taskId,
+                actionIntent = existingBinding?.actionIntent ?: WorkflowChatActionIntent.DISCUSS,
+                focusedStage = existingBinding?.focusedStage,
+            ),
+        )
             .onFailure { error ->
                 logger.warn("Failed to bind session to spec workflow: $normalizedWorkflowId", error)
             }

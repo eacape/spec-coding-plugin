@@ -1,9 +1,10 @@
 package com.eacape.speccodingplugin.ui.history
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.session.SessionSummary
 import com.eacape.speccodingplugin.session.displayWorkflowChatSessionTitle
 import com.eacape.speccodingplugin.session.isWorkflowChatSessionTitle
-import com.eacape.speccodingplugin.session.SessionSummary
+import com.eacape.speccodingplugin.session.resolvedWorkflowChatBinding
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
@@ -161,7 +162,7 @@ class HistorySessionListPanel(
     private fun selectedSessionId(): String? = sessionList.selectedValue?.id
 
     private fun isSpecSession(summary: SessionSummary): Boolean {
-        if (!summary.specTaskId.isNullOrBlank()) return true
+        if (summary.resolvedWorkflowChatBinding() != null) return true
         return isWorkflowChatSessionTitle(summary.title)
     }
 
@@ -181,9 +182,9 @@ class HistorySessionListPanel(
                 summary.branchName,
             )
 
-            !summary.specTaskId.isNullOrBlank() -> SpecCodingBundle.message(
+            summary.resolvedWorkflowChatBinding() != null -> SpecCodingBundle.message(
                 "history.binding.spec",
-                summary.specTaskId,
+                summary.resolvedWorkflowChatBinding()!!.workflowId,
             )
 
             else -> SpecCodingBundle.message("history.binding.general")

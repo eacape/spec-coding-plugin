@@ -9,6 +9,9 @@ import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.llm.LlmResponse
 import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.SessionManager
+import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
+import com.eacape.speccodingplugin.session.WorkflowChatBinding
+import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
@@ -501,6 +504,17 @@ class SpecTaskExecutionService(private val project: Project) {
         title = buildSessionTitle(workflow, task, trigger),
         specTaskId = workflow.id,
         modelProvider = providerId,
+        workflowChatBinding = WorkflowChatBinding(
+            workflowId = workflow.id,
+            taskId = task.id,
+            focusedStage = StageId.IMPLEMENT,
+            source = WorkflowChatEntrySource.TASK_PANEL,
+            actionIntent = when (trigger) {
+                ExecutionTrigger.USER_EXECUTE -> WorkflowChatActionIntent.EXECUTE_TASK
+                ExecutionTrigger.USER_RETRY -> WorkflowChatActionIntent.RETRY_TASK
+                ExecutionTrigger.SYSTEM_RECOVERY -> WorkflowChatActionIntent.DISCUSS
+            },
+        ),
     ).getOrThrow()
 
     private fun buildSessionTitle(

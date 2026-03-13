@@ -24,6 +24,7 @@ data class ConversationSession(
     val branchName: String? = null,
     val createdAt: Long,
     val updatedAt: Long,
+    val workflowChatBinding: WorkflowChatBinding? = null,
 )
 
 data class ConversationMessage(
@@ -46,6 +47,7 @@ data class SessionSummary(
     val branchName: String? = null,
     val messageCount: Int,
     val updatedAt: Long,
+    val workflowChatBinding: WorkflowChatBinding? = null,
 )
 
 data class SessionBranchComparison(

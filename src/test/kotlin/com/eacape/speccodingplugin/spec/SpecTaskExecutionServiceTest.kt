@@ -6,6 +6,8 @@ import com.eacape.speccodingplugin.llm.LlmResponse
 import com.eacape.speccodingplugin.llm.LlmUsage
 import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.SessionManager
+import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
+import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
@@ -241,6 +243,11 @@ class SpecTaskExecutionServiceTest {
         assertTrue(persistedTasks.contains("status: PENDING"))
         assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
         assertEquals(workflowId, session.specTaskId)
+        assertEquals(workflowId, session.workflowChatBinding?.workflowId)
+        assertEquals("T-002", session.workflowChatBinding?.taskId)
+        assertEquals(StageId.IMPLEMENT, session.workflowChatBinding?.focusedStage)
+        assertEquals(WorkflowChatEntrySource.TASK_PANEL, session.workflowChatBinding?.source)
+        assertEquals(WorkflowChatActionIntent.EXECUTE_TASK, session.workflowChatBinding?.actionIntent)
         assertTrue(session.title.contains("T-002"))
         assertEquals(listOf(ConversationRole.USER, ConversationRole.ASSISTANT), messages.map { it.role })
         assertTrue(messages.first().content.contains("Task ID: T-002"))
@@ -351,6 +358,7 @@ class SpecTaskExecutionServiceTest {
 
         val runs = executionService.listRuns(workflowId, "T-001")
         val latestTask = tasksService.parse(workflowId).first { it.id == "T-001" }
+        val session = sessionManager.getSession(result.sessionId)
         val userMessage = sessionManager.listMessages(result.sessionId).first()
         val userMetadata = TaskExecutionSessionMetadataCodec.decode(userMessage.metadataJson)
 
@@ -358,6 +366,9 @@ class SpecTaskExecutionServiceTest {
         assertEquals(ExecutionTrigger.USER_RETRY, result.run.trigger)
         assertEquals(TaskExecutionRunStatus.WAITING_CONFIRMATION, result.run.status)
         assertEquals(TaskStatus.PENDING, latestTask.status)
+        assertEquals(workflowId, session?.workflowChatBinding?.workflowId)
+        assertEquals("T-001", session?.workflowChatBinding?.taskId)
+        assertEquals(WorkflowChatActionIntent.RETRY_TASK, session?.workflowChatBinding?.actionIntent)
         assertTrue(userMessage.content.contains("Previous run ID: ${previousRun.runId}"))
         assertTrue(userMessage.content.contains("Previous summary: First attempt failed."))
         assertEquals(previousRun.runId, userMetadata.previousRunId)

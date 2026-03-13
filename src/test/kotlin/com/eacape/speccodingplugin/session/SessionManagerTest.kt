@@ -5,12 +5,14 @@ import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import com.eacape.speccodingplugin.spec.StageId
+import java.nio.file.Files
 import java.nio.file.Path
 import java.sql.DriverManager
 
@@ -59,6 +61,33 @@ class SessionManagerTest {
         val dbPath = manager.databasePathForTest()
         assertNotNull(dbPath)
         assertTrue(dbPath!!.toFile().exists())
+    }
+
+    @Test
+    fun `createSession should persist workflow chat binding`() {
+        val binding = WorkflowChatBinding(
+            workflowId = "wf-binding",
+            taskId = "T-007",
+            focusedStage = StageId.IMPLEMENT,
+            source = WorkflowChatEntrySource.TASK_PANEL,
+            actionIntent = WorkflowChatActionIntent.EXECUTE_TASK,
+        )
+
+        val created = manager.createSession(
+            title = "Workflow execution chat",
+            modelProvider = "openai",
+            workflowChatBinding = binding,
+        ).getOrThrow()
+
+        assertEquals("wf-binding", created.specTaskId)
+        assertEquals(binding, created.workflowChatBinding)
+
+        val loaded = manager.getSession(created.id)
+        assertEquals(binding, loaded?.workflowChatBinding)
+
+        val searched = manager.searchSessions(query = "T-007", filter = SessionFilter.SPEC, limit = 20)
+        assertEquals(1, searched.size)
+        assertEquals(binding, searched.first().workflowChatBinding)
     }
 
     @Test
@@ -227,6 +256,99 @@ class SessionManagerTest {
         val searched = managerAfterRestart.searchSessions(query = "Persisted", limit = 20)
         assertEquals(1, searched.size)
         assertEquals(session.id, searched.first().id)
+    }
+
+    @Test
+    fun `legacy specTaskId sessions should migrate to workflow chat binding`() {
+        val repoPath = tempDir.resolve("repo")
+        val databasePath = repoPath.resolve(".spec-coding").resolve("data").resolve("conversations.db")
+        Files.createDirectories(databasePath.parent)
+
+        DriverManager.getConnection("jdbc:sqlite:${databasePath.toAbsolutePath()}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    """
+                    CREATE TABLE schema_migrations(
+                        version INTEGER PRIMARY KEY,
+                        applied_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                (1..4).forEach { version ->
+                    statement.execute("INSERT INTO schema_migrations(version, applied_at) VALUES($version, $version)")
+                }
+                statement.execute(
+                    """
+                    CREATE TABLE sessions(
+                        id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        spec_task_id TEXT,
+                        worktree_id TEXT,
+                        model_provider TEXT,
+                        parent_session_id TEXT,
+                        branch_from_message_id TEXT,
+                        branch_name TEXT,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                statement.execute(
+                    """
+                    CREATE TABLE messages(
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        token_count INTEGER,
+                        metadata_json TEXT,
+                        created_at INTEGER NOT NULL,
+                        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                statement.execute(
+                    """
+                    CREATE TABLE session_context_snapshots(
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        message_id TEXT,
+                        snapshot_title TEXT NOT NULL,
+                        message_count INTEGER NOT NULL DEFAULT 0,
+                        metadata_json TEXT,
+                        created_at INTEGER NOT NULL,
+                        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                statement.execute(
+                    """
+                    INSERT INTO sessions(
+                        id, title, spec_task_id, worktree_id, model_provider,
+                        parent_session_id, branch_from_message_id, branch_name,
+                        created_at, updated_at
+                    )
+                    VALUES ('legacy-session', '/spec status', 'wf-legacy', NULL, NULL, NULL, NULL, NULL, 10, 20)
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        val migratedManager = SessionManager(
+            project = project,
+            connectionProvider = { jdbcUrl -> DriverManager.getConnection(jdbcUrl) },
+            idGenerator = { java.util.UUID.randomUUID().toString() },
+            clock = { System.currentTimeMillis() },
+        )
+
+        val loaded = migratedManager.getSession("legacy-session")
+
+        assertNotNull(loaded)
+        assertEquals("/workflow status", loaded?.title)
+        assertEquals("wf-legacy", loaded?.workflowChatBinding?.workflowId)
+        assertEquals(WorkflowChatEntrySource.SESSION_RESTORE, loaded?.workflowChatBinding?.source)
+        assertEquals(WorkflowChatActionIntent.DISCUSS, loaded?.workflowChatBinding?.actionIntent)
+        assertEquals("wf-legacy", loaded?.specTaskId)
     }
 
     @Test
