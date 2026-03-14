@@ -1526,29 +1526,47 @@ class SpecWorkflowPanel(
     }
 
     private fun onCreateWorkflow() {
-        val dialog = NewSpecWorkflowDialog(workflowOptions = listPanel.workflowOptionsForCreate())
-        if (dialog.showAndGet()) {
-            val title = dialog.resultTitle ?: return
-            val desc = dialog.resultDescription ?: ""
-            val changeIntent = dialog.resultChangeIntent
-            val baselineWorkflowId = dialog.resultBaselineWorkflowId
-            scope.launch(Dispatchers.IO) {
-                specEngine.createWorkflow(
-                    title = title,
-                    description = desc,
-                    changeIntent = changeIntent,
-                    baselineWorkflowId = baselineWorkflowId,
-                ).onSuccess { wf ->
-                    invokeLaterSafe {
-                        highlightedWorkflowId = wf.id
-                        refreshWorkflows(selectWorkflowId = wf.id)
-                        publishWorkflowSelection(wf.id)
-                    }
-                }.onFailure { e ->
-                    logger.warn("Failed to create workflow", e)
-                    invokeLaterSafe {
-                        val message = compactErrorMessage(e, SpecCodingBundle.message("common.unknown"))
-                        setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+        val workflowOptions = listPanel.workflowOptionsForCreate()
+        scope.launch(Dispatchers.IO) {
+            val defaultTemplate = runCatching {
+                SpecProjectConfigService(project).load().defaultTemplate
+            }.getOrElse { error ->
+                logger.warn("Failed to load default workflow template for create dialog", error)
+                WorkflowTemplate.FULL_SPEC
+            }
+
+            invokeLaterSafe {
+                val dialog = NewSpecWorkflowDialog(
+                    workflowOptions = workflowOptions,
+                    defaultTemplate = defaultTemplate,
+                )
+                if (!dialog.showAndGet()) {
+                    return@invokeLaterSafe
+                }
+                val title = dialog.resultTitle ?: return@invokeLaterSafe
+                val desc = dialog.resultDescription ?: ""
+                val template = dialog.resultTemplate
+                val changeIntent = dialog.resultChangeIntent
+                val baselineWorkflowId = dialog.resultBaselineWorkflowId
+                scope.launch(Dispatchers.IO) {
+                    specEngine.createWorkflow(
+                        title = title,
+                        description = desc,
+                        template = template,
+                        changeIntent = changeIntent,
+                        baselineWorkflowId = baselineWorkflowId,
+                    ).onSuccess { wf ->
+                        invokeLaterSafe {
+                            highlightedWorkflowId = wf.id
+                            refreshWorkflows(selectWorkflowId = wf.id)
+                            publishWorkflowSelection(wf.id)
+                        }
+                    }.onFailure { e ->
+                        logger.warn("Failed to create workflow", e)
+                        invokeLaterSafe {
+                            val message = compactErrorMessage(e, SpecCodingBundle.message("common.unknown"))
+                            setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                        }
                     }
                 }
             }

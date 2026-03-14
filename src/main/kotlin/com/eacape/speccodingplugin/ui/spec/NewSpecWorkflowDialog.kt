@@ -2,10 +2,14 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecChangeIntent
+import com.eacape.speccodingplugin.spec.StageId
+import com.eacape.speccodingplugin.spec.WorkflowTemplate
+import com.eacape.speccodingplugin.spec.WorkflowTemplates
 import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.CollectionComboBoxModel
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBTextArea
@@ -21,6 +25,7 @@ import javax.swing.JScrollPane
 
 class NewSpecWorkflowDialog(
     workflowOptions: List<WorkflowOption> = emptyList(),
+    defaultTemplate: WorkflowTemplate = WorkflowTemplate.FULL_SPEC,
 ) : DialogWrapper(true) {
 
     data class WorkflowOption(
@@ -35,6 +40,14 @@ class NewSpecWorkflowDialog(
 
     private val titleField = JBTextField()
     private val descriptionArea = JBTextArea(4, 40)
+    private val templateLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.template"))
+    private val templateCombo = JComboBox(CollectionComboBoxModel(WorkflowTemplate.entries.toList())).apply {
+        selectedItem = defaultTemplate
+        renderer = SimpleListCellRenderer.create<WorkflowTemplate> { label, value, _ ->
+            label.text = value?.let(SpecWorkflowOverviewPresenter::templateLabel).orEmpty()
+        }
+    }
+    private val intentLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.intent"))
     private val fullIntentRadio = JBRadioButton(SpecCodingBundle.message("spec.dialog.intent.full"), true)
     private val incrementalIntentRadio = JBRadioButton(SpecCodingBundle.message("spec.dialog.intent.incremental"), false)
     private val baselineLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.baseline"))
@@ -48,6 +61,8 @@ class NewSpecWorkflowDialog(
         private set
     var resultDescription: String? = null
         private set
+    var resultTemplate: WorkflowTemplate = defaultTemplate
+        private set
     var resultChangeIntent: SpecChangeIntent = SpecChangeIntent.FULL
         private set
     var resultBaselineWorkflowId: String? = null
@@ -58,11 +73,12 @@ class NewSpecWorkflowDialog(
             add(fullIntentRadio)
             add(incrementalIntentRadio)
         }
-        fullIntentRadio.addActionListener { updateIntentUI() }
-        incrementalIntentRadio.addActionListener { updateIntentUI() }
+        templateCombo.addActionListener { updateFormState() }
+        fullIntentRadio.addActionListener { updateFormState() }
+        incrementalIntentRadio.addActionListener { updateFormState() }
         init()
         title = SpecCodingBundle.message("spec.dialog.newWorkflow.title")
-        updateIntentUI()
+        updateFormState()
     }
 
     override fun createCenterPanel(): JComponent {
@@ -93,7 +109,20 @@ class NewSpecWorkflowDialog(
         panel.add(scrollPane)
         panel.add(javax.swing.Box.createVerticalStrut(12))
 
-        val intentLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.intent"))
+        templateLabel.alignmentX = JComponent.LEFT_ALIGNMENT
+        panel.add(templateLabel)
+        panel.add(javax.swing.Box.createVerticalStrut(4))
+
+        templateCombo.alignmentX = JComponent.LEFT_ALIGNMENT
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = templateCombo,
+            minWidth = JBUI.scale(160),
+            maxWidth = JBUI.scale(520),
+            height = JBUI.scale(30),
+        )
+        panel.add(templateCombo)
+        panel.add(javax.swing.Box.createVerticalStrut(12))
+
         intentLabel.alignmentX = JComponent.LEFT_ALIGNMENT
         panel.add(intentLabel)
         panel.add(javax.swing.Box.createVerticalStrut(4))
@@ -124,7 +153,7 @@ class NewSpecWorkflowDialog(
         if (titleField.text.isNullOrBlank()) {
             return ValidationInfo(SpecCodingBundle.message("spec.dialog.validation.titleRequired"), titleField)
         }
-        if (incrementalIntentRadio.isSelected) {
+        if (templateSupportsRequirementScope(selectedTemplate()) && incrementalIntentRadio.isSelected) {
             if (descriptionArea.text.isNullOrBlank()) {
                 return ValidationInfo(
                     SpecCodingBundle.message("spec.dialog.validation.changeSummaryRequired"),
@@ -138,11 +167,15 @@ class NewSpecWorkflowDialog(
     override fun doOKAction() {
         resultTitle = titleField.text.trim()
         resultDescription = descriptionArea.text.trim()
-        resultChangeIntent = if (incrementalIntentRadio.isSelected) {
-            SpecChangeIntent.INCREMENTAL
-        } else {
-            SpecChangeIntent.FULL
-        }
+        resultTemplate = selectedTemplate()
+        resultChangeIntent = normalizeChangeIntent(
+            template = resultTemplate,
+            requestedIntent = if (incrementalIntentRadio.isSelected) {
+                SpecChangeIntent.INCREMENTAL
+            } else {
+                SpecChangeIntent.FULL
+            },
+        )
         resultBaselineWorkflowId = if (resultChangeIntent == SpecChangeIntent.INCREMENTAL) {
             (baselineCombo.selectedItem as? WorkflowOption)?.workflowId
         } else {
@@ -151,8 +184,13 @@ class NewSpecWorkflowDialog(
         super.doOKAction()
     }
 
-    private fun updateIntentUI() {
-        val incremental = incrementalIntentRadio.isSelected
+    private fun updateFormState() {
+        val supportsRequirementScope = templateSupportsRequirementScope(selectedTemplate())
+        intentLabel.isVisible = supportsRequirementScope
+        fullIntentRadio.isVisible = supportsRequirementScope
+        incrementalIntentRadio.isVisible = supportsRequirementScope
+
+        val incremental = supportsRequirementScope && incrementalIntentRadio.isSelected
         baselineLabel.isVisible = incremental
         baselineCombo.isVisible = incremental
         baselineCombo.isEnabled = incremental
@@ -174,10 +212,33 @@ class NewSpecWorkflowDialog(
         )
     }
 
+    private fun selectedTemplate(): WorkflowTemplate {
+        return (templateCombo.selectedItem as? WorkflowTemplate) ?: WorkflowTemplate.FULL_SPEC
+    }
+
     override fun getPreferredFocusedComponent() = titleField
 
     companion object {
         private const val INITIAL_DIALOG_WIDTH = 560
-        private const val INITIAL_DIALOG_HEIGHT = 430
+        private const val INITIAL_DIALOG_HEIGHT = 500
+
+        internal fun templateSupportsRequirementScope(template: WorkflowTemplate): Boolean {
+            return WorkflowTemplates
+                .definitionOf(template)
+                .buildStagePlan()
+                .activeStages
+                .contains(StageId.REQUIREMENTS)
+        }
+
+        internal fun normalizeChangeIntent(
+            template: WorkflowTemplate,
+            requestedIntent: SpecChangeIntent,
+        ): SpecChangeIntent {
+            return if (templateSupportsRequirementScope(template)) {
+                requestedIntent
+            } else {
+                SpecChangeIntent.FULL
+            }
+        }
     }
 }

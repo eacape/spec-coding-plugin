@@ -90,4 +90,34 @@ class SpecEngineArtifactBootstrapTest {
         assertTrue(Files.exists(workflowDir.resolve("tasks.md")))
         assertTrue(Files.exists(workflowDir.resolve("verification.md")))
     }
+
+    @Test
+    fun `createWorkflow should honor explicit template selection over project default`() {
+        val configPath = tempDir.resolve(".spec-coding").resolve("config.yaml")
+        Files.createDirectories(configPath.parent)
+        Files.writeString(
+            configPath,
+            """
+            schemaVersion: 1
+            defaultTemplate: FULL_SPEC
+            """.trimIndent() + "\n",
+        )
+
+        val engine = SpecEngine(project, storage) { SpecGenerationResult.Failure("not used") }
+        val workflow = engine.createWorkflow(
+            title = "quick task from dialog",
+            description = "explicit template",
+            template = WorkflowTemplate.QUICK_TASK,
+        ).getOrThrow()
+
+        val workflowDir = tempDir
+            .resolve(".spec-coding")
+            .resolve("specs")
+            .resolve(workflow.id)
+        assertEquals(WorkflowTemplate.QUICK_TASK, workflow.template)
+        assertEquals(StageId.TASKS, workflow.currentStage)
+        assertTrue(Files.exists(workflowDir.resolve("tasks.md")))
+        assertFalse(Files.exists(workflowDir.resolve("requirements.md")))
+        assertFalse(Files.exists(workflowDir.resolve("design.md")))
+    }
 }

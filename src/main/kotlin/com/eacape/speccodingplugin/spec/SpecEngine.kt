@@ -138,16 +138,18 @@ class SpecEngine(private val project: Project) {
     fun createWorkflow(
         title: String,
         description: String,
+        template: WorkflowTemplate? = null,
         changeIntent: SpecChangeIntent = SpecChangeIntent.FULL,
         baselineWorkflowId: String? = null,
     ): Result<SpecWorkflow> {
         return runCatching {
             val projectConfig = projectConfigDelegate.load()
             val configPin = projectConfigDelegate.createConfigPin(projectConfig)
-            val template = projectConfig.defaultTemplate
-            val templatePolicy = projectConfig.policyFor(template)
+            val selectedTemplate = template ?: projectConfig.defaultTemplate
+            val templatePolicy = projectConfig.policyFor(selectedTemplate)
             logger.debug(
-                "Loaded spec project config: schemaVersion=${projectConfig.schemaVersion}, defaultTemplate=${projectConfig.defaultTemplate}",
+                "Loaded spec project config: schemaVersion=${projectConfig.schemaVersion}, " +
+                    "defaultTemplate=${projectConfig.defaultTemplate}, selectedTemplate=$selectedTemplate",
             )
             val normalizedBaselineWorkflowId = baselineWorkflowId
                 ?.trim()
@@ -174,7 +176,7 @@ class SpecEngine(private val project: Project) {
                 title = title,
                 description = description,
                 changeIntent = changeIntent,
-                template = template,
+                template = selectedTemplate,
                 stageStates = stageMetadata.stageStates,
                 currentStage = stageMetadata.currentStage,
                 verifyEnabled = stageMetadata.verifyEnabled,
@@ -192,13 +194,13 @@ class SpecEngine(private val project: Project) {
             storageDelegate.saveWorkflow(workflow).getOrThrow()
             val artifactWrites = artifactServiceDelegate.ensureMissingArtifacts(
                 workflowId = workflowId,
-                template = template,
+                template = selectedTemplate,
                 templatePolicy = templatePolicy,
             )
             activeWorkflows[workflowId] = workflow
 
             logger.info(
-                "Created workflow: $workflowId, template=$template, " +
+                "Created workflow: $workflowId, template=$selectedTemplate, " +
                     "scaffoldedArtifacts=${artifactWrites.count { it.created }}",
             )
             workflow
