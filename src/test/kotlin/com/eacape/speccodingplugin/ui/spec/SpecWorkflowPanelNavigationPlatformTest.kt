@@ -109,7 +109,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         }
     }
 
-    fun `test requirements workflow should hide checks and verification sections until they are needed`() {
+    fun `test requirements workflow should keep continue checks visible for repair actions`() {
         val workflow = SpecEngine.getInstance(project).createWorkflow(
             title = "Section Visibility",
             description = "requirements stage visibility",
@@ -132,6 +132,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             linkedSetOf(
                 SpecWorkflowWorkspaceSectionId.OVERVIEW,
                 SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.GATE,
                 SpecWorkflowWorkspaceSectionId.DOCUMENTS,
             ),
             panel.visibleWorkspaceSectionIdsForTest(),

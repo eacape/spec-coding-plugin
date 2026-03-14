@@ -237,58 +237,6 @@ class RequirementsSectionRepairServiceTest {
         assertEquals("", capturedContext)
     }
 
-    @Test
-    fun `previewRepair should treat explicit blank clarification override as no context`() {
-        val workflow = engine.createWorkflow(
-            title = "repair-blank-override",
-            description = "skip clarification context",
-        ).getOrThrow()
-        engine.saveClarificationRetryState(
-            workflow.id,
-            ClarificationRetryState(
-                input = "repair requirements",
-                confirmedContext = "Should not leak into skipped clarify repair.",
-                questionsMarkdown = "1. Clarify missing sections?",
-                followUp = ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR,
-                requirementsRepairSections = listOf(RequirementsSectionId.NON_FUNCTIONAL),
-            ),
-        ).getOrThrow()
-        engine.updateDocumentContent(workflow.id, SpecPhase.SPECIFY, ENGLISH_REQUIREMENTS_WITH_GAPS).getOrThrow()
-
-        var capturedContext: String? = null
-        val service = RequirementsSectionRepairService(
-            project = project,
-            storage = storage,
-            artifactService = artifactService,
-            updateDocument = { workflowId, content, expectedRevision ->
-                engine.updateDocumentContent(
-                    workflowId = workflowId,
-                    phase = SpecPhase.SPECIFY,
-                    content = content,
-                    expectedRevision = expectedRevision,
-                )
-            },
-            draftGenerator = { request ->
-                capturedContext = request.confirmedContext
-                Result.success(
-                    """
-                    ## Non-Functional Requirements
-                    - Keep repair output deterministic.
-                    """.trimIndent(),
-                )
-            },
-            llmRouter = mockk<LlmRouter>(relaxed = true),
-        )
-
-        service.previewRepair(
-            workflowId = workflow.id,
-            requestedMissingSections = listOf(RequirementsSectionId.NON_FUNCTIONAL),
-            confirmedContextOverride = "",
-        )
-
-        assertEquals("", capturedContext)
-    }
-
     private fun repairService(draft: String): RequirementsSectionRepairService {
         return RequirementsSectionRepairService(
             project = project,

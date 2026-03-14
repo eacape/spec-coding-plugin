@@ -22,7 +22,7 @@ internal object SpecWorkflowWorkspaceLayout {
             SpecWorkflowWorkspaceSectionId.DOCUMENTS,
         )
 
-        if (status != WorkflowStatus.COMPLETED && currentStage in setOf(StageId.TASKS, StageId.IMPLEMENT, StageId.VERIFY)) {
+        if (status != WorkflowStatus.COMPLETED && currentStage != StageId.ARCHIVE) {
             visible += SpecWorkflowWorkspaceSectionId.GATE
         }
         if (status == WorkflowStatus.COMPLETED || currentStage in setOf(StageId.IMPLEMENT, StageId.VERIFY, StageId.ARCHIVE)) {
@@ -48,6 +48,7 @@ internal object SpecWorkflowWorkspaceLayout {
             StageId.DESIGN,
             -> linkedSetOf(
                 SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.GATE,
                 SpecWorkflowWorkspaceSectionId.DOCUMENTS,
             )
 

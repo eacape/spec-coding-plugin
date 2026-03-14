@@ -8,15 +8,32 @@ import org.junit.jupiter.api.Test
 class SpecWorkflowWorkspaceLayoutTest {
 
     @Test
-    fun `requirements stage should hide checks and verification sections`() {
+    fun `requirements stage should show continue checks but not verification yet`() {
         assertEquals(
             linkedSetOf(
                 SpecWorkflowWorkspaceSectionId.OVERVIEW,
                 SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.GATE,
                 SpecWorkflowWorkspaceSectionId.DOCUMENTS,
             ),
             SpecWorkflowWorkspaceLayout.visibleSections(
                 currentStage = StageId.REQUIREMENTS,
+                status = WorkflowStatus.IN_PROGRESS,
+            ),
+        )
+    }
+
+    @Test
+    fun `design stage should show continue checks but not verification yet`() {
+        assertEquals(
+            linkedSetOf(
+                SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.TASKS,
+                SpecWorkflowWorkspaceSectionId.GATE,
+                SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            ),
+            SpecWorkflowWorkspaceLayout.visibleSections(
+                currentStage = StageId.DESIGN,
                 status = WorkflowStatus.IN_PROGRESS,
             ),
         )
@@ -72,14 +89,30 @@ class SpecWorkflowWorkspaceLayoutTest {
     }
 
     @Test
-    fun `requirements stage should focus overview and documents`() {
+    fun `requirements stage should focus overview checks and documents`() {
         assertEquals(
             linkedSetOf(
                 SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.GATE,
                 SpecWorkflowWorkspaceSectionId.DOCUMENTS,
             ),
             SpecWorkflowWorkspaceLayout.defaultExpandedSections(
                 currentStage = StageId.REQUIREMENTS,
+                status = WorkflowStatus.IN_PROGRESS,
+            ),
+        )
+    }
+
+    @Test
+    fun `design stage should focus overview checks and documents`() {
+        assertEquals(
+            linkedSetOf(
+                SpecWorkflowWorkspaceSectionId.OVERVIEW,
+                SpecWorkflowWorkspaceSectionId.GATE,
+                SpecWorkflowWorkspaceSectionId.DOCUMENTS,
+            ),
+            SpecWorkflowWorkspaceLayout.defaultExpandedSections(
+                currentStage = StageId.DESIGN,
                 status = WorkflowStatus.IN_PROGRESS,
             ),
         )
