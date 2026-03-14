@@ -119,6 +119,8 @@ class SpecTaskExecutionService(private val project: Project) {
         providerId: String?,
         modelId: String?,
         operationMode: OperationMode,
+        sessionId: String? = null,
+        sessionSource: WorkflowChatEntrySource = WorkflowChatEntrySource.TASK_PANEL,
         auditContext: Map<String, String> = emptyMap(),
     ): TaskAiExecutionResult {
         return executeWithAi(
@@ -129,6 +131,8 @@ class SpecTaskExecutionService(private val project: Project) {
             operationMode = operationMode,
             trigger = ExecutionTrigger.USER_EXECUTE,
             previousRunId = null,
+            sessionId = sessionId,
+            sessionSource = sessionSource,
             auditContext = auditContext,
         )
     }
@@ -140,6 +144,8 @@ class SpecTaskExecutionService(private val project: Project) {
         modelId: String?,
         operationMode: OperationMode,
         previousRunId: String? = null,
+        sessionId: String? = null,
+        sessionSource: WorkflowChatEntrySource = WorkflowChatEntrySource.TASK_PANEL,
         auditContext: Map<String, String> = emptyMap(),
     ): TaskAiExecutionResult {
         return executeWithAi(
@@ -150,6 +156,8 @@ class SpecTaskExecutionService(private val project: Project) {
             operationMode = operationMode,
             trigger = ExecutionTrigger.USER_RETRY,
             previousRunId = previousRunId,
+            sessionId = sessionId,
+            sessionSource = sessionSource,
             auditContext = auditContext,
         )
     }
@@ -290,6 +298,8 @@ class SpecTaskExecutionService(private val project: Project) {
         operationMode: OperationMode,
         trigger: ExecutionTrigger,
         previousRunId: String?,
+        sessionId: String?,
+        sessionSource: WorkflowChatEntrySource,
         auditContext: Map<String, String>,
     ): TaskAiExecutionResult {
         val workflow = storage.loadWorkflow(workflowId).getOrThrow()
@@ -303,11 +313,13 @@ class SpecTaskExecutionService(private val project: Project) {
             trigger = trigger,
             summary = buildQueuedSummary(trigger, previousRun),
         ).second
-        val session = createExecutionSession(
+        val session = resolveExecutionSession(
             workflow = workflow,
             task = task,
             providerId = providerId,
             trigger = trigger,
+            sessionId = sessionId,
+            sessionSource = sessionSource,
         )
         val requestId = UUID.randomUUID().toString()
         val prompt = buildExecutionPrompt(
@@ -495,27 +507,48 @@ class SpecTaskExecutionService(private val project: Project) {
         return "run-${taskId.lowercase()}-${UUID.randomUUID()}"
     }
 
-    private fun createExecutionSession(
+    private fun resolveExecutionSession(
         workflow: SpecWorkflow,
         task: StructuredTask,
         providerId: String?,
         trigger: ExecutionTrigger,
-    ) = sessionManager.createSession(
-        title = buildSessionTitle(workflow, task, trigger),
-        specTaskId = workflow.id,
-        modelProvider = providerId,
-        workflowChatBinding = WorkflowChatBinding(
-            workflowId = workflow.id,
-            taskId = task.id,
-            focusedStage = StageId.IMPLEMENT,
-            source = WorkflowChatEntrySource.TASK_PANEL,
-            actionIntent = when (trigger) {
-                ExecutionTrigger.USER_EXECUTE -> WorkflowChatActionIntent.EXECUTE_TASK
-                ExecutionTrigger.USER_RETRY -> WorkflowChatActionIntent.RETRY_TASK
-                ExecutionTrigger.SYSTEM_RECOVERY -> WorkflowChatActionIntent.DISCUSS
-            },
-        ),
-    ).getOrThrow()
+        sessionId: String?,
+        sessionSource: WorkflowChatEntrySource,
+    ) = sessionId
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+        ?.let { existingSessionId ->
+            sessionManager.updateWorkflowChatBinding(
+                sessionId = existingSessionId,
+                binding = WorkflowChatBinding(
+                    workflowId = workflow.id,
+                    taskId = task.id,
+                    focusedStage = StageId.IMPLEMENT,
+                    source = sessionSource,
+                    actionIntent = when (trigger) {
+                        ExecutionTrigger.USER_EXECUTE -> WorkflowChatActionIntent.EXECUTE_TASK
+                        ExecutionTrigger.USER_RETRY -> WorkflowChatActionIntent.RETRY_TASK
+                        ExecutionTrigger.SYSTEM_RECOVERY -> WorkflowChatActionIntent.DISCUSS
+                    },
+                ),
+            ).getOrThrow()
+        }
+        ?: sessionManager.createSession(
+            title = buildSessionTitle(workflow, task, trigger),
+            specTaskId = workflow.id,
+            modelProvider = providerId,
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = workflow.id,
+                taskId = task.id,
+                focusedStage = StageId.IMPLEMENT,
+                source = sessionSource,
+                actionIntent = when (trigger) {
+                    ExecutionTrigger.USER_EXECUTE -> WorkflowChatActionIntent.EXECUTE_TASK
+                    ExecutionTrigger.USER_RETRY -> WorkflowChatActionIntent.RETRY_TASK
+                    ExecutionTrigger.SYSTEM_RECOVERY -> WorkflowChatActionIntent.DISCUSS
+                },
+            ),
+        ).getOrThrow()
 
     private fun buildSessionTitle(
         workflow: SpecWorkflow,

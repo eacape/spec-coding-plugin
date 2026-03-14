@@ -82,6 +82,7 @@ class SpecWorkflowPanel(
     private val specDeltaService = SpecDeltaService.getInstance(project)
     private val specTasksService = SpecTasksService.getInstance(project)
     private val specTaskExecutionService = SpecTaskExecutionService.getInstance(project)
+    private val specTaskCompletionService = SpecTaskCompletionService.getInstance(project)
     private val specRelatedFilesService = SpecRelatedFilesService.getInstance(project)
     private val specVerificationService = SpecVerificationService.getInstance(project)
     private val artifactService = SpecArtifactService(project)
@@ -2723,44 +2724,18 @@ class SpecWorkflowPanel(
         verificationResult: TaskVerificationResult?,
     ) {
         val workflowId = selectedWorkflowId ?: return
-        val existingTask = currentStructuredTasks.firstOrNull { task -> task.id == taskId }
         val auditContext = buildTaskAuditContext(taskId, "COMPLETE")
         SpecWorkflowActionSupport.runBackground(
             project = project,
             title = SpecCodingBundle.message("spec.toolwindow.tasks.complete.progress"),
             task = {
-                specTasksService.updateRelatedFiles(
+                specTaskCompletionService.completeTask(
                     workflowId = workflowId,
                     taskId = taskId,
-                    files = files,
+                    relatedFiles = files,
+                    verificationResult = verificationResult,
                     auditContext = auditContext,
-                )
-                when {
-                    verificationResult != null -> specTasksService.updateVerificationResult(
-                        workflowId = workflowId,
-                        taskId = taskId,
-                        verificationResult = verificationResult,
-                        auditContext = auditContext,
-                    )
-
-                    existingTask?.verificationResult != null -> specTasksService.clearVerificationResult(
-                        workflowId = workflowId,
-                        taskId = taskId,
-                        auditContext = auditContext,
-                    )
-                }
-                if (existingTask?.awaitingCompletionConfirmation == true) {
-                    specTaskExecutionService.resolveWaitingConfirmationRun(
-                        workflowId = workflowId,
-                        taskId = taskId,
-                        summary = "Completed from spec workflow task action.",
-                    )
-                }
-                specTasksService.transitionStatus(
-                    workflowId = workflowId,
-                    taskId = taskId,
-                    to = TaskStatus.COMPLETED,
-                    auditContext = auditContext,
+                    completionRunSummary = "Completed from spec workflow task action.",
                 )
             },
             onSuccess = {

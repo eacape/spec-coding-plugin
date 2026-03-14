@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.TaskPriority
+import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowPanel
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.wm.RegisterToolWindowTask
@@ -117,6 +118,35 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             SpecCodingBundle.message("toolwindow.workflow.binding.task", task.id),
             snapshot.getValue("taskChipText"),
         )
+        assertEquals("true", snapshot.getValue("executeTaskVisible"))
+        assertEquals("true", snapshot.getValue("executeTaskEnabled"))
+        assertEquals("execute", snapshot.getValue("executeTaskIconId"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", task.id),
+            snapshot.getValue("executeTaskTooltip"),
+        )
+        assertEquals("true", snapshot.getValue("retryTaskVisible"))
+        assertEquals("false", snapshot.getValue("retryTaskEnabled"))
+        assertEquals("refresh", snapshot.getValue("retryTaskIconId"))
+        assertEquals(
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.retry.unavailable.state",
+                task.id,
+                TaskStatus.PENDING.name,
+            ),
+            snapshot.getValue("retryTaskTooltip"),
+        )
+        assertEquals("true", snapshot.getValue("completeTaskVisible"))
+        assertEquals("false", snapshot.getValue("completeTaskEnabled"))
+        assertEquals("complete", snapshot.getValue("completeTaskIconId"))
+        assertEquals(
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.complete.unavailable.state",
+                task.id,
+                TaskStatus.PENDING.name,
+            ),
+            snapshot.getValue("completeTaskTooltip"),
+        )
         assertEquals("true", snapshot.getValue("taskClearVisible"))
         assertFalse(snapshot.getValue("sessionId").isBlank())
 
@@ -134,6 +164,9 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("", clearedSnapshot.getValue("taskId"))
         assertEquals("true", clearedSnapshot.getValue("workflowChipVisible"))
         assertEquals("false", clearedSnapshot.getValue("taskChipVisible"))
+        assertEquals("false", clearedSnapshot.getValue("executeTaskVisible"))
+        assertEquals("false", clearedSnapshot.getValue("retryTaskVisible"))
+        assertEquals("false", clearedSnapshot.getValue("completeTaskVisible"))
     }
 
     private fun registerSpecCodeToolWindow(): ToolWindow {
