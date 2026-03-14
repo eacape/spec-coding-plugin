@@ -17,6 +17,7 @@ import javax.swing.Icon
 import javax.swing.JButton
 import javax.swing.JScrollPane
 import javax.swing.JSplitPane
+import javax.swing.SwingConstants
 import javax.swing.border.AbstractBorder
 import javax.swing.border.Border
 import javax.swing.border.CompoundBorder
@@ -25,6 +26,7 @@ import javax.swing.plaf.basic.BasicSplitPaneUI
 
 internal data class SpecIconActionPresentation(
     val icon: Icon,
+    val text: String = "",
     val tooltip: String,
     val accessibleName: String = tooltip,
     val enabled: Boolean = true,
@@ -62,15 +64,22 @@ internal object SpecUiStyle {
     fun configureIconActionButton(
         button: JButton,
         icon: Icon,
+        text: String = "",
         tooltip: String,
         accessibleName: String = tooltip,
     ) {
-        button.text = ""
+        val label = text.trim()
+        button.text = label
         button.icon = icon
         button.disabledIcon = IconLoader.getDisabledIcon(icon)
-        button.iconTextGap = 0
+        button.iconTextGap = if (label.isEmpty()) 0 else JBUI.scale(6)
+        button.horizontalTextPosition = SwingConstants.RIGHT
+        button.verticalTextPosition = SwingConstants.CENTER
+        button.horizontalAlignment = SwingConstants.CENTER
+        button.margin = if (label.isEmpty()) JBUI.insets(0) else JBUI.insets(0, 10, 0, 10)
         button.putClientProperty(ICON_ACTION_TOOLTIP_KEY, tooltip)
         button.putClientProperty(ICON_ACTION_ACCESSIBLE_NAME_KEY, accessibleName)
+        syncIconActionButtonSize(button)
         syncIconActionButtonSemantics(button)
     }
 
@@ -78,6 +87,7 @@ internal object SpecUiStyle {
         configureIconActionButton(
             button = button,
             icon = presentation.icon,
+            text = presentation.text,
             tooltip = presentation.tooltip,
             accessibleName = presentation.accessibleName,
         )
@@ -114,6 +124,7 @@ internal object SpecUiStyle {
         installIconActionButtonStateTracking(button)
         applyIconActionButtonVisualState(button)
         val scaledSize = JBUI.scale(size)
+        button.putClientProperty(ICON_ACTION_SIZE_KEY, scaledSize)
         button.preferredSize = JBUI.size(scaledSize, scaledSize)
         button.minimumSize = button.preferredSize
     }
@@ -236,6 +247,26 @@ internal object SpecUiStyle {
         button.toolTipText = effectiveTooltip.ifBlank { null }
         button.accessibleContext?.accessibleName = accessibleName.ifBlank { null }
         button.accessibleContext?.accessibleDescription = accessibleDescription.ifBlank { null }
+    }
+
+    private fun syncIconActionButtonSize(button: JButton) {
+        val configuredSize = (button.getClientProperty(ICON_ACTION_SIZE_KEY) as? Int) ?: JBUI.scale(24)
+        val label = button.text.orEmpty()
+        if (label.isBlank()) {
+            val size = JBUI.size(configuredSize, configuredSize)
+            button.preferredSize = size
+            button.minimumSize = size
+            return
+        }
+        val textWidth = button.getFontMetrics(button.font).stringWidth(label)
+        val iconWidth = button.icon?.iconWidth ?: 0
+        val width = maxOf(
+            configuredSize,
+            textWidth + iconWidth + button.iconTextGap + button.margin.left + button.margin.right + JBUI.scale(10),
+        )
+        val size = JBUI.size(width, maxOf(configuredSize, JBUI.scale(26)))
+        button.preferredSize = size
+        button.minimumSize = size
     }
 
     private fun applyIconActionButtonVisualState(button: JButton) {
@@ -406,6 +437,7 @@ internal object SpecUiStyle {
     private val ICON_BUTTON_BORDER_ACTIVE = JBColor(Color(89, 136, 208), Color(143, 182, 232))
     private val ICON_BUTTON_BG_DISABLED = JBColor(Color(247, 250, 254), Color(66, 72, 83))
     private val ICON_BUTTON_BORDER_DISABLED = JBColor(Color(198, 205, 216), Color(96, 106, 121))
+    private const val ICON_ACTION_SIZE_KEY = "spec.iconActionButton.size"
     private const val ICON_ACTION_TOOLTIP_KEY = "spec.iconActionButton.tooltip"
     private const val ICON_ACTION_ACCESSIBLE_NAME_KEY = "spec.iconActionButton.accessibleName"
     private const val ICON_ACTION_DISABLED_REASON_KEY = "spec.iconActionButton.disabledReason"

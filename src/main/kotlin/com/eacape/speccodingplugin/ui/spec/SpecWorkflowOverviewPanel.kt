@@ -633,6 +633,12 @@ internal class SpecWorkflowOverviewPanel(
             button = primaryActionButton,
             presentation = SpecIconActionPresentation(
                 icon = SpecWorkflowIcons.workbenchAction(action.kind),
+                text = when (action.kind) {
+                    SpecWorkflowWorkbenchActionKind.ADVANCE ->
+                        SpecCodingBundle.message("spec.toolwindow.overview.nextStage")
+
+                    else -> ""
+                },
                 tooltip = action.label,
                 accessibleName = action.label,
                 enabled = action.enabled,

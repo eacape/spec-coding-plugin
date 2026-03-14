@@ -30,7 +30,9 @@ class SpecDetailPanelTest {
         assertFalse(states["nextEnabled"] as Boolean)
         assertFalse(states["goBackEnabled"] as Boolean)
         assertFalse(states["completeEnabled"] as Boolean)
+        assertFalse(states["completeVisible"] as Boolean)
         assertFalse(states["pauseResumeEnabled"] as Boolean)
+        assertFalse(states["pauseResumeVisible"] as Boolean)
         assertFalse(states["openEditorEnabled"] as Boolean)
         assertFalse(states["historyDiffEnabled"] as Boolean)
     }
@@ -89,18 +91,20 @@ class SpecDetailPanelTest {
         assertEquals("back", states["goBackIconId"])
         assertTrue(states["goBackFocusable"] as Boolean)
         assertFalse(states["completeEnabled"] as Boolean)
-        assertEquals("complete", states["completeIconId"])
-        assertTrue(states["completeFocusable"] as Boolean)
-        assertTrue(states["pauseResumeEnabled"] as Boolean)
-        assertEquals(SpecCodingBundle.message("spec.detail.pause"), states["pauseResumeText"])
-        assertEquals("pause", states["pauseResumeIconId"])
-        assertTrue(states["pauseResumeFocusable"] as Boolean)
+        assertFalse(states["completeVisible"] as Boolean)
+        assertFalse(states["pauseResumeEnabled"] as Boolean)
+        assertFalse(states["pauseResumeVisible"] as Boolean)
         assertTrue(states["openEditorEnabled"] as Boolean)
         assertEquals("openToolWindow", states["openEditorIconId"])
         assertTrue(states["openEditorFocusable"] as Boolean)
         assertTrue(states["historyDiffEnabled"] as Boolean)
         assertEquals("history", states["historyDiffIconId"])
         assertTrue(states["historyDiffFocusable"] as Boolean)
+        assertEquals(0, panel.documentToolbarActionCountForTest())
+        assertEquals(
+            listOf("generate", "openEditor", "historyDiff", "edit"),
+            panel.visibleComposerActionOrderForTest(),
+        )
     }
 
     @Test
@@ -526,7 +530,7 @@ class SpecDetailPanelTest {
     }
 
     @Test
-    fun `updateWorkflow should enable complete only when implement document is valid`() {
+    fun `updateWorkflow should keep retired toolbar actions hidden in implement phase`() {
         val panel = createPanel()
 
         val workflow = SpecWorkflow(
@@ -549,7 +553,14 @@ class SpecDetailPanelTest {
         panel.updateWorkflow(workflow)
 
         val states = panel.buttonStatesForTest()
-        assertTrue(states["completeEnabled"] as Boolean)
+        assertFalse(states["completeEnabled"] as Boolean)
+        assertFalse(states["completeVisible"] as Boolean)
+        assertFalse(states["pauseResumeEnabled"] as Boolean)
+        assertFalse(states["pauseResumeVisible"] as Boolean)
+        assertEquals(
+            listOf("generate", "openEditor", "historyDiff", "edit"),
+            panel.visibleComposerActionOrderForTest(),
+        )
     }
 
     @Test
@@ -580,10 +591,14 @@ class SpecDetailPanelTest {
         assertFalse(states["nextEnabled"] as Boolean)
         assertFalse(states["goBackEnabled"] as Boolean)
         assertFalse(states["completeEnabled"] as Boolean)
-        assertTrue(states["pauseResumeEnabled"] as Boolean)
-        assertEquals(SpecCodingBundle.message("spec.detail.resume"), states["pauseResumeText"])
-        assertEquals("resume", states["pauseResumeIconId"])
+        assertFalse(states["completeVisible"] as Boolean)
+        assertFalse(states["pauseResumeEnabled"] as Boolean)
+        assertFalse(states["pauseResumeVisible"] as Boolean)
         assertTrue(states["historyDiffEnabled"] as Boolean)
+        assertEquals(
+            listOf("generate", "openEditor", "historyDiff", "edit"),
+            panel.visibleComposerActionOrderForTest(),
+        )
     }
 
     @Test

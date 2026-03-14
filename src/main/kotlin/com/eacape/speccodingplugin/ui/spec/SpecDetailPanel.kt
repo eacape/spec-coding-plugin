@@ -20,6 +20,7 @@ import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Container
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
@@ -109,9 +110,11 @@ class SpecDetailPanel(
     private lateinit var processTimelineSection: JPanel
     private lateinit var processTimelineBodyContainer: JPanel
     private lateinit var processTimelineToggleButton: JButton
+    private lateinit var documentToolbarPanel: JPanel
     private lateinit var composerSectionBodyContainer: JPanel
     private lateinit var composerSectionToggleButton: JButton
     private lateinit var inputSectionContainer: JPanel
+    private lateinit var actionButtonPanel: JPanel
     private lateinit var bottomPanelContainer: JPanel
     private lateinit var mainSplitPane: JSplitPane
     private var isPhaseStepperEnabled: Boolean = true
@@ -237,7 +240,7 @@ class SpecDetailPanel(
                 isOpaque = false
                 add(
                     createSectionContainer(
-                        buildDocumentToolbar(),
+                        buildDocumentToolbar().also { documentToolbarPanel = it },
                         backgroundColor = PREVIEW_SECTION_BG,
                         borderColor = PREVIEW_SECTION_BORDER,
                     ),
@@ -296,14 +299,14 @@ class SpecDetailPanel(
         )
         composerContent.add(inputSectionContainer, BorderLayout.CENTER)
 
-        val buttonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 3, 0)).apply {
+        actionButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 3, 0)).apply {
             isOpaque = false
             border = JBUI.Borders.emptyBottom(JBUI.scale(1))
         }
-        setupButtons(buttonPanel)
+        setupButtons(actionButtonPanel)
         composerContent.add(
             createSectionContainer(
-                JBScrollPane(buttonPanel).apply {
+                JBScrollPane(actionButtonPanel).apply {
                     border = JBUI.Borders.empty(1, 3)
                     horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
@@ -471,6 +474,11 @@ class SpecDetailPanel(
         }
 
         panel.add(generateButton)
+        panel.add(openEditorButton)
+        panel.add(historyDiffButton)
+        panel.add(editButton)
+        panel.add(saveButton)
+        panel.add(cancelEditButton)
         panel.add(confirmGenerateButton)
         panel.add(regenerateClarificationButton)
         panel.add(skipClarificationButton)
@@ -598,16 +606,6 @@ class SpecDetailPanel(
     }
 
     private fun buildDocumentToolbar(): JPanel {
-        val documentActionsPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
-            isOpaque = false
-            add(pauseResumeButton)
-            add(completeButton)
-            add(openEditorButton)
-            add(historyDiffButton)
-            add(editButton)
-            add(saveButton)
-            add(cancelEditButton)
-        }
         val headerLeft = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
             isOpaque = false
             add(documentMetaLabel, BorderLayout.CENTER)
@@ -616,7 +614,6 @@ class SpecDetailPanel(
             isOpaque = false
             border = JBUI.Borders.empty(2, 2)
             add(headerLeft, BorderLayout.CENTER)
-            add(documentActionsPanel, BorderLayout.EAST)
         }
     }
 
@@ -1477,8 +1474,8 @@ class SpecDetailPanel(
         generateButton.isVisible = true
         nextPhaseButton.isVisible = true
         goBackButton.isVisible = true
-        completeButton.isVisible = true
-        pauseResumeButton.isVisible = true
+        completeButton.isVisible = false
+        pauseResumeButton.isVisible = false
         openEditorButton.isVisible = true
         historyDiffButton.isVisible = true
         editButton.isVisible = true
@@ -3390,8 +3387,8 @@ class SpecDetailPanel(
         generateButton.isVisible = !clarifying
         nextPhaseButton.isVisible = !clarifying
         goBackButton.isVisible = false
-        completeButton.isVisible = !clarifying
-        pauseResumeButton.isVisible = !clarifying
+        completeButton.isVisible = false
+        pauseResumeButton.isVisible = false
         openEditorButton.isVisible = !clarifying
         historyDiffButton.isVisible = !clarifying && !artifactOnlyView
         editButton.isVisible = !clarifying && !isEditing && !artifactOnlyView
@@ -3406,10 +3403,8 @@ class SpecDetailPanel(
         generateButton.isEnabled = standardModeEnabled
         nextPhaseButton.isEnabled = workflow.canProceedToNext() && standardModeEnabled
         goBackButton.isEnabled = false
-        completeButton.isEnabled = workflow.currentPhase == SpecPhase.IMPLEMENT
-                && workflow.getDocument(SpecPhase.IMPLEMENT)?.validationResult?.valid == true
-                && standardModeEnabled
-        pauseResumeButton.isEnabled = !isEditing
+        completeButton.isEnabled = false
+        pauseResumeButton.isEnabled = false
         updatePauseResumeButtonPresentation(workflow.status)
         styleActionButton(pauseResumeButton)
         openEditorButton.isEnabled = !isEditing && !clarifying && (selectedDocumentAvailable || artifactOpenAvailable)
@@ -3683,16 +3678,23 @@ class SpecDetailPanel(
             "completeEnabled" to completeButton.isEnabled,
             "completeIconId" to SpecWorkflowIcons.debugId(completeButton.icon),
             "completeFocusable" to completeButton.isFocusable,
+            "completeVisible" to completeButton.isVisible,
             "pauseResumeEnabled" to pauseResumeButton.isEnabled,
             "pauseResumeIconId" to SpecWorkflowIcons.debugId(pauseResumeButton.icon),
             "pauseResumeText" to (pauseResumeButton.toolTipText ?: pauseResumeButton.text),
             "pauseResumeFocusable" to pauseResumeButton.isFocusable,
+            "pauseResumeVisible" to pauseResumeButton.isVisible,
             "openEditorEnabled" to openEditorButton.isEnabled,
             "openEditorIconId" to SpecWorkflowIcons.debugId(openEditorButton.icon),
             "openEditorFocusable" to openEditorButton.isFocusable,
+            "openEditorVisible" to openEditorButton.isVisible,
             "historyDiffEnabled" to historyDiffButton.isEnabled,
             "historyDiffIconId" to SpecWorkflowIcons.debugId(historyDiffButton.icon),
             "historyDiffFocusable" to historyDiffButton.isFocusable,
+            "historyDiffVisible" to historyDiffButton.isVisible,
+            "editVisible" to editButton.isVisible,
+            "saveVisible" to saveButton.isVisible,
+            "cancelEditVisible" to cancelEditButton.isVisible,
             "confirmGenerateEnabled" to confirmGenerateButton.isEnabled,
             "confirmGenerateIconId" to SpecWorkflowIcons.debugId(confirmGenerateButton.icon),
             "confirmGenerateFocusable" to confirmGenerateButton.isFocusable,
@@ -3706,6 +3708,42 @@ class SpecDetailPanel(
             "cancelClarificationIconId" to SpecWorkflowIcons.debugId(cancelClarificationButton.icon),
             "cancelClarificationFocusable" to cancelClarificationButton.isFocusable,
         )
+    }
+
+    internal fun documentToolbarActionCountForTest(): Int {
+        if (!::documentToolbarPanel.isInitialized) {
+            return 0
+        }
+        return collectButtons(documentToolbarPanel).size
+    }
+
+    internal fun visibleComposerActionOrderForTest(): List<String> {
+        if (!::actionButtonPanel.isInitialized) {
+            return emptyList()
+        }
+        return actionButtonPanel.components.mapNotNull { component ->
+            val button = component as? JButton ?: return@mapNotNull null
+            if (!button.isVisible) {
+                return@mapNotNull null
+            }
+            composerActionId(button)
+        }
+    }
+
+    private fun composerActionId(button: JButton): String? {
+        return when (button) {
+            generateButton -> "generate"
+            openEditorButton -> "openEditor"
+            historyDiffButton -> "historyDiff"
+            editButton -> "edit"
+            saveButton -> "save"
+            cancelEditButton -> "cancelEdit"
+            confirmGenerateButton -> "confirmGenerate"
+            regenerateClarificationButton -> "regenerateClarification"
+            skipClarificationButton -> "skipClarification"
+            cancelClarificationButton -> "cancelClarification"
+            else -> null
+        }
     }
 
     private fun collectButtonTexts(component: Component): List<String> {
@@ -3722,6 +3760,19 @@ class SpecDetailPanel(
             }
         }
         return texts
+    }
+
+    private fun collectButtons(component: Component): List<JButton> {
+        val buttons = mutableListOf<JButton>()
+        if (component is JButton) {
+            buttons += component
+        }
+        if (component is Container) {
+            component.components.forEach { child ->
+                buttons += collectButtons(child)
+            }
+        }
+        return buttons
     }
 
     private data class PhaseNode(val phase: SpecPhase, val document: SpecDocument?) {

@@ -1,4 +1,4 @@
-package com.eacape.speccodingplugin.ui.spec
+﻿package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.ExecutionTrigger
@@ -131,8 +131,8 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals("", snapshot.getValue("blockers"))
         assertEquals("true", snapshot.getValue("primaryActionVisible"))
         assertEquals("true", snapshot.getValue("primaryActionEnabled"))
-        assertEquals("", snapshot.getValue("primaryActionText"))
-        assertEquals("advance", snapshot.getValue("primaryActionIconId"))
+        assertEquals(SpecCodingBundle.message("spec.toolwindow.overview.nextStage"), snapshot.getValue("primaryActionText"))
+        assertEquals("nextStage", snapshot.getValue("primaryActionIconId"))
         assertEquals("true", snapshot.getValue("primaryActionHasIcon"))
         assertEquals("true", snapshot.getValue("primaryActionRolloverEnabled"))
         assertEquals("true", snapshot.getValue("primaryActionFocusable"))
@@ -190,6 +190,8 @@ class SpecWorkflowOverviewPanelTest {
         assertTrue(snapshot.getValue("blockers").contains(SpecCodingBundle.message("spec.toolwindow.overview.blockers.common.gateUnavailable")))
         assertEquals("true", snapshot.getValue("primaryActionVisible"))
         assertEquals("false", snapshot.getValue("primaryActionEnabled"))
+        assertEquals(SpecCodingBundle.message("spec.toolwindow.overview.nextStage"), snapshot.getValue("primaryActionText"))
+        assertEquals("nextStage", snapshot.getValue("primaryActionIconId"))
         assertEquals("true", snapshot.getValue("primaryActionFocusable"))
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.document"),
@@ -587,3 +589,4 @@ class SpecWorkflowOverviewPanelTest {
         }
     }
 }
+

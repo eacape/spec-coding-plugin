@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.util.IconLoader
 import javax.swing.Icon
 
 internal enum class SpecWorkflowActionIcon(
@@ -9,6 +10,10 @@ internal enum class SpecWorkflowActionIcon(
     val icon: Icon,
 ) {
     ADVANCE("advance", AllIcons.General.ArrowRight),
+    NEXT_STAGE(
+        "nextStage",
+        IconLoader.getIcon("/icons/spec-workflow-next-stage.svg", SpecWorkflowActionIcon::class.java),
+    ),
     EXECUTE("execute", AllIcons.Actions.Execute),
     RETRY("refresh", AllIcons.General.InlineRefresh),
     COMPLETE("complete", AllIcons.General.GreenCheckmark),
@@ -30,6 +35,7 @@ internal enum class SpecWorkflowActionIcon(
 
 internal object SpecWorkflowIcons {
     val Advance: Icon = SpecWorkflowActionIcon.ADVANCE.icon
+    val NextStage: Icon = SpecWorkflowActionIcon.NEXT_STAGE.icon
     val Execute: Icon = SpecWorkflowActionIcon.EXECUTE.icon
     val Refresh: Icon = SpecWorkflowActionIcon.RETRY.icon
     val Complete: Icon = SpecWorkflowActionIcon.COMPLETE.icon
@@ -52,9 +58,8 @@ internal object SpecWorkflowIcons {
 
     fun workbenchAction(kind: SpecWorkflowWorkbenchActionKind): Icon {
         return when (kind) {
-            SpecWorkflowWorkbenchActionKind.ADVANCE,
-            SpecWorkflowWorkbenchActionKind.JUMP,
-            -> Advance
+            SpecWorkflowWorkbenchActionKind.ADVANCE -> NextStage
+            SpecWorkflowWorkbenchActionKind.JUMP -> Advance
 
             SpecWorkflowWorkbenchActionKind.ROLLBACK -> Back
             SpecWorkflowWorkbenchActionKind.START_TASK,
