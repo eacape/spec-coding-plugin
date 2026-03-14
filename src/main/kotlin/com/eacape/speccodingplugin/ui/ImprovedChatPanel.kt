@@ -5626,6 +5626,8 @@ class ImprovedChatPanel(
         if (normalizedCommand.isBlank() || project.isDisposed || _isDisposed) {
             return
         }
+        val originalComposerText = inputField.text.orEmpty()
+        val originalComposerCaret = inputField.caretPosition.coerceIn(0, originalComposerText.length)
         val request = OperationRequest(
             operation = Operation.EXECUTE_COMMAND,
             description = requestDescription,
@@ -5660,11 +5662,21 @@ class ImprovedChatPanel(
             )
         }.fold(
             onSuccess = {
+                restoreComposerIfTerminalCommandEchoed(
+                    originalText = originalComposerText,
+                    originalCaret = originalComposerCaret,
+                    command = normalizedCommand,
+                )
                 modeManager.recordOperation(request, success = true)
                 val message = SpecCodingBundle.message("chat.workflow.action.runCommand.startedTerminal", normalizedCommand)
                 showStatus(message)
             },
             onFailure = { error ->
+                restoreComposerIfTerminalCommandEchoed(
+                    originalText = originalComposerText,
+                    originalCaret = originalComposerCaret,
+                    command = normalizedCommand,
+                )
                 logger.warn("Failed to open IDE terminal for workflow command", error)
                 val message = SpecCodingBundle.message("chat.workflow.action.runCommand.terminalUnavailable", normalizedCommand)
                 addErrorMessage(message)
@@ -5677,6 +5689,50 @@ class ImprovedChatPanel(
                 }
             },
         )
+    }
+
+    private fun restoreComposerIfTerminalCommandEchoed(
+        originalText: String,
+        originalCaret: Int,
+        command: String,
+    ) {
+        val currentText = inputField.text.orEmpty()
+        if (!looksLikeTerminalCommandEcho(currentText, originalText, originalCaret, command)) {
+            return
+        }
+
+        suppressComposerAutoCollapse = true
+        try {
+            inputField.text = originalText
+            inputField.caretPosition = originalCaret.coerceIn(0, inputField.text.length)
+        } finally {
+            suppressComposerAutoCollapse = false
+        }
+        prunePendingPastedTextBlocks(inputField.text.orEmpty())
+        lastComposerTextSnapshot = inputField.text.orEmpty()
+    }
+
+    private fun looksLikeTerminalCommandEcho(
+        currentText: String,
+        originalText: String,
+        originalCaret: Int,
+        command: String,
+    ): Boolean {
+        if (command.isBlank() || currentText == originalText) {
+            return false
+        }
+        if (originalText.isBlank() && currentText == command) {
+            return true
+        }
+
+        val safeCaret = originalCaret.coerceIn(0, currentText.length)
+        val insertedEnd = safeCaret + command.length
+        if (insertedEnd > currentText.length) {
+            return false
+        }
+
+        return currentText.substring(safeCaret, insertedEnd) == command &&
+            currentText.removeRange(safeCaret, insertedEnd) == originalText
     }
 
     private fun handleWorkflowCommandStop(command: String) {
