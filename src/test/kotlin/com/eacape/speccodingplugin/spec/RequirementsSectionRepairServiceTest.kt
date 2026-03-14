@@ -140,6 +140,103 @@ class RequirementsSectionRepairServiceTest {
         assertFalse(preview.updatedContent.contains("## User Stories"))
     }
 
+    @Test
+    fun `previewRepair should insert missing leading sections before the first later section in canonical order`() {
+        val workflow = engine.createWorkflow(
+            title = "repair-leading-sections",
+            description = "stable insertion order",
+        ).getOrThrow()
+        engine.updateDocumentContent(
+            workflow.id,
+            SpecPhase.SPECIFY,
+            """
+                # Requirements Document
+
+                ## User Stories
+                As a writer, I want later sections to stay in place, so that repairs are predictable.
+
+                ## Acceptance Criteria
+                - [ ] Missing leading sections are inserted ahead of later ones.
+            """.trimIndent(),
+        ).getOrThrow()
+        val service = repairService(
+            draft = """
+                ## Functional Requirements
+                - Preserve the canonical top-level section order.
+
+                ## Non-Functional Requirements
+                - Insert the repair before the first later section when needed.
+            """.trimIndent(),
+        )
+
+        val preview = service.previewRepair(workflow.id, emptyList())
+
+        assertEquals(
+            listOf(RequirementsSectionId.FUNCTIONAL, RequirementsSectionId.NON_FUNCTIONAL),
+            preview.patches.map { patch -> patch.sectionId },
+        )
+        assertTrue(
+            preview.updatedContent.indexOf("## Functional Requirements") <
+                preview.updatedContent.indexOf("## Non-Functional Requirements"),
+        )
+        assertTrue(
+            preview.updatedContent.indexOf("## Non-Functional Requirements") <
+                preview.updatedContent.indexOf("## User Stories"),
+        )
+    }
+
+    @Test
+    fun `previewRepair should treat explicit blank clarification override as no context`() {
+        val workflow = engine.createWorkflow(
+            title = "repair-blank-override",
+            description = "skip clarification context",
+        ).getOrThrow()
+        engine.saveClarificationRetryState(
+            workflow.id,
+            ClarificationRetryState(
+                input = "repair requirements",
+                confirmedContext = "Should not leak into skipped clarify repair.",
+                questionsMarkdown = "1. Clarify missing sections?",
+                followUp = ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR,
+                requirementsRepairSections = listOf(RequirementsSectionId.NON_FUNCTIONAL),
+            ),
+        ).getOrThrow()
+        engine.updateDocumentContent(workflow.id, SpecPhase.SPECIFY, ENGLISH_REQUIREMENTS_WITH_GAPS).getOrThrow()
+
+        var capturedContext: String? = null
+        val service = RequirementsSectionRepairService(
+            project = project,
+            storage = storage,
+            artifactService = artifactService,
+            updateDocument = { workflowId, content, expectedRevision ->
+                engine.updateDocumentContent(
+                    workflowId = workflowId,
+                    phase = SpecPhase.SPECIFY,
+                    content = content,
+                    expectedRevision = expectedRevision,
+                )
+            },
+            draftGenerator = { request ->
+                capturedContext = request.confirmedContext
+                Result.success(
+                    """
+                    ## Non-Functional Requirements
+                    - Keep repair output deterministic.
+                    """.trimIndent(),
+                )
+            },
+            llmRouter = mockk<LlmRouter>(relaxed = true),
+        )
+
+        service.previewRepair(
+            workflowId = workflow.id,
+            requestedMissingSections = listOf(RequirementsSectionId.NON_FUNCTIONAL),
+            confirmedContextOverride = "",
+        )
+
+        assertEquals("", capturedContext)
+    }
+
     private fun repairService(draft: String): RequirementsSectionRepairService {
         return RequirementsSectionRepairService(
             project = project,

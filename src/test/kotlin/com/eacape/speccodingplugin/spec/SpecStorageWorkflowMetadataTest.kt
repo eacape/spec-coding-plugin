@@ -122,6 +122,11 @@ class SpecStorageWorkflowMetadataTest {
             clarificationRound = 2,
             lastError = "request interrupted",
             confirmed = true,
+            followUp = ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR,
+            requirementsRepairSections = listOf(
+                RequirementsSectionId.NON_FUNCTIONAL,
+                RequirementsSectionId.ACCEPTANCE_CRITERIA,
+            ),
         )
         val workflow = SpecWorkflow(
             id = workflowId,
@@ -155,6 +160,8 @@ class SpecStorageWorkflowMetadataTest {
         assertEquals(retryState.clarificationRound, loadedRetry?.clarificationRound)
         assertEquals(retryState.lastError, loadedRetry?.lastError)
         assertEquals(retryState.confirmed, loadedRetry?.confirmed)
+        assertEquals(retryState.followUp, loadedRetry?.followUp)
+        assertEquals(retryState.requirementsRepairSections, loadedRetry?.requirementsRepairSections)
     }
 
     @Test

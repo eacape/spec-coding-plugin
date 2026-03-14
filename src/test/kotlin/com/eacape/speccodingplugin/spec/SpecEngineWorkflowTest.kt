@@ -806,6 +806,11 @@ class SpecEngineWorkflowTest {
             clarificationRound = 2,
             lastError = "interrupted",
             confirmed = true,
+            followUp = ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR,
+            requirementsRepairSections = listOf(
+                RequirementsSectionId.USER_STORIES,
+                RequirementsSectionId.ACCEPTANCE_CRITERIA,
+            ),
         )
         val saved = engine.saveClarificationRetryState(created.id, retryState).getOrThrow()
         assertEquals(retryState, saved.clarificationRetryState)

@@ -3618,6 +3618,10 @@ class SpecDetailPanel(
         return isClarificationPreviewContentVisible
     }
 
+    internal fun isClarifyingForTest(): Boolean = clarificationState != null
+
+    internal fun clarificationQuestionsTextForTest(): String = clarificationQuestionsPane.text
+
     internal fun currentProcessTimelineTextForTest(): String {
         return processTimelinePane.text
     }

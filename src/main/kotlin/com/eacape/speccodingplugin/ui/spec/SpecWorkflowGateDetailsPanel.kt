@@ -5,7 +5,8 @@ import com.eacape.speccodingplugin.spec.GateQuickFixKind
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.MissingRequirementsSectionsQuickFixPayload
-import com.eacape.speccodingplugin.spec.RequirementsSectionRepairService
+import com.eacape.speccodingplugin.spec.RequirementsSectionAiSupport
+import com.eacape.speccodingplugin.spec.RequirementsSectionId
 import com.eacape.speccodingplugin.spec.RequirementsSectionSupport
 import com.eacape.speccodingplugin.spec.Violation
 import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
@@ -44,6 +45,9 @@ import javax.swing.event.DocumentListener
 internal class SpecWorkflowGateDetailsPanel(
     private val project: Project,
     private val showHeader: Boolean = true,
+    private val onClarifyThenFillRequested: ((String, List<RequirementsSectionId>) -> Boolean)? = null,
+    private val onAiFillRequested: ((String, List<RequirementsSectionId>) -> Boolean)? = null,
+    private val aiFillUnavailableReasonProvider: (() -> String?)? = null,
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
     private enum class SeverityFilter {
@@ -229,7 +233,41 @@ internal class SpecWorkflowGateDetailsPanel(
 
     internal fun selectedQuickFixLabelsForTest(): List<String> {
         val selected = violationsList.selectedValue ?: return emptyList()
-        return SpecGateQuickFixSupport.presentations(selected).map(SpecGateQuickFixSupport.Presentation::title)
+        return quickFixPresentations(selected).map(SpecGateQuickFixSupport.Presentation::title)
+    }
+
+    internal fun selectedQuickFixPopupTextsForTest(): List<String> {
+        val selected = violationsList.selectedValue ?: return emptyList()
+        return quickFixPresentations(selected).map(SpecGateQuickFixSupport.Presentation::popupText)
+    }
+
+    internal fun selectedQuickFixEnabledStatesForTest(): List<Boolean> {
+        val selected = violationsList.selectedValue ?: return emptyList()
+        return quickFixPresentations(selected).map(SpecGateQuickFixSupport.Presentation::enabled)
+    }
+
+    internal fun triggerSelectedQuickFixForTest(kind: GateQuickFixKind): Boolean {
+        val selectedIndex = violationsList.selectedIndex
+        if (selectedIndex < 0) {
+            return false
+        }
+        return triggerQuickFixForTest(selectedIndex, kind)
+    }
+
+    internal fun triggerQuickFixForTest(index: Int, kind: GateQuickFixKind): Boolean {
+        val workflowId = currentWorkflowId ?: return false
+        if (index !in 0 until listModel.size()) {
+            return false
+        }
+        val violation = listModel.getElementAt(index)
+        val presentation = quickFixPresentations(violation)
+            .firstOrNull { quickFix -> quickFix.descriptor.kind == kind }
+            ?: return false
+        if (!presentation.enabled) {
+            return false
+        }
+        executeQuickFix(workflowId, violation, presentation)
+        return true
     }
 
     private fun buildHeader(): JPanel {
@@ -400,7 +438,7 @@ internal class SpecWorkflowGateDetailsPanel(
     private fun showQuickFixActions() {
         val workflowId = currentWorkflowId ?: return
         val violation = violationsList.selectedValue ?: return
-        val quickFixes = SpecGateQuickFixSupport.presentations(violation)
+        val quickFixes = quickFixPresentations(violation)
         if (quickFixes.isNotEmpty()) {
             if (quickFixes.size == 1 && quickFixes.single().enabled) {
                 executeQuickFix(workflowId, violation, quickFixes.single())
@@ -473,6 +511,10 @@ internal class SpecWorkflowGateDetailsPanel(
             }
 
             GateQuickFixKind.CLARIFY_THEN_FILL_REQUIREMENTS_SECTIONS -> {
+                val payload = quickFix.descriptor.payload as? MissingRequirementsSectionsQuickFixPayload ?: return
+                if (onClarifyThenFillRequested?.invoke(workflowId, payload.missingSections) == true) {
+                    return
+                }
                 val sections = missingSectionsDescription(quickFix)
                 SpecWorkflowActionSupport.showInfo(
                     project,
@@ -483,54 +525,39 @@ internal class SpecWorkflowGateDetailsPanel(
         }
     }
 
+    private fun quickFixPresentations(violation: Violation): List<SpecGateQuickFixSupport.Presentation> {
+        val aiDisabledReason = if (aiFillUnavailableReasonProvider != null) {
+            aiFillUnavailableReasonProvider.invoke()
+        } else {
+            RequirementsSectionAiSupport.unavailableReason()
+        }
+        return SpecGateQuickFixSupport.presentations(violation).map { presentation ->
+            if (
+                presentation.descriptor.kind == GateQuickFixKind.AI_FILL_MISSING_REQUIREMENTS_SECTIONS &&
+                aiDisabledReason != null
+            ) {
+                presentation.copy(
+                    enabled = false,
+                    disabledReason = aiDisabledReason,
+                )
+            } else {
+                presentation
+            }
+        }
+    }
+
     private fun runRequirementsSectionRepair(
         workflowId: String,
         quickFix: SpecGateQuickFixSupport.Presentation,
     ) {
         val payload = quickFix.descriptor.payload as? MissingRequirementsSectionsQuickFixPayload ?: return
-        val repairService = RequirementsSectionRepairService(project)
-        SpecWorkflowActionSupport.runBackground(
+        if (onAiFillRequested?.invoke(workflowId, payload.missingSections) == true) {
+            return
+        }
+        RequirementsSectionRepairUiSupport.previewAndApply(
             project = project,
-            title = SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.progress.preview"),
-            task = {
-                repairService.previewRepair(
-                    workflowId = workflowId,
-                    requestedMissingSections = payload.missingSections,
-                )
-            },
-            onSuccess = { preview ->
-                if (!preview.changed) {
-                    SpecWorkflowActionSupport.showInfo(
-                        project,
-                        SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.noop.title"),
-                        SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.noop.message"),
-                    )
-                    return@runBackground
-                }
-                val dialog = RequirementsSectionRepairPreviewDialog(project, preview)
-                if (!dialog.showAndGet()) {
-                    return@runBackground
-                }
-                SpecWorkflowActionSupport.runBackground(
-                    project = project,
-                    title = SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.progress.apply"),
-                    task = { repairService.applyPreview(preview) },
-                    onSuccess = { result ->
-                        SpecWorkflowActionSupport.notifySuccess(
-                            project,
-                            SpecCodingBundle.message(
-                                "spec.toolwindow.gate.quickFix.aiFill.success",
-                                RequirementsSectionSupport.describeSections(
-                                    result.preview.patches.map { patch -> patch.sectionId },
-                                ),
-                            ),
-                        )
-                        SpecWorkflowActionSupport.openFile(project, result.requirementsDocumentPath)
-                        project.messageBus.syncPublisher(SpecToolWindowControlListener.TOPIC)
-                            .onSelectWorkflowRequested(result.workflow.id)
-                    },
-                )
-            },
+            workflowId = workflowId,
+            missingSections = payload.missingSections,
         )
     }
 

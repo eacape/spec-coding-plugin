@@ -253,7 +253,14 @@ data class ClarificationRetryState(
     val clarificationRound: Int = 1,
     val lastError: String? = null,
     val confirmed: Boolean = false,
+    val followUp: ClarificationFollowUp = ClarificationFollowUp.GENERATION,
+    val requirementsRepairSections: List<RequirementsSectionId> = emptyList(),
 )
+
+enum class ClarificationFollowUp {
+    GENERATION,
+    REQUIREMENTS_SECTION_REPAIR,
+}
 
 /**
  * 工作流状态枚举
