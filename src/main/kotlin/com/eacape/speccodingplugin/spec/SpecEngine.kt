@@ -1709,11 +1709,16 @@ class SpecEngine(private val project: Project) {
 
         return when (currentStage) {
             StageId.REQUIREMENTS -> buildList {
-                if (requirementsDocument != null && !hasRequirementsSections(requirementsDocument.content)) {
+                val missingSections = requirementsDocument
+                    ?.content
+                    ?.let(RequirementsSectionSupport::missingSections)
+                    .orEmpty()
+                if (missingSections.isNotEmpty()) {
                     add(
                         completionViolation(
                             fileName = StageId.REQUIREMENTS.artifactFileName.orEmpty(),
                             message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.requirements.sections"),
+                            quickFixes = requirementsMissingSectionQuickFixes(missingSections),
                         ),
                     )
                 }
@@ -1828,7 +1833,11 @@ class SpecEngine(private val project: Project) {
         }
     }
 
-    private fun completionViolation(fileName: String, message: String): Violation {
+    private fun completionViolation(
+        fileName: String,
+        message: String,
+        quickFixes: List<GateQuickFixDescriptor> = emptyList(),
+    ): Violation {
         return Violation(
             ruleId = STAGE_COMPLETION_RULE_ID,
             severity = GateStatus.ERROR,
@@ -1836,6 +1845,7 @@ class SpecEngine(private val project: Project) {
             line = 1,
             message = message,
             fixHint = message,
+            quickFixes = quickFixes,
         )
     }
 
@@ -1853,11 +1863,7 @@ class SpecEngine(private val project: Project) {
         return state.questionsMarkdown.isNotBlank() || state.structuredQuestions.isNotEmpty()
     }
 
-    private fun hasRequirementsSections(content: String): Boolean {
-        return REQUIRED_REQUIREMENTS_SECTION_MARKERS.all { markers ->
-            markers.any { marker -> content.contains(marker, ignoreCase = true) }
-        }
-    }
+    private fun hasRequirementsSections(content: String): Boolean = RequirementsSectionSupport.hasRequiredSections(content)
 
     private fun hasDesignSections(content: String): Boolean {
         return REQUIRED_DESIGN_SECTION_MARKERS.all { markers ->
@@ -1867,6 +1873,26 @@ class SpecEngine(private val project: Project) {
 
     private fun isImplementationTaskSettled(task: StructuredTask): Boolean {
         return task.status == TaskStatus.COMPLETED || task.status == TaskStatus.CANCELLED
+    }
+
+    private fun requirementsMissingSectionQuickFixes(
+        missingSections: List<RequirementsSectionId>,
+    ): List<GateQuickFixDescriptor> {
+        val payload = MissingRequirementsSectionsQuickFixPayload(missingSections)
+        return listOf(
+            GateQuickFixDescriptor(
+                kind = GateQuickFixKind.AI_FILL_MISSING_REQUIREMENTS_SECTIONS,
+                payload = payload,
+            ),
+            GateQuickFixDescriptor(
+                kind = GateQuickFixKind.CLARIFY_THEN_FILL_REQUIREMENTS_SECTIONS,
+                payload = payload,
+            ),
+            GateQuickFixDescriptor(
+                kind = GateQuickFixKind.OPEN_FOR_MANUAL_EDIT,
+                payload = payload,
+            ),
+        )
     }
 
     private fun emitSpecStageChangedHook(

@@ -296,6 +296,35 @@ enum class GateStatus {
     ERROR,
 }
 
+enum class GateQuickFixKind {
+    AI_FILL_MISSING_REQUIREMENTS_SECTIONS,
+    CLARIFY_THEN_FILL_REQUIREMENTS_SECTIONS,
+    OPEN_FOR_MANUAL_EDIT,
+}
+
+sealed interface GateQuickFixPayload
+
+data class MissingRequirementsSectionsQuickFixPayload(
+    val missingSections: List<RequirementsSectionId>,
+) : GateQuickFixPayload {
+    init {
+        require(missingSections.isNotEmpty()) { "missingSections cannot be empty." }
+    }
+}
+
+data class GateQuickFixDescriptor(
+    val kind: GateQuickFixKind,
+    val payload: GateQuickFixPayload? = null,
+    val enabled: Boolean = true,
+    val disabledReason: String? = null,
+) {
+    init {
+        if (!enabled) {
+            require(!disabledReason.isNullOrBlank()) { "disabledReason is required when quick fix is disabled." }
+        }
+    }
+}
+
 data class Violation(
     val ruleId: String,
     val severity: GateStatus,
@@ -304,6 +333,7 @@ data class Violation(
     val message: String,
     val fixHint: String? = null,
     val originalSeverity: GateStatus? = null,
+    val quickFixes: List<GateQuickFixDescriptor> = emptyList(),
 )
 
 data class GateAggregation(

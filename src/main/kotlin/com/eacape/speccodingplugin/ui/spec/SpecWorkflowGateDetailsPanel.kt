@@ -1,12 +1,19 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.GateQuickFixKind
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
+import com.eacape.speccodingplugin.spec.MissingRequirementsSectionsQuickFixPayload
+import com.eacape.speccodingplugin.spec.RequirementsSectionSupport
 import com.eacape.speccodingplugin.spec.Violation
 import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.ui.popup.PopupStep
+import com.intellij.openapi.ui.popup.util.BaseListPopupStep
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
@@ -87,7 +94,7 @@ internal class SpecWorkflowGateDetailsPanel(
         isEnabled = false
         isFocusable = false
         SpecUiStyle.applyRoundRect(this, 14)
-        addActionListener { showFixPlaceholder() }
+        addActionListener { showQuickFixActions() }
     }
 
     private val listModel = DefaultListModel<Violation>()
@@ -211,6 +218,17 @@ internal class SpecWorkflowGateDetailsPanel(
             "violationCount" to listModel.size().toString(),
             "emptyText" to violationsList.emptyText.text.orEmpty(),
         )
+    }
+
+    internal fun selectViolationForTest(index: Int) {
+        if (index in 0 until listModel.size()) {
+            violationsList.selectedIndex = index
+        }
+    }
+
+    internal fun selectedQuickFixLabelsForTest(): List<String> {
+        val selected = violationsList.selectedValue ?: return emptyList()
+        return SpecGateQuickFixSupport.presentations(selected).map(SpecGateQuickFixSupport.Presentation::title)
     }
 
     private fun buildHeader(): JPanel {
@@ -348,14 +366,21 @@ internal class SpecWorkflowGateDetailsPanel(
         return violation.ruleId.lowercase().contains(normalized) ||
             violation.fileName.lowercase().contains(normalized) ||
             violation.message.lowercase().contains(normalized) ||
-            (violation.fixHint?.lowercase()?.contains(normalized) == true)
+            (violation.fixHint?.lowercase()?.contains(normalized) == true) ||
+            SpecGateQuickFixSupport.searchableText(violation).lowercase().contains(normalized)
     }
 
     private fun updateControlsForSelection() {
         val selected = violationsList.selectedValue
         val workflowId = currentWorkflowId
         openButton.isEnabled = selected != null && !workflowId.isNullOrBlank()
-        fixButton.isEnabled = selected?.fixHint?.isNullOrBlank() == false
+        val quickFixSummary = selected?.let(SpecGateQuickFixSupport::summary)
+        fixButton.isEnabled = selected != null &&
+            (
+                !quickFixSummary.isNullOrBlank() ||
+                    selected.fixHint?.isNullOrBlank() == false
+                )
+        fixButton.toolTipText = quickFixSummary ?: selected?.fixHint?.takeIf(String::isNotBlank)
     }
 
     private fun openSelectedViolation() {
@@ -371,14 +396,104 @@ internal class SpecWorkflowGateDetailsPanel(
         )
     }
 
-    private fun showFixPlaceholder() {
+    private fun showQuickFixActions() {
+        val workflowId = currentWorkflowId ?: return
         val violation = violationsList.selectedValue ?: return
+        val quickFixes = SpecGateQuickFixSupport.presentations(violation)
+        if (quickFixes.isNotEmpty()) {
+            if (quickFixes.size == 1 && quickFixes.single().enabled) {
+                executeQuickFix(workflowId, violation, quickFixes.single())
+                return
+            }
+            showQuickFixPopup(workflowId, violation, quickFixes)
+            return
+        }
+        showFixPlaceholder(violation)
+    }
+
+    private fun showFixPlaceholder(violation: Violation) {
         val hint = violation.fixHint?.takeIf(String::isNotBlank) ?: return
         SpecWorkflowActionSupport.showInfo(
             project,
             SpecCodingBundle.message("spec.toolwindow.gate.fix.unavailable.title"),
             SpecCodingBundle.message("spec.toolwindow.gate.fix.unavailable.message", hint),
         )
+    }
+
+    private fun showQuickFixPopup(
+        workflowId: String,
+        violation: Violation,
+        quickFixes: List<SpecGateQuickFixSupport.Presentation>,
+    ) {
+        val popup = JBPopupFactory.getInstance().createListPopup(
+            object : BaseListPopupStep<SpecGateQuickFixSupport.Presentation>(
+                SpecCodingBundle.message("spec.toolwindow.gate.quickFix.popup.title"),
+                quickFixes,
+            ) {
+                override fun getTextFor(value: SpecGateQuickFixSupport.Presentation): String = value.popupText()
+
+                override fun isSelectable(value: SpecGateQuickFixSupport.Presentation?): Boolean =
+                    value?.enabled == true
+
+                override fun onChosen(
+                    selectedValue: SpecGateQuickFixSupport.Presentation,
+                    finalChoice: Boolean,
+                ): PopupStep<*>? {
+                    if (finalChoice && selectedValue.enabled) {
+                        ApplicationManager.getApplication().invokeLater {
+                            executeQuickFix(workflowId, violation, selectedValue)
+                        }
+                    }
+                    return PopupStep.FINAL_CHOICE
+                }
+            },
+        )
+        popup.showUnderneathOf(fixButton)
+    }
+
+    private fun executeQuickFix(
+        workflowId: String,
+        violation: Violation,
+        quickFix: SpecGateQuickFixSupport.Presentation,
+    ) {
+        when (quickFix.descriptor.kind) {
+            GateQuickFixKind.OPEN_FOR_MANUAL_EDIT -> {
+                if (!SpecWorkflowActionSupport.openGateViolation(project, workflowId, violation)) {
+                    SpecWorkflowActionSupport.showInfo(
+                        project,
+                        SpecCodingBundle.message("spec.action.gate.location.unavailable.title"),
+                        gateViolationDetails(violation),
+                    )
+                }
+            }
+
+            GateQuickFixKind.AI_FILL_MISSING_REQUIREMENTS_SECTIONS -> {
+                val sections = missingSectionsDescription(quickFix)
+                SpecWorkflowActionSupport.showInfo(
+                    project,
+                    SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.pending.title"),
+                    SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.pending.message", sections),
+                )
+            }
+
+            GateQuickFixKind.CLARIFY_THEN_FILL_REQUIREMENTS_SECTIONS -> {
+                val sections = missingSectionsDescription(quickFix)
+                SpecWorkflowActionSupport.showInfo(
+                    project,
+                    SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.pending.title"),
+                    SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.pending.message", sections),
+                )
+            }
+        }
+    }
+
+    private fun missingSectionsDescription(quickFix: SpecGateQuickFixSupport.Presentation): String {
+        val payload = quickFix.descriptor.payload as? MissingRequirementsSectionsQuickFixPayload
+        return payload
+            ?.missingSections
+            ?.takeIf { sections -> sections.isNotEmpty() }
+            ?.let(RequirementsSectionSupport::describeSections)
+            ?: SpecCodingBundle.message("spec.toolwindow.gate.quickFix.missingSections.fallback")
     }
 
     private fun gateViolationDetails(violation: Violation): String {
@@ -397,6 +512,10 @@ internal class SpecWorkflowGateDetailsPanel(
             if (!fix.isNullOrBlank()) {
                 append('\n')
                 append(fix)
+            }
+            SpecGateQuickFixSupport.summary(violation)?.let { summary ->
+                append('\n')
+                append(SpecCodingBundle.message("spec.toolwindow.gate.quickFix.summary", summary))
             }
         }
     }
@@ -451,8 +570,15 @@ internal class SpecWorkflowGateDetailsPanel(
             if (value == null) return panel
             messageLabel.text = value.message
             metaLabel.text = "${value.ruleId} · ${value.fileName}:${value.line}"
+            val quickFixSummary = SpecGateQuickFixSupport.summary(value)
             val hint = value.fixHint?.trim().orEmpty()
-            fixHintLabel.text = if (hint.isNotEmpty()) SpecCodingBundle.message("spec.action.gate.fix", hint) else ""
+            fixHintLabel.text = when {
+                !quickFixSummary.isNullOrBlank() ->
+                    SpecCodingBundle.message("spec.toolwindow.gate.quickFix.summary", quickFixSummary)
+
+                hint.isNotEmpty() -> SpecCodingBundle.message("spec.action.gate.fix", hint)
+                else -> ""
+            }
 
             applySeverityChipStyle(severityChipLabel, value.severity, isSelected)
             val bg = if (isSelected) SELECTED_BG else ROW_BG

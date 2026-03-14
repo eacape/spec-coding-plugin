@@ -138,6 +138,56 @@ class SpecEngineStageTransitionTest {
     }
 
     @Test
+    fun `preview advance from requirements should expose quick fixes for missing sections`() {
+        val engine = SpecEngine(project, storage, generationHandler = ::generateValidDocument)
+        val artifactService = SpecArtifactService(project)
+        val created = engine.createWorkflow(
+            title = "Missing Requirements Sections Workflow",
+            description = "quick fix metadata",
+        ).getOrThrow()
+
+        artifactService.writeArtifact(
+            workflowId = created.id,
+            stageId = StageId.REQUIREMENTS,
+            content = """
+                # Requirements Document
+
+                ## Functional Requirements
+                - Keep gate repair metadata structured.
+            """.trimIndent(),
+        )
+        engine.reloadWorkflow(created.id).getOrThrow()
+
+        val preview = engine.previewStageTransition(
+            workflowId = created.id,
+            transitionType = StageTransitionType.ADVANCE,
+        ).getOrThrow()
+
+        val violation = preview.gateResult.violations.first { gateViolation ->
+            gateViolation.ruleId == "stage-completion-checks" &&
+                gateViolation.fileName == "requirements.md"
+        }
+
+        assertEquals(
+            listOf(
+                GateQuickFixKind.AI_FILL_MISSING_REQUIREMENTS_SECTIONS,
+                GateQuickFixKind.CLARIFY_THEN_FILL_REQUIREMENTS_SECTIONS,
+                GateQuickFixKind.OPEN_FOR_MANUAL_EDIT,
+            ),
+            violation.quickFixes.map { quickFix -> quickFix.kind },
+        )
+        val payload = violation.quickFixes.first().payload as? MissingRequirementsSectionsQuickFixPayload
+        assertEquals(
+            listOf(
+                RequirementsSectionId.NON_FUNCTIONAL,
+                RequirementsSectionId.USER_STORIES,
+                RequirementsSectionId.ACCEPTANCE_CRITERIA,
+            ),
+            payload?.missingSections,
+        )
+    }
+
+    @Test
     fun `previewStageTransition should expose structured warning result without mutating workflow`() {
         val warningGate = SpecStageGateEvaluator {
             GateResult.fromViolations(

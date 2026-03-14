@@ -18,6 +18,7 @@ import com.eacape.speccodingplugin.spec.VerifyPlanConfigSource
 import com.eacape.speccodingplugin.spec.VerifyRunResult
 import com.eacape.speccodingplugin.spec.WorkflowMeta
 import com.eacape.speccodingplugin.ui.ChatToolWindowFactory
+import com.eacape.speccodingplugin.ui.spec.SpecGateQuickFixSupport
 import com.eacape.speccodingplugin.ui.spec.SpecToolWindowControlListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedEvent
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedListener
@@ -467,6 +468,8 @@ internal object SpecWorkflowActionSupport {
         violation.fixHint
             ?.takeIf { it.isNotBlank() }
             ?.let { fixHint -> lines += SpecCodingBundle.message("spec.action.gate.fix", fixHint) }
+        SpecGateQuickFixSupport.summary(violation)
+            ?.let { summary -> lines += SpecCodingBundle.message("spec.toolwindow.gate.quickFix.summary", summary) }
         return lines.joinToString("\n")
     }
 

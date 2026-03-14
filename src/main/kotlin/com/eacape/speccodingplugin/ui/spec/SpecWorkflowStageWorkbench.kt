@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
+import com.eacape.speccodingplugin.spec.RequirementsSectionSupport
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecValidator
 import com.eacape.speccodingplugin.spec.SpecWorkflow
@@ -1103,9 +1104,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         }
     }
 
-    private fun hasRequirementsSections(content: String): Boolean {
-        return REQUIRED_REQUIREMENTS_SECTIONS.all { markers -> containsAnyMarker(content, markers) }
-    }
+    private fun hasRequirementsSections(content: String): Boolean = RequirementsSectionSupport.hasRequiredSections(content)
 
     private fun hasDesignSections(content: String): Boolean {
         return REQUIRED_DESIGN_SECTIONS.all { markers -> containsAnyMarker(content, markers) }
