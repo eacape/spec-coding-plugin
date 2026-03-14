@@ -26,6 +26,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
 import java.time.Instant
@@ -101,6 +102,7 @@ internal class SpecWorkflowGateDetailsPanel(
         SpecUiStyle.applyRoundRect(this, 14)
         addActionListener { showQuickFixActions() }
     }
+    private val headerPanel by lazy(::buildHeader)
 
     private val listModel = DefaultListModel<Violation>()
     private val violationsList = JBList(listModel).apply {
@@ -111,6 +113,13 @@ internal class SpecWorkflowGateDetailsPanel(
         border = JBUI.Borders.empty()
         emptyText.text = SpecCodingBundle.message("spec.toolwindow.gate.empty")
     }
+    private val violationsScrollPane = JBScrollPane(violationsList).apply {
+        border = JBUI.Borders.empty()
+        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+        viewport.isOpaque = false
+        isOpaque = false
+    }
 
     private var currentWorkflowId: String? = null
     private var currentGateResult: GateResult? = null
@@ -120,17 +129,8 @@ internal class SpecWorkflowGateDetailsPanel(
     init {
         isOpaque = false
         border = JBUI.Borders.empty(6, 4, 6, 4)
-        add(buildHeader(), BorderLayout.NORTH)
-        add(
-            JBScrollPane(violationsList).apply {
-                border = JBUI.Borders.empty()
-                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-                verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                viewport.isOpaque = false
-                isOpaque = false
-            },
-            BorderLayout.CENTER,
-        )
+        add(headerPanel, BorderLayout.NORTH)
+        add(violationsScrollPane, BorderLayout.CENTER)
         ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
             comboBox = severityFilterComboBox,
             minWidth = JBUI.scale(82),
@@ -162,6 +162,23 @@ internal class SpecWorkflowGateDetailsPanel(
                 }
             },
         )
+    }
+
+    override fun getPreferredSize(): Dimension {
+        val base = super.getPreferredSize()
+        val height = insets.top +
+            insets.bottom +
+            headerPanel.preferredSize.height +
+            dynamicListHeight() +
+            JBUI.scale(6)
+        return Dimension(base.width, height)
+    }
+
+    private fun dynamicListHeight(): Int {
+        val listHeight = violationsList.preferredSize.height.takeIf { it > 0 } ?: EMPTY_LIST_HEIGHT
+        val scrollBorderInsets = violationsScrollPane.border?.getBorderInsets(violationsScrollPane)
+        val verticalBorder = (scrollBorderInsets?.top ?: 0) + (scrollBorderInsets?.bottom ?: 0)
+        return listHeight + verticalBorder
     }
 
     fun refreshLocalizedTexts() {
@@ -710,6 +727,7 @@ internal class SpecWorkflowGateDetailsPanel(
     }
 
     companion object {
+        private val EMPTY_LIST_HEIGHT = JBUI.scale(72)
         private val HEADER_FG = JBColor(Color(35, 40, 47), Color(222, 226, 232))
         private val HEADER_SECONDARY_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
         private val REFRESHED_AT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")

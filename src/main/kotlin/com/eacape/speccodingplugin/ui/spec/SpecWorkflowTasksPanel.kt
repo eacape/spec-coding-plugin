@@ -14,6 +14,7 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
 import java.awt.Cursor
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.time.Instant
 import java.time.ZoneId
@@ -56,6 +57,7 @@ internal class SpecWorkflowTasksPanel(
         font = JBUI.Fonts.smallFont().deriveFont(10.5f)
         foreground = HEADER_SECONDARY_FG
     }
+    private val headerPanel = buildHeader()
 
     private val listModel = DefaultListModel<StructuredTask>()
     private val tasksList = JBList(listModel).apply {
@@ -65,6 +67,13 @@ internal class SpecWorkflowTasksPanel(
         isOpaque = false
         border = JBUI.Borders.empty()
         emptyText.text = SpecCodingBundle.message("spec.toolwindow.tasks.empty")
+    }
+    private val tasksScrollPane = JBScrollPane(tasksList).apply {
+        border = JBUI.Borders.empty()
+        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+        viewport.isOpaque = false
+        isOpaque = false
     }
 
     private val executeTaskButton = createIconActionButton {
@@ -89,24 +98,16 @@ internal class SpecWorkflowTasksPanel(
     private var currentWorkflowId: String? = null
     private var currentTasksById: Map<String, StructuredTask> = emptyMap()
     private var lastRefreshedAtMillis: Long? = null
+    private val controlsPanel = buildControls()
 
     init {
         isOpaque = false
         border = JBUI.Borders.empty(6, 4, 6, 4)
         if (showHeader) {
-            add(buildHeader(), BorderLayout.NORTH)
+            add(headerPanel, BorderLayout.NORTH)
         }
-        add(
-            JBScrollPane(tasksList).apply {
-                border = JBUI.Borders.empty()
-                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-                verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                viewport.isOpaque = false
-                isOpaque = false
-            },
-            BorderLayout.CENTER,
-        )
-        add(buildControls(), BorderLayout.SOUTH)
+        add(tasksScrollPane, BorderLayout.CENTER)
+        add(controlsPanel, BorderLayout.SOUTH)
 
         tasksList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
@@ -116,6 +117,26 @@ internal class SpecWorkflowTasksPanel(
         refreshLocalizedTexts()
         showEmpty()
     }
+
+    override fun getPreferredSize(): Dimension {
+        val base = super.getPreferredSize()
+        val height = insets.top +
+            insets.bottom +
+            dynamicListHeight() +
+            controlsPanel.preferredSize.height +
+            preferredVerticalGaps() +
+            if (showHeader) headerPanel.preferredSize.height else 0
+        return Dimension(base.width, height)
+    }
+
+    private fun dynamicListHeight(): Int {
+        val listHeight = tasksList.preferredSize.height.takeIf { it > 0 } ?: EMPTY_LIST_HEIGHT
+        val scrollBorderInsets = tasksScrollPane.border?.getBorderInsets(tasksScrollPane)
+        val verticalBorder = (scrollBorderInsets?.top ?: 0) + (scrollBorderInsets?.bottom ?: 0)
+        return listHeight + verticalBorder
+    }
+
+    private fun preferredVerticalGaps(): Int = if (showHeader) JBUI.scale(12) else JBUI.scale(6)
 
     fun refreshLocalizedTexts() {
         headerTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.tasks.title")
@@ -828,6 +849,7 @@ internal class SpecWorkflowTasksPanel(
     )
 
     companion object {
+        private val EMPTY_LIST_HEIGHT = JBUI.scale(72)
         private val HEADER_FG = JBColor(Color(35, 40, 47), Color(222, 226, 232))
         private val HEADER_SECONDARY_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
         private val REFRESHED_AT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")

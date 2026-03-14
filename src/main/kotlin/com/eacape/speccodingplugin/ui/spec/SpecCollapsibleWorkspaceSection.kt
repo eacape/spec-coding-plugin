@@ -8,6 +8,7 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
 import java.awt.Cursor
+import java.awt.Dimension
 import java.awt.Font
 import javax.swing.JButton
 import javax.swing.JPanel
@@ -16,6 +17,7 @@ internal class SpecCollapsibleWorkspaceSection(
     private val titleProvider: () -> String,
     content: Component,
     expandedInitially: Boolean = true,
+    private val maxExpandedBodyHeight: Int? = null,
     private val onExpandedChanged: (Boolean) -> Unit = {},
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
@@ -39,17 +41,31 @@ internal class SpecCollapsibleWorkspaceSection(
             setExpanded(!isExpanded())
         }
     }
-    private val bodyContainer = JPanel(BorderLayout()).apply {
-        isOpaque = false
-        add(content, BorderLayout.CENTER)
+    private val contentWrapper = object : JPanel(BorderLayout()) {
+        override fun getPreferredSize(): Dimension {
+            val base = content.preferredSize ?: super.getPreferredSize()
+            return base.withClampedHeight()
         }
 
-        init {
-            isOpaque = false
-            border = JBUI.Borders.emptyTop(2)
-            add(
-                JPanel(BorderLayout(JBUI.scale(8), JBUI.scale(2))).apply {
-                    isOpaque = false
+        override fun getMaximumSize(): Dimension {
+            val preferred = preferredSize
+            return Dimension(Int.MAX_VALUE, preferred.height)
+        }
+    }.apply {
+        isOpaque = false
+        add(content, BorderLayout.CENTER)
+    }
+    private val bodyContainer = JPanel(BorderLayout()).apply {
+        isOpaque = false
+        add(contentWrapper, BorderLayout.CENTER)
+    }
+
+    init {
+        isOpaque = false
+        border = JBUI.Borders.emptyTop(2)
+        add(
+            JPanel(BorderLayout(JBUI.scale(8), JBUI.scale(2))).apply {
+                isOpaque = false
                 add(
                     JPanel(BorderLayout(0, JBUI.scale(2))).apply {
                         isOpaque = false
@@ -65,6 +81,11 @@ internal class SpecCollapsibleWorkspaceSection(
         add(bodyContainer, BorderLayout.CENTER)
         refreshLocalizedTexts()
         setExpanded(expandedInitially, notify = false)
+    }
+
+    private fun Dimension.withClampedHeight(): Dimension {
+        val clampedHeight = maxExpandedBodyHeight?.let { height.coerceAtMost(it) } ?: height
+        return Dimension(width, clampedHeight)
     }
 
     fun refreshLocalizedTexts() {
@@ -131,6 +152,10 @@ internal class SpecCollapsibleWorkspaceSection(
         applyToggleButtonSize()
         return toggleButtonHasEnoughWidthForTextForTest()
     }
+
+    internal fun bodyPreferredHeightForTest(): Int = contentWrapper.preferredSize.height
+
+    internal fun bodyMaximumHeightForTest(): Int = contentWrapper.maximumSize.height
 
     companion object {
         private val SECTION_TITLE_FG = JBColor(Color(53, 70, 108), Color(211, 220, 235))

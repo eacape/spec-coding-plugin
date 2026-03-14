@@ -475,7 +475,7 @@ class SpecWorkflowPanel(
         }
 
         val summaryCard = buildWorkspaceSummaryCard()
-        sectionsStack.add(prepareWorkspaceStackItem(summaryCard))
+        sectionsStack.add(createWorkspaceStackItem(summaryCard))
         sectionsStack.add(Box.createVerticalStrut(JBUI.scale(6)))
 
         overviewSection = createWorkspaceSection(
@@ -487,11 +487,13 @@ class SpecWorkflowPanel(
             id = SpecWorkflowWorkspaceSectionId.TASKS,
             titleProvider = { SpecCodingBundle.message("spec.toolwindow.section.tasks") },
             content = tasksPanel,
+            maxExpandedBodyHeight = SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT,
         )
         gateSection = createWorkspaceSection(
             id = SpecWorkflowWorkspaceSectionId.GATE,
             titleProvider = { SpecCodingBundle.message("spec.toolwindow.section.gate") },
             content = gateDetailsPanel,
+            maxExpandedBodyHeight = SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT,
         )
         verifySection = createWorkspaceSection(
             id = SpecWorkflowWorkspaceSectionId.VERIFY,
@@ -517,7 +519,7 @@ class SpecWorkflowPanel(
                 addBottomGap = index < 4,
             )
             workspaceSectionItems[sectionId] = item
-            sectionsStack.add(prepareWorkspaceStackItem(item))
+            sectionsStack.add(item)
         }
 
         val contentPanel = JPanel(BorderLayout()).apply {
@@ -542,32 +544,37 @@ class SpecWorkflowPanel(
         return workspaceCardPanel
     }
 
-    private fun prepareWorkspaceStackItem(component: Component): Component {
-        if (component is JPanel) {
-            component.alignmentX = Component.LEFT_ALIGNMENT
-            component.maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
-        }
-        return component
-    }
-
     private fun createWorkspaceSectionItem(
         content: Component,
         addBottomGap: Boolean,
     ): JPanel {
-        return JPanel(BorderLayout()).apply {
+        return createWorkspaceStackItem(
+            component = createSectionContainer(
+                content,
+                padding = WORKSPACE_SECTION_CARD_PADDING,
+                backgroundColor = DETAIL_SECTION_BG,
+                borderColor = DETAIL_SECTION_BORDER,
+            ),
+            addBottomGap = addBottomGap,
+        )
+    }
+
+    private fun createWorkspaceStackItem(
+        component: Component,
+        addBottomGap: Boolean = false,
+    ): JPanel {
+        return object : JPanel(BorderLayout()) {
+            override fun getMaximumSize(): Dimension {
+                val preferred = preferredSize
+                return Dimension(Int.MAX_VALUE, preferred.height)
+            }
+        }.apply {
             isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
             if (addBottomGap) {
                 border = JBUI.Borders.emptyBottom(6)
             }
-            add(
-                createSectionContainer(
-                    content,
-                    padding = WORKSPACE_SECTION_CARD_PADDING,
-                    backgroundColor = DETAIL_SECTION_BG,
-                    borderColor = DETAIL_SECTION_BORDER,
-                ),
-                BorderLayout.CENTER,
-            )
+            add(component, BorderLayout.CENTER)
         }
     }
 
@@ -665,11 +672,13 @@ class SpecWorkflowPanel(
         id: SpecWorkflowWorkspaceSectionId,
         titleProvider: () -> String,
         content: Component,
+        maxExpandedBodyHeight: Int? = null,
     ): SpecCollapsibleWorkspaceSection {
         return SpecCollapsibleWorkspaceSection(
             titleProvider = titleProvider,
             content = content,
             expandedInitially = true,
+            maxExpandedBodyHeight = maxExpandedBodyHeight,
             onExpandedChanged = { expanded ->
                 workspaceSectionOverrides[id] = expanded
             },
@@ -4636,6 +4645,7 @@ class SpecWorkflowPanel(
         private val DETAIL_SECTION_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
         private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
         private const val WORKSPACE_SECTION_CARD_PADDING = 12
+        private val SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT = JBUI.scale(320)
         private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")

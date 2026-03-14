@@ -111,4 +111,48 @@ class SpecWorkflowGateDetailsPanelUnitTest {
         assertFalse(popupTexts[1].contains("AI is offline"))
         assertFalse(popupTexts[2].contains("AI is offline"))
     }
+
+    @Test
+    fun `preferred height should grow with violation count before workspace cap applies`() {
+        val panel = SpecWorkflowGateDetailsPanel(
+            project = project,
+            showHeader = false,
+        )
+
+        panel.updateGateResult(
+            workflowId = "wf-gate-height-single",
+            gateResult = GateResult.fromViolations(
+                listOf(
+                    Violation(
+                        ruleId = "stage-completion-checks",
+                        severity = GateStatus.ERROR,
+                        fileName = "requirements.md",
+                        line = 1,
+                        message = "Single violation",
+                    ),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+        val singleViolationHeight = panel.preferredSize.height
+
+        panel.updateGateResult(
+            workflowId = "wf-gate-height-many",
+            gateResult = GateResult.fromViolations(
+                (1..6).map { index ->
+                    Violation(
+                        ruleId = "stage-completion-checks-$index",
+                        severity = GateStatus.ERROR,
+                        fileName = "requirements.md",
+                        line = index,
+                        message = "Violation $index",
+                    )
+                },
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+        val manyViolationsHeight = panel.preferredSize.height
+
+        assertTrue(manyViolationsHeight > singleViolationHeight)
+    }
 }

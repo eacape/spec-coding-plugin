@@ -205,6 +205,41 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
+    fun `preferred height should grow with task count before workspace cap applies`() {
+        val panel = SpecWorkflowTasksPanel(showHeader = false)
+
+        panel.updateTasks(
+            workflowId = "wf-height-single",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "Single task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+        val singleTaskHeight = panel.preferredSize.height
+
+        panel.updateTasks(
+            workflowId = "wf-height-many",
+            tasks = (1..6).map { index ->
+                StructuredTask(
+                    id = "T-%03d".format(index),
+                    title = "Task $index",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                )
+            },
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+        val manyTasksHeight = panel.preferredSize.height
+
+        assertTrue(manyTasksHeight > singleTaskHeight)
+    }
+
+    @Test
     fun `requestExecutionForTask should route pending tasks to execute and blocked tasks to retry`() {
         val executions = mutableListOf<String>()
         val panel = SpecWorkflowTasksPanel(
