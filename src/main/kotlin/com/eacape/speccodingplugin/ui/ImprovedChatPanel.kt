@@ -86,6 +86,7 @@ import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.spec.EditSpecWorkflowDialog
 import com.eacape.speccodingplugin.ui.spec.SpecIconActionPresentation
 import com.eacape.speccodingplugin.ui.spec.SpecTaskCompletionDialogs
+import com.eacape.speccodingplugin.ui.spec.SpecToolWindowOpenRequest
 import com.eacape.speccodingplugin.ui.spec.SpecToolWindowControlListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedEvent
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowChangedListener
@@ -366,6 +367,7 @@ class ImprovedChatPanel(
         subscribeToHistoryOpenEvents()
         subscribeToToolWindowControlEvents()
         subscribeToSpecWorkflowEvents()
+        subscribeToWorkflowChatRefreshEvents()
         subscribeToLocaleEvents()
         refreshLocalizedTexts()
         restoreWindowStateIfNeeded()
@@ -488,6 +490,29 @@ class ImprovedChatPanel(
                         }
 
                         refreshSpecWorkflowComboBox(selectWorkflowId = workflowId)
+                        updateWorkflowBindingUi()
+                    }
+                }
+            },
+        )
+    }
+
+    private fun subscribeToWorkflowChatRefreshEvents() {
+        project.messageBus.connect(this).subscribe(
+            WorkflowChatRefreshListener.TOPIC,
+            object : WorkflowChatRefreshListener {
+                override fun onWorkflowChatRefreshRequested(event: WorkflowChatRefreshEvent) {
+                    ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed || _isDisposed) return@invokeLater
+                        val binding = resolvedActiveWorkflowChatBinding() ?: return@invokeLater
+                        if (binding.workflowId != event.workflowId.trim()) {
+                            return@invokeLater
+                        }
+                        activeSpecWorkflowId = event.workflowId.trim()
+                        refreshSpecWorkflowComboBox(selectWorkflowId = event.workflowId)
+                        if (specSidebarVisible && specSidebarPanel.hasFocusedWorkflow(event.workflowId)) {
+                            specSidebarPanel.refreshCurrentWorkflow()
+                        }
                         updateWorkflowBindingUi()
                     }
                 }
@@ -810,7 +835,7 @@ class ImprovedChatPanel(
         configureWorkflowBindingActionButton(completeTaskBindingButton, SpecWorkflowIcons.Complete)
         configureWorkflowBindingChip(clearTaskBindingButton, icon = SpecWorkflowIcons.Close, clearAction = true)
         workflowBindingChip.addActionListener { handleWorkflowBindingChipClicked() }
-        taskBindingChip.addActionListener { handleWorkflowBindingChipClicked() }
+        taskBindingChip.addActionListener { handleTaskBindingChipClicked() }
         executeTaskBindingButton.addActionListener { handleBoundTaskExecutionRequested(retry = false) }
         retryTaskBindingButton.addActionListener { handleBoundTaskExecutionRequested(retry = true) }
         completeTaskBindingButton.addActionListener { handleBoundTaskCompletionRequested() }
@@ -918,8 +943,9 @@ class ImprovedChatPanel(
         retryTaskBindingButton.isVisible = taskId != null
         completeTaskBindingButton.isVisible = taskId != null
         if (taskId != null) {
+            val task = resolveBoundWorkflowTask(binding)
             taskBindingChip.text = SpecCodingBundle.message("toolwindow.workflow.binding.task", taskId)
-            taskBindingChip.toolTipText = SpecCodingBundle.message("toolwindow.workflow.binding.task.tooltip", taskId)
+            taskBindingChip.toolTipText = buildTaskBindingTooltip(taskId, task)
             clearTaskBindingButton.text = ""
             clearTaskBindingButton.toolTipText = SpecCodingBundle.message(
                 "toolwindow.workflow.binding.task.clear.tooltip",
@@ -929,7 +955,7 @@ class ImprovedChatPanel(
                 SpecCodingBundle.message("toolwindow.workflow.binding.task.clear")
             clearTaskBindingButton.accessibleContext.accessibleDescription =
                 clearTaskBindingButton.toolTipText
-            updateTaskBindingActionButtons(binding, taskId)
+            updateTaskBindingActionButtons(binding, taskId, task)
         } else {
             taskBindingChip.text = ""
             taskBindingChip.toolTipText = null
@@ -945,8 +971,33 @@ class ImprovedChatPanel(
         workflowBindingStrip.repaint()
     }
 
-    private fun updateTaskBindingActionButtons(binding: WorkflowChatBinding, taskId: String) {
-        val task = resolveBoundWorkflowTask(binding)
+    private fun buildTaskBindingTooltip(taskId: String, task: StructuredTask?): String {
+        if (task == null) {
+            return SpecCodingBundle.message("toolwindow.workflow.binding.task.tooltip.missing", taskId)
+        }
+        val activeRun = task.activeExecutionRun
+        return if (activeRun == null) {
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.task.tooltip.state",
+                taskId,
+                task.displayStatus.name,
+            )
+        } else {
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.task.tooltip.run",
+                taskId,
+                task.displayStatus.name,
+                activeRun.runId,
+                activeRun.status.name,
+            )
+        }
+    }
+
+    private fun updateTaskBindingActionButtons(
+        binding: WorkflowChatBinding,
+        taskId: String,
+        task: StructuredTask? = resolveBoundWorkflowTask(binding),
+    ) {
         applyTaskBindingActionPresentation(
             button = executeTaskBindingButton,
             presentation = when (task?.displayStatus) {
@@ -1091,9 +1142,30 @@ class ImprovedChatPanel(
 
     private fun handleWorkflowBindingChipClicked() {
         val binding = resolvedActiveWorkflowChatBinding() ?: return
+        openSpecWorkflowRequest(
+            SpecToolWindowOpenRequest(
+                workflowId = binding.workflowId,
+                focusedStage = binding.focusedStage,
+            ),
+        )
+    }
+
+    private fun handleTaskBindingChipClicked() {
+        val binding = resolvedActiveWorkflowChatBinding() ?: return
+        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
+        openSpecWorkflowRequest(
+            SpecToolWindowOpenRequest(
+                workflowId = binding.workflowId,
+                taskId = taskId,
+                focusedStage = binding.focusedStage ?: StageId.IMPLEMENT,
+            ),
+        )
+    }
+
+    private fun openSpecWorkflowRequest(request: SpecToolWindowOpenRequest) {
         openSpecTab()
         project.messageBus.syncPublisher(SpecToolWindowControlListener.TOPIC)
-            .onSelectWorkflowRequested(binding.workflowId)
+            .onOpenWorkflowRequested(request)
     }
 
     private fun clearActiveTaskBinding() {
@@ -1120,6 +1192,7 @@ class ImprovedChatPanel(
         val sessionId = currentSessionId?.trim()?.ifBlank { null } ?: return
         val binding = resolvedActiveWorkflowChatBinding() ?: return
         val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
+        showWorkflowAttachmentBoundaryIfNeeded()
         val executionContext = resolveWorkflowChatTaskExecutionContext() ?: return
         val progressKey = if (retry) {
             "spec.toolwindow.tasks.retry.progress"
@@ -1178,6 +1251,7 @@ class ImprovedChatPanel(
         val sessionId = currentSessionId?.trim()?.ifBlank { null } ?: return
         val binding = resolvedActiveWorkflowChatBinding() ?: return
         val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
+        showWorkflowAttachmentBoundaryIfNeeded()
         SpecWorkflowActionSupport.runBackground(
             project = project,
             title = SpecCodingBundle.message("spec.toolwindow.tasks.complete.progress"),
@@ -1255,6 +1329,16 @@ class ImprovedChatPanel(
             providerId = providerId,
             modelId = modelId,
             operationMode = modeManager.getCurrentMode(),
+        )
+    }
+
+    private fun showWorkflowAttachmentBoundaryIfNeeded() {
+        if (imageAttachmentPreviewPanel.getImagePaths().isEmpty()) {
+            return
+        }
+        showStatus(
+            SpecCodingBundle.message("toolwindow.workflow.attachment.boundary"),
+            autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
         )
     }
 
@@ -1635,7 +1719,7 @@ class ImprovedChatPanel(
                 if (selectedImagePaths.isNotEmpty()) {
                     clearImageAttachments()
                     showStatus(
-                        SpecCodingBundle.message("toolwindow.image.attach.ignored.spec"),
+                        SpecCodingBundle.message("toolwindow.workflow.attachment.boundary"),
                         autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
                     )
                 }
@@ -6481,6 +6565,10 @@ class ImprovedChatPanel(
 
     internal fun clearTaskBindingForTest() {
         clearTaskBindingButton.doClick()
+    }
+
+    internal fun clickTaskBindingChipForTest() {
+        taskBindingChip.doClick()
     }
 
     internal fun clickExecuteBoundTaskForTest() {

@@ -22,6 +22,8 @@ import com.eacape.speccodingplugin.ui.ChatToolWindowControlListener
 import com.eacape.speccodingplugin.ui.ChatToolWindowFactory
 import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.RefreshFeedback
+import com.eacape.speccodingplugin.ui.WorkflowChatRefreshEvent
+import com.eacape.speccodingplugin.ui.WorkflowChatRefreshListener
 import com.eacape.speccodingplugin.ui.WorkflowChatOpenRequest
 import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
@@ -183,6 +185,7 @@ class SpecWorkflowPanel(
     private var highlightedWorkflowId: String? = null
     private var currentWorkflow: SpecWorkflow? = null
     private var focusedStage: StageId? = null
+    private var pendingOpenWorkflowRequest: SpecToolWindowOpenRequest? = null
     private var isWorkspaceMode: Boolean = false
     private var detailDividerLocation: Int = 210
 
@@ -1510,6 +1513,7 @@ class SpecWorkflowPanel(
                     if (previousSelectedWorkflowId != workflowId) {
                         restorePendingClarificationState(workflowId)
                     }
+                    applyPendingOpenWorkflowRequestIfNeeded(workflowId)
                     createWorktreeButton.isEnabled = true
                     mergeWorktreeButton.isEnabled = true
                     deltaButton.isEnabled = true
@@ -2673,6 +2677,7 @@ class SpecWorkflowPanel(
             },
             onSuccess = {
                 setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.status.updated", taskId, to.name))
+                publishWorkflowChatRefresh(workflowId, taskId, "spec_task_status_transition")
                 reloadCurrentWorkflow()
             },
         )
@@ -2713,6 +2718,7 @@ class SpecWorkflowPanel(
             },
             onSuccess = {
                 setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.updated", taskId))
+                publishWorkflowChatRefresh(workflowId, taskId, "spec_task_related_files_updated")
                 reloadCurrentWorkflow()
             },
         )
@@ -2740,6 +2746,7 @@ class SpecWorkflowPanel(
             },
             onSuccess = {
                 setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.complete.updated", taskId))
+                publishWorkflowChatRefresh(workflowId, taskId, "spec_task_completed")
                 reloadCurrentWorkflow()
             },
         )
@@ -2794,11 +2801,13 @@ class SpecWorkflowPanel(
                     "spec.toolwindow.tasks.execute.updated"
                 }
                 setStatusText(SpecCodingBundle.message(statusKey, taskId, result.sessionTitle))
+                publishWorkflowChatRefresh(workflowId, taskId, "spec_task_execution_updated")
                 reloadCurrentWorkflow()
             },
             onFailure = { error ->
                 val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
                 setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                publishWorkflowChatRefresh(workflowId, taskId, "spec_task_execution_failed")
                 reloadCurrentWorkflow()
                 Messages.showErrorDialog(
                     project,
@@ -2864,6 +2873,7 @@ class SpecWorkflowPanel(
                     "spec.toolwindow.tasks.verification.updated"
                 }
                 setStatusText(SpecCodingBundle.message(statusKey, taskId))
+                publishWorkflowChatRefresh(workflowId, taskId, "spec_task_verification_updated")
                 reloadCurrentWorkflow()
             },
         )
@@ -3344,6 +3354,13 @@ class SpecWorkflowPanel(
                         refreshWorkflows(selectWorkflowId = workflowId)
                     }
                 }
+
+                override fun onOpenWorkflowRequested(request: SpecToolWindowOpenRequest) {
+                    invokeLaterSafe {
+                        if (project.isDisposed || _isDisposed) return@invokeLaterSafe
+                        openWorkflowFromRequest(request)
+                    }
+                }
             },
         )
     }
@@ -3657,6 +3674,7 @@ class SpecWorkflowPanel(
                         val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
                         setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
                     }
+                    applyPendingOpenWorkflowRequestIfNeeded(wf.id)
                     archiveButton.isEnabled = wf.status == WorkflowStatus.COMPLETED
                     onUpdated?.invoke(wf)
                 } else {
@@ -3906,6 +3924,46 @@ class SpecWorkflowPanel(
 
     internal fun focusStageForTest(stageId: StageId) {
         focusStage(stageId)
+    }
+
+    private fun openWorkflowFromRequest(request: SpecToolWindowOpenRequest) {
+        val normalizedWorkflowId = request.workflowId.trim().ifBlank { return }
+        pendingOpenWorkflowRequest = request.copy(
+            workflowId = normalizedWorkflowId,
+            taskId = request.taskId?.trim()?.ifBlank { null },
+        )
+        refreshWorkflows(selectWorkflowId = normalizedWorkflowId)
+    }
+
+    private fun applyPendingOpenWorkflowRequestIfNeeded(workflowId: String) {
+        val request = pendingOpenWorkflowRequest ?: return
+        if (request.workflowId != workflowId) {
+            return
+        }
+        request.focusedStage?.let(::focusStage)
+        request.taskId?.let(tasksPanel::selectTask)
+        pendingOpenWorkflowRequest = null
+    }
+
+    private fun publishWorkflowChatRefresh(
+        workflowId: String,
+        taskId: String? = null,
+        reason: String,
+        focusedStage: StageId? = StageId.IMPLEMENT,
+    ) {
+        runCatching {
+            project.messageBus.syncPublisher(WorkflowChatRefreshListener.TOPIC)
+                .onWorkflowChatRefreshRequested(
+                    WorkflowChatRefreshEvent(
+                        workflowId = workflowId,
+                        taskId = taskId,
+                        focusedStage = focusedStage,
+                        reason = reason,
+                    ),
+                )
+        }.onFailure { error ->
+            logger.warn("Failed to publish workflow chat refresh event", error)
+        }
     }
 
     private fun onOverviewStageSelected(stageId: StageId) {

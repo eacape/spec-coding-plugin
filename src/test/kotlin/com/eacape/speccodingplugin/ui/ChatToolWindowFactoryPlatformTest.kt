@@ -1,10 +1,16 @@
 package com.eacape.speccodingplugin.ui
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.SpecEngine
+import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
 import com.eacape.speccodingplugin.spec.SpecTasksService
+import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.TaskPriority
+import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskStatus
+import com.eacape.speccodingplugin.ui.WorkflowChatRefreshEvent
+import com.eacape.speccodingplugin.ui.WorkflowChatRefreshListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowPanel
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.wm.RegisterToolWindowTask
@@ -118,6 +124,10 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             SpecCodingBundle.message("toolwindow.workflow.binding.task", task.id),
             snapshot.getValue("taskChipText"),
         )
+        assertEquals(
+            SpecCodingBundle.message("toolwindow.workflow.binding.task.tooltip.state", task.id, TaskStatus.PENDING.name),
+            snapshot.getValue("taskChipTooltip"),
+        )
         assertEquals("true", snapshot.getValue("executeTaskVisible"))
         assertEquals("true", snapshot.getValue("executeTaskEnabled"))
         assertEquals("execute", snapshot.getValue("executeTaskIconId"))
@@ -167,6 +177,144 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("false", clearedSnapshot.getValue("executeTaskVisible"))
         assertEquals("false", clearedSnapshot.getValue("retryTaskVisible"))
         assertEquals("false", clearedSnapshot.getValue("completeTaskVisible"))
+    }
+
+    fun `test task binding chip should deep link back to workflow task in specs tab`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Task Deep Link",
+            description = "task 82",
+        ).getOrThrow()
+        val tasksService = SpecTasksService(project)
+        val primaryTask = tasksService.addTask(
+            workflowId = workflow.id,
+            title = "Primary linked task",
+            priority = TaskPriority.P0,
+        )
+        val secondaryTask = tasksService.addTask(
+            workflowId = workflow.id,
+            title = "Secondary task",
+            priority = TaskPriority.P1,
+        )
+        val toolWindow = registerSpecCodeToolWindow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val specPanel = currentSpecPanel(toolWindow)
+        val chatPanel = currentChatPanel(toolWindow)
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.openWorkflowForTest(workflow.id)
+        }
+        waitUntil {
+            specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(primaryTask.id) &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(secondaryTask.id)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(specPanel.selectTaskForTest(primaryTask.id))
+            specPanel.clickOpenWorkflowChatForSelectedTaskForTest()
+        }
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == primaryTask.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory.selectSpecContent(toolWindow, project)
+            assertTrue(specPanel.selectTaskForTest(secondaryTask.id))
+            specPanel.focusStageForTest(StageId.TASKS)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory.selectChatContent(toolWindow, project)
+            chatPanel.clickTaskBindingChipForTest()
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        waitUntil {
+            ChatToolWindowFactory.isSpecContent(toolWindow.contentManager.selectedContent) &&
+                specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.focusedStageForTest() == StageId.IMPLEMENT &&
+                specPanel.tasksSnapshotForTest().getValue("selectedTaskId") == primaryTask.id
+        }
+    }
+
+    fun `test workflow chat refresh event should update bound task run state presentation`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Chat Refresh",
+            description = "task 82 refresh",
+        ).getOrThrow()
+        val task = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Refresh bound task",
+            priority = TaskPriority.P0,
+        )
+        val executionService = SpecTaskExecutionService(project)
+        val toolWindow = registerSpecCodeToolWindow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val specPanel = currentSpecPanel(toolWindow)
+        val chatPanel = currentChatPanel(toolWindow)
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.openWorkflowForTest(workflow.id)
+        }
+        waitUntil {
+            specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(task.id)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(specPanel.selectTaskForTest(task.id))
+            specPanel.clickOpenWorkflowChatForSelectedTaskForTest()
+        }
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == task.id &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("completeTaskEnabled") == "false"
+        }
+
+        val run = executionService.createRun(
+            workflowId = workflow.id,
+            taskId = task.id,
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            trigger = ExecutionTrigger.USER_EXECUTE,
+        )
+        project.messageBus.syncPublisher(WorkflowChatRefreshListener.TOPIC)
+            .onWorkflowChatRefreshRequested(
+                WorkflowChatRefreshEvent(
+                    workflowId = workflow.id,
+                    taskId = task.id,
+                    focusedStage = StageId.IMPLEMENT,
+                    reason = "test_waiting_confirmation",
+                ),
+            )
+
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("completeTaskEnabled") == "true"
+        }
+
+        val snapshot = chatPanel.workflowBindingSnapshotForTest()
+        assertEquals(
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.task.tooltip.run",
+                task.id,
+                TaskStatus.IN_PROGRESS.name,
+                run.runId,
+                TaskExecutionRunStatus.WAITING_CONFIRMATION.name,
+            ),
+            snapshot.getValue("taskChipTooltip"),
+        )
+        assertEquals("false", snapshot.getValue("executeTaskEnabled"))
+        assertEquals("false", snapshot.getValue("retryTaskEnabled"))
+        assertEquals("true", snapshot.getValue("completeTaskEnabled"))
     }
 
     private fun registerSpecCodeToolWindow(): ToolWindow {
