@@ -794,6 +794,13 @@ class SpecEngine(private val project: Project) {
             }
             .filter { it.isNotBlank() }
             .distinct()
+        val normalizedRepairSections = requirementsRepairSections.distinct()
+        val normalizedFollowUp = when {
+            followUp == ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR && normalizedRepairSections.isNotEmpty() ->
+                ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR
+
+            else -> ClarificationFollowUp.GENERATION
+        }
         val normalizedLastError = lastError
             ?.replace("\r\n", "\n")
             ?.replace('\r', '\n')
@@ -813,6 +820,12 @@ class SpecEngine(private val project: Project) {
             structuredQuestions = normalizedStructuredQuestions,
             clarificationRound = clarificationRound.coerceAtLeast(1),
             lastError = normalizedLastError,
+            followUp = normalizedFollowUp,
+            requirementsRepairSections = if (normalizedFollowUp == ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR) {
+                normalizedRepairSections
+            } else {
+                emptyList()
+            },
         )
     }
 
@@ -1879,10 +1892,13 @@ class SpecEngine(private val project: Project) {
         missingSections: List<RequirementsSectionId>,
     ): List<GateQuickFixDescriptor> {
         val payload = MissingRequirementsSectionsQuickFixPayload(missingSections)
+        val aiUnavailableReason = RequirementsSectionAiSupport.unavailableReason()
         return listOf(
             GateQuickFixDescriptor(
                 kind = GateQuickFixKind.AI_FILL_MISSING_REQUIREMENTS_SECTIONS,
                 payload = payload,
+                enabled = aiUnavailableReason == null,
+                disabledReason = aiUnavailableReason,
             ),
             GateQuickFixDescriptor(
                 kind = GateQuickFixKind.CLARIFY_THEN_FILL_REQUIREMENTS_SECTIONS,

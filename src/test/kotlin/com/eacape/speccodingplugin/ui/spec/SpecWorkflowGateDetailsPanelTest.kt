@@ -9,6 +9,8 @@ import com.eacape.speccodingplugin.spec.MissingRequirementsSectionsQuickFixPaylo
 import com.eacape.speccodingplugin.spec.RequirementsSectionId
 import com.eacape.speccodingplugin.spec.Violation
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 
 class SpecWorkflowGateDetailsPanelTest : BasePlatformTestCase() {
 
@@ -82,5 +84,54 @@ class SpecWorkflowGateDetailsPanelTest : BasePlatformTestCase() {
             ),
             panel.selectedQuickFixLabelsForTest(),
         )
+    }
+
+    fun `test gate panel should keep clarify and manual repair enabled when ai fill is unavailable`() {
+        val panel = SpecWorkflowGateDetailsPanel(
+            project,
+            showHeader = true,
+            aiFillUnavailableReasonProvider = { "AI is offline" },
+        )
+        val payload = MissingRequirementsSectionsQuickFixPayload(
+            listOf(RequirementsSectionId.NON_FUNCTIONAL),
+        )
+
+        panel.updateGateResult(
+            workflowId = "wf-quick-fix-disabled",
+            gateResult = GateResult.fromViolations(
+                listOf(
+                    Violation(
+                        ruleId = "stage-completion-checks",
+                        severity = GateStatus.ERROR,
+                        fileName = "requirements.md",
+                        line = 1,
+                        message = "Missing requirements sections",
+                        quickFixes = listOf(
+                            GateQuickFixDescriptor(
+                                kind = GateQuickFixKind.AI_FILL_MISSING_REQUIREMENTS_SECTIONS,
+                                payload = payload,
+                            ),
+                            GateQuickFixDescriptor(
+                                kind = GateQuickFixKind.CLARIFY_THEN_FILL_REQUIREMENTS_SECTIONS,
+                                payload = payload,
+                            ),
+                            GateQuickFixDescriptor(
+                                kind = GateQuickFixKind.OPEN_FOR_MANUAL_EDIT,
+                                payload = payload,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+        panel.selectViolationForTest(0)
+
+        val popupTexts = panel.selectedQuickFixPopupTextsForTest()
+
+        assertEquals(3, popupTexts.size)
+        assertTrue(popupTexts[0].contains("AI is offline"))
+        assertFalse(popupTexts[1].contains("AI is offline"))
+        assertFalse(popupTexts[2].contains("AI is offline"))
     }
 }

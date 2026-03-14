@@ -1,12 +1,22 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.spec.RequirementsSectionId
 import com.eacape.speccodingplugin.spec.StageId
 import com.intellij.util.messages.Topic
+
+data class RequirementsRepairClarificationRequest(
+    val missingSections: List<RequirementsSectionId>,
+) {
+    init {
+        require(missingSections.isNotEmpty()) { "missingSections cannot be empty." }
+    }
+}
 
 data class SpecToolWindowOpenRequest(
     val workflowId: String,
     val taskId: String? = null,
     val focusedStage: StageId? = null,
+    val requirementsRepairClarification: RequirementsRepairClarificationRequest? = null,
 )
 
 interface SpecToolWindowControlListener {

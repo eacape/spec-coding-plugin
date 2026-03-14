@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ClarificationFollowUp
+import com.eacape.speccodingplugin.spec.RequirementsSectionId
 import com.eacape.speccodingplugin.spec.SpecArtifactService
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecEngine
@@ -577,6 +579,61 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals("true", tasksSnapshot.getValue("executeFocusable"))
         assertTrue(persistedTasks.contains("status: PENDING"))
         assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
+    }
+
+    fun `test clarify then fill should reuse clarification ui and persist repair retry metadata`() {
+        val engine = SpecEngine.getInstance(project)
+        val workflow = engine.createWorkflow(
+            title = "Requirements Clarify Repair",
+            description = "task 86 clarify then fill",
+        ).getOrThrow()
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(
+                panel.startRequirementsClarifyThenFillForTest(
+                    workflow.id,
+                    listOf(RequirementsSectionId.USER_STORIES, RequirementsSectionId.ACCEPTANCE_CRITERIA),
+                ),
+            )
+        }
+
+        waitUntil {
+            panel.isClarifyingForTest() && panel.focusedStageForTest() == StageId.REQUIREMENTS
+        }
+
+        val questionsText = panel.currentClarificationQuestionsTextForTest()
+        val retryState = engine.reloadWorkflow(workflow.id).getOrThrow().clarificationRetryState
+
+        assertTrue(questionsText.contains(SpecCodingBundle.message("spec.workflow.clarify.noQuestions")))
+        assertTrue(
+            questionsText.contains(
+                SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.manualFallback.phase"),
+            ),
+        )
+        assertEquals(ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR, retryState?.followUp)
+        assertEquals(
+            listOf(RequirementsSectionId.USER_STORIES, RequirementsSectionId.ACCEPTANCE_CRITERIA),
+            retryState?.requirementsRepairSections,
+        )
     }
 
     private fun createPanel(): SpecWorkflowPanel {

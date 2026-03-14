@@ -1030,6 +1030,10 @@ class SpecStorage(
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .joinToString(STRUCTURED_QUESTION_DELIMITER.toString())
+        val repairSectionsPayload = state.requirementsRepairSections
+            .map(RequirementsSectionId::name)
+            .distinct()
+            .joinToString(STRUCTURED_QUESTION_DELIMITER.toString())
         return listOf(
             encodeBase64Url(state.input),
             encodeBase64Url(state.confirmedContext),
@@ -1038,6 +1042,8 @@ class SpecStorage(
             state.clarificationRound.coerceAtLeast(1).toString(),
             encodeBase64Url(state.lastError.orEmpty()),
             if (state.confirmed) "1" else "0",
+            state.followUp.name,
+            encodeBase64Url(repairSectionsPayload),
         ).joinToString(RETRY_FIELD_DELIMITER.toString())
     }
 
@@ -1058,6 +1064,21 @@ class SpecStorage(
             ?.trim()
             ?.takeIf { it.isNotBlank() }
         val confirmed = parts[6] == "1" || parts[6].equals("true", ignoreCase = true)
+        val followUp = parts.getOrNull(7)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { raw ->
+                ClarificationFollowUp.entries.firstOrNull { candidate -> candidate.name == raw }
+            }
+            ?: ClarificationFollowUp.GENERATION
+        val requirementsRepairSections = decodeBase64Url(parts.getOrNull(8).orEmpty())
+            .orEmpty()
+            .split(STRUCTURED_QUESTION_DELIMITER)
+            .mapNotNull { raw ->
+                val normalized = raw.trim()
+                RequirementsSectionId.entries.firstOrNull { section -> section.name == normalized }
+            }
+            .distinct()
         val structuredQuestions = structuredPayload
             .split(STRUCTURED_QUESTION_DELIMITER)
             .map { it.trim() }
@@ -1074,6 +1095,8 @@ class SpecStorage(
             clarificationRound = clarificationRound,
             lastError = lastError,
             confirmed = confirmed,
+            followUp = followUp,
+            requirementsRepairSections = requirementsRepairSections,
         )
     }
 

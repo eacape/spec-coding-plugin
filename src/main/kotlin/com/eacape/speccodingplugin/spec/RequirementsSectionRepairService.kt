@@ -68,6 +68,7 @@ internal class RequirementsSectionRepairService(
     fun previewRepair(
         workflowId: String,
         requestedMissingSections: List<RequirementsSectionId>,
+        confirmedContextOverride: String? = null,
     ): RequirementsSectionRepairPreview {
         val normalizedWorkflowId = workflowId.trim()
         require(normalizedWorkflowId.isNotEmpty()) { "workflowId cannot be blank." }
@@ -99,12 +100,19 @@ internal class RequirementsSectionRepairService(
             document = document,
             missingSections = targetMissingSections,
             headingStyle = headingStyle,
-            confirmedContext = workflow.clarificationRetryState
-                ?.confirmedContext
-                ?.replace("\r\n", "\n")
-                ?.replace('\r', '\n')
-                ?.trim()
-                .orEmpty(),
+            confirmedContext = if (confirmedContextOverride != null) {
+                confirmedContextOverride
+                    .replace("\r\n", "\n")
+                    .replace('\r', '\n')
+                    .trim()
+            } else {
+                workflow.clarificationRetryState
+                    ?.confirmedContext
+                    ?.replace("\r\n", "\n")
+                    ?.replace('\r', '\n')
+                    ?.trim()
+                    .orEmpty()
+            },
         )
         val generatedDraft = runBlocking {
             sectionDraftGenerator(request).getOrThrow()
@@ -304,9 +312,10 @@ internal class RequirementsSectionRepairService(
     private suspend fun generateSectionDraft(request: RequirementsSectionDraftRequest): Result<String> {
         return runCatching {
             val settings = settingsProvider()
-            val availableProviders = llmRouter.availableUiProviders()
-            val providerId = availableProviders.firstOrNull { provider -> provider == settings.defaultProvider }
-                ?: availableProviders.firstOrNull()
+            val providerId = RequirementsSectionAiSupport.resolvePreferredRealProviderId(
+                llmRouter = llmRouter,
+                settingsProvider = { settings },
+            )
                 ?: throw IllegalStateException(
                     SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.error.aiUnavailable"),
                 )

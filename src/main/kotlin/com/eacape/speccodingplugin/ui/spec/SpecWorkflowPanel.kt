@@ -136,6 +136,7 @@ class SpecWorkflowPanel(
     private val gateDetailsPanel = SpecWorkflowGateDetailsPanel(
         project = project,
         showHeader = false,
+        onClarifyThenFillRequested = ::startRequirementsClarifyThenFill,
     )
     private val statusLabel = JBLabel("")
     private val statusChipPanel = JPanel(BorderLayout())
@@ -1725,8 +1726,64 @@ class SpecWorkflowPanel(
     }
 
     private fun onGenerate(input: String) {
+        val workflow = resolveSelectedWorkflowForClarification() ?: return
+        val pendingRetry = pendingClarificationRetryByWorkflowId[workflow.id]
+        if (pendingRetry?.followUp == ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR) {
+            val effectiveInput = input.ifBlank { pendingRetry.input }
+            val seededContext = when {
+                input.isNotBlank() -> input
+                pendingRetry.confirmedContext.isNotBlank() -> pendingRetry.confirmedContext
+                else -> effectiveInput
+            }
+            val shouldResumeWithConfirmedContext = pendingRetry.confirmed &&
+                input.isBlank() &&
+                pendingRetry.confirmedContext.isNotBlank()
+            if (shouldResumeWithConfirmedContext) {
+                detailPanel.appendProcessTimelineEntry(
+                    text = SpecCodingBundle.message("spec.workflow.process.retryContextReuse"),
+                    state = SpecDetailPanel.ProcessTimelineState.INFO,
+                )
+                runRequirementsRepairAfterClarification(
+                    workflowId = workflow.id,
+                    pendingRetry = pendingRetry,
+                    input = effectiveInput,
+                    confirmedContext = pendingRetry.confirmedContext,
+                )
+                return
+            }
+            val clarificationRound = (pendingRetry.clarificationRound) + 1
+            if (pendingRetry.questionsMarkdown.isBlank()) {
+                detailPanel.clearProcessTimeline()
+            }
+            detailPanel.appendProcessTimelineEntry(
+                text = SpecCodingBundle.message("spec.workflow.process.clarify.round", clarificationRound),
+                state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
+            )
+            detailPanel.appendProcessTimelineEntry(
+                text = SpecCodingBundle.message("spec.workflow.process.retryContextReuse"),
+                state = SpecDetailPanel.ProcessTimelineState.INFO,
+            )
+            rememberClarificationRetry(
+                workflowId = workflow.id,
+                input = effectiveInput,
+                confirmedContext = seededContext,
+                clarificationRound = clarificationRound,
+                lastError = pendingRetry.lastError,
+                confirmed = false,
+                followUp = ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR,
+                requirementsRepairSections = pendingRetry.requirementsRepairSections,
+            )
+            requestRequirementsRepairClarification(
+                workflow = workflow,
+                input = effectiveInput,
+                suggestedDetails = seededContext,
+                pendingRetry = pendingClarificationRetryByWorkflowId[workflow.id],
+                clarificationRound = clarificationRound,
+            )
+            return
+        }
+
         val context = resolveGenerationContext() ?: return
-        val pendingRetry = pendingClarificationRetryByWorkflowId[context.workflowId]
         val clarificationRound = (pendingRetry?.clarificationRound ?: 0) + 1
         val effectiveInput = input.ifBlank { pendingRetry?.input.orEmpty() }
         val seededContext = when {
@@ -1772,6 +1829,8 @@ class SpecWorkflowPanel(
             clarificationRound = clarificationRound,
             lastError = pendingRetry?.lastError,
             confirmed = false,
+            followUp = ClarificationFollowUp.GENERATION,
+            requirementsRepairSections = emptyList(),
         )
         requestClarificationDraft(
             context = context,
@@ -1790,30 +1849,47 @@ class SpecWorkflowPanel(
         input: String,
         confirmedContext: String,
     ) {
-        val context = resolveGenerationContext()
-        if (context == null) {
+        val workflow = resolveSelectedWorkflowForClarification()
+        if (workflow == null) {
             detailPanel.unlockClarificationChecklistInteractions()
             return
         }
+        val pendingRetry = pendingClarificationRetryByWorkflowId[workflow.id]
         detailPanel.lockClarificationChecklistInteractions()
         detailPanel.appendProcessTimelineEntry(
             text = SpecCodingBundle.message("spec.workflow.process.clarify.confirmed"),
             state = SpecDetailPanel.ProcessTimelineState.DONE,
         )
         rememberClarificationRetry(
-            workflowId = context.workflowId,
+            workflowId = workflow.id,
             input = input,
             confirmedContext = confirmedContext,
-            clarificationRound = pendingClarificationRetryByWorkflowId[context.workflowId]?.clarificationRound,
+            clarificationRound = pendingRetry?.clarificationRound,
             confirmed = true,
+            followUp = pendingRetry?.followUp,
+            requirementsRepairSections = pendingRetry?.requirementsRepairSections.orEmpty(),
         )
-        val pendingRetry = pendingClarificationRetryByWorkflowId[context.workflowId]
+        val refreshedRetry = pendingClarificationRetryByWorkflowId[workflow.id]
+        if (refreshedRetry?.followUp == ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR) {
+            runRequirementsRepairAfterClarification(
+                workflowId = workflow.id,
+                pendingRetry = refreshedRetry,
+                input = input,
+                confirmedContext = confirmedContext,
+            )
+            return
+        }
+        val context = resolveGenerationContext()
+        if (context == null) {
+            detailPanel.unlockClarificationChecklistInteractions()
+            return
+        }
         runGeneration(
             workflowId = context.workflowId,
             input = input,
             options = context.options.copy(
                 confirmedContext = confirmedContext,
-                clarificationWriteback = pendingRetry.toWritebackPayload(confirmedContext = confirmedContext),
+                clarificationWriteback = refreshedRetry.toWritebackPayload(confirmedContext = confirmedContext),
             ),
         )
     }
@@ -1822,13 +1898,24 @@ class SpecWorkflowPanel(
         input: String,
         currentDraft: String,
     ) {
-        val context = resolveGenerationContext() ?: return
-        val pendingRetry = pendingClarificationRetryByWorkflowId[context.workflowId]
+        val workflow = resolveSelectedWorkflowForClarification() ?: return
+        val pendingRetry = pendingClarificationRetryByWorkflowId[workflow.id]
         val clarificationRound = (pendingRetry?.clarificationRound ?: 0) + 1
         detailPanel.appendProcessTimelineEntry(
             text = SpecCodingBundle.message("spec.workflow.process.clarify.regenerate", clarificationRound),
             state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
         )
+        if (pendingRetry?.followUp == ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR) {
+            requestRequirementsRepairClarification(
+                workflow = workflow,
+                input = input,
+                suggestedDetails = currentDraft,
+                pendingRetry = pendingRetry,
+                clarificationRound = clarificationRound,
+            )
+            return
+        }
+        val context = resolveGenerationContext() ?: return
         requestClarificationDraft(
             context = context,
             input = input,
@@ -1841,6 +1928,31 @@ class SpecWorkflowPanel(
     }
 
     private fun onClarificationSkip(input: String) {
+        val workflow = resolveSelectedWorkflowForClarification() ?: return
+        val pendingRetry = pendingClarificationRetryByWorkflowId[workflow.id]
+        if (pendingRetry?.followUp == ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR) {
+            rememberClarificationRetry(
+                workflowId = workflow.id,
+                input = input,
+                confirmedContext = "",
+                clarificationRound = pendingRetry.clarificationRound,
+                confirmed = false,
+                followUp = ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR,
+                requirementsRepairSections = pendingRetry.requirementsRepairSections,
+            )
+            detailPanel.appendProcessTimelineEntry(
+                text = SpecCodingBundle.message("spec.workflow.process.clarify.skipped"),
+                state = SpecDetailPanel.ProcessTimelineState.INFO,
+            )
+            setStatusText(SpecCodingBundle.message("spec.workflow.clarify.skippedProceed"))
+            runRequirementsRepairAfterClarification(
+                workflowId = workflow.id,
+                pendingRetry = pendingClarificationRetryByWorkflowId[workflow.id] ?: pendingRetry,
+                input = input,
+                confirmedContext = "",
+            )
+            return
+        }
         val context = resolveGenerationContext() ?: return
         clearClarificationRetry(context.workflowId)
         detailPanel.appendProcessTimelineEntry(
@@ -1885,8 +1997,300 @@ class SpecWorkflowPanel(
             questionsMarkdown = questionsMarkdown,
             structuredQuestions = structuredQuestions,
             clarificationRound = pendingClarificationRetryByWorkflowId[workflowId]?.clarificationRound,
+            followUp = pendingClarificationRetryByWorkflowId[workflowId]?.followUp,
+            requirementsRepairSections = pendingClarificationRetryByWorkflowId[workflowId]?.requirementsRepairSections.orEmpty(),
             persist = false,
         )
+    }
+
+    private fun resolveSelectedWorkflowForClarification(): SpecWorkflow? {
+        val workflowId = selectedWorkflowId ?: return null
+        val workflow = currentWorkflow?.takeIf { it.id == workflowId }
+        if (workflow == null) {
+            setStatusText(SpecCodingBundle.message("spec.workflow.error", SpecCodingBundle.message("common.unknown")))
+        }
+        return workflow
+    }
+
+    private fun resolveOptionalGenerationContext(workflow: SpecWorkflow): GenerationContext? {
+        val selectedProvider = (providerComboBox.selectedItem as? String)
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+            ?: return null
+        val selectedModel = (modelComboBox.selectedItem as? ModelInfo)
+            ?.id
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+            ?: return null
+        return GenerationContext(
+            workflowId = workflow.id,
+            phase = workflow.currentPhase,
+            options = GenerationOptions(
+                providerId = selectedProvider,
+                model = selectedModel,
+            ),
+        )
+    }
+
+    private fun startRequirementsClarifyThenFill(
+        workflowId: String,
+        missingSections: List<RequirementsSectionId>,
+    ): Boolean {
+        val workflow = currentWorkflow?.takeIf { it.id == workflowId } ?: return false
+        val normalizedSections = missingSections.distinct()
+        if (normalizedSections.isEmpty()) {
+            return false
+        }
+        showWorkspaceContent()
+        focusStage(StageId.REQUIREMENTS)
+
+        val previous = pendingClarificationRetryByWorkflowId[workflowId]
+            ?.takeIf { retry ->
+                retry.followUp == ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR &&
+                    retry.requirementsRepairSections == normalizedSections
+            }
+        val input = previous?.input?.takeIf(String::isNotBlank)
+            ?: buildRequirementsRepairClarificationInput(normalizedSections)
+        val suggestedDetails = previous?.confirmedContext?.takeIf(String::isNotBlank)
+            ?: buildRequirementsRepairSuggestedDetails(normalizedSections)
+        val clarificationRound = (previous?.clarificationRound ?: 0) + 1
+
+        if (previous == null) {
+            detailPanel.clearProcessTimeline()
+        }
+        detailPanel.appendProcessTimelineEntry(
+            text = SpecCodingBundle.message("spec.workflow.process.clarify.round", clarificationRound),
+            state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
+        )
+        if (previous != null) {
+            detailPanel.appendProcessTimelineEntry(
+                text = SpecCodingBundle.message("spec.workflow.process.retryContextReuse"),
+                state = SpecDetailPanel.ProcessTimelineState.INFO,
+            )
+        }
+        rememberClarificationRetry(
+            workflowId = workflowId,
+            input = input,
+            confirmedContext = suggestedDetails,
+            questionsMarkdown = previous?.questionsMarkdown,
+            structuredQuestions = previous?.structuredQuestions,
+            clarificationRound = clarificationRound,
+            lastError = previous?.lastError,
+            confirmed = false,
+            followUp = ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR,
+            requirementsRepairSections = normalizedSections,
+        )
+        requestRequirementsRepairClarification(
+            workflow = workflow,
+            input = input,
+            suggestedDetails = suggestedDetails,
+            pendingRetry = pendingClarificationRetryByWorkflowId[workflowId],
+            clarificationRound = clarificationRound,
+        )
+        return true
+    }
+
+    private fun requestRequirementsRepairClarification(
+        workflow: SpecWorkflow,
+        input: String,
+        suggestedDetails: String,
+        pendingRetry: ClarificationRetryPayload?,
+        clarificationRound: Int,
+    ) {
+        val context = resolveOptionalGenerationContext(workflow)
+        val unavailableReason = when {
+            workflow.currentPhase != SpecPhase.SPECIFY ->
+                SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.manualFallback.phase")
+
+            context == null -> RequirementsSectionAiSupport.unavailableReason(providerHint = null)
+                ?: SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.manualFallback.model")
+
+            else -> null
+        }
+        if (unavailableReason != null) {
+            showRequirementsRepairClarificationFallback(
+                workflowId = workflow.id,
+                phase = workflow.currentPhase,
+                input = input,
+                suggestedDetails = suggestedDetails,
+                clarificationRound = clarificationRound,
+                reason = unavailableReason,
+            )
+            return
+        }
+        val resolvedContext = context ?: return
+        requestClarificationDraft(
+            context = resolvedContext,
+            input = input,
+            options = resolvedContext.options.copy(
+                confirmedContext = pendingRetry?.confirmedContext,
+            ),
+            suggestedDetails = suggestedDetails,
+            seedQuestionsMarkdown = pendingRetry?.questionsMarkdown,
+            seedStructuredQuestions = pendingRetry?.structuredQuestions.orEmpty(),
+            clarificationRound = clarificationRound,
+        )
+    }
+
+    private fun showRequirementsRepairClarificationFallback(
+        workflowId: String,
+        phase: SpecPhase,
+        input: String,
+        suggestedDetails: String,
+        clarificationRound: Int,
+        reason: String,
+    ) {
+        val markdown = buildClarificationMarkdown(
+            draft = null,
+            error = IllegalStateException(reason),
+        )
+        rememberClarificationRetry(
+            workflowId = workflowId,
+            input = input,
+            confirmedContext = suggestedDetails,
+            questionsMarkdown = markdown,
+            structuredQuestions = emptyList(),
+            clarificationRound = clarificationRound,
+            lastError = reason,
+            confirmed = false,
+            followUp = ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR,
+            requirementsRepairSections = pendingClarificationRetryByWorkflowId[workflowId]?.requirementsRepairSections.orEmpty(),
+        )
+        detailPanel.showClarificationDraft(
+            phase = phase,
+            input = input,
+            questionsMarkdown = markdown,
+            suggestedDetails = suggestedDetails,
+            structuredQuestions = emptyList(),
+        )
+        detailPanel.appendProcessTimelineEntry(
+            text = SpecCodingBundle.message("spec.workflow.process.clarify.prepare"),
+            state = SpecDetailPanel.ProcessTimelineState.DONE,
+        )
+        detailPanel.appendProcessTimelineEntry(
+            text = SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.manualFallback.timeline"),
+            state = SpecDetailPanel.ProcessTimelineState.INFO,
+        )
+        setStatusText(
+            SpecCodingBundle.message(
+                "spec.toolwindow.gate.quickFix.clarify.manualFallback.status",
+                reason,
+            ),
+        )
+    }
+
+    private fun runRequirementsRepairAfterClarification(
+        workflowId: String,
+        pendingRetry: ClarificationRetryPayload,
+        input: String,
+        confirmedContext: String?,
+    ) {
+        val requestedSections = pendingRetry.requirementsRepairSections
+        if (requestedSections.isEmpty()) {
+            detailPanel.unlockClarificationChecklistInteractions()
+            setStatusText(SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.noop.message"))
+            return
+        }
+
+        val unavailableReason = RequirementsSectionAiSupport.unavailableReason()
+        if (unavailableReason != null) {
+            detailPanel.unlockClarificationChecklistInteractions()
+            detailPanel.exitClarificationMode(clearInput = false)
+            setStatusText(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.gate.quickFix.clarify.manualFallback.status",
+                    unavailableReason,
+                ),
+            )
+            runCatching {
+                SpecWorkflowActionSupport.openFile(
+                    project,
+                    artifactService.locateArtifact(workflowId, StageId.REQUIREMENTS),
+                )
+            }
+            SpecWorkflowActionSupport.showInfo(
+                project,
+                SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.manualContinue.title"),
+                SpecCodingBundle.message(
+                    "spec.toolwindow.gate.quickFix.clarify.manualContinue.message",
+                    RequirementsSectionSupport.describeSections(requestedSections),
+                    unavailableReason,
+                ),
+            )
+            return
+        }
+
+        RequirementsSectionRepairUiSupport.previewAndApply(
+            project = project,
+            workflowId = workflowId,
+            missingSections = requestedSections,
+            confirmedContextOverride = confirmedContext,
+            previewTitle = SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.progress.preview"),
+            applyTitle = SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.progress.apply"),
+            onPreviewCancelled = {
+                detailPanel.unlockClarificationChecklistInteractions()
+                setStatusText(SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.previewCancelled"))
+            },
+            onNoop = {
+                clearClarificationRetry(workflowId)
+                detailPanel.exitClarificationMode(clearInput = true)
+                detailPanel.unlockClarificationChecklistInteractions()
+                reloadCurrentWorkflow(followCurrentPhase = true)
+            },
+            onApplied = {
+                clearClarificationRetry(workflowId)
+                detailPanel.exitClarificationMode(clearInput = true)
+                detailPanel.unlockClarificationChecklistInteractions()
+                reloadCurrentWorkflow(followCurrentPhase = true) {
+                    focusStage(StageId.REQUIREMENTS)
+                }
+            },
+            onFailure = { error ->
+                detailPanel.unlockClarificationChecklistInteractions()
+                rememberClarificationRetry(
+                    workflowId = workflowId,
+                    input = input,
+                    confirmedContext = confirmedContext ?: pendingRetry.confirmedContext,
+                    clarificationRound = pendingRetry.clarificationRound,
+                    lastError = compactErrorMessage(error, SpecCodingBundle.message("common.unknown")),
+                    confirmed = pendingRetry.confirmed,
+                    followUp = ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR,
+                    requirementsRepairSections = requestedSections,
+                )
+                setStatusText(
+                    SpecCodingBundle.message(
+                        "spec.workflow.error",
+                        compactErrorMessage(error, SpecCodingBundle.message("common.unknown")),
+                    ),
+                )
+            },
+        )
+    }
+
+    private fun buildRequirementsRepairClarificationInput(
+        missingSections: List<RequirementsSectionId>,
+    ): String {
+        return buildString {
+            append("Repair requirements.md by filling the missing top-level sections: ")
+            append(RequirementsSectionSupport.describeSections(missingSections))
+            append(".")
+        }
+    }
+
+    private fun buildRequirementsRepairSuggestedDetails(
+        missingSections: List<RequirementsSectionId>,
+    ): String {
+        return buildString {
+            appendLine("## ${SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.context.title")}")
+            appendLine(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.gate.quickFix.missingSections",
+                    RequirementsSectionSupport.describeSections(missingSections),
+                ),
+            )
+            appendLine()
+            appendLine(SpecCodingBundle.message("spec.toolwindow.gate.quickFix.clarify.context.hint"))
+        }.trim()
     }
 
     private fun requestClarificationDraft(
@@ -2304,6 +2708,8 @@ class SpecWorkflowPanel(
         val clarificationRound: Int,
         val lastError: String?,
         val confirmed: Boolean,
+        val followUp: ClarificationFollowUp,
+        val requirementsRepairSections: List<RequirementsSectionId>,
     )
 
     private data class ActiveGenerationRequest(
@@ -2336,6 +2742,8 @@ class SpecWorkflowPanel(
         clarificationRound: Int? = null,
         lastError: String? = null,
         confirmed: Boolean? = null,
+        followUp: ClarificationFollowUp? = null,
+        requirementsRepairSections: List<RequirementsSectionId>? = null,
         persist: Boolean = true,
     ) {
         val previous = pendingClarificationRetryByWorkflowId[workflowId]
@@ -2366,6 +2774,11 @@ class SpecWorkflowPanel(
             ?: 1
         val mergedError = normalizedError ?: previous?.lastError
         val mergedConfirmed = confirmed ?: previous?.confirmed ?: false
+        val mergedFollowUp = followUp ?: previous?.followUp ?: ClarificationFollowUp.GENERATION
+        val mergedRequirementsRepairSections = requirementsRepairSections
+            ?.distinct()
+            ?: previous?.requirementsRepairSections
+            .orEmpty()
         if (mergedInput.isBlank() && mergedContext.isBlank() && mergedQuestions.isBlank() && mergedStructuredQuestions.isEmpty()) {
             pendingClarificationRetryByWorkflowId.remove(workflowId)
             if (persist) {
@@ -2381,6 +2794,22 @@ class SpecWorkflowPanel(
             clarificationRound = mergedRound,
             lastError = mergedError,
             confirmed = mergedConfirmed,
+            followUp = if (
+                mergedFollowUp == ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR &&
+                mergedRequirementsRepairSections.isNotEmpty()
+            ) {
+                ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR
+            } else {
+                ClarificationFollowUp.GENERATION
+            },
+            requirementsRepairSections = if (
+                mergedFollowUp == ClarificationFollowUp.REQUIREMENTS_SECTION_REPAIR &&
+                mergedRequirementsRepairSections.isNotEmpty()
+            ) {
+                mergedRequirementsRepairSections
+            } else {
+                emptyList()
+            },
         )
         pendingClarificationRetryByWorkflowId[workflowId] = payload
         if (persist) {
@@ -2435,6 +2864,8 @@ class SpecWorkflowPanel(
             clarificationRound = clarificationRound,
             lastError = lastError,
             confirmed = confirmed,
+            followUp = followUp,
+            requirementsRepairSections = requirementsRepairSections,
         )
     }
 
@@ -2447,6 +2878,8 @@ class SpecWorkflowPanel(
             clarificationRound = clarificationRound,
             lastError = lastError,
             confirmed = confirmed,
+            followUp = followUp,
+            requirementsRepairSections = requirementsRepairSections,
         )
     }
 
@@ -4139,6 +4572,15 @@ class SpecWorkflowPanel(
     internal fun currentDocumentPreviewTextForTest(): String = detailPanel.currentPreviewTextForTest()
 
     internal fun currentDocumentMetaTextForTest(): String = detailPanel.currentDocumentMetaTextForTest()
+
+    internal fun isClarifyingForTest(): Boolean = detailPanel.isClarifyingForTest()
+
+    internal fun currentClarificationQuestionsTextForTest(): String = detailPanel.clarificationQuestionsTextForTest()
+
+    internal fun startRequirementsClarifyThenFillForTest(
+        workflowId: String,
+        missingSections: List<RequirementsSectionId>,
+    ): Boolean = startRequirementsClarifyThenFill(workflowId, missingSections)
 
     internal fun workspaceSummarySnapshotForTest(): Map<String, String> {
         return mapOf(
