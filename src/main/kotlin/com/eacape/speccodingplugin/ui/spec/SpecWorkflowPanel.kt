@@ -4366,6 +4366,12 @@ class SpecWorkflowPanel(
     }
 
     private fun focusStage(stageId: StageId) {
+        if (focusedStage == stageId) {
+            return
+        }
+        if (!detailPanel.allowStageFocusChange(stageId)) {
+            return
+        }
         focusedStage = stageId
         val workflow = currentWorkflow ?: return
         val overviewState = currentOverviewState ?: buildWorkflowUiSnapshot(workflow).overviewState

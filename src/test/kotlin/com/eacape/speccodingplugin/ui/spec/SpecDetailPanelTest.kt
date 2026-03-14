@@ -214,10 +214,26 @@ class SpecDetailPanelTest {
         panel.updateWorkflow(workflow)
         assertTrue(panel.isComposerExpandedForTest())
 
-        panel.selectPhaseForTest(SpecPhase.SPECIFY)
+        panel.updateWorkbenchState(
+            state = workbenchState(
+                currentStage = StageId.DESIGN,
+                focusedStage = StageId.REQUIREMENTS,
+                documentPhase = SpecPhase.SPECIFY,
+                title = "requirements.md",
+            ),
+            syncSelection = true,
+        )
         assertFalse(panel.isComposerExpandedForTest())
 
-        panel.selectPhaseForTest(SpecPhase.DESIGN)
+        panel.updateWorkbenchState(
+            state = workbenchState(
+                currentStage = StageId.DESIGN,
+                focusedStage = StageId.DESIGN,
+                documentPhase = SpecPhase.DESIGN,
+                title = "design.md",
+            ),
+            syncSelection = true,
+        )
         assertTrue(panel.isComposerExpandedForTest())
 
         panel.toggleComposerExpandedForTest()
@@ -226,8 +242,24 @@ class SpecDetailPanelTest {
         panel.updateWorkflow(workflow.copy(updatedAt = 3L))
         assertFalse(panel.isComposerExpandedForTest())
 
-        panel.selectPhaseForTest(SpecPhase.SPECIFY)
-        panel.selectPhaseForTest(SpecPhase.DESIGN)
+        panel.updateWorkbenchState(
+            state = workbenchState(
+                currentStage = StageId.DESIGN,
+                focusedStage = StageId.REQUIREMENTS,
+                documentPhase = SpecPhase.SPECIFY,
+                title = "requirements.md",
+            ),
+            syncSelection = true,
+        )
+        panel.updateWorkbenchState(
+            state = workbenchState(
+                currentStage = StageId.DESIGN,
+                focusedStage = StageId.DESIGN,
+                documentPhase = SpecPhase.DESIGN,
+                title = "design.md",
+            ),
+            syncSelection = true,
+        )
         assertTrue(panel.isComposerExpandedForTest())
     }
 
@@ -365,7 +397,7 @@ class SpecDetailPanelTest {
         assertEquals(emptyMessage, panel.currentValidationTextForTest())
         assertEquals("requirements.md", panel.currentDocumentMetaTextForTest())
         assertEquals(SpecPhase.SPECIFY.name, panel.selectedPhaseNameForTest())
-        assertTrue(panel.areDocumentTabsVisibleForTest())
+        assertFalse(panel.areDocumentTabsVisibleForTest())
     }
 
     @Test
@@ -1369,6 +1401,44 @@ class SpecDetailPanelTest {
                 description = "test",
             ),
             validationResult = ValidationResult(valid = valid),
+        )
+    }
+
+    private fun workbenchState(
+        currentStage: StageId,
+        focusedStage: StageId,
+        documentPhase: SpecPhase?,
+        title: String,
+        fileName: String? = title,
+    ): SpecWorkflowStageWorkbenchState {
+        return SpecWorkflowStageWorkbenchState(
+            currentStage = currentStage,
+            focusedStage = focusedStage,
+            progress = SpecWorkflowStageProgressView(
+                stepIndex = 1,
+                totalSteps = 6,
+                stageStatus = com.eacape.speccodingplugin.spec.StageProgress.IN_PROGRESS,
+                completedCheckCount = 0,
+                totalCheckCount = 4,
+                completionChecks = emptyList(),
+            ),
+            primaryAction = null,
+            overflowActions = emptyList(),
+            blockers = emptyList(),
+            artifactBinding = SpecWorkflowStageArtifactBinding(
+                stageId = focusedStage,
+                title = title,
+                fileName = fileName,
+                documentPhase = documentPhase,
+                mode = if (documentPhase != null) {
+                    SpecWorkflowWorkbenchDocumentMode.PREVIEW
+                } else {
+                    SpecWorkflowWorkbenchDocumentMode.READ_ONLY
+                },
+                fallbackEditable = false,
+                available = true,
+            ),
+            visibleSections = setOf(SpecWorkflowWorkspaceSectionId.DOCUMENTS),
         )
     }
 }

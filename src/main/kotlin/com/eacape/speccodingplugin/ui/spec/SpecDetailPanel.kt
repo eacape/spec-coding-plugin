@@ -5,6 +5,7 @@ import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
+import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.ui.chat.MarkdownRenderer
@@ -229,7 +230,6 @@ class SpecDetailPanel(
         previewCardPanel.add(createClarificationCard(), CARD_CLARIFY)
         applyDocumentViewportSizing(previewCardPanel)
         switchPreviewCard(CARD_PREVIEW)
-        configureDocumentTabsPanel()
         processTimelineSection = createProcessTimelineSection()
         setProcessTimelineVisible(false)
         previewPanel.add(
@@ -610,8 +610,7 @@ class SpecDetailPanel(
         }
         val headerLeft = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
             isOpaque = false
-            add(documentTabsPanel, BorderLayout.NORTH)
-            add(documentMetaLabel, BorderLayout.SOUTH)
+            add(documentMetaLabel, BorderLayout.CENTER)
         }
         return JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
@@ -631,6 +630,35 @@ class SpecDetailPanel(
 
     private fun isWorkbenchArtifactOnlyView(): Boolean {
         return workbenchArtifactBinding?.documentPhase == null && !workbenchArtifactBinding?.fileName.isNullOrBlank()
+    }
+
+    internal fun allowStageFocusChange(targetStage: StageId): Boolean {
+        val targetPhase = documentPhaseForStage(targetStage)
+        if (isEditing) {
+            val editing = editingPhase
+            if (editing != null && editing != targetPhase) {
+                Messages.showWarningDialog(
+                    SpecCodingBundle.message(
+                        "spec.detail.stageSwitch.blocked.editing",
+                        SpecWorkflowOverviewPresenter.stageLabel(targetStage),
+                    ),
+                    SpecCodingBundle.message("spec.detail.stageSwitch.blocked.title"),
+                )
+                return false
+            }
+        }
+        val clarificationPhase = clarificationState?.phase
+        if (clarificationPhase != null && clarificationPhase != targetPhase) {
+            Messages.showWarningDialog(
+                SpecCodingBundle.message(
+                    "spec.detail.stageSwitch.blocked.clarifying",
+                    SpecWorkflowOverviewPresenter.stageLabel(targetStage),
+                ),
+                SpecCodingBundle.message("spec.detail.stageSwitch.blocked.title"),
+            )
+            return false
+        }
+        return true
     }
 
     private fun activeDocumentMetaText(): String {
@@ -662,22 +690,22 @@ class SpecDetailPanel(
             completed = completedPhases,
             interactive = isPhaseStepperEnabled && workflow != null,
         )
-        documentTabButtons.forEach { (phase, button) ->
-            button.text = phaseStepperTitle(phase)
-            val hasDocument = workflow?.documents?.containsKey(phase) == true
-            val isCurrentPhase = workflow?.currentPhase == phase
-            val isSelectedPhase = selectedPhase == phase
-            button.isEnabled = isPhaseStepperEnabled && workflow != null && (hasDocument || isCurrentPhase)
-            button.isVisible = workflow != null && !artifactOnlyView
-            applyDocumentTabButtonStyle(
-                button = button,
-                selected = isSelectedPhase,
-                current = isCurrentPhase,
-                available = hasDocument,
-            )
-        }
         documentMetaLabel.text = activeDocumentMetaText()
         documentMetaLabel.isVisible = documentMetaLabel.text.isNotBlank()
+    }
+
+    private fun documentPhaseForStage(stageId: StageId): SpecPhase? {
+        return when (stageId) {
+            StageId.REQUIREMENTS -> SpecPhase.SPECIFY
+            StageId.DESIGN -> SpecPhase.DESIGN
+            StageId.TASKS,
+            StageId.IMPLEMENT,
+            -> SpecPhase.IMPLEMENT
+
+            StageId.VERIFY,
+            StageId.ARCHIVE,
+            -> null
+        }
     }
 
     private fun applyDocumentTabButtonStyle(
@@ -3457,12 +3485,15 @@ class SpecDetailPanel(
     }
 
     internal fun selectPhaseForTest(phase: SpecPhase) {
-        documentTabButtons[phase]?.doClick()
+        val workflow = currentWorkflow ?: return
+        updateTreeSelection(phase)
+        showDocumentPreview(phase, keepGeneratingIndicator = false)
+        updateButtonStates(workflow)
     }
 
     internal fun selectedPhaseNameForTest(): String? = selectedPhase?.name
 
-    internal fun areDocumentTabsVisibleForTest(): Boolean = documentTabButtons.values.any(JButton::isVisible)
+    internal fun areDocumentTabsVisibleForTest(): Boolean = false
 
     internal fun toggleClarificationQuestionForTest(index: Int) {
         val currentDecision = clarificationState
