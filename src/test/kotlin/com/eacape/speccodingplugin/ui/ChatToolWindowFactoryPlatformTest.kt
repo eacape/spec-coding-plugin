@@ -1,6 +1,10 @@
 package com.eacape.speccodingplugin.ui
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.session.SessionManager
+import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
+import com.eacape.speccodingplugin.session.WorkflowChatBinding
+import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
 import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
@@ -11,6 +15,7 @@ import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.ui.WorkflowChatRefreshEvent
 import com.eacape.speccodingplugin.ui.WorkflowChatRefreshListener
+import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowPanel
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.wm.RegisterToolWindowTask
@@ -179,6 +184,42 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("false", clearedSnapshot.getValue("completeTaskVisible"))
     }
 
+    fun `test history open should normalize legacy spec session into workflow binding UI`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Legacy Spec Session Upgrade",
+            description = "task 83 legacy session",
+        ).getOrThrow()
+        val session = SessionManager.getInstance(project).createSession(
+            title = "/spec status",
+            specTaskId = workflow.id,
+        ).getOrThrow()
+        val toolWindow = registerSpecCodeToolWindow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val chatPanel = currentChatPanel(toolWindow)
+
+        openSessionFromHistory(session.id)
+
+        waitUntil {
+            val snapshot = chatPanel.workflowBindingSnapshotForTest()
+            snapshot.getValue("sessionId") == session.id &&
+                snapshot.getValue("mode") == "SPEC" &&
+                snapshot.getValue("workflowId") == workflow.id
+        }
+
+        val snapshot = chatPanel.workflowBindingSnapshotForTest()
+        assertEquals("SPEC", snapshot.getValue("mode"))
+        assertEquals(workflow.id, snapshot.getValue("workflowId"))
+        assertEquals("", snapshot.getValue("taskId"))
+        assertEquals("true", snapshot.getValue("workflowChipVisible"))
+        assertTrue(snapshot.getValue("workflowChipText").contains(workflow.title))
+        assertEquals("false", snapshot.getValue("taskChipVisible"))
+    }
+
     fun `test task binding chip should deep link back to workflow task in specs tab`() {
         val workflow = SpecEngine.getInstance(project).createWorkflow(
             title = "Workflow Task Deep Link",
@@ -240,6 +281,58 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
                 specPanel.selectedWorkflowIdForTest() == workflow.id &&
                 specPanel.focusedStageForTest() == StageId.IMPLEMENT &&
                 specPanel.tasksSnapshotForTest().getValue("selectedTaskId") == primaryTask.id
+        }
+    }
+
+    fun `test history open should restore persisted task binding and keep spec selection consistent`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Persisted Task Binding Restore",
+            description = "task 83 persisted binding",
+        ).getOrThrow()
+        val task = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Restore bound task selection",
+            priority = TaskPriority.P0,
+        )
+        val session = SessionManager.getInstance(project).createSession(
+            title = "Workflow task restore",
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = workflow.id,
+                taskId = task.id,
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.SESSION_RESTORE,
+                actionIntent = WorkflowChatActionIntent.DISCUSS,
+            ),
+        ).getOrThrow()
+        val toolWindow = registerSpecCodeToolWindow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val chatPanel = currentChatPanel(toolWindow)
+        val specPanel = currentSpecPanel(toolWindow)
+
+        openSessionFromHistory(session.id)
+
+        waitUntil {
+            val snapshot = chatPanel.workflowBindingSnapshotForTest()
+            snapshot.getValue("sessionId") == session.id &&
+                snapshot.getValue("taskId") == task.id &&
+                snapshot.getValue("taskChipVisible") == "true"
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            chatPanel.clickTaskBindingChipForTest()
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        waitUntil {
+            ChatToolWindowFactory.isSpecContent(toolWindow.contentManager.selectedContent) &&
+                specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.focusedStageForTest() == StageId.IMPLEMENT &&
+                specPanel.tasksSnapshotForTest().getValue("selectedTaskId") == task.id
         }
     }
 
@@ -317,6 +410,56 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("true", snapshot.getValue("completeTaskEnabled"))
     }
 
+    fun `test workflow attachment boundary should surface explicit status in bound chat`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Attachment Boundary",
+            description = "task 83 attachments",
+        ).getOrThrow()
+        val task = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Discuss attachment boundary",
+            priority = TaskPriority.P1,
+        )
+        val session = SessionManager.getInstance(project).createSession(
+            title = "Workflow attachment boundary",
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = workflow.id,
+                taskId = task.id,
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.SESSION_RESTORE,
+                actionIntent = WorkflowChatActionIntent.DISCUSS,
+            ),
+        ).getOrThrow()
+        val toolWindow = registerSpecCodeToolWindow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val chatPanel = currentChatPanel(toolWindow)
+
+        openSessionFromHistory(session.id)
+
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("sessionId") == session.id &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == task.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            chatPanel.addImageAttachmentsForTest(listOf("C:/tmp/context-image.png"))
+            chatPanel.showWorkflowAttachmentBoundaryForTest()
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val statusSnapshot = chatPanel.statusSnapshotForTest()
+        assertEquals(
+            SpecCodingBundle.message("toolwindow.workflow.attachment.boundary"),
+            statusSnapshot.getValue("text"),
+        )
+        assertEquals("true", statusSnapshot.getValue("visible"))
+    }
+
     private fun registerSpecCodeToolWindow(): ToolWindow {
         var toolWindow: ToolWindow? = null
         ApplicationManager.getApplication().invokeAndWait {
@@ -340,6 +483,14 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         return toolWindow.contentManager.contents
             .first(ChatToolWindowFactory::isSpecContent)
             .component as SpecWorkflowPanel
+    }
+
+    private fun openSessionFromHistory(sessionId: String) {
+        ApplicationManager.getApplication().invokeAndWait {
+            project.messageBus.syncPublisher(HistorySessionOpenListener.TOPIC)
+                .onSessionOpenRequested(sessionId)
+        }
+        UIUtil.dispatchAllInvocationEvents()
     }
 
     private fun waitUntil(timeoutMs: Long = 5_000, condition: () -> Boolean) {

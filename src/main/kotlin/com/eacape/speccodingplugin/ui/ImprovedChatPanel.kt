@@ -6563,6 +6563,22 @@ class ImprovedChatPanel(
         )
     }
 
+    internal fun statusSnapshotForTest(): Map<String, String> {
+        return mapOf(
+            "text" to statusLabel.text.orEmpty(),
+            "tooltip" to statusLabel.toolTipText.orEmpty(),
+            "visible" to statusLabel.isVisible.toString(),
+        )
+    }
+
+    internal fun addImageAttachmentsForTest(paths: List<String>) {
+        imageAttachmentPreviewPanel.addImagePaths(paths)
+    }
+
+    internal fun showWorkflowAttachmentBoundaryForTest() {
+        showWorkflowAttachmentBoundaryIfNeeded()
+    }
+
     internal fun clearTaskBindingForTest() {
         clearTaskBindingButton.doClick()
     }
