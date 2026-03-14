@@ -40,6 +40,7 @@ import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.session.WorkflowChatActionRouter
 import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
 import com.eacape.speccodingplugin.session.WorkflowChatBinding
+import com.eacape.speccodingplugin.session.WorkflowChatContextAssembler
 import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
 import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_COMMAND_PREFIX
 import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_MODE_KEY
@@ -200,6 +201,7 @@ class ImprovedChatPanel(
     private val specEngine = SpecEngine.getInstance(project)
     private val specTasksService = SpecTasksService.getInstance(project)
     private val workflowChatActionRouter = WorkflowChatActionRouter.getInstance(project)
+    private val workflowChatContextAssembler = WorkflowChatContextAssembler.getInstance(project)
     private val contextCollector by lazy { ContextCollector.getInstance(project) }
     private val completionProvider by lazy { CompletionProvider.getInstance(project) }
     private val operationModeSelector = OperationModeSelector(project)
@@ -2575,22 +2577,15 @@ class ImprovedChatPanel(
     }
 
     private fun buildSpecModePrompt(input: String): String {
-        val workflowId = activeSpecWorkflowId?.trim()?.ifBlank { null }
-        val workflowHint = if (workflowId != null) {
-            buildString {
-                append("Workflow=$workflowId")
-                append(" (docs: .spec-coding/specs/$workflowId/{requirements,design,tasks}.md)")
+        val binding = resolvedActiveWorkflowChatBinding()
+            ?: activeSpecWorkflowId?.trim()?.ifBlank { null }?.let { workflowId ->
+                WorkflowChatBinding(
+                    workflowId = workflowId,
+                    source = WorkflowChatEntrySource.MODE_SWITCH,
+                    actionIntent = WorkflowChatActionIntent.DISCUSS,
+                )
             }
-        } else {
-            "No active workflow. If needed, run /workflow <requirements> first."
-        }
-        return buildString {
-            appendLine("Interaction mode: workflow")
-            appendLine(workflowHint)
-            appendLine(SpecCodingBundle.message("toolwindow.chat.mode.spec.instruction"))
-            appendLine("User instruction:")
-            appendLine(input.trim())
-        }
+        return workflowChatContextAssembler.buildPrompt(binding, input)
     }
 
     private fun resolvePromptReferences(rawInput: String): PromptReferenceResolution {
