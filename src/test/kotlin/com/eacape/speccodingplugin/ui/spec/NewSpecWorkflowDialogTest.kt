@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.ui.spec
 
+import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecChangeIntent
+import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -39,6 +41,62 @@ class NewSpecWorkflowDialogTest {
                 template = WorkflowTemplate.DIRECT_IMPLEMENT,
                 requestedIntent = SpecChangeIntent.FULL,
             ),
+        )
+    }
+
+    @Test
+    fun `buildTemplatePresentation should describe full spec flow with optional verify artifact`() {
+        val presentation = NewSpecWorkflowDialog.buildTemplatePresentation(WorkflowTemplate.FULL_SPEC)
+
+        assertTrue(presentation.description.isNotBlank())
+        assertTrue(presentation.bestFor.isNotBlank())
+        assertEquals(
+            listOf(
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.REQUIREMENTS),
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.DESIGN),
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS),
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+                SpecCodingBundle.message(
+                    "spec.dialog.template.optionalValue",
+                    SpecWorkflowOverviewPresenter.stageLabel(StageId.VERIFY),
+                ),
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.ARCHIVE),
+            ).joinToString(" -> "),
+            presentation.stageSummary,
+        )
+        assertEquals(
+            listOf(
+                "requirements.md",
+                "design.md",
+                "tasks.md",
+                SpecCodingBundle.message("spec.dialog.template.optionalValue", "verification.md"),
+            ).joinToString(", "),
+            presentation.artifactSummary,
+        )
+    }
+
+    @Test
+    fun `buildTemplatePresentation should explain direct implement scaffolded artifacts`() {
+        val presentation = NewSpecWorkflowDialog.buildTemplatePresentation(WorkflowTemplate.DIRECT_IMPLEMENT)
+
+        assertTrue(presentation.description.contains("tasks.md"))
+        assertEquals(
+            listOf(
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+                SpecCodingBundle.message(
+                    "spec.dialog.template.optionalValue",
+                    SpecWorkflowOverviewPresenter.stageLabel(StageId.VERIFY),
+                ),
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.ARCHIVE),
+            ).joinToString(" -> "),
+            presentation.stageSummary,
+        )
+        assertEquals(
+            listOf(
+                SpecCodingBundle.message("spec.dialog.template.generatedValue", "tasks.md"),
+                SpecCodingBundle.message("spec.dialog.template.optionalValue", "verification.md"),
+            ).joinToString(", "),
+            presentation.artifactSummary,
         )
     }
 }

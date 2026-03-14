@@ -67,6 +67,7 @@ import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.stream.ChatTraceKind
 import com.eacape.speccodingplugin.stream.ChatTraceStatus
+import com.eacape.speccodingplugin.terminal.IdeTerminalCommandExecutor
 import com.eacape.speccodingplugin.ui.chat.ChatSpecSidebarPanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagePanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagesListPanel
@@ -5514,7 +5515,7 @@ class ImprovedChatPanel(
             return
         }
 
-        executeShellCommand(
+        executeShellCommandInIdeTerminal(
             command = normalizedCommand,
             requestDescription = "Workflow quick action command: $normalizedCommand",
         )
@@ -5551,6 +5552,72 @@ class ImprovedChatPanel(
         scope.launch(Dispatchers.IO) {
             runWorkflowShellCommandInBackground(normalizedCommand, request)
         }
+    }
+
+    private fun executeShellCommandInIdeTerminal(command: String, requestDescription: String) {
+        val normalizedCommand = command.trim()
+        if (normalizedCommand.isBlank() || project.isDisposed || _isDisposed) {
+            return
+        }
+        val request = OperationRequest(
+            operation = Operation.EXECUTE_COMMAND,
+            description = requestDescription,
+            details = mapOf("command" to normalizedCommand),
+        )
+        if (!checkWorkflowCommandPermission(request, normalizedCommand)) {
+            return
+        }
+
+        val workingDirectory = project.basePath
+            ?.takeIf { it.isNotBlank() }
+            ?: System.getProperty("user.home")
+            ?.takeIf { it.isNotBlank() }
+            ?: run {
+                val message = SpecCodingBundle.message("chat.workflow.action.runCommand.terminalUnavailable", normalizedCommand)
+                addErrorMessage(message)
+                currentSessionId?.let { sessionId ->
+                    persistMessage(
+                        sessionId = sessionId,
+                        role = ConversationRole.TOOL,
+                        content = message,
+                    )
+                }
+                return
+            }
+
+        runCatching {
+            IdeTerminalCommandExecutor.execute(
+                project = project,
+                command = normalizedCommand,
+                workingDirectory = workingDirectory,
+            )
+        }.fold(
+            onSuccess = {
+                modeManager.recordOperation(request, success = true)
+                val message = SpecCodingBundle.message("chat.workflow.action.runCommand.startedTerminal", normalizedCommand)
+                showStatus(message)
+                addSystemMessage(message)
+                currentSessionId?.let { sessionId ->
+                    persistMessage(
+                        sessionId = sessionId,
+                        role = ConversationRole.TOOL,
+                        content = message,
+                    )
+                }
+            },
+            onFailure = { error ->
+                logger.warn("Failed to open IDE terminal for workflow command", error)
+                val message = SpecCodingBundle.message("chat.workflow.action.runCommand.terminalUnavailable", normalizedCommand)
+                addErrorMessage(message)
+                currentSessionId?.let { sessionId ->
+                    persistMessage(
+                        sessionId = sessionId,
+                        role = ConversationRole.TOOL,
+                        content = message,
+                    )
+                }
+            },
+        )
     }
 
     private fun handleWorkflowCommandStop(command: String) {

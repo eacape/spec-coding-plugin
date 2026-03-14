@@ -5,9 +5,11 @@ import com.eacape.speccodingplugin.spec.SpecChangeIntent
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
 import com.eacape.speccodingplugin.spec.WorkflowTemplates
+import com.intellij.openapi.util.text.StringUtil
 import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
+import com.intellij.ui.JBColor
 import com.intellij.ui.CollectionComboBoxModel
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
@@ -16,7 +18,9 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import java.awt.Dimension
+import java.awt.Font
 import javax.swing.BoxLayout
+import javax.swing.BorderFactory
 import javax.swing.ButtonGroup
 import javax.swing.JComboBox
 import javax.swing.JComponent
@@ -40,13 +44,39 @@ class NewSpecWorkflowDialog(
 
     private val titleField = JBTextField()
     private val descriptionArea = JBTextArea(4, 40)
+    private val templateHelpArea = createReadOnlyInfoArea(rows = 2).apply {
+        text = SpecCodingBundle.message("spec.dialog.template.help")
+    }
     private val templateLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.template"))
     private val templateCombo = JComboBox(CollectionComboBoxModel(WorkflowTemplate.entries.toList())).apply {
         selectedItem = defaultTemplate
-        renderer = SimpleListCellRenderer.create<WorkflowTemplate> { label, value, _ ->
-            label.text = value?.let(SpecWorkflowOverviewPresenter::templateLabel).orEmpty()
+        renderer = SimpleListCellRenderer.create<WorkflowTemplate> { label, value, index ->
+            val template = value
+            if (template == null) {
+                label.text = ""
+                label.toolTipText = null
+                return@create
+            }
+            val detail = buildTemplatePresentation(template)
+            val templateLabel = SpecWorkflowOverviewPresenter.templateLabel(template)
+            label.toolTipText = detail.bestFor
+            label.text = if (index < 0) {
+                templateLabel
+            } else {
+                buildComboEntryHtml(
+                    title = templateLabel,
+                    subtitle = detail.bestFor,
+                )
+            }
         }
     }
+    private val templateDetailTitleLabel = JBLabel().apply {
+        font = font.deriveFont(font.style or Font.BOLD)
+    }
+    private val templateDescriptionArea = createReadOnlyInfoArea(rows = 3)
+    private val templateBestForArea = createReadOnlyInfoArea(rows = 2)
+    private val templateStagesArea = createReadOnlyInfoArea(rows = 2)
+    private val templateArtifactsArea = createReadOnlyInfoArea(rows = 2)
     private val intentLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.intent"))
     private val fullIntentRadio = JBRadioButton(SpecCodingBundle.message("spec.dialog.intent.full"), true)
     private val incrementalIntentRadio = JBRadioButton(SpecCodingBundle.message("spec.dialog.intent.incremental"), false)
@@ -105,7 +135,8 @@ class NewSpecWorkflowDialog(
         descriptionArea.wrapStyleWord = true
         val scrollPane = JScrollPane(descriptionArea)
         scrollPane.alignmentX = JComponent.LEFT_ALIGNMENT
-        scrollPane.preferredSize = Dimension(400, 100)
+        scrollPane.preferredSize = Dimension(JBUI.scale(560), JBUI.scale(128))
+        scrollPane.maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(144))
         panel.add(scrollPane)
         panel.add(javax.swing.Box.createVerticalStrut(12))
 
@@ -117,10 +148,15 @@ class NewSpecWorkflowDialog(
         ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
             comboBox = templateCombo,
             minWidth = JBUI.scale(160),
-            maxWidth = JBUI.scale(520),
+            maxWidth = JBUI.scale(640),
             height = JBUI.scale(30),
         )
         panel.add(templateCombo)
+        panel.add(javax.swing.Box.createVerticalStrut(8))
+        templateHelpArea.alignmentX = JComponent.LEFT_ALIGNMENT
+        panel.add(templateHelpArea)
+        panel.add(javax.swing.Box.createVerticalStrut(8))
+        panel.add(createTemplateDetailPanel())
         panel.add(javax.swing.Box.createVerticalStrut(12))
 
         intentLabel.alignmentX = JComponent.LEFT_ALIGNMENT
@@ -185,6 +221,7 @@ class NewSpecWorkflowDialog(
     }
 
     private fun updateFormState() {
+        updateTemplatePresentation(selectedTemplate())
         val supportsRequirementScope = templateSupportsRequirementScope(selectedTemplate())
         intentLabel.isVisible = supportsRequirementScope
         fullIntentRadio.isVisible = supportsRequirementScope
@@ -216,11 +253,66 @@ class NewSpecWorkflowDialog(
         return (templateCombo.selectedItem as? WorkflowTemplate) ?: WorkflowTemplate.FULL_SPEC
     }
 
+    private fun createTemplateDetailPanel(): JComponent {
+        val panel = JPanel()
+        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
+        panel.alignmentX = JComponent.LEFT_ALIGNMENT
+        panel.maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+        panel.border = BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(JBColor.border(), 1),
+            JBUI.Borders.empty(12),
+        )
+
+        templateDetailTitleLabel.alignmentX = JComponent.LEFT_ALIGNMENT
+        panel.add(templateDetailTitleLabel)
+        panel.add(javax.swing.Box.createVerticalStrut(10))
+        panel.add(createTemplateDetailSection("spec.dialog.template.detail.description", templateDescriptionArea))
+        panel.add(javax.swing.Box.createVerticalStrut(8))
+        panel.add(createTemplateDetailSection("spec.dialog.template.detail.bestFor", templateBestForArea))
+        panel.add(javax.swing.Box.createVerticalStrut(8))
+        panel.add(createTemplateDetailSection("spec.dialog.template.detail.stages", templateStagesArea))
+        panel.add(javax.swing.Box.createVerticalStrut(8))
+        panel.add(createTemplateDetailSection("spec.dialog.template.detail.artifacts", templateArtifactsArea))
+        return panel
+    }
+
+    private fun createTemplateDetailSection(messageKey: String, valueArea: JBTextArea): JComponent {
+        val section = JPanel()
+        section.layout = BoxLayout(section, BoxLayout.Y_AXIS)
+        section.alignmentX = JComponent.LEFT_ALIGNMENT
+
+        JBLabel(SpecCodingBundle.message(messageKey)).apply {
+            alignmentX = JComponent.LEFT_ALIGNMENT
+            section.add(this)
+        }
+        section.add(javax.swing.Box.createVerticalStrut(2))
+        valueArea.alignmentX = JComponent.LEFT_ALIGNMENT
+        section.add(valueArea)
+        return section
+    }
+
+    private fun updateTemplatePresentation(template: WorkflowTemplate) {
+        val presentation = buildTemplatePresentation(template)
+        templateCombo.toolTipText = presentation.bestFor
+        templateDetailTitleLabel.text = SpecWorkflowOverviewPresenter.templateLabel(template)
+        templateDescriptionArea.text = presentation.description
+        templateBestForArea.text = presentation.bestFor
+        templateStagesArea.text = presentation.stageSummary
+        templateArtifactsArea.text = presentation.artifactSummary
+    }
+
     override fun getPreferredFocusedComponent() = titleField
 
     companion object {
-        private const val INITIAL_DIALOG_WIDTH = 560
-        private const val INITIAL_DIALOG_HEIGHT = 500
+        private const val INITIAL_DIALOG_WIDTH = 720
+        private const val INITIAL_DIALOG_HEIGHT = 620
+
+        internal data class TemplatePresentation(
+            val description: String,
+            val bestFor: String,
+            val stageSummary: String,
+            val artifactSummary: String,
+        )
 
         internal fun templateSupportsRequirementScope(template: WorkflowTemplate): Boolean {
             return WorkflowTemplates
@@ -238,6 +330,72 @@ class NewSpecWorkflowDialog(
                 requestedIntent
             } else {
                 SpecChangeIntent.FULL
+            }
+        }
+
+        internal fun buildTemplatePresentation(template: WorkflowTemplate): TemplatePresentation {
+            val definition = WorkflowTemplates.definitionOf(template)
+            return TemplatePresentation(
+                description = SpecCodingBundle.message(templateMessageKey("description", template)),
+                bestFor = SpecCodingBundle.message(templateMessageKey("bestFor", template)),
+                stageSummary = definition.stagePlan.joinToString(" -> ") { item ->
+                    decorateOptional(
+                        value = SpecWorkflowOverviewPresenter.stageLabel(item.id),
+                        optional = item.optional,
+                    )
+                },
+                artifactSummary = buildArtifactSummary(template, definition),
+            )
+        }
+
+        private fun buildArtifactSummary(
+            template: WorkflowTemplate,
+            definition: com.eacape.speccodingplugin.spec.TemplateDefinition,
+        ): String {
+            val artifacts = mutableListOf<String>()
+            if (template == WorkflowTemplate.DIRECT_IMPLEMENT) {
+                artifacts += SpecCodingBundle.message(
+                    "spec.dialog.template.generatedValue",
+                    StageId.TASKS.artifactFileName.orEmpty(),
+                )
+            }
+            definition.stagePlan.forEach { item ->
+                val fileName = item.id.artifactFileName ?: return@forEach
+                artifacts += decorateOptional(fileName, item.optional)
+            }
+            return artifacts.distinct().joinToString(", ")
+        }
+
+        private fun decorateOptional(value: String, optional: Boolean): String {
+            return if (optional) {
+                SpecCodingBundle.message("spec.dialog.template.optionalValue", value)
+            } else {
+                value
+            }
+        }
+
+        private fun templateMessageKey(section: String, template: WorkflowTemplate): String {
+            return "spec.dialog.template.$section.${template.name.lowercase()}"
+        }
+
+        private fun createReadOnlyInfoArea(rows: Int): JBTextArea {
+            return JBTextArea(rows, 1).apply {
+                isEditable = false
+                isOpaque = false
+                isFocusable = false
+                lineWrap = true
+                wrapStyleWord = true
+                border = JBUI.Borders.empty()
+            }
+        }
+
+        private fun buildComboEntryHtml(title: String, subtitle: String): String {
+            return buildString {
+                append("<html><div><b>")
+                append(StringUtil.escapeXmlEntities(title))
+                append("</b><br/><span>")
+                append(StringUtil.escapeXmlEntities(subtitle))
+                append("</span></div></html>")
             }
         }
     }
