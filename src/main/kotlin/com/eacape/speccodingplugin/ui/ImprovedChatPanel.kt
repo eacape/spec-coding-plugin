@@ -42,6 +42,9 @@ import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
 import com.eacape.speccodingplugin.session.WorkflowChatBinding
 import com.eacape.speccodingplugin.session.WorkflowChatContextAssembler
 import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
+import com.eacape.speccodingplugin.session.WorkflowChatTaskIntentFailureReason
+import com.eacape.speccodingplugin.session.WorkflowChatTaskIntentResolution
+import com.eacape.speccodingplugin.session.WorkflowChatTaskIntentResolver
 import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_COMMAND_PREFIX
 import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_MODE_KEY
 import com.eacape.speccodingplugin.session.canonicalizeWorkflowChatCommand
@@ -204,6 +207,7 @@ class ImprovedChatPanel(
     private val specTasksService = SpecTasksService.getInstance(project)
     private val workflowChatActionRouter = WorkflowChatActionRouter.getInstance(project)
     private val workflowChatContextAssembler = WorkflowChatContextAssembler.getInstance(project)
+    private val workflowChatTaskIntentResolver = WorkflowChatTaskIntentResolver.getInstance(project)
     private val contextCollector by lazy { ContextCollector.getInstance(project) }
     private val completionProvider by lazy { CompletionProvider.getInstance(project) }
     private val operationModeSelector = OperationModeSelector(project)
@@ -829,19 +833,16 @@ class ImprovedChatPanel(
         workflowBindingStrip.isOpaque = false
         workflowBindingStrip.border = JBUI.Borders.empty()
         workflowBindingStrip.isVisible = false
-        configureWorkflowBindingChip(workflowBindingChip, icon = SpecWorkflowIcons.Branch, clearAction = false)
         configureWorkflowBindingChip(taskBindingChip, icon = SpecWorkflowIcons.Execute, clearAction = false)
         configureWorkflowBindingActionButton(executeTaskBindingButton, SpecWorkflowIcons.Execute)
         configureWorkflowBindingActionButton(retryTaskBindingButton, SpecWorkflowIcons.Refresh)
         configureWorkflowBindingActionButton(completeTaskBindingButton, SpecWorkflowIcons.Complete)
         configureWorkflowBindingChip(clearTaskBindingButton, icon = SpecWorkflowIcons.Close, clearAction = true)
-        workflowBindingChip.addActionListener { handleWorkflowBindingChipClicked() }
         taskBindingChip.addActionListener { handleTaskBindingChipClicked() }
         executeTaskBindingButton.addActionListener { handleBoundTaskExecutionRequested(retry = false) }
         retryTaskBindingButton.addActionListener { handleBoundTaskExecutionRequested(retry = true) }
         completeTaskBindingButton.addActionListener { handleBoundTaskCompletionRequested() }
         clearTaskBindingButton.addActionListener { clearActiveTaskBinding() }
-        workflowBindingStrip.add(workflowBindingChip)
         workflowBindingStrip.add(taskBindingChip)
         workflowBindingStrip.add(executeTaskBindingButton)
         workflowBindingStrip.add(retryTaskBindingButton)
@@ -910,12 +911,14 @@ class ImprovedChatPanel(
     private fun updateWorkflowBindingUi() {
         val binding = resolvedActiveWorkflowChatBinding()
         val specMode = currentInteractionMode() == ChatInteractionMode.SPEC
-        val visible = specMode && binding != null
+        val taskId = binding?.taskId?.trim()?.ifBlank { null }
+        val visible = specMode && taskId != null
         workflowBindingStrip.isVisible = visible
-        if (!specMode || binding == null) {
+        workflowBindingChip.isVisible = false
+        workflowBindingChip.text = ""
+        workflowBindingChip.toolTipText = null
+        if (!specMode || binding == null || taskId == null) {
             workflowBindingChip.isVisible = false
-            workflowBindingChip.text = ""
-            workflowBindingChip.toolTipText = null
             taskBindingChip.isVisible = false
             taskBindingChip.text = ""
             taskBindingChip.toolTipText = null
@@ -929,43 +932,24 @@ class ImprovedChatPanel(
             return
         }
 
-        workflowBindingChip.isVisible = true
-        val workflowLabel = resolveWorkflowBindingLabel(binding.workflowId)
-        workflowBindingChip.text = SpecCodingBundle.message("toolwindow.workflow.binding.workflow", workflowLabel)
-        workflowBindingChip.toolTipText = SpecCodingBundle.message(
-            "toolwindow.workflow.binding.workflow.tooltip",
-            binding.workflowId,
+        taskBindingChip.isVisible = true
+        clearTaskBindingButton.isVisible = true
+        executeTaskBindingButton.isVisible = true
+        retryTaskBindingButton.isVisible = true
+        completeTaskBindingButton.isVisible = true
+        val task = resolveBoundWorkflowTask(binding)
+        taskBindingChip.text = SpecCodingBundle.message("toolwindow.workflow.binding.task", taskId)
+        taskBindingChip.toolTipText = buildTaskBindingTooltip(taskId, task)
+        clearTaskBindingButton.text = ""
+        clearTaskBindingButton.toolTipText = SpecCodingBundle.message(
+            "toolwindow.workflow.binding.task.clear.tooltip",
+            taskId,
         )
-
-        val taskId = binding.taskId?.trim()?.ifBlank { null }
-        taskBindingChip.isVisible = taskId != null
-        clearTaskBindingButton.isVisible = taskId != null
-        executeTaskBindingButton.isVisible = taskId != null
-        retryTaskBindingButton.isVisible = taskId != null
-        completeTaskBindingButton.isVisible = taskId != null
-        if (taskId != null) {
-            val task = resolveBoundWorkflowTask(binding)
-            taskBindingChip.text = SpecCodingBundle.message("toolwindow.workflow.binding.task", taskId)
-            taskBindingChip.toolTipText = buildTaskBindingTooltip(taskId, task)
-            clearTaskBindingButton.text = ""
-            clearTaskBindingButton.toolTipText = SpecCodingBundle.message(
-                "toolwindow.workflow.binding.task.clear.tooltip",
-                taskId,
-            )
-            clearTaskBindingButton.accessibleContext.accessibleName =
-                SpecCodingBundle.message("toolwindow.workflow.binding.task.clear")
-            clearTaskBindingButton.accessibleContext.accessibleDescription =
-                clearTaskBindingButton.toolTipText
-            updateTaskBindingActionButtons(binding, taskId, task)
-        } else {
-            taskBindingChip.text = ""
-            taskBindingChip.toolTipText = null
-            applyUnavailableTaskBindingActionButtons()
-            clearTaskBindingButton.toolTipText = null
-        }
-
-        workflowBindingChip.accessibleContext.accessibleName = workflowBindingChip.text
-        workflowBindingChip.accessibleContext.accessibleDescription = workflowBindingChip.toolTipText
+        clearTaskBindingButton.accessibleContext.accessibleName =
+            SpecCodingBundle.message("toolwindow.workflow.binding.task.clear")
+        clearTaskBindingButton.accessibleContext.accessibleDescription =
+            clearTaskBindingButton.toolTipText
+        updateTaskBindingActionButtons(binding, taskId, task)
         taskBindingChip.accessibleContext.accessibleName = taskBindingChip.text
         taskBindingChip.accessibleContext.accessibleDescription = taskBindingChip.toolTipText
         workflowBindingStrip.revalidate()
@@ -1713,8 +1697,25 @@ class ImprovedChatPanel(
         val interactionMode = currentInteractionMode()
         if (interactionMode == ChatInteractionMode.SPEC) {
             val normalizedInput = rawInput.trim()
-            val token = normalizedInput.substringBefore(" ").trim().lowercase(Locale.ROOT)
             val workflowId = resolveMostRecentSpecWorkflowIdOrNull()?.also { activeSpecWorkflowId = it }
+            when (
+                val taskIntentResolution = workflowChatTaskIntentResolver.resolve(
+                    workflowId = workflowId,
+                    binding = resolvedActiveWorkflowChatBinding(),
+                    userInput = rawInput,
+                )
+            ) {
+                WorkflowChatTaskIntentResolution.NoMatch -> Unit
+                is WorkflowChatTaskIntentResolution.Resolved -> {
+                    dispatchWorkflowTaskIntent(taskIntentResolution)
+                    return
+                }
+                is WorkflowChatTaskIntentResolution.Unresolved -> {
+                    reportWorkflowTaskIntentUnresolved(taskIntentResolution)
+                    return
+                }
+            }
+            val token = normalizedInput.substringBefore(" ").trim().lowercase(Locale.ROOT)
             val isBareSpecCommand = token in setOf("status", "open", "next", "back", "generate", "complete", "help")
             if (isBareSpecCommand || workflowId == null) {
                 if (selectedImagePaths.isNotEmpty()) {
@@ -3424,6 +3425,72 @@ class ImprovedChatPanel(
             ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
             ChatToolWindowFactory.selectSpecContent(toolWindow, project)
         }
+    }
+
+    private fun dispatchWorkflowTaskIntent(resolution: WorkflowChatTaskIntentResolution.Resolved) {
+        val source = resolvedActiveWorkflowChatBinding()?.source ?: WorkflowChatEntrySource.MODE_SWITCH
+        val binding = buildWorkflowChatBinding(
+            workflowId = resolution.workflowId,
+            source = source,
+            taskId = resolution.task.id,
+            actionIntent = resolution.actionIntent,
+            focusedStage = StageId.IMPLEMENT,
+        )
+        openWorkflowChatBinding(
+            WorkflowChatOpenRequest(
+                binding = binding,
+                preferNewSession = false,
+            ),
+        )
+        val actionButton = when (resolution.actionIntent) {
+            WorkflowChatActionIntent.EXECUTE_TASK -> executeTaskBindingButton
+            WorkflowChatActionIntent.RETRY_TASK -> retryTaskBindingButton
+            WorkflowChatActionIntent.COMPLETE_TASK -> completeTaskBindingButton
+            WorkflowChatActionIntent.DISCUSS -> return
+        }
+        if (!actionButton.isVisible || !actionButton.isEnabled) {
+            showStatus(
+                actionButton.toolTipText
+                    ?: SpecCodingBundle.message("toolwindow.error.unknown"),
+                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+            )
+            return
+        }
+        clearComposerInput()
+        showWorkflowAttachmentBoundaryIfNeeded()
+        actionButton.doClick()
+    }
+
+    private fun reportWorkflowTaskIntentUnresolved(
+        resolution: WorkflowChatTaskIntentResolution.Unresolved,
+    ) {
+        val message = when (resolution.reason) {
+            WorkflowChatTaskIntentFailureReason.NO_ACTIVE_WORKFLOW ->
+                SpecCodingBundle.message("toolwindow.workflow.intent.unresolved.noWorkflow")
+
+            WorkflowChatTaskIntentFailureReason.NO_TASKS ->
+                SpecCodingBundle.message("toolwindow.workflow.intent.unresolved.noTasks")
+
+            WorkflowChatTaskIntentFailureReason.NO_CURRENT_TASK ->
+                SpecCodingBundle.message("toolwindow.workflow.intent.unresolved.noCurrentTask")
+
+            WorkflowChatTaskIntentFailureReason.NO_NEXT_TASK ->
+                SpecCodingBundle.message("toolwindow.workflow.intent.unresolved.noNextTask")
+
+            WorkflowChatTaskIntentFailureReason.TASK_NOT_FOUND ->
+                SpecCodingBundle.message(
+                    "toolwindow.workflow.intent.unresolved.taskNotFound",
+                    resolution.referenceText ?: SpecCodingBundle.message("common.unknown"),
+                )
+
+            WorkflowChatTaskIntentFailureReason.AMBIGUOUS_TASK ->
+                SpecCodingBundle.message(
+                    "toolwindow.workflow.intent.unresolved.ambiguousTask",
+                    resolution.referenceText ?: SpecCodingBundle.message("common.unknown"),
+                    resolution.candidateTaskIds.joinToString(", "),
+                )
+        }
+        addErrorMessage(message)
     }
 
     private fun openHistoryPanel() {
@@ -5596,14 +5663,6 @@ class ImprovedChatPanel(
                 modeManager.recordOperation(request, success = true)
                 val message = SpecCodingBundle.message("chat.workflow.action.runCommand.startedTerminal", normalizedCommand)
                 showStatus(message)
-                addSystemMessage(message)
-                currentSessionId?.let { sessionId ->
-                    persistMessage(
-                        sessionId = sessionId,
-                        role = ConversationRole.TOOL,
-                        content = message,
-                    )
-                }
             },
             onFailure = { error ->
                 logger.warn("Failed to open IDE terminal for workflow command", error)
@@ -6606,7 +6665,7 @@ class ImprovedChatPanel(
             "mode" to currentInteractionMode().name,
             "workflowId" to resolvedActiveWorkflowChatBinding()?.workflowId.orEmpty(),
             "taskId" to resolvedActiveWorkflowChatBinding()?.taskId.orEmpty(),
-            "workflowChipVisible" to workflowBindingChip.isVisible.toString(),
+            "workflowChipVisible" to (workflowBindingChip.parent != null && workflowBindingChip.isVisible).toString(),
             "workflowChipText" to workflowBindingChip.text.orEmpty(),
             "workflowChipTooltip" to workflowBindingChip.toolTipText.orEmpty(),
             "taskChipVisible" to taskBindingChip.isVisible.toString(),

@@ -44,6 +44,14 @@ class NewSpecWorkflowDialog(
 
     private val titleField = JBTextField()
     private val descriptionArea = JBTextArea(4, 40)
+    private val descriptionScrollPane = JScrollPane(descriptionArea).apply {
+        alignmentX = JComponent.LEFT_ALIGNMENT
+        lockFixedHeight(
+            component = this,
+            height = JBUI.scale(DESCRIPTION_AREA_HEIGHT),
+            preferredWidth = JBUI.scale(CONTENT_WIDTH),
+        )
+    }
     private val templateHelpArea = createReadOnlyInfoArea(rows = 2).apply {
         text = SpecCodingBundle.message("spec.dialog.template.help")
     }
@@ -77,6 +85,7 @@ class NewSpecWorkflowDialog(
     private val templateBestForArea = createReadOnlyInfoArea(rows = 2)
     private val templateStagesArea = createReadOnlyInfoArea(rows = 2)
     private val templateArtifactsArea = createReadOnlyInfoArea(rows = 2)
+    private val templateDetailPanel = createTemplateDetailPanel()
     private val intentLabel = JBLabel(SpecCodingBundle.message("spec.dialog.field.intent"))
     private val fullIntentRadio = JBRadioButton(SpecCodingBundle.message("spec.dialog.intent.full"), true)
     private val incrementalIntentRadio = JBRadioButton(SpecCodingBundle.message("spec.dialog.intent.incremental"), false)
@@ -133,11 +142,7 @@ class NewSpecWorkflowDialog(
 
         descriptionArea.lineWrap = true
         descriptionArea.wrapStyleWord = true
-        val scrollPane = JScrollPane(descriptionArea)
-        scrollPane.alignmentX = JComponent.LEFT_ALIGNMENT
-        scrollPane.preferredSize = Dimension(JBUI.scale(560), JBUI.scale(128))
-        scrollPane.maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(144))
-        panel.add(scrollPane)
+        panel.add(descriptionScrollPane)
         panel.add(javax.swing.Box.createVerticalStrut(12))
 
         templateLabel.alignmentX = JComponent.LEFT_ALIGNMENT
@@ -156,7 +161,7 @@ class NewSpecWorkflowDialog(
         templateHelpArea.alignmentX = JComponent.LEFT_ALIGNMENT
         panel.add(templateHelpArea)
         panel.add(javax.swing.Box.createVerticalStrut(8))
-        panel.add(createTemplateDetailPanel())
+        panel.add(templateDetailPanel)
         panel.add(javax.swing.Box.createVerticalStrut(12))
 
         intentLabel.alignmentX = JComponent.LEFT_ALIGNMENT
@@ -257,7 +262,6 @@ class NewSpecWorkflowDialog(
         val panel = JPanel()
         panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
         panel.alignmentX = JComponent.LEFT_ALIGNMENT
-        panel.maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
         panel.border = BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(JBColor.border(), 1),
             JBUI.Borders.empty(12),
@@ -273,6 +277,7 @@ class NewSpecWorkflowDialog(
         panel.add(createTemplateDetailSection("spec.dialog.template.detail.stages", templateStagesArea))
         panel.add(javax.swing.Box.createVerticalStrut(8))
         panel.add(createTemplateDetailSection("spec.dialog.template.detail.artifacts", templateArtifactsArea))
+        panel.maximumSize = Dimension(Int.MAX_VALUE, panel.preferredSize.height)
         return panel
     }
 
@@ -305,7 +310,10 @@ class NewSpecWorkflowDialog(
 
     companion object {
         private const val INITIAL_DIALOG_WIDTH = 720
-        private const val INITIAL_DIALOG_HEIGHT = 620
+        private const val INITIAL_DIALOG_HEIGHT = 540
+        private const val CONTENT_WIDTH = 560
+        private const val DESCRIPTION_AREA_HEIGHT = 96
+        private const val READ_ONLY_INFO_COLUMNS = 48
 
         internal data class TemplatePresentation(
             val description: String,
@@ -379,14 +387,25 @@ class NewSpecWorkflowDialog(
         }
 
         private fun createReadOnlyInfoArea(rows: Int): JBTextArea {
-            return JBTextArea(rows, 1).apply {
+            return JBTextArea(rows, READ_ONLY_INFO_COLUMNS).apply {
                 isEditable = false
                 isOpaque = false
                 isFocusable = false
                 lineWrap = true
                 wrapStyleWord = true
                 border = JBUI.Borders.empty()
+                maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
             }
+        }
+
+        private fun lockFixedHeight(
+            component: JComponent,
+            height: Int,
+            preferredWidth: Int,
+        ) {
+            component.minimumSize = Dimension(0, height)
+            component.preferredSize = Dimension(preferredWidth, height)
+            component.maximumSize = Dimension(Int.MAX_VALUE, height)
         }
 
         private fun buildComboEntryHtml(title: String, subtitle: String): String {

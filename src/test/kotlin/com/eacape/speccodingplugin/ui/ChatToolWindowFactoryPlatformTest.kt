@@ -122,8 +122,7 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
 
         val snapshot = chatPanel.workflowBindingSnapshotForTest()
         assertEquals("SPEC", snapshot.getValue("mode"))
-        assertEquals("true", snapshot.getValue("workflowChipVisible"))
-        assertTrue(snapshot.getValue("workflowChipText").contains(workflow.title))
+        assertEquals("false", snapshot.getValue("workflowChipVisible"))
         assertEquals("true", snapshot.getValue("taskChipVisible"))
         assertEquals(
             SpecCodingBundle.message("toolwindow.workflow.binding.task", task.id),
@@ -177,7 +176,7 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         val clearedSnapshot = chatPanel.workflowBindingSnapshotForTest()
         assertEquals(workflow.id, clearedSnapshot.getValue("workflowId"))
         assertEquals("", clearedSnapshot.getValue("taskId"))
-        assertEquals("true", clearedSnapshot.getValue("workflowChipVisible"))
+        assertEquals("false", clearedSnapshot.getValue("workflowChipVisible"))
         assertEquals("false", clearedSnapshot.getValue("taskChipVisible"))
         assertEquals("false", clearedSnapshot.getValue("executeTaskVisible"))
         assertEquals("false", clearedSnapshot.getValue("retryTaskVisible"))
@@ -215,8 +214,7 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("SPEC", snapshot.getValue("mode"))
         assertEquals(workflow.id, snapshot.getValue("workflowId"))
         assertEquals("", snapshot.getValue("taskId"))
-        assertEquals("true", snapshot.getValue("workflowChipVisible"))
-        assertTrue(snapshot.getValue("workflowChipText").contains(workflow.title))
+        assertEquals("false", snapshot.getValue("workflowChipVisible"))
         assertEquals("false", snapshot.getValue("taskChipVisible"))
     }
 
