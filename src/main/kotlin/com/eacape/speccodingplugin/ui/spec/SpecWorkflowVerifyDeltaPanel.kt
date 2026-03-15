@@ -144,13 +144,41 @@ internal class SpecWorkflowVerifyDeltaPanel(
     private var currentState: SpecWorkflowVerifyDeltaState? = null
     private var emptyMessageKey: String = "spec.toolwindow.verifyDelta.empty"
     private var currentSelectionId: String? = null
+    private val historyScrollPane = JBScrollPane(historyList).apply {
+        border = JBUI.Borders.empty()
+        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+        viewport.isOpaque = false
+        isOpaque = false
+        SpecUiStyle.applyFastVerticalScrolling(this)
+    }
+    private val detailScrollPane = JBScrollPane(detailArea).apply {
+        border = JBUI.Borders.empty()
+        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+        verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+        SpecUiStyle.applyFastVerticalScrolling(this)
+    }
+    private val contentSplitPane = JSplitPane(
+        JSplitPane.VERTICAL_SPLIT,
+        historyScrollPane,
+        detailScrollPane,
+    ).apply {
+        resizeWeight = 0.6
+        dividerLocation = JBUI.scale(120)
+        isContinuousLayout = true
+        border = JBUI.Borders.empty()
+        background = DETAIL_BG
+        SpecUiStyle.applyChatLikeSpecDivider(this, dividerSize = JBUI.scale(4))
+    }
+    private val headerPanel = buildHeader()
+    private val contentPanel = buildContent()
 
     init {
         isOpaque = false
         border = JBUI.Borders.empty(6, 4, 6, 4)
-        minimumSize = JBUI.size(220, 150)
-        add(buildHeader(), BorderLayout.NORTH)
-        add(buildContent(), BorderLayout.CENTER)
+        minimumSize = JBUI.size(220, 0)
+        add(headerPanel, BorderLayout.NORTH)
+        add(contentPanel, BorderLayout.CENTER)
         ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
             comboBox = baselineComboBox,
             minWidth = JBUI.scale(120),
@@ -173,6 +201,38 @@ internal class SpecWorkflowVerifyDeltaPanel(
         showEmpty()
     }
 
+    override fun getPreferredSize(): Dimension {
+        val base = super.getPreferredSize()
+        val height = insets.top +
+            insets.bottom +
+            headerPanel.preferredSize.height +
+            JBUI.scale(6) +
+            dynamicContentHeight()
+        return Dimension(base.width, height)
+    }
+
+    private fun dynamicContentHeight(): Int {
+        return dynamicHistoryHeight() + contentSplitPane.dividerSize + dynamicDetailHeight()
+    }
+
+    private fun dynamicHistoryHeight(): Int {
+        val listHeight = historyList.preferredSize.height.takeIf { it > 0 } ?: EMPTY_HISTORY_HEIGHT
+        val scrollBorderInsets = historyScrollPane.border?.getBorderInsets(historyScrollPane)
+        val verticalBorder = (scrollBorderInsets?.top ?: 0) + (scrollBorderInsets?.bottom ?: 0)
+        return maxOf(EMPTY_HISTORY_HEIGHT, listHeight + verticalBorder)
+    }
+
+    private fun dynamicDetailHeight(): Int {
+        val textInsets = detailArea.insets
+        val lineHeight = detailArea.getFontMetrics(detailArea.font).height
+        val logicalLineCount = detailArea.text.lines().size.coerceAtLeast(MIN_DETAIL_LINE_COUNT)
+        val lineBasedHeight = logicalLineCount * lineHeight + textInsets.top + textInsets.bottom
+        val preferredTextHeight = detailArea.preferredSize.height.takeIf { it > 0 } ?: 0
+        val scrollBorderInsets = detailScrollPane.border?.getBorderInsets(detailScrollPane)
+        val verticalBorder = (scrollBorderInsets?.top ?: 0) + (scrollBorderInsets?.bottom ?: 0)
+        return maxOf(MIN_DETAIL_HEIGHT, lineBasedHeight, preferredTextHeight) + verticalBorder
+    }
+
     fun refreshLocalizedTexts() {
         headerTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.title")
         baselineLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.baseline.label")
@@ -193,6 +253,8 @@ internal class SpecWorkflowVerifyDeltaPanel(
         updateHeader()
         updateControls()
         updateDetail()
+        revalidate()
+        repaint()
     }
 
     fun showLoading() {
@@ -205,6 +267,8 @@ internal class SpecWorkflowVerifyDeltaPanel(
         updateHeader()
         updateControls()
         updateDetail()
+        revalidate()
+        repaint()
     }
 
     fun updateState(state: SpecWorkflowVerifyDeltaState) {
@@ -236,6 +300,8 @@ internal class SpecWorkflowVerifyDeltaPanel(
         updateHeader()
         updateControls()
         updateDetail()
+        revalidate()
+        repaint()
     }
 
     internal fun snapshotForTest(): Map<String, String> {
@@ -355,33 +421,9 @@ internal class SpecWorkflowVerifyDeltaPanel(
     }
 
     private fun buildContent(): JPanel {
-        val split = JSplitPane(
-            JSplitPane.VERTICAL_SPLIT,
-            JBScrollPane(historyList).apply {
-                border = JBUI.Borders.empty()
-                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-                verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                viewport.isOpaque = false
-                isOpaque = false
-                SpecUiStyle.applyFastVerticalScrolling(this)
-            },
-            JBScrollPane(detailArea).apply {
-                border = JBUI.Borders.empty()
-                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-                verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                SpecUiStyle.applyFastVerticalScrolling(this)
-            },
-        ).apply {
-            resizeWeight = 0.6
-            dividerLocation = JBUI.scale(120)
-            isContinuousLayout = true
-            border = JBUI.Borders.empty()
-            background = DETAIL_BG
-            SpecUiStyle.applyChatLikeSpecDivider(this, dividerSize = JBUI.scale(4))
-        }
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(split, BorderLayout.CENTER)
+            add(contentSplitPane, BorderLayout.CENTER)
         }
     }
 
@@ -478,6 +520,7 @@ internal class SpecWorkflowVerifyDeltaPanel(
             else -> buildDisabledDetail(selectedBaseline)
         }
         detailArea.caretPosition = 0
+        detailArea.revalidate()
     }
 
     private fun buildRunDetail(entry: VerifyRunHistoryEntry): String {
@@ -695,6 +738,9 @@ internal class SpecWorkflowVerifyDeltaPanel(
     )
 
     companion object {
+        private val EMPTY_HISTORY_HEIGHT = JBUI.scale(96)
+        private val MIN_DETAIL_HEIGHT = JBUI.scale(72)
+        private const val MIN_DETAIL_LINE_COUNT = 4
         private val HEADER_FG = JBColor(Color(35, 40, 47), Color(222, 226, 232))
         private val HEADER_SECONDARY_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
         private val DETAIL_BG = JBColor(Color(253, 254, 255), Color(45, 50, 58))

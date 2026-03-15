@@ -544,6 +544,7 @@ class SpecWorkflowPanel(
             id = SpecWorkflowWorkspaceSectionId.VERIFY,
             titleProvider = { SpecCodingBundle.message("spec.toolwindow.section.verify") },
             content = verifyDeltaPanel,
+            maxExpandedBodyHeight = SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT,
         )
         documentsSection = createWorkspaceSection(
             id = SpecWorkflowWorkspaceSectionId.DOCUMENTS,
