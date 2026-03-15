@@ -344,6 +344,45 @@ class SpecTaskExecutionServiceTest {
     }
 
     @Test
+    fun `startAiExecution should synthesize generic recent activity when provider emits delta without trace`() {
+        val workflowId = "wf-ai-live-progress-fallback"
+        seedWorkflow(workflowId)
+        val executionService = newExecutionService(
+            chatExecutor = { request ->
+                request.onChunk(
+                    com.eacape.speccodingplugin.llm.LlmChunk(
+                        delta = "Applying implementation change",
+                        isLast = false,
+                    ),
+                )
+                LlmResponse(
+                    content = "Implemented task update.",
+                    model = "mock-model-v1",
+                    usage = LlmUsage(),
+                    finishReason = "stop",
+                )
+            },
+        )
+
+        val result = executionService.startAiExecution(
+            workflowId = workflowId,
+            taskId = "T-001",
+            providerId = "mock",
+            modelId = "mock-model-v1",
+            operationMode = OperationMode.AUTO,
+        )
+
+        val liveProgress = executionService.getLiveProgress(workflowId, result.run.runId)
+
+        assertNotNull(liveProgress)
+        assertTrue(liveProgress!!.recentEvents.any { event ->
+            event.kind == ChatTraceKind.OUTPUT &&
+                event.detail.contains("returning content", ignoreCase = true)
+        })
+        assertEquals(ExecutionLivePhase.WAITING_CONFIRMATION, liveProgress.phase)
+    }
+
+    @Test
     fun `cancelExecution should stop active run without blocking task lifecycle`() {
         val workflowId = "wf-ai-cancel"
         seedWorkflow(workflowId)

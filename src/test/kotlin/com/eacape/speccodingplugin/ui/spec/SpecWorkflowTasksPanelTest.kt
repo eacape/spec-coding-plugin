@@ -11,6 +11,9 @@ import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskVerificationResult
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.VerificationConclusion
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.stream.ChatTraceKind
+import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import java.time.Instant
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -394,6 +397,18 @@ class SpecWorkflowTasksPanelTest {
                     startedAt = now.minusSeconds(90),
                     lastUpdatedAt = now.minusSeconds(3),
                     lastDetail = "Reading task context",
+                    recentEvents = listOf(
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.READ,
+                            detail = "SpecWorkflowPanel.kt",
+                            status = ChatTraceStatus.RUNNING,
+                        ),
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.EDIT,
+                            detail = "SpecTaskExecutionService.kt",
+                            status = ChatTraceStatus.INFO,
+                        ),
+                    ),
                 ),
             ),
             refreshedAtMillis = 1_710_000_000_000,
@@ -409,6 +424,7 @@ class SpecWorkflowTasksPanelTest {
             snapshot.getValue("selectedTaskChip"),
         )
         assertEquals("Reading task context", snapshot.getValue("selectedTaskExecutionDetail"))
+        assertTrue(snapshot.getValue("selectedTaskMeta").contains("Edit: SpecTaskExecutionService.kt"))
         assertTrue(panel.triggerStopExecutionForTest())
         assertEquals(listOf("T-011"), cancellations)
     }

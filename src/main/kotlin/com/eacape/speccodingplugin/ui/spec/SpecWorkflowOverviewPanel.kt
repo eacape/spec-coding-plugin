@@ -42,7 +42,7 @@ internal class SpecWorkflowOverviewPanel(
     private val focusTitleLabel = JBLabel()
     private val focusMetaLabel = createBodyLabel(VALUE_SECONDARY_FG)
     private val focusSummaryLabel = createBodyLabel(FOCUS_SUMMARY_FG)
-    private val focusDetailLabels = List(3) { createBodyLabel(VALUE_SECONDARY_FG) }
+    private val focusDetailLabels = List(4) { createBodyLabel(VALUE_SECONDARY_FG) }
     private val focusDetailsPanel = JPanel()
     private val blockersTitleLabel = createSectionTitleLabel().apply {
         foreground = BLOCKER_TITLE_FG

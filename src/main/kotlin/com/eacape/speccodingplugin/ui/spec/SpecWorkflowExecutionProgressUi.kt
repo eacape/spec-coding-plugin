@@ -5,6 +5,8 @@ import com.eacape.speccodingplugin.spec.ExecutionLivePhase
 import com.eacape.speccodingplugin.spec.StructuredTask
 import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
+import com.eacape.speccodingplugin.ui.chat.ExecutionTimelineParser
+import com.eacape.speccodingplugin.ui.chat.StreamingTraceAssembler
 import java.time.Duration
 import java.time.Instant
 
@@ -15,6 +17,8 @@ internal data class SpecWorkflowExecutionProgressPresentation(
     val elapsedText: String,
     val lastActivityText: String,
     val detailText: String,
+    val activitySummaryText: String,
+    val recentActivityTrailText: String?,
 )
 
 internal object SpecWorkflowExecutionProgressUi {
@@ -24,6 +28,7 @@ internal object SpecWorkflowExecutionProgressUi {
         now: Instant = Instant.now(),
     ): SpecWorkflowExecutionProgressPresentation? {
         val snapshot = resolveSnapshot(task, liveProgress) ?: return null
+        val activity = resolveRecentActivity(liveProgress, snapshot.detailText)
         return SpecWorkflowExecutionProgressPresentation(
             phase = snapshot.phase,
             phaseLabel = phaseLabel(snapshot.phase),
@@ -31,6 +36,8 @@ internal object SpecWorkflowExecutionProgressUi {
             elapsedText = formatDuration(now, snapshot.startedAt),
             lastActivityText = formatAge(now, snapshot.lastUpdatedAt),
             detailText = snapshot.detailText,
+            activitySummaryText = activity.summaryText,
+            recentActivityTrailText = activity.trailText,
         )
     }
 
@@ -183,10 +190,122 @@ internal object SpecWorkflowExecutionProgressUi {
         return runCatching { Instant.parse(normalized) }.getOrElse { Instant.now() }
     }
 
+    private fun resolveRecentActivity(
+        liveProgress: TaskExecutionLiveProgress?,
+        fallbackDetail: String,
+    ): ActivityPresentation {
+        if (liveProgress == null) {
+            return ActivityPresentation(
+                summaryText = fallbackDetail,
+                trailText = null,
+            )
+        }
+
+        val traceAssembler = StreamingTraceAssembler()
+        liveProgress.recentEvents.forEach(traceAssembler::onStructuredEvent)
+        val traceItems = traceAssembler
+            .snapshot(
+                content = "",
+                includeRawContent = false,
+                finalizeRunningItems = liveProgress.phase == ExecutionLivePhase.TERMINAL,
+            )
+            .items
+        val preferredActivities = traceItems
+            .mapNotNull(::formatPreferredActivity)
+            .takeLast(MAX_RECENT_ACTIVITY_ITEMS)
+        val fallbackActivities = traceItems
+            .mapNotNull(::formatFallbackActivity)
+            .takeLast(MAX_RECENT_ACTIVITY_ITEMS)
+        val recentActivities = (preferredActivities.ifEmpty { fallbackActivities })
+            .map(::compactActivityLine)
+
+        if (recentActivities.isEmpty()) {
+            return ActivityPresentation(
+                summaryText = fallbackDetail,
+                trailText = null,
+            )
+        }
+
+        val summaryText = recentActivities.last()
+        val trailText = when {
+            recentActivities.size > 1 -> compactActivityTrail(recentActivities.joinToString(" -> "))
+            recentActivities.single() != fallbackDetail -> recentActivities.single()
+            else -> null
+        }
+        return ActivityPresentation(
+            summaryText = summaryText,
+            trailText = trailText,
+        )
+    }
+
+    private fun formatPreferredActivity(item: StreamingTraceAssembler.TraceItem): String? {
+        val detail = item.detail.trim().takeIf(String::isNotBlank) ?: return null
+        return when (item.kind) {
+            ExecutionTimelineParser.Kind.READ ->
+                SpecCodingBundle.message("spec.toolwindow.execution.activity.read", detail)
+
+            ExecutionTimelineParser.Kind.EDIT ->
+                SpecCodingBundle.message("spec.toolwindow.execution.activity.edit", detail)
+
+            ExecutionTimelineParser.Kind.VERIFY ->
+                SpecCodingBundle.message("spec.toolwindow.execution.activity.verify", detail)
+
+            ExecutionTimelineParser.Kind.TASK -> detail
+
+            ExecutionTimelineParser.Kind.THINK,
+            ExecutionTimelineParser.Kind.TOOL,
+            ExecutionTimelineParser.Kind.OUTPUT,
+            -> null
+        }
+    }
+
+    private fun formatFallbackActivity(item: StreamingTraceAssembler.TraceItem): String? {
+        val detail = item.detail.trim().takeIf(String::isNotBlank) ?: return null
+        return when (item.kind) {
+            ExecutionTimelineParser.Kind.TOOL ->
+                SpecCodingBundle.message("spec.toolwindow.execution.activity.tool", detail)
+
+            ExecutionTimelineParser.Kind.OUTPUT -> detail
+
+            else -> null
+        }
+    }
+
+    private fun compactActivityLine(value: String): String {
+        return compactText(value, MAX_ACTIVITY_LINE_LENGTH)
+    }
+
+    private fun compactActivityTrail(value: String): String {
+        return compactText(value, MAX_ACTIVITY_TRAIL_LENGTH)
+    }
+
+    private fun compactText(
+        value: String,
+        maxLength: Int,
+    ): String {
+        val normalized = value
+            .replace('\n', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (normalized.length <= maxLength) {
+            return normalized
+        }
+        return normalized.take(maxLength - 3).trimEnd() + "..."
+    }
+
     private data class ProgressSnapshot(
         val phase: ExecutionLivePhase,
         val startedAt: Instant,
         val lastUpdatedAt: Instant,
         val detailText: String,
     )
+
+    private data class ActivityPresentation(
+        val summaryText: String,
+        val trailText: String?,
+    )
+
+    private const val MAX_RECENT_ACTIVITY_ITEMS = 3
+    private const val MAX_ACTIVITY_LINE_LENGTH = 72
+    private const val MAX_ACTIVITY_TRAIL_LENGTH = 180
 }

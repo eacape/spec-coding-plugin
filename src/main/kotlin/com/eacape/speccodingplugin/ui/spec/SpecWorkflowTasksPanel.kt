@@ -855,6 +855,7 @@ internal class SpecWorkflowTasksPanel(
                 progress.phaseLabel,
                 progress.elapsedText,
                 progress.lastActivityText,
+                progress.activitySummaryText,
             )
         } else {
             SpecCodingBundle.message(

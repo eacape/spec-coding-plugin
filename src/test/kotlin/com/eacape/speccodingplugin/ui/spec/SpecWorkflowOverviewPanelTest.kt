@@ -25,6 +25,9 @@ import com.eacape.speccodingplugin.spec.VerifyRunHistoryEntry
 import com.eacape.speccodingplugin.spec.Violation
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.stream.ChatTraceKind
+import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import java.time.Instant
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -354,6 +357,23 @@ class SpecWorkflowOverviewPanelTest {
                     startedAt = now.minusSeconds(90),
                     lastUpdatedAt = now.minusSeconds(4),
                     lastDetail = "Reading SpecWorkflowPanel.kt",
+                    recentEvents = listOf(
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.READ,
+                            detail = "SpecWorkflowPanel.kt",
+                            status = ChatTraceStatus.RUNNING,
+                        ),
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.EDIT,
+                            detail = "SpecTaskExecutionService.kt",
+                            status = ChatTraceStatus.INFO,
+                        ),
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.VERIFY,
+                            detail = "./gradlew.bat test --tests SpecWorkflowTasksPanelTest",
+                            status = ChatTraceStatus.INFO,
+                        ),
+                    ),
                 ),
             ),
             gateResult = null,
@@ -379,6 +399,12 @@ class SpecWorkflowOverviewPanelTest {
         assertTrue(
             snapshot.getValue("focusDetails").contains(
                 SpecCodingBundle.message("spec.toolwindow.execution.phase.streaming"),
+            ),
+        )
+        assertTrue(
+            snapshot.getValue("focusDetails").contains(
+                "Read: SpecWorkflowPanel.kt -> Edit: SpecTaskExecutionService.kt -> " +
+                    "Verify: ./gradlew.bat test --tests SpecWorkflowTasksPanelTest",
             ),
         )
         assertTrue(

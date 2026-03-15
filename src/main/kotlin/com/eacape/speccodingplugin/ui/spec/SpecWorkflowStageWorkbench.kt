@@ -576,19 +576,31 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.implement.workspace"),
             )
         }
-        return listOf(
-            SpecCodingBundle.message(
-                "spec.toolwindow.overview.focus.detail.implement.execution",
-                progress.phaseLabel,
-                progress.elapsedText,
-                progress.lastActivityText,
-            ),
-            SpecCodingBundle.message(
-                "spec.toolwindow.overview.focus.detail.implement.latest",
-                progress.detailText,
-            ),
-            tasksLine,
-        )
+        return buildList {
+            add(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.overview.focus.detail.implement.execution",
+                    progress.phaseLabel,
+                    progress.elapsedText,
+                    progress.lastActivityText,
+                ),
+            )
+            add(
+                SpecCodingBundle.message(
+                    "spec.toolwindow.overview.focus.detail.implement.latest",
+                    progress.detailText,
+                ),
+            )
+            progress.recentActivityTrailText?.let { recentActivity ->
+                add(
+                    SpecCodingBundle.message(
+                        "spec.toolwindow.overview.focus.detail.implement.recent",
+                        recentActivity,
+                    ),
+                )
+            }
+            add(tasksLine)
+        }
     }
 
     private fun buildVerifyFocusDetails(
