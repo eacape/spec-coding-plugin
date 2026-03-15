@@ -204,6 +204,7 @@ class SpecTaskExecutionService(private val project: Project) {
         providerId: String?,
         modelId: String?,
         operationMode: OperationMode,
+        supplementalInstruction: String? = null,
         sessionId: String? = null,
         sessionSource: WorkflowChatEntrySource = WorkflowChatEntrySource.TASK_PANEL,
         auditContext: Map<String, String> = emptyMap(),
@@ -215,6 +216,7 @@ class SpecTaskExecutionService(private val project: Project) {
             providerId = providerId,
             modelId = modelId,
             operationMode = operationMode,
+            supplementalInstruction = supplementalInstruction,
             trigger = ExecutionTrigger.USER_EXECUTE,
             previousRunId = null,
             sessionId = sessionId,
@@ -230,6 +232,7 @@ class SpecTaskExecutionService(private val project: Project) {
         providerId: String?,
         modelId: String?,
         operationMode: OperationMode,
+        supplementalInstruction: String? = null,
         previousRunId: String? = null,
         sessionId: String? = null,
         sessionSource: WorkflowChatEntrySource = WorkflowChatEntrySource.TASK_PANEL,
@@ -242,6 +245,7 @@ class SpecTaskExecutionService(private val project: Project) {
             providerId = providerId,
             modelId = modelId,
             operationMode = operationMode,
+            supplementalInstruction = supplementalInstruction,
             trigger = ExecutionTrigger.USER_RETRY,
             previousRunId = previousRunId,
             sessionId = sessionId,
@@ -458,6 +462,7 @@ class SpecTaskExecutionService(private val project: Project) {
         providerId: String?,
         modelId: String?,
         operationMode: OperationMode,
+        supplementalInstruction: String?,
         trigger: ExecutionTrigger,
         previousRunId: String?,
         sessionId: String?,
@@ -531,6 +536,7 @@ class SpecTaskExecutionService(private val project: Project) {
             trigger = trigger,
             previousRun = previousRun,
             suggestedRelatedFiles = suggestedRelatedFiles,
+            supplementalInstruction = supplementalInstruction,
         )
         val contextSnapshot = buildRelatedFilesContextSnapshot(suggestedRelatedFiles)
         var sawStreamingSignal = false
@@ -1065,6 +1071,7 @@ class SpecTaskExecutionService(private val project: Project) {
         trigger: ExecutionTrigger,
         previousRun: TaskExecutionRun?,
         suggestedRelatedFiles: List<String>,
+        supplementalInstruction: String?,
     ): String {
         val taskSummary = listOf(
             "Task ID: ${task.id}",
@@ -1125,6 +1132,11 @@ class SpecTaskExecutionService(private val project: Project) {
                 previousRun.summary?.takeIf(String::isNotBlank)?.let { summary ->
                     appendLine("Previous summary: ${summary.trim()}")
                 }
+            }
+            supplementalInstruction?.trim()?.takeIf(String::isNotBlank)?.let { instruction ->
+                appendLine()
+                appendLine("## Supplemental Instruction")
+                appendLine(instruction)
             }
             appendLine()
             appendLine("## Execution Request")

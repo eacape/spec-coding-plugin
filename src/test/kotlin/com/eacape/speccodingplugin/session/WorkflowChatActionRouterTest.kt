@@ -82,6 +82,7 @@ class WorkflowChatActionRouterTest {
             providerId = "mock",
             modelId = "mock-model-v1",
             operationMode = OperationMode.AUTO,
+            supplementalInstruction = "Also update the related tests.",
         )
 
         val loadedSession = sessionManager.getSession(session.id)
@@ -99,6 +100,8 @@ class WorkflowChatActionRouterTest {
         )
         assertEquals(result.run.runId, userMetadata.runId)
         assertTrue(capturedRequest?.userInput?.contains("EXECUTE_WITH_AI") == true)
+        assertTrue(capturedRequest?.userInput?.contains("## Supplemental Instruction") == true)
+        assertTrue(capturedRequest?.userInput?.contains("Also update the related tests.") == true)
     }
 
     @Test

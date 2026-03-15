@@ -55,6 +55,7 @@ class WorkflowChatActionRouter(private val project: Project) {
         providerId: String?,
         modelId: String?,
         operationMode: OperationMode,
+        supplementalInstruction: String? = null,
         onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = {},
     ): SpecTaskExecutionService.TaskAiExecutionResult {
         val context = resolveBoundTaskContext(sessionId)
@@ -64,6 +65,7 @@ class WorkflowChatActionRouter(private val project: Project) {
             providerId = providerId,
             modelId = modelId,
             operationMode = operationMode,
+            supplementalInstruction = supplementalInstruction,
             sessionId = context.session.id,
             sessionSource = context.binding.source,
             auditContext = buildAuditContext(
@@ -79,6 +81,7 @@ class WorkflowChatActionRouter(private val project: Project) {
         providerId: String?,
         modelId: String?,
         operationMode: OperationMode,
+        supplementalInstruction: String? = null,
         previousRunId: String? = null,
         onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = {},
     ): SpecTaskExecutionService.TaskAiExecutionResult {
@@ -89,6 +92,7 @@ class WorkflowChatActionRouter(private val project: Project) {
             providerId = providerId,
             modelId = modelId,
             operationMode = operationMode,
+            supplementalInstruction = supplementalInstruction,
             previousRunId = previousRunId,
             sessionId = context.session.id,
             sessionSource = context.binding.source,

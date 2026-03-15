@@ -5,6 +5,7 @@ import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
 import com.eacape.speccodingplugin.session.WorkflowChatBinding
 import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
+import com.eacape.speccodingplugin.spec.ExecutionLivePhase
 import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
@@ -140,36 +141,22 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             ),
             snapshot.getValue("taskChipTooltip"),
         )
-        assertEquals("true", snapshot.getValue("executeTaskVisible"))
-        assertEquals("true", snapshot.getValue("executeTaskEnabled"))
-        assertEquals("execute", snapshot.getValue("executeTaskIconId"))
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", task.id),
-            snapshot.getValue("executeTaskTooltip"),
-        )
         assertEquals("false", snapshot.getValue("retryTaskVisible"))
         assertEquals("false", snapshot.getValue("retryTaskEnabled"))
-        assertEquals("refresh", snapshot.getValue("retryTaskIconId"))
-        assertEquals(
-            SpecCodingBundle.message(
-                "toolwindow.workflow.binding.retry.unavailable.state",
-                task.id,
-                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.pending"),
-            ),
-            snapshot.getValue("retryTaskTooltip"),
-        )
+        assertEquals("false", snapshot.getValue("executeTaskVisible"))
+        assertEquals("false", snapshot.getValue("executeTaskEnabled"))
         assertEquals("false", snapshot.getValue("completeTaskVisible"))
         assertEquals("false", snapshot.getValue("completeTaskEnabled"))
-        assertEquals("complete", snapshot.getValue("completeTaskIconId"))
         assertEquals(
-            SpecCodingBundle.message(
-                "toolwindow.workflow.binding.complete.unavailable.state",
-                task.id,
-                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.pending"),
-            ),
-            snapshot.getValue("completeTaskTooltip"),
+            "TASK_EXECUTE",
+            snapshot.getValue("sendActionKind"),
         )
-        assertEquals("true", snapshot.getValue("taskMoreVisible"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", task.id),
+            snapshot.getValue("sendTooltip"),
+        )
+        assertEquals("true", snapshot.getValue("sendEnabled"))
+        assertEquals("false", snapshot.getValue("taskMoreVisible"))
         assertEquals("false", snapshot.getValue("taskClearVisible"))
         assertEquals("true", snapshot.getValue("composerAccessoryVisible"))
         assertFalse(snapshot.getValue("sessionId").isBlank())
@@ -380,14 +367,42 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         }
         waitUntil {
             chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == task.id &&
-                chatPanel.workflowBindingSnapshotForTest().getValue("completeTaskEnabled") == "false"
+                chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_EXECUTE"
         }
 
         val run = executionService.createRun(
             workflowId = workflow.id,
             taskId = task.id,
-            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            status = TaskExecutionRunStatus.RUNNING,
             trigger = ExecutionTrigger.USER_EXECUTE,
+        )
+        project.messageBus.syncPublisher(WorkflowChatRefreshListener.TOPIC)
+            .onWorkflowChatRefreshRequested(
+                WorkflowChatRefreshEvent(
+                    workflowId = workflow.id,
+                    taskId = task.id,
+                    focusedStage = StageId.IMPLEMENT,
+                    reason = "test_running_refresh",
+                ),
+            )
+
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_STOP"
+        }
+
+        val runningSnapshot = chatPanel.workflowBindingSnapshotForTest()
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", task.id),
+            runningSnapshot.getValue("sendTooltip"),
+        )
+        assertEquals("false", runningSnapshot.getValue("executeTaskVisible"))
+        assertEquals("false", runningSnapshot.getValue("retryTaskVisible"))
+        assertEquals("false", runningSnapshot.getValue("completeTaskVisible"))
+
+        executionService.updateRunStatus(
+            workflowId = workflow.id,
+            runId = run.runId,
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
         )
         project.messageBus.syncPublisher(WorkflowChatRefreshListener.TOPIC)
             .onWorkflowChatRefreshRequested(
@@ -400,7 +415,7 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             )
 
         waitUntil {
-            chatPanel.workflowBindingSnapshotForTest().getValue("completeTaskEnabled") == "true"
+            chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_COMPLETE"
         }
 
         val snapshot = chatPanel.workflowBindingSnapshotForTest()
@@ -408,18 +423,22 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             SpecCodingBundle.message(
                 "toolwindow.workflow.binding.task.tooltip.run",
                 task.id,
-                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress"),
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.waitingConfirmation"),
                 run.runId,
-                TaskExecutionRunStatus.WAITING_CONFIRMATION.name,
+                ExecutionLivePhase.WAITING_CONFIRMATION.name,
             ),
             snapshot.getValue("taskChipTooltip"),
         )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", task.id),
+            snapshot.getValue("sendTooltip"),
+        )
         assertEquals("false", snapshot.getValue("executeTaskEnabled"))
         assertEquals("false", snapshot.getValue("retryTaskEnabled"))
-        assertEquals("true", snapshot.getValue("completeTaskEnabled"))
+        assertEquals("false", snapshot.getValue("completeTaskEnabled"))
         assertEquals("false", snapshot.getValue("executeTaskVisible"))
         assertEquals("false", snapshot.getValue("retryTaskVisible"))
-        assertEquals("true", snapshot.getValue("completeTaskVisible"))
+        assertEquals("false", snapshot.getValue("completeTaskVisible"))
     }
 
     fun `test workflow attachment boundary should surface explicit status in bound chat`() {

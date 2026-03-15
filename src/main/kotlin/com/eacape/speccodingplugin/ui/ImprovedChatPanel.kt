@@ -57,6 +57,7 @@ import com.eacape.speccodingplugin.session.workflowChatCommandArgs
 import com.eacape.speccodingplugin.skill.SkillExecutor
 import com.eacape.speccodingplugin.skill.SkillContext
 import com.eacape.speccodingplugin.spec.DocumentRevisionConflictException
+import com.eacape.speccodingplugin.spec.ExecutionLivePhase
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecGenerationProgress
 import com.eacape.speccodingplugin.spec.SpecPhase
@@ -150,6 +151,8 @@ import java.awt.datatransfer.Transferable
 import java.awt.event.ActionEvent
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -330,12 +333,36 @@ class ImprovedChatPanel(
         val operationMode: OperationMode,
     )
 
-    private enum class TaskBindingPrimaryAction {
-        NONE,
+    private data class BoundTaskBindingState(
+        val binding: WorkflowChatBinding,
+        val taskId: String,
+        val task: StructuredTask?,
+        val liveProgress: com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress?,
+    )
+
+    private enum class TaskBindingActionKind {
         EXECUTE,
         RETRY,
         COMPLETE,
+        STOP,
     }
+
+    private enum class ComposerSendActionKind {
+        CHAT_SEND,
+        CHAT_STOP,
+        TASK_EXECUTE,
+        TASK_RETRY,
+        TASK_COMPLETE,
+        TASK_STOP,
+    }
+
+    private data class ComposerSendAction(
+        val kind: ComposerSendActionKind,
+        val tooltip: String,
+        val accessibleName: String,
+        val enabled: Boolean = true,
+        val taskId: String? = null,
+    )
 
     private enum class ChatInteractionMode(
         val key: String,
@@ -852,23 +879,28 @@ class ImprovedChatPanel(
         workflowBindingStrip.border = JBUI.Borders.empty()
         workflowBindingStrip.isVisible = false
         configureWorkflowBindingChip(taskBindingChip, icon = SpecWorkflowIcons.Execute, clearAction = false)
-        configureWorkflowBindingActionButton(executeTaskBindingButton, SpecWorkflowIcons.Execute)
-        configureWorkflowBindingActionButton(retryTaskBindingButton, SpecWorkflowIcons.Refresh)
-        configureWorkflowBindingActionButton(completeTaskBindingButton, SpecWorkflowIcons.Complete)
-        configureWorkflowBindingChip(clearTaskBindingButton, icon = SpecWorkflowIcons.Close, clearAction = true)
-        configureWorkflowBindingOverflowButton()
         taskBindingChip.addActionListener { handleTaskBindingChipClicked() }
-        executeTaskBindingButton.addActionListener { handleBoundTaskExecutionRequested(retry = false) }
-        retryTaskBindingButton.addActionListener { handleBoundTaskExecutionRequested(retry = true) }
-        completeTaskBindingButton.addActionListener { handleBoundTaskCompletionRequested() }
-        clearTaskBindingButton.addActionListener { clearActiveTaskBinding() }
-        taskBindingOverflowButton.addActionListener { showTaskBindingOverflowMenu(taskBindingOverflowButton) }
+        taskBindingChip.addMouseListener(
+            object : MouseAdapter() {
+                override fun mousePressed(event: MouseEvent) = maybeShowTaskBindingOverflowMenu(event)
+
+                override fun mouseReleased(event: MouseEvent) = maybeShowTaskBindingOverflowMenu(event)
+            },
+        )
         workflowBindingStrip.add(taskBindingChip)
-        workflowBindingStrip.add(executeTaskBindingButton)
-        workflowBindingStrip.add(retryTaskBindingButton)
-        workflowBindingStrip.add(completeTaskBindingButton)
-        workflowBindingStrip.add(taskBindingOverflowButton)
         updateWorkflowBindingUi()
+    }
+
+    private fun maybeShowTaskBindingOverflowMenu(event: MouseEvent) {
+        if (!event.isPopupTrigger) {
+            return
+        }
+        showTaskBindingOverflowMenu(
+            anchor = event.component as? JComponent ?: taskBindingChip,
+            x = event.x,
+            y = event.y,
+        )
+        event.consume()
     }
 
     private fun configureWorkflowBindingChip(button: JButton, icon: Icon, clearAction: Boolean) {
@@ -959,92 +991,135 @@ class ImprovedChatPanel(
         workflowBindingChip.isVisible = false
         workflowBindingChip.text = ""
         workflowBindingChip.toolTipText = null
+        executeTaskBindingButton.isVisible = false
+        retryTaskBindingButton.isVisible = false
+        completeTaskBindingButton.isVisible = false
+        taskBindingOverflowButton.isVisible = false
+        clearTaskBindingButton.toolTipText = null
+        clearTaskBindingButton.isVisible = false
         if (!specMode || binding == null || taskId == null) {
             workflowBindingChip.isVisible = false
             taskBindingChip.isVisible = false
             taskBindingChip.text = ""
             taskBindingChip.toolTipText = null
-            executeTaskBindingButton.isVisible = false
-            retryTaskBindingButton.isVisible = false
-            completeTaskBindingButton.isVisible = false
-            taskBindingOverflowButton.isVisible = false
-            clearTaskBindingButton.toolTipText = null
-            clearTaskBindingButton.isVisible = false
             workflowBindingStrip.revalidate()
             workflowBindingStrip.repaint()
             refreshComposerAccessoryStripVisibility()
+            refreshActionButtonTexts()
             return
         }
 
+        val state = resolveBoundTaskBindingState(binding, taskId)
         taskBindingChip.isVisible = true
-        taskBindingOverflowButton.isVisible = true
-        clearTaskBindingButton.isVisible = false
-        val task = resolveBoundWorkflowTask(binding)
-        taskBindingChip.text = buildTaskBindingChipText(taskId, task)
-        taskBindingChip.toolTipText = buildTaskBindingTooltip(taskId, task)
-        clearTaskBindingButton.text = ""
-        clearTaskBindingButton.toolTipText = SpecCodingBundle.message(
-            "toolwindow.workflow.binding.task.clear.tooltip",
-            taskId,
-        )
-        clearTaskBindingButton.accessibleContext.accessibleName =
-            SpecCodingBundle.message("toolwindow.workflow.binding.task.clear")
-        clearTaskBindingButton.accessibleContext.accessibleDescription =
-            clearTaskBindingButton.toolTipText
-        taskBindingOverflowButton.toolTipText = SpecCodingBundle.message(
-            "toolwindow.workflow.binding.more.tooltip",
-            taskId,
-        )
-        taskBindingOverflowButton.accessibleContext.accessibleName =
-            SpecCodingBundle.message("toolwindow.workflow.binding.more")
-        taskBindingOverflowButton.accessibleContext.accessibleDescription =
-            taskBindingOverflowButton.toolTipText
-        updateTaskBindingActionButtons(binding, taskId, task)
+        taskBindingChip.text = buildTaskBindingChipText(taskId, state)
+        taskBindingChip.toolTipText = buildTaskBindingTooltip(taskId, state)
         taskBindingChip.accessibleContext.accessibleName = taskBindingChip.text
         taskBindingChip.accessibleContext.accessibleDescription = taskBindingChip.toolTipText
         workflowBindingStrip.revalidate()
         workflowBindingStrip.repaint()
         refreshComposerAccessoryStripVisibility()
+        refreshActionButtonTexts()
     }
 
-    private fun buildTaskBindingChipText(taskId: String, task: StructuredTask?): String {
+    private fun buildTaskBindingChipText(taskId: String, state: BoundTaskBindingState?): String {
         return SpecCodingBundle.message(
             "toolwindow.workflow.binding.task.summary",
             taskId,
-            formatTaskStatus(task?.displayStatus),
+            resolveBoundTaskStatusText(state),
         )
     }
 
-    private fun buildTaskBindingTooltip(taskId: String, task: StructuredTask?): String {
+    private fun buildTaskBindingTooltip(taskId: String, state: BoundTaskBindingState?): String {
+        val task = state?.task
         if (task == null) {
             return SpecCodingBundle.message("toolwindow.workflow.binding.task.tooltip.missing", taskId)
         }
+        val liveProgress = state.liveProgress?.takeIf { it.phase != ExecutionLivePhase.TERMINAL }
         val activeRun = task.activeExecutionRun
-        return if (activeRun == null) {
+        val runId = liveProgress?.runId ?: activeRun?.runId
+        val runStatus = when {
+            liveProgress != null -> liveProgress.phase.name
+            activeRun != null -> activeRun.status.name
+            else -> null
+        }
+        return if (runId == null || runStatus == null) {
             SpecCodingBundle.message(
                 "toolwindow.workflow.binding.task.tooltip.state",
                 taskId,
-                formatTaskStatus(task.displayStatus),
+                resolveBoundTaskStatusText(state),
             )
         } else {
             SpecCodingBundle.message(
                 "toolwindow.workflow.binding.task.tooltip.run",
                 taskId,
-                formatTaskStatus(task.displayStatus),
-                activeRun.runId,
-                activeRun.status.name,
+                resolveBoundTaskStatusText(state),
+                runId,
+                runStatus,
             )
         }
     }
 
-    private fun updateTaskBindingActionButtons(
+    private fun resolveBoundTaskBindingState(): BoundTaskBindingState? {
+        val binding = resolvedActiveWorkflowChatBinding() ?: return null
+        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return null
+        return resolveBoundTaskBindingState(binding, taskId)
+    }
+
+    private fun resolveBoundTaskBindingState(
         binding: WorkflowChatBinding,
         taskId: String,
-        task: StructuredTask? = resolveBoundWorkflowTask(binding),
-    ) {
-        applyTaskBindingActionPresentation(
-            button = executeTaskBindingButton,
-            presentation = when (task?.displayStatus) {
+    ): BoundTaskBindingState {
+        return BoundTaskBindingState(
+            binding = binding,
+            taskId = taskId,
+            task = resolveBoundWorkflowTask(binding),
+            liveProgress = specTaskExecutionService.getTaskLiveProgress(binding.workflowId, taskId),
+        )
+    }
+
+    private fun resolveBoundTaskStatusText(state: BoundTaskBindingState?): String {
+        val liveProgress = state?.liveProgress?.takeIf { it.phase != ExecutionLivePhase.TERMINAL }
+        return when {
+            liveProgress?.phase == ExecutionLivePhase.CANCELLING ->
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.cancelling")
+
+            state?.task?.awaitingCompletionConfirmation == true ||
+                liveProgress?.phase == ExecutionLivePhase.WAITING_CONFIRMATION ->
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.waitingConfirmation")
+
+            else -> formatTaskStatus(state?.task?.displayStatus)
+        }
+    }
+
+    private fun resolvePrimaryTaskBindingAction(state: BoundTaskBindingState?): TaskBindingActionKind? {
+        val task = state?.task ?: return null
+        val liveProgress = state.liveProgress?.takeIf { it.phase != ExecutionLivePhase.TERMINAL }
+        return when {
+            liveProgress?.phase == ExecutionLivePhase.CANCELLING -> TaskBindingActionKind.STOP
+            task.awaitingCompletionConfirmation || liveProgress?.phase == ExecutionLivePhase.WAITING_CONFIRMATION ->
+                TaskBindingActionKind.COMPLETE
+
+            task.hasExecutionInFlight ||
+                liveProgress?.phase == ExecutionLivePhase.QUEUED ||
+                liveProgress?.phase == ExecutionLivePhase.PREPARING_CONTEXT ||
+                liveProgress?.phase == ExecutionLivePhase.REQUEST_DISPATCHED ||
+                liveProgress?.phase == ExecutionLivePhase.STREAMING ->
+                TaskBindingActionKind.STOP
+
+            task.status == TaskStatus.PENDING -> TaskBindingActionKind.EXECUTE
+            task.status == TaskStatus.BLOCKED -> TaskBindingActionKind.RETRY
+            else -> null
+        }
+    }
+
+    private fun buildTaskBindingActionPresentation(
+        state: BoundTaskBindingState,
+        actionKind: TaskBindingActionKind,
+    ): SpecIconActionPresentation {
+        val task = state.task
+        val taskId = state.taskId
+        return when (actionKind) {
+            TaskBindingActionKind.EXECUTE -> when (task?.status) {
                 TaskStatus.PENDING -> SpecIconActionPresentation(
                     icon = SpecWorkflowIcons.Execute,
                     tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
@@ -1068,14 +1143,12 @@ class ImprovedChatPanel(
                     disabledReason = SpecCodingBundle.message(
                         "toolwindow.workflow.binding.execute.unavailable.state",
                         taskId,
-                        formatTaskStatus(task.displayStatus),
+                        resolveBoundTaskStatusText(state),
                     ),
                 )
-            },
-        )
-        applyTaskBindingActionPresentation(
-            button = retryTaskBindingButton,
-            presentation = when (task?.displayStatus) {
+            }
+
+            TaskBindingActionKind.RETRY -> when (task?.status) {
                 TaskStatus.BLOCKED -> SpecIconActionPresentation(
                     icon = SpecWorkflowIcons.Refresh,
                     tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
@@ -1099,22 +1172,22 @@ class ImprovedChatPanel(
                     disabledReason = SpecCodingBundle.message(
                         "toolwindow.workflow.binding.retry.unavailable.state",
                         taskId,
-                        formatTaskStatus(task.displayStatus),
+                        resolveBoundTaskStatusText(state),
                     ),
                 )
-            },
-        )
-        applyTaskBindingActionPresentation(
-            button = completeTaskBindingButton,
-            presentation = when (task?.displayStatus) {
-                TaskStatus.IN_PROGRESS -> SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.Complete,
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("toolwindow.workflow.binding.complete"),
-                    enabled = true,
-                )
+            }
 
-                null -> SpecIconActionPresentation(
+            TaskBindingActionKind.COMPLETE -> when {
+                task?.awaitingCompletionConfirmation == true ||
+                    state.liveProgress?.phase == ExecutionLivePhase.WAITING_CONFIRMATION ->
+                    SpecIconActionPresentation(
+                        icon = SpecWorkflowIcons.Complete,
+                        tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
+                        accessibleName = SpecCodingBundle.message("toolwindow.workflow.binding.complete"),
+                        enabled = true,
+                    )
+
+                task == null -> SpecIconActionPresentation(
                     icon = SpecWorkflowIcons.Complete,
                     tooltip = SpecCodingBundle.message("toolwindow.workflow.binding.complete.unavailable"),
                     accessibleName = SpecCodingBundle.message("toolwindow.workflow.binding.complete"),
@@ -1130,66 +1203,66 @@ class ImprovedChatPanel(
                     disabledReason = SpecCodingBundle.message(
                         "toolwindow.workflow.binding.complete.unavailable.state",
                         taskId,
-                        formatTaskStatus(task.displayStatus),
+                        resolveBoundTaskStatusText(state),
                     ),
                 )
-            },
-        )
-        val primaryAction = resolvePrimaryTaskBindingAction(task)
-        executeTaskBindingButton.isVisible = primaryAction == TaskBindingPrimaryAction.EXECUTE
-        retryTaskBindingButton.isVisible = primaryAction == TaskBindingPrimaryAction.RETRY
-        completeTaskBindingButton.isVisible = primaryAction == TaskBindingPrimaryAction.COMPLETE
+            }
+
+            TaskBindingActionKind.STOP -> when {
+                task == null -> SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.Close,
+                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop"),
+                    enabled = false,
+                    disabledReason = SpecCodingBundle.message("toolwindow.workflow.binding.execute.unavailable"),
+                )
+
+                else -> SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.Close,
+                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop"),
+                    enabled = true,
+                )
+            }
+        }
     }
 
-    private fun showTaskBindingOverflowMenu(anchor: JComponent) {
-        val binding = resolvedActiveWorkflowChatBinding() ?: return
-        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
-        val task = resolveBoundWorkflowTask(binding)
-        val primaryAction = resolvePrimaryTaskBindingAction(task)
+    private fun showTaskBindingOverflowMenu(anchor: JComponent, x: Int = 0, y: Int = anchor.height) {
+        val state = resolveBoundTaskBindingState() ?: return
         val popup = JPopupMenu()
         popup.add(createTaskBindingMenuItem(
             text = SpecCodingBundle.message("toolwindow.workflow.binding.open"),
             icon = AllIcons.Actions.MenuOpen,
-            tooltip = SpecCodingBundle.message("toolwindow.workflow.binding.open.tooltip", taskId),
+            tooltip = SpecCodingBundle.message("toolwindow.workflow.binding.open.tooltip", state.taskId),
         ) {
             handleTaskBindingChipClicked()
         })
-        if (primaryAction != TaskBindingPrimaryAction.EXECUTE && task?.displayStatus == TaskStatus.PENDING) {
-            popup.add(createTaskBindingMenuItem(
-                text = SpecCodingBundle.message("toolwindow.workflow.binding.execute"),
-                icon = SpecWorkflowIcons.Execute,
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
-            ) {
-                handleBoundTaskExecutionRequested(retry = false)
-            })
-        }
-        if (primaryAction != TaskBindingPrimaryAction.RETRY && task?.displayStatus == TaskStatus.BLOCKED) {
-            popup.add(createTaskBindingMenuItem(
-                text = SpecCodingBundle.message("toolwindow.workflow.binding.retry"),
-                icon = SpecWorkflowIcons.Refresh,
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
-            ) {
-                handleBoundTaskExecutionRequested(retry = true)
-            })
-        }
-        if (primaryAction != TaskBindingPrimaryAction.COMPLETE && task?.displayStatus == TaskStatus.IN_PROGRESS) {
-            popup.add(createTaskBindingMenuItem(
-                text = SpecCodingBundle.message("toolwindow.workflow.binding.complete"),
-                icon = SpecWorkflowIcons.Complete,
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
-            ) {
-                handleBoundTaskCompletionRequested()
-            })
+        resolvePrimaryTaskBindingAction(state)?.let { primaryAction ->
+            val presentation = buildTaskBindingActionPresentation(state, primaryAction)
+            if (presentation.enabled) {
+                popup.add(createTaskBindingMenuItem(
+                    text = when (primaryAction) {
+                        TaskBindingActionKind.EXECUTE -> SpecCodingBundle.message("toolwindow.workflow.binding.execute")
+                        TaskBindingActionKind.RETRY -> SpecCodingBundle.message("toolwindow.workflow.binding.retry")
+                        TaskBindingActionKind.COMPLETE -> SpecCodingBundle.message("toolwindow.workflow.binding.complete")
+                        TaskBindingActionKind.STOP -> SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop")
+                    },
+                    icon = presentation.icon,
+                    tooltip = presentation.tooltip,
+                ) {
+                    performTaskBindingAction(primaryAction)
+                })
+            }
         }
         popup.addSeparator()
         popup.add(createTaskBindingMenuItem(
             text = SpecCodingBundle.message("toolwindow.workflow.binding.task.clear"),
             icon = SpecWorkflowIcons.Close,
-            tooltip = SpecCodingBundle.message("toolwindow.workflow.binding.task.clear.tooltip", taskId),
+            tooltip = SpecCodingBundle.message("toolwindow.workflow.binding.task.clear.tooltip", state.taskId),
         ) {
             clearActiveTaskBinding()
         })
-        popup.show(anchor, 0, anchor.height)
+        popup.show(anchor, x, y)
     }
 
     private fun createTaskBindingMenuItem(
@@ -1201,15 +1274,6 @@ class ImprovedChatPanel(
         return JMenuItem(text, icon).apply {
             toolTipText = tooltip
             addActionListener { action() }
-        }
-    }
-
-    private fun resolvePrimaryTaskBindingAction(task: StructuredTask?): TaskBindingPrimaryAction {
-        return when (task?.displayStatus) {
-            TaskStatus.PENDING -> TaskBindingPrimaryAction.EXECUTE
-            TaskStatus.BLOCKED -> TaskBindingPrimaryAction.RETRY
-            TaskStatus.IN_PROGRESS -> TaskBindingPrimaryAction.COMPLETE
-            else -> TaskBindingPrimaryAction.NONE
         }
     }
 
@@ -1319,7 +1383,66 @@ class ImprovedChatPanel(
         )
     }
 
-    private fun handleBoundTaskExecutionRequested(retry: Boolean) {
+    private fun performTaskBindingAction(
+        actionKind: TaskBindingActionKind,
+        supplementalInstruction: String? = null,
+    ) {
+        when (actionKind) {
+            TaskBindingActionKind.EXECUTE -> {
+                clearComposerInput()
+                handleBoundTaskExecutionRequested(retry = false, supplementalInstruction = supplementalInstruction)
+            }
+
+            TaskBindingActionKind.RETRY -> {
+                clearComposerInput()
+                handleBoundTaskExecutionRequested(retry = true, supplementalInstruction = supplementalInstruction)
+            }
+
+            TaskBindingActionKind.COMPLETE -> {
+                clearComposerInput()
+                handleBoundTaskCompletionRequested()
+            }
+
+            TaskBindingActionKind.STOP -> {
+                requestBoundTaskExecutionStop()
+            }
+        }
+    }
+
+    private fun requestBoundTaskExecutionStop() {
+        val state = resolveBoundTaskBindingState() ?: return
+        val runId = state.liveProgress?.runId ?: state.task?.activeExecutionRun?.runId ?: return
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.toolwindow.tasks.execution.cancel.progress", state.taskId),
+            task = {
+                specTaskExecutionService.cancelExecutionRun(
+                    workflowId = state.binding.workflowId,
+                    runId = runId,
+                )
+            },
+            onSuccess = {
+                publishSpecWorkflowChanged(state.binding.workflowId, reason = "workflow_chat_task_execution_stop_requested")
+                updateWorkflowBindingUi()
+                showStatus(
+                    SpecCodingBundle.message("spec.toolwindow.tasks.execution.cancel.requested", state.taskId),
+                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                )
+            },
+            onFailure = { error ->
+                val message = error.message ?: SpecCodingBundle.message("common.unknown")
+                showStatus(
+                    SpecCodingBundle.message("spec.workflow.error", message),
+                    autoHideMillis = STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS,
+                )
+            },
+        )
+    }
+
+    private fun handleBoundTaskExecutionRequested(
+        retry: Boolean,
+        supplementalInstruction: String? = null,
+    ) {
         val sessionId = currentSessionId?.trim()?.ifBlank { null } ?: return
         val binding = resolvedActiveWorkflowChatBinding() ?: return
         val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
@@ -1352,6 +1475,7 @@ class ImprovedChatPanel(
                         providerId = executionContext.providerId,
                         modelId = executionContext.modelId,
                         operationMode = executionContext.operationMode,
+                        supplementalInstruction = supplementalInstruction,
                         onRequestRegistered = onRequestRegistered,
                     )
                 } else {
@@ -1360,6 +1484,7 @@ class ImprovedChatPanel(
                         providerId = executionContext.providerId,
                         modelId = executionContext.modelId,
                         operationMode = executionContext.operationMode,
+                        supplementalInstruction = supplementalInstruction,
                         onRequestRegistered = onRequestRegistered,
                     )
                 }
@@ -1657,7 +1782,99 @@ class ImprovedChatPanel(
             requestStopActiveOperation()
             return
         }
-        sendCurrentInput()
+        val visibleRawInput = inputField.text.trim()
+        prunePendingPastedTextBlocks(visibleRawInput)
+        val rawInput = expandPendingPastedTextBlocks(visibleRawInput)
+        if (!visibleRawInput.startsWith("/")) {
+            when (val resolution = resolveWorkflowTaskIntentResolution(rawInput)) {
+                null,
+                WorkflowChatTaskIntentResolution.NoMatch,
+                -> Unit
+
+                is WorkflowChatTaskIntentResolution.Resolved -> {
+                    dispatchWorkflowTaskIntent(resolution)
+                    return
+                }
+
+                is WorkflowChatTaskIntentResolution.Unresolved -> {
+                    reportWorkflowTaskIntentUnresolved(resolution)
+                    return
+                }
+            }
+        }
+        val sendAction = resolveComposerSendAction(visibleRawInput)
+        when (sendAction.kind) {
+            ComposerSendActionKind.CHAT_SEND -> sendCurrentInput()
+            ComposerSendActionKind.CHAT_STOP -> requestStopActiveOperation()
+            ComposerSendActionKind.TASK_EXECUTE -> performTaskBindingAction(
+                actionKind = TaskBindingActionKind.EXECUTE,
+                supplementalInstruction = rawInput,
+            )
+
+            ComposerSendActionKind.TASK_RETRY -> performTaskBindingAction(
+                actionKind = TaskBindingActionKind.RETRY,
+                supplementalInstruction = rawInput,
+            )
+
+            ComposerSendActionKind.TASK_COMPLETE -> performTaskBindingAction(TaskBindingActionKind.COMPLETE)
+            ComposerSendActionKind.TASK_STOP -> performTaskBindingAction(TaskBindingActionKind.STOP)
+        }
+    }
+
+    private fun resolveWorkflowTaskIntentResolution(rawInput: String): WorkflowChatTaskIntentResolution? {
+        if (currentInteractionMode() != ChatInteractionMode.SPEC) {
+            return null
+        }
+        val normalizedInput = rawInput.trim()
+        if (normalizedInput.isBlank()) {
+            return null
+        }
+        val workflowId = resolveMostRecentSpecWorkflowIdOrNull()?.also { activeSpecWorkflowId = it }
+        return workflowChatTaskIntentResolver.resolve(
+            workflowId = workflowId,
+            binding = resolvedActiveWorkflowChatBinding(),
+            userInput = rawInput,
+        )
+    }
+
+    private fun resolveComposerSendAction(visibleRawInput: String = inputField.text.trim()): ComposerSendAction {
+        if (isGenerating && !isRestoringSession && !isFinalizingResponse) {
+            return ComposerSendAction(
+                kind = ComposerSendActionKind.CHAT_STOP,
+                tooltip = SpecCodingBundle.message("toolwindow.stop"),
+                accessibleName = SpecCodingBundle.message("toolwindow.stop"),
+            )
+        }
+        if (currentInteractionMode() != ChatInteractionMode.SPEC || visibleRawInput.startsWith("/")) {
+            return ComposerSendAction(
+                kind = ComposerSendActionKind.CHAT_SEND,
+                tooltip = SpecCodingBundle.message("toolwindow.send"),
+                accessibleName = SpecCodingBundle.message("toolwindow.send"),
+            )
+        }
+        val state = resolveBoundTaskBindingState()
+        val primaryAction = resolvePrimaryTaskBindingAction(state)
+        if (state == null || primaryAction == null) {
+            return ComposerSendAction(
+                kind = ComposerSendActionKind.CHAT_SEND,
+                tooltip = SpecCodingBundle.message("toolwindow.send"),
+                accessibleName = SpecCodingBundle.message("toolwindow.send"),
+            )
+        }
+        val presentation = buildTaskBindingActionPresentation(state, primaryAction)
+        val actionKind = when (primaryAction) {
+            TaskBindingActionKind.EXECUTE -> ComposerSendActionKind.TASK_EXECUTE
+            TaskBindingActionKind.RETRY -> ComposerSendActionKind.TASK_RETRY
+            TaskBindingActionKind.COMPLETE -> ComposerSendActionKind.TASK_COMPLETE
+            TaskBindingActionKind.STOP -> ComposerSendActionKind.TASK_STOP
+        }
+        return ComposerSendAction(
+            kind = actionKind,
+            tooltip = presentation.tooltip,
+            accessibleName = presentation.accessibleName,
+            enabled = presentation.enabled,
+            taskId = state.taskId,
+        )
     }
 
     private fun handleCompactContextAction() {
@@ -2457,11 +2674,20 @@ class ImprovedChatPanel(
 
     private fun installComposerAutoCollapseListener() {
         inputField.document.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent?) = scheduleComposerAutoCollapse()
+            override fun insertUpdate(e: DocumentEvent?) {
+                scheduleComposerAutoCollapse()
+                refreshSendButtonState()
+            }
 
-            override fun removeUpdate(e: DocumentEvent?) = scheduleComposerAutoCollapse()
+            override fun removeUpdate(e: DocumentEvent?) {
+                scheduleComposerAutoCollapse()
+                refreshSendButtonState()
+            }
 
-            override fun changedUpdate(e: DocumentEvent?) = scheduleComposerAutoCollapse()
+            override fun changedUpdate(e: DocumentEvent?) {
+                scheduleComposerAutoCollapse()
+                refreshSendButtonState()
+            }
         })
     }
 
@@ -3625,23 +3851,24 @@ class ImprovedChatPanel(
                 preferNewSession = false,
             ),
         )
-        val actionButton = when (resolution.actionIntent) {
-            WorkflowChatActionIntent.EXECUTE_TASK -> executeTaskBindingButton
-            WorkflowChatActionIntent.RETRY_TASK -> retryTaskBindingButton
-            WorkflowChatActionIntent.COMPLETE_TASK -> completeTaskBindingButton
+        val actionKind = when (resolution.actionIntent) {
+            WorkflowChatActionIntent.EXECUTE_TASK -> TaskBindingActionKind.EXECUTE
+            WorkflowChatActionIntent.RETRY_TASK -> TaskBindingActionKind.RETRY
+            WorkflowChatActionIntent.COMPLETE_TASK -> TaskBindingActionKind.COMPLETE
             WorkflowChatActionIntent.DISCUSS -> return
         }
-        if (!actionButton.isVisible || !actionButton.isEnabled) {
+        val state = resolveBoundTaskBindingState(binding, resolution.task.id)
+        val presentation = buildTaskBindingActionPresentation(state, actionKind)
+        if (!presentation.enabled) {
             showStatus(
-                actionButton.toolTipText
+                presentation.disabledReason
+                    ?: presentation.tooltip
                     ?: SpecCodingBundle.message("toolwindow.error.unknown"),
                 autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
             )
             return
         }
-        clearComposerInput()
-        showWorkflowAttachmentBoundaryIfNeeded()
-        actionButton.doClick()
+        performTaskBindingAction(actionKind)
     }
 
     private fun reportWorkflowTaskIntentUnresolved(
@@ -5122,9 +5349,10 @@ class ImprovedChatPanel(
     }
 
     private fun refreshSendButtonState() {
-        sendButton.isEnabled = !isRestoringSession && !isFinalizingResponse
+        val sendAction = resolveComposerSendAction()
+        sendButton.isEnabled = !isRestoringSession && !isFinalizingResponse && sendAction.enabled
         compactButton.isEnabled = !isGenerating && !isRestoringSession
-        refreshActionButtonTexts()
+        refreshActionButtonTexts(sendAction)
     }
 
     private fun showStatus(
@@ -5158,17 +5386,20 @@ class ImprovedChatPanel(
         statusLabel.isVisible = false
     }
 
-    private fun refreshActionButtonTexts() {
-        val stopMode = isGenerating && !isRestoringSession && !isFinalizingResponse
+    private fun refreshActionButtonTexts(sendAction: ComposerSendAction = resolveComposerSendAction()) {
         val tooltip = when {
             isRestoringSession -> SpecCodingBundle.message("toolwindow.status.session.restoring")
             isFinalizingResponse -> SpecCodingBundle.message("toolwindow.status.finalizing")
-            stopMode -> SpecCodingBundle.message("toolwindow.stop")
-            else -> SpecCodingBundle.message("toolwindow.send")
+            else -> sendAction.tooltip
         }
         sendButton.toolTipText = tooltip
-        sendButton.accessibleContext.accessibleName = tooltip
-        sendButton.icon = if (stopMode) {
+        sendButton.accessibleContext.accessibleName = when {
+            isRestoringSession || isFinalizingResponse -> tooltip
+            else -> sendAction.accessibleName
+        }
+        sendButton.icon = if (sendAction.kind == ComposerSendActionKind.CHAT_STOP ||
+            sendAction.kind == ComposerSendActionKind.TASK_STOP
+        ) {
             CHAT_STOP_ICON
         } else {
             CHAT_SEND_ICON
@@ -6956,6 +7187,7 @@ class ImprovedChatPanel(
     }
 
     internal fun workflowBindingSnapshotForTest(): Map<String, String> {
+        val sendAction = resolveComposerSendAction()
         return mapOf(
             "mode" to currentInteractionMode().name,
             "workflowId" to resolvedActiveWorkflowChatBinding()?.workflowId.orEmpty(),
@@ -6982,6 +7214,9 @@ class ImprovedChatPanel(
             "taskMoreTooltip" to taskBindingOverflowButton.toolTipText.orEmpty(),
             "taskClearVisible" to clearTaskBindingButton.isVisible.toString(),
             "taskClearTooltip" to clearTaskBindingButton.toolTipText.orEmpty(),
+            "sendActionKind" to sendAction.kind.name,
+            "sendTooltip" to sendButton.toolTipText.orEmpty(),
+            "sendEnabled" to sendButton.isEnabled.toString(),
             "composerAccessoryVisible" to composerAccessoryStrip.isVisible.toString(),
             "contextSummaryVisible" to contextPreviewPanel.isVisible.toString(),
             "imageSummaryVisible" to imageAttachmentPreviewPanel.isVisible.toString(),
@@ -6999,6 +7234,10 @@ class ImprovedChatPanel(
 
     internal fun addImageAttachmentsForTest(paths: List<String>) {
         imageAttachmentPreviewPanel.addImagePaths(paths)
+    }
+
+    internal fun setComposerInputForTest(text: String) {
+        setComposerInput(text)
     }
 
     internal fun showWorkflowAttachmentBoundaryForTest() {
@@ -7023,6 +7262,10 @@ class ImprovedChatPanel(
 
     internal fun clickCompleteBoundTaskForTest() {
         handleBoundTaskCompletionRequested()
+    }
+
+    internal fun clickSendForTest() {
+        handleSendOrStop()
     }
 
     companion object {

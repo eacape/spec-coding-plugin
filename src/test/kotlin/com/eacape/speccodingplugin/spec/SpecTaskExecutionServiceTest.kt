@@ -231,6 +231,7 @@ class SpecTaskExecutionServiceTest {
             providerId = "mock",
             modelId = "mock-model-v1",
             operationMode = OperationMode.AUTO,
+            supplementalInstruction = "Prefer the existing file-first workflow behavior.",
             auditContext = mapOf("triggerSource" to "TEST"),
         )
 
@@ -259,6 +260,8 @@ class SpecTaskExecutionServiceTest {
         assertTrue(session.title.contains("T-002"))
         assertEquals(listOf(ConversationRole.USER, ConversationRole.ASSISTANT), messages.map { it.role })
         assertTrue(messages.first().content.contains("Task ID: T-002"))
+        assertTrue(messages.first().content.contains("## Supplemental Instruction"))
+        assertTrue(messages.first().content.contains("Prefer the existing file-first workflow behavior."))
         assertTrue(messages.first().content.contains("T-001 · COMPLETED · Prepare base"))
         assertTrue(messages.first().content.contains("requirements.md:"))
         assertTrue(messages.first().content.contains("Use task-scoped execution runs for AI execution."))
@@ -273,6 +276,7 @@ class SpecTaskExecutionServiceTest {
         assertEquals(result.requestId, capturedRequest!!.requestId)
         assertEquals("mock-model-v1", capturedRequest!!.modelId)
         assertTrue(capturedRequest!!.userInput.contains("EXECUTE_WITH_AI"))
+        assertTrue(capturedRequest!!.userInput.contains("Prefer the existing file-first workflow behavior."))
         assertEquals(
             "src/main/kotlin/demo/FeatureService.kt",
             capturedRequest!!.contextSnapshot?.items?.single()?.label,
