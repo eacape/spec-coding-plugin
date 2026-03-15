@@ -24,6 +24,7 @@ import java.awt.event.MouseEvent
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.DefaultListModel
+import javax.swing.JComponent
 import javax.swing.JList
 import javax.swing.JLabel
 import javax.swing.ListCellRenderer
@@ -32,6 +33,7 @@ import javax.swing.JPanel
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
+import javax.swing.ToolTipManager
 
 class SpecWorkflowListPanel(
     private val onWorkflowFocused: (String) -> Unit,
@@ -55,7 +57,12 @@ class SpecWorkflowListPanel(
     )
 
     private val listModel = DefaultListModel<WorkflowListItem>()
-    private val workflowList = JBList(listModel)
+    private val workflowList = object : JBList<WorkflowListItem>(listModel) {
+        override fun getToolTipText(event: MouseEvent?): String? {
+            val point = event?.point ?: return null
+            return resolveTooltipAt(point)
+        }
+    }
     private val workflowCellRenderer = WorkflowCellRenderer()
     private val newButton = JButton()
     private var suppressSelectionEvents = false
@@ -83,6 +90,7 @@ class SpecWorkflowListPanel(
         workflowList.setExpandableItemsEnabled(false)
         workflowList.border = JBUI.Borders.empty()
         workflowList.emptyText.text = SpecCodingBundle.message("spec.workflow.empty")
+        ToolTipManager.sharedInstance().registerComponent(workflowList)
         workflowList.addListSelectionListener {
             if (suppressSelectionEvents) return@addListSelectionListener
             if (!it.valueIsAdjusting) {
@@ -255,6 +263,14 @@ class SpecWorkflowListPanel(
                 }
             }
         }
+    }
+
+    private fun resolveTooltipAt(point: Point): String? {
+        val index = workflowList.locationToIndex(point)
+        if (index < 0) return null
+        val cellBounds = workflowList.getCellBounds(index, index) ?: return null
+        if (!cellBounds.contains(point)) return null
+        return workflowCellRenderer.resolveTooltip(workflowList, index, point)
     }
 
     private fun newButtonText(): String = "+ ${SpecCodingBundle.message("spec.workflow.new")}"
@@ -577,6 +593,29 @@ class SpecWorkflowListPanel(
                 listEditRect.contains(point) -> RowAction.EDIT
                 else -> null
             }
+        }
+
+        fun resolveTooltip(
+            list: JList<out WorkflowListItem>,
+            index: Int,
+            point: Point,
+        ): String? {
+            val cellBounds = list.getCellBounds(index, index) ?: return null
+            if (!cellBounds.contains(point)) return null
+            val value = list.model.getElementAt(index) ?: return null
+            val selected = list.selectedIndex == index
+            val rendererComponent = getListCellRendererComponent(list, value, index, selected, false)
+            rendererComponent.setBounds(0, 0, cellBounds.width, cellBounds.height)
+            layoutRecursively(rendererComponent)
+            val target = SwingUtilities.getDeepestComponentAt(
+                rendererComponent,
+                point.x - cellBounds.x,
+                point.y - cellBounds.y,
+            )
+            return generateSequence(target) { component -> component.parent }
+                .filterIsInstance<JComponent>()
+                .mapNotNull { component -> component.toolTipText?.takeIf { it.isNotBlank() } }
+                .firstOrNull()
         }
 
         private fun layoutRecursively(component: Component) {

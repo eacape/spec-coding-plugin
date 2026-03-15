@@ -265,7 +265,10 @@ class ChatToolWindowFactory : ToolWindowFactory, DumbAware {
                     }
                 windowStateStore.updateSelectedTabTitle(selectedTabTitle)
                 if (isSpecContent(selectedContent)) {
-                    (selectedContent.component as? SpecWorkflowPanel)?.refreshWorkflows()
+                    (selectedContent.component as? SpecWorkflowPanel)?.let { panel ->
+                        panel.syncToolbarSelectionFromSettings()
+                        panel.refreshWorkflows()
+                    }
                 }
             }
         })

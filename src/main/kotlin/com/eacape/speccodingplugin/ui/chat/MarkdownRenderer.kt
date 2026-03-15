@@ -47,9 +47,17 @@ object MarkdownRenderer {
     private val LINK_FG_DARK = Color(124, 181, 255)
 
     const val LINK_TARGET_ATTRIBUTE: String = "specCoding.markdown.linkTarget"
+    const val CHECKLIST_LINE_INDEX_ATTRIBUTE: String = "specCoding.markdown.checklistLineIndex"
+    const val CHECKLIST_CHECKED_ATTRIBUTE: String = "specCoding.markdown.checklistChecked"
 
     fun extractLinkTarget(attributes: AttributeSet?): String? =
         attributes?.getAttribute(LINK_TARGET_ATTRIBUTE) as? String
+
+    fun extractChecklistLineIndex(attributes: AttributeSet?): Int? =
+        attributes?.getAttribute(CHECKLIST_LINE_INDEX_ATTRIBUTE) as? Int
+
+    fun extractChecklistChecked(attributes: AttributeSet?): Boolean? =
+        attributes?.getAttribute(CHECKLIST_CHECKED_ATTRIBUTE) as? Boolean
 
     fun render(textPane: JTextPane, markdown: String) {
         val proseFontFamily = textPane.font?.family ?: Font.SANS_SERIF
@@ -128,9 +136,23 @@ object MarkdownRenderer {
                     renderHeading(doc, headingMatch.groupValues[2], level, proseFontFamily, baseFontSize)
                 }
                 trimmedLine.startsWith("- ") || trimmedLine.startsWith("* ") ->
-                    renderListItem(doc, line, ordered = false, proseFontFamily = proseFontFamily, baseFontSize = baseFontSize)
+                    renderListItem(
+                        doc,
+                        line,
+                        ordered = false,
+                        proseFontFamily = proseFontFamily,
+                        baseFontSize = baseFontSize,
+                        sourceLineIndex = i,
+                    )
                 ORDERED_LIST_REGEX.matches(trimmedLine) ->
-                    renderListItem(doc, line, ordered = true, proseFontFamily = proseFontFamily, baseFontSize = baseFontSize)
+                    renderListItem(
+                        doc,
+                        line,
+                        ordered = true,
+                        proseFontFamily = proseFontFamily,
+                        baseFontSize = baseFontSize,
+                        sourceLineIndex = i,
+                    )
                 line.trim() == "---" || line.trim() == "***" || line.trim() == "___" ->
                     renderHorizontalRule(doc, baseFontSize)
                 line.isBlank() -> { /* 空行，newline 已在上面插入 */ }
@@ -1261,6 +1283,7 @@ object MarkdownRenderer {
         ordered: Boolean,
         proseFontFamily: String,
         baseFontSize: Int,
+        sourceLineIndex: Int,
     ) {
         val listParagraphStart = doc.length
         val indent = line.length - line.trimStart().length
@@ -1286,7 +1309,25 @@ object MarkdownRenderer {
         } else {
             trimmed.removePrefix("- ").removePrefix("* ")
         }
-        renderInlineMarkdown(doc, content, proseFontFamily, baseFontSize)
+        val checklistItem = parseChecklistItem(content)
+        if (checklistItem != null) {
+            doc.remove(listParagraphStart, doc.length - listParagraphStart)
+            doc.insertString(doc.length, if (ordered) bullet else "$prefix  ", bulletAttrs)
+
+            val checkboxAttrs = SimpleAttributeSet()
+            applyProseTextAttrs(checkboxAttrs, proseFontFamily, baseFontSize)
+            StyleConstants.setBold(checkboxAttrs, true)
+            doc.insertString(doc.length, if (checklistItem.checked) "\u2611 " else "\u2610 ", checkboxAttrs)
+            renderInlineMarkdown(doc, checklistItem.content, proseFontFamily, baseFontSize)
+            applyChecklistParagraphMetadata(
+                doc = doc,
+                paragraphStart = listParagraphStart,
+                lineIndex = sourceLineIndex,
+                checked = checklistItem.checked,
+            )
+        } else {
+            renderInlineMarkdown(doc, content, proseFontFamily, baseFontSize)
+        }
         applyListParagraphSpacing(doc, listParagraphStart)
     }
 
@@ -1296,6 +1337,28 @@ object MarkdownRenderer {
         StyleConstants.setSpaceAbove(paragraphAttrs, LIST_ITEM_SPACE_ABOVE)
         StyleConstants.setSpaceBelow(paragraphAttrs, LIST_ITEM_SPACE_BELOW)
         doc.setParagraphAttributes(paragraphStart, length, paragraphAttrs, false)
+    }
+
+    private fun applyChecklistParagraphMetadata(
+        doc: StyledDocument,
+        paragraphStart: Int,
+        lineIndex: Int,
+        checked: Boolean,
+    ) {
+        val length = (doc.length - paragraphStart).coerceAtLeast(1)
+        val paragraphAttrs = SimpleAttributeSet()
+        paragraphAttrs.addAttribute(CHECKLIST_LINE_INDEX_ATTRIBUTE, lineIndex)
+        paragraphAttrs.addAttribute(CHECKLIST_CHECKED_ATTRIBUTE, checked)
+        doc.setParagraphAttributes(paragraphStart, length, paragraphAttrs, false)
+    }
+
+    private fun parseChecklistItem(content: String): ChecklistItem? {
+        val normalized = content.trimStart()
+        val match = CHECKLIST_ITEM_REGEX.matchEntire(normalized) ?: return null
+        return ChecklistItem(
+            checked = match.groupValues[1].equals("x", ignoreCase = true),
+            content = match.groupValues[2],
+        )
     }
 
     /**
@@ -1518,6 +1581,7 @@ object MarkdownRenderer {
     private val LOOSE_UNORDERED_LIST_REGEX = Regex("""^(\s*)[•●·・▪◦‣]\s*(\S.*)$""")
     private val LOOSE_DASH_UNORDERED_LIST_REGEX = Regex("""^(\s*)-([^\s-].*)$""")
     private val ORDERED_LIST_REGEX = Regex("""^(\d+)[.)]\s+(.*)$""")
+    private val CHECKLIST_ITEM_REGEX = Regex("""^\[( |x|X)]\s+(.*)$""")
     private val TABLE_OPEN_TAG_REGEX = Regex("""<table\b([^>]*)>""", RegexOption.IGNORE_CASE)
     private val TABLE_CLOSE_TAG_REGEX = Regex("""</table\s*>""", RegexOption.IGNORE_CASE)
     private val TABLE_BORDER_ATTR_REGEX = Regex("""\bborder\s*=""", RegexOption.IGNORE_CASE)
@@ -1573,6 +1637,11 @@ object MarkdownRenderer {
     private data class TableBlock(
         val rows: List<List<String>>,
         val nextIndex: Int,
+    )
+
+    private data class ChecklistItem(
+        val checked: Boolean,
+        val content: String,
     )
 
     private data class HtmlTableBlock(

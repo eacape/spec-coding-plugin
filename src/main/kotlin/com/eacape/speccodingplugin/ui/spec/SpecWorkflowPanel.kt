@@ -27,6 +27,8 @@ import com.eacape.speccodingplugin.ui.WorkflowChatRefreshListener
 import com.eacape.speccodingplugin.ui.WorkflowChatOpenRequest
 import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
+import com.eacape.speccodingplugin.window.GlobalConfigChangedEvent
+import com.eacape.speccodingplugin.window.GlobalConfigSyncListener
 import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
 import com.eacape.speccodingplugin.worktree.WorktreeStatus
@@ -245,6 +247,7 @@ class SpecWorkflowPanel(
         setupUI()
         CliDiscoveryService.getInstance().addDiscoveryListener(discoveryListener)
         subscribeToLocaleEvents()
+        subscribeToGlobalConfigEvents()
         subscribeToToolWindowControlEvents()
         subscribeToWorkflowEvents()
         subscribeToDocumentFileEvents()
@@ -295,15 +298,14 @@ class SpecWorkflowPanel(
         statusLabel.foreground = STATUS_TEXT_FG
         setupGenerationControls()
 
-        val controlsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
-            isOpaque = false
+        val controlsRow = createToolbarGroup(horizontalGap = 6).apply {
             add(providerComboBox)
+            add(createToolbarDivider())
             add(modelLabel)
             add(modelComboBox)
             add(statusChipPanel)
         }
-        val actionsRow = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(3), 0)).apply {
-            isOpaque = false
+        val actionsRow = createToolbarGroup(horizontalGap = 4, leftPadding = 4, rightPadding = 4).apply {
             add(switchWorkflowButton)
             add(createWorkflowButton)
             add(refreshButton)
@@ -311,53 +313,38 @@ class SpecWorkflowPanel(
         }
         val toolbarRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.empty(0, 0, JBUI.scale(1), 0)
-            add(controlsRow, BorderLayout.CENTER)
+            add(controlsRow, BorderLayout.WEST)
             add(actionsRow, BorderLayout.EAST)
-        }
-        val modelHost = JPanel(BorderLayout()).apply {
-            isOpaque = false
-            add(
-                JBScrollPane(toolbarRow).apply {
-                    border = JBUI.Borders.empty()
-                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
-                    verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
-                    viewport.isOpaque = false
-                    isOpaque = false
-                    SpecUiStyle.applySlimHorizontalScrollBar(this, height = 7)
-                },
-                BorderLayout.CENTER,
-            )
         }
         statusChipPanel.isOpaque = true
         statusChipPanel.background = STATUS_CHIP_BG
         statusChipPanel.border = SpecUiStyle.roundedCardBorder(
             lineColor = STATUS_CHIP_BORDER,
-            arc = JBUI.scale(12),
+            arc = JBUI.scale(10),
             top = 1,
-            left = 8,
+            left = 6,
             bottom = 1,
-            right = 8,
+            right = 6,
         )
         statusChipPanel.removeAll()
         statusChipPanel.add(statusLabel, BorderLayout.CENTER)
-        val toolbarCard = JPanel(BorderLayout(0, JBUI.scale(1))).apply {
+        val toolbarCard = JPanel(BorderLayout()).apply {
             isOpaque = true
             background = TOOLBAR_BG
             border = SpecUiStyle.roundedCardBorder(
                 lineColor = TOOLBAR_BORDER,
                 arc = JBUI.scale(14),
-                top = 3,
-                left = 8,
-                bottom = 3,
-                right = 8,
+                top = 5,
+                left = 6,
+                bottom = 5,
+                right = 6,
             )
-            add(modelHost, BorderLayout.CENTER)
+            add(toolbarRow, BorderLayout.CENTER)
         }
         add(
             JPanel(BorderLayout()).apply {
                 isOpaque = false
-                border = JBUI.Borders.emptyBottom(6)
+                border = JBUI.Borders.emptyBottom(4)
                 add(toolbarCard, BorderLayout.CENTER)
             },
             BorderLayout.NORTH,
@@ -820,6 +807,37 @@ class SpecWorkflowPanel(
         }
     }
 
+    private fun createToolbarGroup(
+        horizontalGap: Int,
+        leftPadding: Int = 8,
+        rightPadding: Int = 8,
+    ): JPanel {
+        return JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(horizontalGap), 0)).apply {
+            isOpaque = true
+            background = TOOLBAR_GROUP_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = TOOLBAR_GROUP_BORDER,
+                arc = JBUI.scale(12),
+                top = 3,
+                left = leftPadding,
+                bottom = 3,
+                right = rightPadding,
+            )
+        }
+    }
+
+    private fun createToolbarDivider(height: Int = 16): JPanel {
+        val scaledHeight = JBUI.scale(height)
+        val size = JBUI.size(1, scaledHeight)
+        return JPanel().apply {
+            isOpaque = true
+            background = TOOLBAR_GROUP_DIVIDER
+            preferredSize = size
+            minimumSize = size
+            maximumSize = size
+        }
+    }
+
     private fun installToolbarButtonCursorTracking(button: JButton) {
         if (button.getClientProperty("spec.toolbar.cursorTrackingInstalled") == true) return
         button.putClientProperty("spec.toolbar.cursorTrackingInstalled", true)
@@ -998,6 +1016,10 @@ class SpecWorkflowPanel(
     private fun updateSelectorTooltips() {
         providerComboBox.toolTipText = providerDisplayName(providerComboBox.selectedItem as? String)
         modelComboBox.toolTipText = (modelComboBox.selectedItem as? ModelInfo)?.name
+    }
+
+    internal fun syncToolbarSelectionFromSettings() {
+        refreshProviderCombo(preserveSelection = false)
     }
 
     private fun providerDisplayName(providerId: String?): String {
@@ -4041,6 +4063,19 @@ class SpecWorkflowPanel(
         )
     }
 
+    private fun subscribeToGlobalConfigEvents() {
+        ApplicationManager.getApplication().messageBus.connect(this).subscribe(
+            GlobalConfigSyncListener.TOPIC,
+            object : GlobalConfigSyncListener {
+                override fun onGlobalConfigChanged(event: GlobalConfigChangedEvent) {
+                    invokeLaterSafe {
+                        syncToolbarSelectionFromSettings()
+                    }
+                }
+            },
+        )
+    }
+
     private fun subscribeToToolWindowControlEvents() {
         project.messageBus.connect(this).subscribe(
             SpecToolWindowControlListener.TOPIC,
@@ -4882,6 +4917,20 @@ class SpecWorkflowPanel(
         }
     }
 
+    internal fun selectedProviderIdForTest(): String? = providerComboBox.selectedItem as? String
+
+    internal fun selectedModelIdForTest(): String? = (modelComboBox.selectedItem as? ModelInfo)?.id
+
+    internal fun selectToolbarModelForTest(providerId: String, modelId: String) {
+        providerComboBox.selectedItem = providerId
+        val targetModel = (0 until modelComboBox.itemCount)
+            .map { index -> modelComboBox.getItemAt(index) }
+            .firstOrNull { it.id == modelId }
+        if (targetModel != null) {
+            modelComboBox.selectedItem = targetModel
+        }
+    }
+
     internal fun selectedDocumentPhaseForTest(): String? = detailPanel.selectedPhaseNameForTest()
 
     internal fun currentDocumentPreviewTextForTest(): String = detailPanel.currentPreviewTextForTest()
@@ -4932,6 +4981,9 @@ class SpecWorkflowPanel(
     companion object {
         private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
         private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
+        private val TOOLBAR_GROUP_BG = JBColor(Color(252, 253, 255), Color(63, 69, 79))
+        private val TOOLBAR_GROUP_BORDER = JBColor(Color(214, 224, 240), Color(92, 103, 120))
+        private val TOOLBAR_GROUP_DIVIDER = JBColor(Color(204, 215, 234), Color(93, 104, 121))
         private val WORKSPACE_SUMMARY_BG = JBColor(Color(245, 249, 255), Color(56, 62, 72))
         private val WORKSPACE_SUMMARY_BORDER = JBColor(Color(201, 214, 235), Color(86, 96, 110))
         private val WORKSPACE_SUMMARY_TITLE_FG = JBColor(Color(42, 59, 94), Color(214, 223, 236))

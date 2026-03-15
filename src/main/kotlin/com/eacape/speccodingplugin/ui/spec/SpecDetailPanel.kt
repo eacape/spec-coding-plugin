@@ -136,6 +136,8 @@ class SpecDetailPanel(
     private var currentWorkflow: SpecWorkflow? = null
     private var selectedPhase: SpecPhase? = null
     private var previewSourceText: String = ""
+    private var previewChecklistInteraction: PreviewChecklistInteraction? = null
+    private var isPreviewChecklistSaving: Boolean = false
     private var generatingPercent: Int = 0
     private var generatingFrameIndex: Int = 0
     private var isGeneratingActive: Boolean = false
@@ -175,6 +177,11 @@ class SpecDetailPanel(
         val questionDetails: Map<Int, String> = emptyMap(),
     )
 
+    private data class PreviewChecklistInteraction(
+        val phase: SpecPhase,
+        val content: String,
+    )
+
     private enum class ClarificationQuestionDecision {
         UNDECIDED,
         CONFIRMED,
@@ -203,6 +210,26 @@ class SpecDetailPanel(
         previewPane.isEditable = false
         previewPane.isOpaque = false
         previewPane.border = JBUI.Borders.empty(2, 2)
+        previewPane.addMouseListener(
+            object : MouseAdapter() {
+                override fun mouseClicked(e: MouseEvent) {
+                    if (SwingUtilities.isLeftMouseButton(e) && e.clickCount == 1) {
+                        togglePreviewChecklistAt(e)
+                    }
+                }
+
+                override fun mouseExited(e: MouseEvent?) {
+                    refreshPreviewChecklistCursor(null)
+                }
+            },
+        )
+        previewPane.addMouseMotionListener(
+            object : MouseMotionAdapter() {
+                override fun mouseMoved(e: MouseEvent) {
+                    refreshPreviewChecklistCursor(e)
+                }
+            },
+        )
 
         previewCardPanel.isOpaque = false
         previewCardPanel.add(
@@ -1467,7 +1494,10 @@ class SpecDetailPanel(
         switchPreviewCard(CARD_PREVIEW)
         documentTree.isEnabled = true
         previewSourceText = ""
+        previewChecklistInteraction = null
+        isPreviewChecklistSaving = false
         previewPane.text = ""
+        refreshPreviewChecklistCursor(null)
         clarificationQuestionsPane.text = ""
         clarificationChecklistPanel.removeAll()
         clarificationChecklistHintLabel.text = SpecCodingBundle.message("spec.detail.clarify.checklist.hint")
@@ -3177,7 +3207,7 @@ class SpecDetailPanel(
             if (doc.content.isBlank() && !workbenchBinding?.emptyStateMessage.isNullOrBlank()) {
                 renderPreviewMarkdown(workbenchBinding?.emptyStateMessage.orEmpty())
             } else {
-                renderPreviewMarkdown(doc.content)
+                renderPreviewMarkdown(doc.content, interactivePhase = phase)
             }
             val vr = doc.validationResult
             if (isGeneratingActive && keepGeneratingIndicator) {
@@ -3213,7 +3243,7 @@ class SpecDetailPanel(
         }
     }
 
-    private fun renderPreviewMarkdown(content: String) {
+    private fun renderPreviewMarkdown(content: String, interactivePhase: SpecPhase? = null) {
         val normalizedRaw = content
             .replace("\r\n", "\n")
             .replace('\r', '\n')
@@ -3221,6 +3251,15 @@ class SpecDetailPanel(
         val sanitized = SpecMarkdownSanitizer.sanitize(normalizedRaw)
         val displayContent = choosePreviewContent(rawContent = normalizedRaw, sanitizedContent = sanitized)
         previewSourceText = displayContent
+        previewChecklistInteraction = if (interactivePhase != null && displayContent == normalizedRaw) {
+            PreviewChecklistInteraction(
+                phase = interactivePhase,
+                content = normalizedRaw,
+            )
+        } else {
+            null
+        }
+        refreshPreviewChecklistCursor(null)
         runCatching {
             MarkdownRenderer.render(previewPane, displayContent)
             previewPane.caretPosition = 0
@@ -3228,6 +3267,82 @@ class SpecDetailPanel(
             previewPane.text = displayContent
             previewPane.caretPosition = 0
         }
+        refreshPreviewChecklistCursor(null)
+    }
+
+    private fun togglePreviewChecklistAt(event: MouseEvent) {
+        if (isEditing || clarificationState != null || isPreviewChecklistSaving) {
+            return
+        }
+        val lineIndex = resolvePreviewChecklistLineIndex(event) ?: return
+        togglePreviewChecklistLine(lineIndex)
+    }
+
+    private fun togglePreviewChecklistLine(lineIndex: Int) {
+        val interaction = previewChecklistInteraction ?: return
+        val updatedContent = toggleChecklistLine(interaction.content, lineIndex) ?: return
+        if (updatedContent == interaction.content) {
+            return
+        }
+
+        isPreviewChecklistSaving = true
+        refreshPreviewChecklistCursor(null)
+        onSaveDocument(interaction.phase, updatedContent) { result ->
+            isPreviewChecklistSaving = false
+            result.onSuccess { updated ->
+                currentWorkflow = updated
+                updateWorkflow(updated)
+            }.onFailure {
+                currentWorkflow?.let(::updateButtonStates)
+            }
+            refreshPreviewChecklistCursor(null)
+        }
+    }
+
+    private fun refreshPreviewChecklistCursor(event: MouseEvent?) {
+        val cursor = when {
+            isPreviewChecklistSaving -> Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR)
+            previewChecklistInteraction != null &&
+                !isEditing &&
+                clarificationState == null &&
+                event != null &&
+                resolvePreviewChecklistLineIndex(event) != null -> Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            else -> Cursor.getDefaultCursor()
+        }
+        if (previewPane.cursor != cursor) {
+            previewPane.cursor = cursor
+        }
+    }
+
+    private fun resolvePreviewChecklistLineIndex(event: MouseEvent): Int? {
+        val documentLength = previewPane.document.length
+        if (documentLength <= 0) {
+            return null
+        }
+        val position = previewPane.viewToModel2D(event.point)
+        if (position < 0) {
+            return null
+        }
+        val safePosition = position.coerceIn(0, documentLength - 1)
+        val paragraph = previewPane.styledDocument.getParagraphElement(safePosition)
+        return MarkdownRenderer.extractChecklistLineIndex(paragraph.attributes)
+    }
+
+    private fun toggleChecklistLine(content: String, lineIndex: Int): String? {
+        val lines = content.lines().toMutableList()
+        if (lineIndex !in lines.indices) {
+            return null
+        }
+        val match = PREVIEW_CHECKLIST_LINE_REGEX.matchEntire(lines[lineIndex]) ?: return null
+        val toggledMarker = if (match.groupValues[2].equals("x", ignoreCase = true)) " " else "x"
+        lines[lineIndex] = buildString {
+            append(match.groupValues[1])
+            append('[')
+            append(toggledMarker)
+            append(']')
+            append(match.groupValues[3])
+        }
+        return lines.joinToString("\n")
     }
 
     private fun choosePreviewContent(rawContent: String, sanitizedContent: String): String {
@@ -3497,6 +3612,10 @@ class SpecDetailPanel(
     }
 
     internal fun selectedPhaseNameForTest(): String? = selectedPhase?.name
+
+    internal fun togglePreviewChecklistForTest(lineIndex: Int) {
+        togglePreviewChecklistLine(lineIndex)
+    }
 
     internal fun areDocumentTabsVisibleForTest(): Boolean = false
 
@@ -4047,6 +4166,7 @@ class SpecDetailPanel(
         private val CODE_FENCE_MARKER_REGEX = Regex("```")
         private val HEADING_LINE_REGEX = Regex("""^\s{0,3}#{1,6}\s+\S+""")
         private val LIST_OR_CHECKBOX_LINE_REGEX = Regex("""^\s*(?:[-*]\s+\S+|\d+\.\s+\S+|-?\s*\[[ xX]\]\s+\S+)""")
+        private val PREVIEW_CHECKLIST_LINE_REGEX = Regex("""^(\s*(?:[-*]|\d+[.)])\s*)\[( |x|X)](\s+.*)$""")
         private val TOOL_NOISE_MARKER_REGEX = Regex(
             pattern = """<tool_|"tool_(?:calls?|name|input)"|plan_file_path""",
             options = setOf(RegexOption.IGNORE_CASE),

@@ -15,6 +15,7 @@ class WindowStateStoreTest {
         store.updateOperationMode("AGENT")
         store.updateChatInteractionMode("workflow")
         store.updateChatSpecSidebar(visible = true, dividerLocation = 640)
+        store.updateChatComposerDividerProportion(0.78f)
 
         val snapshot = store.snapshot()
         assertEquals("History", snapshot.selectedTabTitle)
@@ -23,6 +24,7 @@ class WindowStateStoreTest {
         assertEquals("workflow", snapshot.chatInteractionMode)
         assertEquals(true, snapshot.chatSpecSidebarVisible)
         assertEquals(640, snapshot.chatSpecSidebarDividerLocation)
+        assertEquals(0.78f, snapshot.chatComposerDividerProportion)
     }
 
     @Test
@@ -37,6 +39,7 @@ class WindowStateStoreTest {
                 chatInteractionMode = "vibe",
                 chatSpecSidebarVisible = true,
                 chatSpecSidebarDividerLocation = 420,
+                chatComposerDividerProportion = 0.64f,
                 updatedAt = 42L,
             )
         )
@@ -51,6 +54,23 @@ class WindowStateStoreTest {
         assertEquals("vibe", snapshot.chatInteractionMode)
         assertEquals(true, snapshot.chatSpecSidebarVisible)
         assertEquals(420, snapshot.chatSpecSidebarDividerLocation)
+        assertEquals(0.64f, snapshot.chatComposerDividerProportion)
+    }
+
+    @Test
+    fun `invalid composer divider proportion should reset to default state`() {
+        val store = WindowStateStore()
+
+        store.updateChatComposerDividerProportion(1.2f)
+        assertEquals(0f, store.snapshot().chatComposerDividerProportion)
+
+        store.loadState(
+            WindowStateStore.WindowState(
+                chatComposerDividerProportion = Float.NaN,
+            )
+        )
+
+        assertEquals(0f, store.snapshot().chatComposerDividerProportion)
     }
 
     @Test

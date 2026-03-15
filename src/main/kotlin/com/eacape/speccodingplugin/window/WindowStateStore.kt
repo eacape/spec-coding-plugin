@@ -24,6 +24,7 @@ class WindowStateStore : PersistentStateComponent<WindowStateStore.WindowState> 
     override fun loadState(state: WindowState) {
         this.state = state.copy(
             chatInteractionMode = canonicalizeWorkflowChatModeKey(state.chatInteractionMode),
+            chatComposerDividerProportion = normalizeChatComposerDividerProportion(state.chatComposerDividerProportion),
         )
     }
 
@@ -36,6 +37,7 @@ class WindowStateStore : PersistentStateComponent<WindowStateStore.WindowState> 
             chatInteractionMode = state.chatInteractionMode,
             chatSpecSidebarVisible = state.chatSpecSidebarVisible,
             chatSpecSidebarDividerLocation = state.chatSpecSidebarDividerLocation,
+            chatComposerDividerProportion = state.chatComposerDividerProportion,
             updatedAt = state.updatedAt,
         )
     }
@@ -74,6 +76,12 @@ class WindowStateStore : PersistentStateComponent<WindowStateStore.WindowState> 
         state.updatedAt = System.currentTimeMillis()
     }
 
+    @Synchronized
+    fun updateChatComposerDividerProportion(proportion: Float?) {
+        state.chatComposerDividerProportion = normalizeChatComposerDividerProportion(proportion)
+        state.updatedAt = System.currentTimeMillis()
+    }
+
     data class WindowState(
         var selectedTabTitle: String = "Chat",
         var activeSessionId: String? = null,
@@ -81,6 +89,7 @@ class WindowStateStore : PersistentStateComponent<WindowStateStore.WindowState> 
         var chatInteractionMode: String? = null,
         var chatSpecSidebarVisible: Boolean = false,
         var chatSpecSidebarDividerLocation: Int = 0,
+        var chatComposerDividerProportion: Float = 0f,
         var updatedAt: Long = 0L,
     )
 
@@ -96,5 +105,13 @@ data class WindowRuntimeState(
     val chatInteractionMode: String?,
     val chatSpecSidebarVisible: Boolean,
     val chatSpecSidebarDividerLocation: Int,
+    val chatComposerDividerProportion: Float,
     val updatedAt: Long,
 )
+
+private fun normalizeChatComposerDividerProportion(value: Float?): Float {
+    if (value == null || !value.isFinite()) {
+        return 0f
+    }
+    return value.takeIf { it > 0f && it < 1f } ?: 0f
+}

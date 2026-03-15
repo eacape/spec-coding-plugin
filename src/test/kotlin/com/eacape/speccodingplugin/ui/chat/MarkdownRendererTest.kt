@@ -1,5 +1,6 @@
 package com.eacape.speccodingplugin.ui.chat
 
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -8,6 +9,35 @@ import javax.swing.SwingUtilities
 import javax.swing.text.StyleConstants
 
 class MarkdownRendererTest {
+
+    @Test
+    fun `render should mark checklist paragraphs with metadata`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                - [x] 已完成事项
+                - [ ] 待完成事项
+                """.trimIndent(),
+            )
+        }
+
+        val checkedIndex = pane.text.indexOf('\u2611')
+        val uncheckedIndex = pane.text.indexOf('\u2610')
+        assertTrue(checkedIndex >= 0)
+        assertTrue(uncheckedIndex >= 0)
+        assertFalse(pane.text.contains("[x]"))
+        assertFalse(pane.text.contains("[ ]"))
+
+        val checkedAttrs = pane.styledDocument.getParagraphElement(checkedIndex).attributes
+        val uncheckedAttrs = pane.styledDocument.getParagraphElement(uncheckedIndex).attributes
+        assertEquals(0, MarkdownRenderer.extractChecklistLineIndex(checkedAttrs))
+        assertEquals(true, MarkdownRenderer.extractChecklistChecked(checkedAttrs))
+        assertEquals(1, MarkdownRenderer.extractChecklistLineIndex(uncheckedAttrs))
+        assertEquals(false, MarkdownRenderer.extractChecklistChecked(uncheckedAttrs))
+    }
 
     @Test
     fun `render should support level six heading syntax`() {

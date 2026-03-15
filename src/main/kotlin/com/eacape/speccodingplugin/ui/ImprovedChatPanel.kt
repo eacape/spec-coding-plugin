@@ -254,6 +254,7 @@ class ImprovedChatPanel(
         onEditWorkflow = ::editSpecWorkflowMetadata,
     )
     private val chatSplitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
+    private val contentSplitPane = JSplitPane(JSplitPane.VERTICAL_SPLIT)
     private val specSidebarToggleButton = JButton()
     private val contextPreviewPanel = ContextPreviewPanel(project)
     private val imageAttachmentPreviewPanel = ImageAttachmentPreviewPanel(onRemove = ::removeTransientClipboardImageIfNeeded)
@@ -275,6 +276,7 @@ class ImprovedChatPanel(
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var statusAutoHideTimer: Timer? = null
     private var dividerPersistTimer: Timer? = null
+    private var composerDividerPersistTimer: Timer? = null
     private var pasteKeyDispatcher: KeyEventDispatcher? = null
     private val runningWorkflowCommands = ConcurrentHashMap<String, RunningWorkflowCommand>()
     private val transientClipboardImagePaths = mutableSetOf<String>()
@@ -304,6 +306,7 @@ class ImprovedChatPanel(
     private var activeWorkflowChatBinding: WorkflowChatBinding? = null
     private var specSidebarVisible = false
     private var specSidebarDividerLocation = SPEC_SIDEBAR_DEFAULT_DIVIDER
+    private var chatComposerDividerProportion = CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION
     @Volatile
     private var _isDisposed = false
 
@@ -733,7 +736,7 @@ class ImprovedChatPanel(
         chatSplitPane.leftComponent = conversationScrollPane
         chatSplitPane.rightComponent = specSidebarPanel
         specSidebarPanel.minimumSize = Dimension(JBUI.scale(SPEC_SIDEBAR_MIN_WIDTH), 0)
-        configureSplitPaneDivider()
+        configureSplitPaneDivider(chatSplitPane, SPEC_SIDEBAR_DIVIDER_SIZE)
         chatSplitPane.resizeWeight = 0.74
         chatSplitPane.isContinuousLayout = true
         chatSplitPane.isOpaque = false
@@ -750,6 +753,9 @@ class ImprovedChatPanel(
         specSidebarDividerLocation = restoredWindowState.chatSpecSidebarDividerLocation
             .takeIf { it > 0 }
             ?: SPEC_SIDEBAR_DEFAULT_DIVIDER
+        chatComposerDividerProportion = restoredWindowState.chatComposerDividerProportion
+            .takeIf { it in CHAT_COMPOSER_MIN_PROPORTION..CHAT_COMPOSER_MAX_PROPORTION }
+            ?: CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION
         applySpecSidebarVisibility(restoredWindowState.chatSpecSidebarVisible, persist = false)
         applyInteractionModeUi(currentInteractionMode())
 
@@ -757,6 +763,7 @@ class ImprovedChatPanel(
         val inputScroll = JScrollPane(inputField)
         inputScroll.border = JBUI.Borders.empty()
         inputScroll.preferredSize = JBDimension(0, 92)
+        inputScroll.minimumSize = JBDimension(0, 92)
 
         val composerMetaRow = JPanel(BorderLayout(JBUI.scale(8), 0))
         composerMetaRow.isOpaque = false
@@ -810,26 +817,27 @@ class ImprovedChatPanel(
         composerContainer.add(inputScroll, BorderLayout.CENTER)
         composerContainer.add(composerMetaRow, BorderLayout.SOUTH)
 
-        val bottomPanel = JPanel()
-        bottomPanel.layout = BoxLayout(bottomPanel, BoxLayout.Y_AXIS)
+        val composerPreviewStack = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(contextPreviewPanel)
+            add(imageAttachmentPreviewPanel)
+        }
+
+        val bottomPanel = JPanel(BorderLayout(0, JBUI.scale(8)))
         bottomPanel.isOpaque = true
         bottomPanel.background = composerSurfaceColor
         bottomPanel.border = JBUI.Borders.compound(
             JBUI.Borders.customLine(shellBorderColor, 1, 1, 1, 1),
             JBUI.Borders.empty(8, 10, 8, 10),
         )
-        bottomPanel.add(contextPreviewPanel)
-        bottomPanel.add(imageAttachmentPreviewPanel)
-        bottomPanel.add(composerContainer)
-        bottomPanel.add(controlsRow)
+        bottomPanel.minimumSize = Dimension(0, JBUI.scale(CHAT_COMPOSER_MIN_HEIGHT))
+        bottomPanel.add(composerPreviewStack, BorderLayout.NORTH)
+        bottomPanel.add(composerContainer, BorderLayout.CENTER)
+        bottomPanel.add(controlsRow, BorderLayout.SOUTH)
 
-        // Layout
-        val content = JPanel(BorderLayout())
-        content.isOpaque = false
-        content.add(conversationHostPanel, BorderLayout.CENTER)
-        content.add(bottomPanel, BorderLayout.SOUTH)
-
-        add(content, BorderLayout.CENTER)
+        configureContentSplitPane(bottomPanel)
+        add(contentSplitPane, BorderLayout.CENTER)
     }
 
     private fun configureWorkflowBindingStrip() {
@@ -5206,26 +5214,67 @@ class ImprovedChatPanel(
         applySpecSidebarVisibility(visible = windowStateStore.snapshot().chatSpecSidebarVisible, persist = false)
     }
 
-    private fun configureSplitPaneDivider() {
-        chatSplitPane.ui = SidebarGripSplitPaneUI()
-        chatSplitPane.dividerSize = JBUI.scale(SPEC_SIDEBAR_DIVIDER_SIZE)
-        chatSplitPane.isOneTouchExpandable = false
-        (chatSplitPane.ui as? BasicSplitPaneUI)?.divider?.let { divider ->
-            divider.cursor = Cursor.getPredefinedCursor(Cursor.E_RESIZE_CURSOR)
+    private fun configureContentSplitPane(bottomPanel: JPanel) {
+        conversationHostPanel.minimumSize = Dimension(0, JBUI.scale(CHAT_OUTPUT_MIN_HEIGHT))
+        contentSplitPane.topComponent = conversationHostPanel
+        contentSplitPane.bottomComponent = bottomPanel
+        contentSplitPane.resizeWeight = chatComposerDividerProportion.toDouble()
+        contentSplitPane.isContinuousLayout = true
+        contentSplitPane.isOpaque = false
+        contentSplitPane.border = JBUI.Borders.empty()
+        configureSplitPaneDivider(contentSplitPane, CHAT_COMPOSER_DIVIDER_SIZE)
+        contentSplitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY) { _ ->
+            val availableHeight = contentSplitPane.height - contentSplitPane.dividerSize
+            if (availableHeight <= 0) {
+                return@addPropertyChangeListener
+            }
+            chatComposerDividerProportion = (contentSplitPane.dividerLocation.toFloat() / availableHeight.toFloat())
+                .coerceIn(CHAT_COMPOSER_MIN_PROPORTION, CHAT_COMPOSER_MAX_PROPORTION)
+            contentSplitPane.resizeWeight = chatComposerDividerProportion.toDouble()
+            scheduleComposerDividerPersist()
+        }
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || _isDisposed) {
+                return@invokeLater
+            }
+            contentSplitPane.setDividerLocation(chatComposerDividerProportion.toDouble())
+        }
+    }
+
+    private fun configureSplitPaneDivider(splitPane: JSplitPane, dividerSize: Int) {
+        splitPane.ui = SidebarGripSplitPaneUI()
+        splitPane.dividerSize = JBUI.scale(dividerSize)
+        splitPane.isOneTouchExpandable = false
+        (splitPane.ui as? BasicSplitPaneUI)?.divider?.let { divider ->
+            val horizontal = splitPane.orientation == JSplitPane.HORIZONTAL_SPLIT
+            divider.cursor = Cursor.getPredefinedCursor(if (horizontal) Cursor.E_RESIZE_CURSOR else Cursor.N_RESIZE_CURSOR)
             divider.background = JBColor(
                 Color(236, 240, 246),
                 Color(74, 80, 89),
             )
-            divider.border = JBUI.Borders.customLine(
-                JBColor(
-                    Color(217, 223, 232),
-                    Color(87, 94, 105),
-                ),
-                0,
-                1,
-                0,
-                1,
-            )
+            divider.border = if (horizontal) {
+                JBUI.Borders.customLine(
+                    JBColor(
+                        Color(217, 223, 232),
+                        Color(87, 94, 105),
+                    ),
+                    0,
+                    1,
+                    0,
+                    1,
+                )
+            } else {
+                JBUI.Borders.customLine(
+                    JBColor(
+                        Color(217, 223, 232),
+                        Color(87, 94, 105),
+                    ),
+                    1,
+                    0,
+                    1,
+                    0,
+                )
+            }
         }
     }
 
@@ -5240,6 +5289,19 @@ class ImprovedChatPanel(
         }
         timer.isRepeats = false
         dividerPersistTimer = timer
+        timer.start()
+    }
+
+    private fun scheduleComposerDividerPersist() {
+        composerDividerPersistTimer?.stop()
+        val timer = Timer(CHAT_COMPOSER_DIVIDER_PERSIST_DEBOUNCE_MILLIS) {
+            composerDividerPersistTimer = null
+            if (!project.isDisposed && !_isDisposed) {
+                windowStateStore.updateChatComposerDividerProportion(chatComposerDividerProportion)
+            }
+        }
+        timer.isRepeats = false
+        composerDividerPersistTimer = timer
         timer.start()
     }
 
@@ -6655,6 +6717,8 @@ class ImprovedChatPanel(
         statusAutoHideTimer = null
         dividerPersistTimer?.stop()
         dividerPersistTimer = null
+        composerDividerPersistTimer?.stop()
+        composerDividerPersistTimer = null
         runningWorkflowCommands.values.forEach { running ->
             runCatching {
                 running.stopRequested.set(true)
@@ -7072,6 +7136,13 @@ class ImprovedChatPanel(
         private const val SPEC_SIDEBAR_MIN_DIVIDER = 320
         private const val SPEC_SIDEBAR_DIVIDER_SIZE = 8
         private const val SPEC_SIDEBAR_DIVIDER_PERSIST_DEBOUNCE_MILLIS = 140
+        private const val CHAT_OUTPUT_MIN_HEIGHT = 180
+        private const val CHAT_COMPOSER_MIN_HEIGHT = 170
+        private const val CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION = 0.78f
+        private const val CHAT_COMPOSER_MIN_PROPORTION = 0.25f
+        private const val CHAT_COMPOSER_MAX_PROPORTION = 0.85f
+        private const val CHAT_COMPOSER_DIVIDER_SIZE = 8
+        private const val CHAT_COMPOSER_DIVIDER_PERSIST_DEBOUNCE_MILLIS = 140
         private const val STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS = 2200
         private const val STATUS_SHORT_HINT_AUTO_HIDE_MILLIS = 1800
         private const val COMPACT_REQUEST_TAIL_MAX_MESSAGES = 20

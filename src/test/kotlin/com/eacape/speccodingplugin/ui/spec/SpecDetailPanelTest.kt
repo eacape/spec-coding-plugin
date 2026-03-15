@@ -191,6 +191,77 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `preview checklist toggle should save updated task document`() {
+        var savedPhase: SpecPhase? = null
+        var savedContent: String? = null
+        lateinit var currentWorkflow: SpecWorkflow
+        val panel = createPanel(
+            onSaveDocument = { phase, content, onDone ->
+                savedPhase = phase
+                savedContent = content
+                currentWorkflow = currentWorkflow.copy(
+                    documents = currentWorkflow.documents + (
+                        SpecPhase.IMPLEMENT to document(
+                            phase = SpecPhase.IMPLEMENT,
+                            content = content,
+                            valid = true,
+                        )
+                    ),
+                    updatedAt = currentWorkflow.updatedAt + 1,
+                )
+                onDone(Result.success(currentWorkflow))
+            },
+        )
+        val tasksContent = """
+            ### T-002: 本地开发基础设施与容器编排
+            - [ ] 提供本地 Docker Compose 依赖
+            - [x] 输出数据源迁移脚本
+        """.trimIndent()
+        currentWorkflow = SpecWorkflow(
+            id = "wf-checklist-preview",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = tasksContent,
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Checklist Preview",
+            description = "toggle markdown checklist in preview",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(currentWorkflow)
+        panel.togglePreviewChecklistForTest(1)
+
+        assertEquals(SpecPhase.IMPLEMENT, savedPhase)
+        assertEquals(
+            """
+            ### T-002: 本地开发基础设施与容器编排
+            - [x] 提供本地 Docker Compose 依赖
+            - [x] 输出数据源迁移脚本
+            """.trimIndent(),
+            savedContent,
+        )
+        assertEquals(savedContent, panel.currentPreviewTextForTest())
+
+        panel.togglePreviewChecklistForTest(2)
+
+        assertEquals(
+            """
+            ### T-002: 本地开发基础设施与容器编排
+            - [x] 提供本地 Docker Compose 依赖
+            - [ ] 输出数据源迁移脚本
+            """.trimIndent(),
+            savedContent,
+        )
+        assertEquals(savedContent, panel.currentPreviewTextForTest())
+    }
+
+    @Test
     fun `composer should auto collapse for non current documents and reopen for current stage`() {
         val panel = createPanel()
         val workflow = SpecWorkflow(
@@ -1385,6 +1456,9 @@ class SpecDetailPanelTest {
         onClarificationConfirm: (String, String) -> Unit = { _, _ -> },
         onClarificationRegenerate: (String, String) -> Unit = { _, _ -> },
         onOpenArtifactInEditor: (String) -> Unit = {},
+        onSaveDocument: (SpecPhase, String, (Result<SpecWorkflow>) -> Unit) -> Unit = { _, _, onDone ->
+            onDone(Result.failure(IllegalStateException("not implemented")))
+        },
         onClarificationDraftAutosave: (String, String, String, List<String>) -> Unit = { _, _, _, _ -> },
     ): SpecDetailPanel {
         return SpecDetailPanel(
@@ -1401,7 +1475,7 @@ class SpecDetailPanelTest {
             onOpenInEditor = {},
             onOpenArtifactInEditor = onOpenArtifactInEditor,
             onShowHistoryDiff = {},
-            onSaveDocument = { _, _, onDone -> onDone(Result.failure(IllegalStateException("not implemented"))) },
+            onSaveDocument = onSaveDocument,
             onClarificationDraftAutosave = onClarificationDraftAutosave,
         )
     }
