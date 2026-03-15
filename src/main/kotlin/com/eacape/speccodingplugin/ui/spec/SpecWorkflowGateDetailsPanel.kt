@@ -71,13 +71,6 @@ internal class SpecWorkflowGateDetailsPanel(
         foreground = HEADER_SECONDARY_FG
     }
 
-    private val statusChipLabel = JBLabel().apply {
-        horizontalAlignment = SwingConstants.CENTER
-        border = BorderFactory.createEmptyBorder()
-        isOpaque = true
-        font = JBUI.Fonts.smallFont().deriveFont(10.5f)
-    }
-
     private val severityFilterComboBox = JComboBox<SeverityFilter>().apply {
         model = DefaultComboBoxModel(SeverityFilter.entries.toTypedArray())
         renderer = SimpleListCellRenderer.create { label, value, _ ->
@@ -236,7 +229,7 @@ internal class SpecWorkflowGateDetailsPanel(
             "headerTitle" to headerTitleLabel.text.orEmpty(),
             "headerSummary" to headerSummaryLabel.text.orEmpty(),
             "headerRefreshed" to headerRefreshedLabel.text.orEmpty(),
-            "statusChip" to statusChipLabel.text.orEmpty(),
+            "statusChip" to "",
             "workflowId" to currentWorkflowId.orEmpty(),
             "violationCount" to listModel.size().toString(),
             "emptyText" to violationsList.emptyText.text.orEmpty(),
@@ -296,7 +289,6 @@ internal class SpecWorkflowGateDetailsPanel(
         }
         val controlsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
-            add(statusChipLabel)
             add(severityFilterComboBox)
             add(searchField)
             add(openButton)
@@ -328,14 +320,12 @@ internal class SpecWorkflowGateDetailsPanel(
         when {
             currentWorkflowId.isNullOrBlank() -> {
                 headerSummaryLabel.text = SpecCodingBundle.message("spec.toolwindow.gate.summary.none")
-                statusChipLabel.text = SpecCodingBundle.message("spec.toolwindow.gate.status.unavailable")
-                applyStatusChipStyle(null)
+                headerSummaryLabel.toolTipText = null
             }
 
             gateResult == null -> {
                 headerSummaryLabel.text = SpecCodingBundle.message("spec.toolwindow.gate.unavailable")
-                statusChipLabel.text = SpecCodingBundle.message("spec.toolwindow.gate.status.unavailable")
-                applyStatusChipStyle(null)
+                headerSummaryLabel.toolTipText = null
             }
 
             else -> {
@@ -347,34 +337,8 @@ internal class SpecWorkflowGateDetailsPanel(
                     aggregation.totalViolationCount,
                 )
                 headerSummaryLabel.toolTipText = aggregation.summary
-                statusChipLabel.text = statusChipText(gateResult.status)
-                applyStatusChipStyle(gateResult.status)
             }
         }
-    }
-
-    private fun statusChipText(status: GateStatus?): String {
-        return when (status) {
-            GateStatus.PASS -> SpecCodingBundle.message("spec.toolwindow.gate.status.pass")
-            GateStatus.WARNING -> SpecCodingBundle.message("spec.toolwindow.gate.status.warning")
-            GateStatus.ERROR -> SpecCodingBundle.message("spec.toolwindow.gate.status.error")
-            null -> SpecCodingBundle.message("spec.toolwindow.gate.status.unavailable")
-        }
-    }
-
-    private fun applyStatusChipStyle(status: GateStatus?) {
-        val (background, foreground, border) = when (status) {
-            GateStatus.PASS -> Triple(PASS_BG, PASS_FG, PASS_BORDER)
-            GateStatus.WARNING -> Triple(WARN_BG, WARN_FG, WARN_BORDER)
-            GateStatus.ERROR -> Triple(ERROR_BG, ERROR_FG, ERROR_BORDER)
-            null -> Triple(NEUTRAL_BG, NEUTRAL_FG, NEUTRAL_BORDER)
-        }
-        statusChipLabel.background = background
-        statusChipLabel.foreground = foreground
-        statusChipLabel.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(border, JBUI.scale(10)),
-            JBUI.Borders.empty(2, 8, 2, 8),
-        )
     }
 
     private fun severityFilterLabel(filter: SeverityFilter?): String {
@@ -732,21 +696,5 @@ internal class SpecWorkflowGateDetailsPanel(
         private val HEADER_FG = JBColor(Color(35, 40, 47), Color(222, 226, 232))
         private val HEADER_SECONDARY_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
         private val REFRESHED_AT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-
-        private val PASS_BG = JBColor(Color(233, 246, 237), Color(54, 85, 63))
-        private val PASS_FG = JBColor(Color(39, 94, 57), Color(194, 232, 204))
-        private val PASS_BORDER = JBColor(Color(154, 204, 170), Color(87, 134, 102))
-
-        private val WARN_BG = JBColor(Color(255, 244, 229), Color(97, 77, 42))
-        private val WARN_FG = JBColor(Color(150, 96, 0), Color(245, 212, 152))
-        private val WARN_BORDER = JBColor(Color(232, 191, 111), Color(138, 112, 63))
-
-        private val ERROR_BG = JBColor(Color(252, 235, 236), Color(97, 54, 58))
-        private val ERROR_FG = JBColor(Color(166, 53, 60), Color(250, 196, 200))
-        private val ERROR_BORDER = JBColor(Color(226, 140, 147), Color(145, 92, 98))
-
-        private val NEUTRAL_BG = JBColor(Color(241, 244, 248), Color(72, 77, 85))
-        private val NEUTRAL_FG = JBColor(Color(85, 94, 106), Color(192, 199, 208))
-        private val NEUTRAL_BORDER = JBColor(Color(201, 208, 217), Color(98, 108, 121))
     }
 }

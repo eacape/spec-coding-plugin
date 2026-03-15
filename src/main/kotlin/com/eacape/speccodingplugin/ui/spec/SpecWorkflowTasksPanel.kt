@@ -36,7 +36,6 @@ internal class SpecWorkflowTasksPanel(
     private val onExecuteTask: (taskId: String, retry: Boolean) -> Unit = { _, _ -> },
     private val onOpenWorkflowChat: (workflowId: String, taskId: String) -> Unit = { _, _ -> },
     private val onUpdateDependsOn: (taskId: String, dependsOn: List<String>) -> Unit = { _, _ -> },
-    private val onUpdateRelatedFiles: (taskId: String, files: List<String>) -> Unit = { _, _ -> },
     private val onCompleteWithRelatedFiles: (
         taskId: String,
         files: List<String>,
@@ -91,9 +90,6 @@ internal class SpecWorkflowTasksPanel(
     }
     private val editDependsOnButton = createIconActionButton {
         handleEditDependsOn()
-    }
-    private val editRelatedFilesButton = createIconActionButton {
-        handleEditRelatedFiles()
     }
     private val editVerificationResultButton = createIconActionButton {
         handleEditVerificationResult()
@@ -275,14 +271,6 @@ internal class SpecWorkflowTasksPanel(
             "dependsOnFocusable" to editDependsOnButton.isFocusable.toString(),
             "dependsOnAccessibleName" to editDependsOnButton.accessibleContext.accessibleName.orEmpty(),
             "dependsOnAccessibleDescription" to editDependsOnButton.accessibleContext.accessibleDescription.orEmpty(),
-            "relatedFilesText" to editRelatedFilesButton.text.orEmpty(),
-            "relatedFilesIconId" to SpecWorkflowIcons.debugId(editRelatedFilesButton.icon),
-            "relatedFilesTooltip" to editRelatedFilesButton.toolTipText.orEmpty(),
-            "relatedFilesHasIcon" to (editRelatedFilesButton.icon != null).toString(),
-            "relatedFilesRolloverEnabled" to editRelatedFilesButton.isRolloverEnabled.toString(),
-            "relatedFilesFocusable" to editRelatedFilesButton.isFocusable.toString(),
-            "relatedFilesAccessibleName" to editRelatedFilesButton.accessibleContext.accessibleName.orEmpty(),
-            "relatedFilesAccessibleDescription" to editRelatedFilesButton.accessibleContext.accessibleDescription.orEmpty(),
             "verificationText" to editVerificationResultButton.text.orEmpty(),
             "verificationIconId" to SpecWorkflowIcons.debugId(editVerificationResultButton.icon),
             "verificationHasIcon" to (editVerificationResultButton.icon != null).toString(),
@@ -293,7 +281,6 @@ internal class SpecWorkflowTasksPanel(
             "verificationAccessibleName" to editVerificationResultButton.accessibleContext.accessibleName.orEmpty(),
             "verificationAccessibleDescription" to editVerificationResultButton.accessibleContext.accessibleDescription.orEmpty(),
             "dependsOnEnabled" to editDependsOnButton.isEnabled.toString(),
-            "relatedFilesEnabled" to editRelatedFilesButton.isEnabled.toString(),
             "emptyText" to tasksList.emptyText.text.orEmpty(),
         )
     }
@@ -386,7 +373,6 @@ internal class SpecWorkflowTasksPanel(
             add(secondaryActionsButton)
             add(editVerificationResultButton)
             add(editDependsOnButton)
-            add(editRelatedFilesButton)
         }
         return JPanel(BorderLayout()).apply {
             isOpaque = false
@@ -409,7 +395,6 @@ internal class SpecWorkflowTasksPanel(
         updateSecondaryActionsButtonPresentation(tasksList.selectedValue)
         updateVerificationButtonPresentation(tasksList.selectedValue)
         updateDependsOnButtonPresentation(tasksList.selectedValue)
-        updateRelatedFilesButtonPresentation(tasksList.selectedValue)
     }
 
     private fun updateHeader() {
@@ -442,7 +427,6 @@ internal class SpecWorkflowTasksPanel(
             updateSecondaryActionsButtonPresentation(null)
             updateVerificationButtonPresentation(null)
             updateDependsOnButtonPresentation(null)
-            updateRelatedFilesButtonPresentation(null)
             return
         }
 
@@ -451,7 +435,6 @@ internal class SpecWorkflowTasksPanel(
         updateSecondaryActionsButtonPresentation(selected)
         updateVerificationButtonPresentation(selected)
         updateDependsOnButtonPresentation(selected)
-        updateRelatedFilesButtonPresentation(selected)
     }
 
     private fun updateExecuteButtonPresentation(selected: StructuredTask?) {
@@ -548,7 +531,7 @@ internal class SpecWorkflowTasksPanel(
         val taskId = selected?.id.orEmpty()
         val presentation = when {
             selected == null -> SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.Add,
+                icon = SpecWorkflowIcons.VerificationResult,
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.verification.unavailable"),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.verification.button"),
                 enabled = false,
@@ -556,7 +539,7 @@ internal class SpecWorkflowTasksPanel(
             )
 
             selected.status == TaskStatus.CANCELLED -> SpecIconActionPresentation(
-                icon = if (hasVerification) SpecWorkflowIcons.Edit else SpecWorkflowIcons.Add,
+                icon = SpecWorkflowIcons.VerificationResult,
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.verification.edit.tooltip", taskId),
                 accessibleName = if (hasVerification) {
                     SpecCodingBundle.message("spec.toolwindow.tasks.verification.edit")
@@ -568,14 +551,14 @@ internal class SpecWorkflowTasksPanel(
             )
 
             hasVerification -> SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.Edit,
+                icon = SpecWorkflowIcons.VerificationResult,
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.verification.edit.tooltip", taskId),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.verification.edit"),
                 enabled = true,
             )
 
             else -> SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.Add,
+                icon = SpecWorkflowIcons.VerificationResult,
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.verification.record.tooltip", taskId),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.verification.button"),
                 enabled = true,
@@ -638,24 +621,6 @@ internal class SpecWorkflowTasksPanel(
                 icon = SpecWorkflowIcons.Edit,
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.edit"),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.edit"),
-                enabled = disabledReason == null,
-                disabledReason = disabledReason,
-            ),
-        )
-    }
-
-    private fun updateRelatedFilesButtonPresentation(selected: StructuredTask?) {
-        val disabledReason = if (selected == null) {
-            SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.unavailable")
-        } else {
-            null
-        }
-        SpecUiStyle.applyIconActionPresentation(
-            button = editRelatedFilesButton,
-            presentation = SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.RelatedFilesEdit,
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"),
-                accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"),
                 enabled = disabledReason == null,
                 disabledReason = disabledReason,
             ),
@@ -803,28 +768,16 @@ internal class SpecWorkflowTasksPanel(
 
     private fun handleEditDependsOn() {
         val selectedTask = tasksList.selectedValue ?: return
-        val dialog = ListEditDialog(
-            title = SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.dialog.title", selectedTask.id),
-            hintText = SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.dialog.hint"),
-            initialLines = selectedTask.dependsOn,
-        )
-        if (!dialog.showAndGet()) {
-            return
-        }
-        onUpdateDependsOn(selectedTask.id, dialog.resultLines)
-    }
-
-    private fun handleEditRelatedFiles() {
-        val selectedTask = tasksList.selectedValue ?: return
-        val dialog = ListEditDialog(
-            title = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.dialog.title", selectedTask.id),
-            hintText = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.dialog.hint"),
-            initialLines = selectedTask.relatedFiles,
-        )
-        if (!dialog.showAndGet()) {
-            return
-        }
-        onUpdateRelatedFiles(selectedTask.id, dialog.resultLines)
+        SpecTaskDependencySelectorPopup(
+            selectedTask = selectedTask,
+            tasks = currentTasksById.values,
+            initialDependencies = selectedTask.dependsOn,
+        ) { dependsOn ->
+            if (dependsOn == selectedTask.dependsOn) {
+                return@SpecTaskDependencySelectorPopup
+            }
+            onUpdateDependsOn(selectedTask.id, dependsOn)
+        }.showUnderneathOf(editDependsOnButton)
     }
 
     private fun handleEditVerificationResult() {

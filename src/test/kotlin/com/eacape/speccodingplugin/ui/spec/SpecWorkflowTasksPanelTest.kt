@@ -116,20 +116,13 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("true", snapshot.getValue("dependsOnHasIcon"))
         assertEquals("true", snapshot.getValue("dependsOnRolloverEnabled"))
         assertEquals("true", snapshot.getValue("dependsOnFocusable"))
-        assertEquals("", snapshot.getValue("relatedFilesText"))
-        assertEquals("relatedFilesEdit", snapshot.getValue("relatedFilesIconId"))
-        assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"), snapshot.getValue("relatedFilesTooltip"))
-        assertEquals("true", snapshot.getValue("relatedFilesHasIcon"))
-        assertEquals("true", snapshot.getValue("relatedFilesRolloverEnabled"))
-        assertEquals("true", snapshot.getValue("relatedFilesFocusable"))
         assertEquals("", snapshot.getValue("verificationText"))
-        assertEquals("add", snapshot.getValue("verificationIconId"))
+        assertEquals("verificationResult", snapshot.getValue("verificationIconId"))
         assertEquals("true", snapshot.getValue("verificationHasIcon"))
         assertEquals("true", snapshot.getValue("verificationRolloverEnabled"))
         assertEquals("true", snapshot.getValue("verificationFocusable"))
         assertEquals("true", snapshot.getValue("verificationEnabled"))
         assertEquals("true", snapshot.getValue("dependsOnEnabled"))
-        assertEquals("true", snapshot.getValue("relatedFilesEnabled"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.emptyForWorkflow"), snapshot.getValue("emptyText"))
     }
 
@@ -175,7 +168,6 @@ class SpecWorkflowTasksPanelTest {
             snapshot.getValue("secondaryAccessibleDescription"),
         )
         assertEquals("false", snapshot.getValue("dependsOnEnabled"))
-        assertEquals("true", snapshot.getValue("relatedFilesEnabled"))
         assertEquals("true", snapshot.getValue("verificationEnabled"))
     }
 
@@ -605,7 +597,7 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("true", snapshot.getValue("executeEnabled"))
         assertEquals("true", snapshot.getValue("secondaryEnabled"))
         assertEquals("", snapshot.getValue("verificationText"))
-        assertEquals("edit", snapshot.getValue("verificationIconId"))
+        assertEquals("verificationResult", snapshot.getValue("verificationIconId"))
         assertEquals("true", snapshot.getValue("verificationEnabled"))
         assertFalse(snapshot.getValue("verificationTooltip").isBlank())
     }

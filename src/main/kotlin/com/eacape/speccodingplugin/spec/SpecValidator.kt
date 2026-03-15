@@ -76,6 +76,8 @@ object SpecValidator {
             }
         }
 
+        errors.addAll(requirementsDraftErrors(content))
+
         return ValidationResult(
             valid = errors.isEmpty(),
             errors = errors,
@@ -250,7 +252,27 @@ object SpecValidator {
         )
     }
 
+    private fun requirementsDraftErrors(content: String): List<String> {
+        val normalized = content
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+        val errors = mutableListOf<String>()
+
+        if (REQUIREMENTS_TODO_PATTERN.containsMatchIn(normalized)) {
+            errors.add("requirements.md still contains TODO placeholders. Replace them with concrete requirements before continuing.")
+        }
+        if (REQUIREMENTS_USER_STORY_TEMPLATE_PATTERN.containsMatchIn(normalized)) {
+            errors.add("requirements.md still uses the user story template placeholders <role>/<capability>/<benefit>.")
+        }
+
+        return errors
+    }
+
     private fun containsAnyMarker(content: String, markers: List<String>): Boolean {
         return markers.any { marker -> content.contains(marker, ignoreCase = true) }
     }
+
+    private val REQUIREMENTS_TODO_PATTERN = Regex("""(?im)^\s*[-*]?\s*(?:\[[ xX]\]\s*)?TODO\s*:""")
+    private val REQUIREMENTS_USER_STORY_TEMPLATE_PATTERN =
+        Regex("""(?i)<role>|<capability>|<benefit>""")
 }

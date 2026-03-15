@@ -31,11 +31,18 @@ internal enum class SpecWorkflowActionIcon(
         "relatedFilesEdit",
         IconLoader.getIcon("/icons/spec-task-related-files-edit.svg", SpecWorkflowActionIcon::class.java),
     ),
+    VERIFICATION_RESULT(
+        "verificationResult",
+        IconLoader.getIcon("/icons/spec-task-verification-result.svg", SpecWorkflowActionIcon::class.java),
+    ),
     ADD("add", AllIcons.General.Add),
     BACK("back", AllIcons.Actions.Back),
     FORWARD("forward", AllIcons.Actions.Forward),
     CLONE("clone", AllIcons.Actions.Copy),
-    OVERFLOW("overflow", AllIcons.General.GearPlain),
+    OVERFLOW(
+        "overflow",
+        IconLoader.getIcon("/icons/spec-task-secondary-actions.svg", SpecWorkflowActionIcon::class.java),
+    ),
     CANCEL("close", AllIcons.Actions.Close),
     BRANCH("branch", AllIcons.Vcs.Branch),
     OPEN_TOOL_WINDOW("openToolWindow", AllIcons.General.OpenInToolWindow),
@@ -55,6 +62,7 @@ internal object SpecWorkflowIcons {
     val Save: Icon = SpecWorkflowActionIcon.SAVE.icon
     val Edit: Icon = SpecWorkflowActionIcon.EDIT.icon
     val RelatedFilesEdit: Icon = SpecWorkflowActionIcon.RELATED_FILES_EDIT.icon
+    val VerificationResult: Icon = SpecWorkflowActionIcon.VERIFICATION_RESULT.icon
     val Add: Icon = SpecWorkflowActionIcon.ADD.icon
     val Back: Icon = SpecWorkflowActionIcon.BACK.icon
     val Forward: Icon = SpecWorkflowActionIcon.FORWARD.icon

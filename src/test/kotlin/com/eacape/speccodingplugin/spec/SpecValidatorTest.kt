@@ -58,5 +58,37 @@ class SpecValidatorTest {
         assertFalse(result.valid)
         assertTrue(result.errors.any { it.contains("非功能需求") })
     }
-}
+    @Test
+    fun `specify validation fails when requirements still use scaffold placeholders`() {
+        val content = """
+            # Requirements Document
 
+            ## Functional Requirements
+            - [ ] TODO: Describe required behavior.
+
+            ## Non-Functional Requirements
+            - [ ] TODO: Describe performance, security, and reliability constraints.
+
+            ## User Stories
+            As a <role>, I want <capability>, so that <benefit>.
+
+            ## Acceptance Criteria
+            - [ ] TODO: Add measurable acceptance criteria.
+        """.trimIndent()
+
+        val document = SpecDocument(
+            id = "specify-scaffold",
+            phase = SpecPhase.SPECIFY,
+            content = content,
+            metadata = SpecMetadata(
+                title = "specify",
+                description = "scaffold placeholder",
+            ),
+        )
+
+        val result = SpecValidator.validate(document)
+        assertFalse(result.valid)
+        assertTrue(result.errors.any { it.contains("TODO placeholders") })
+        assertTrue(result.errors.any { it.contains("<role>/<capability>/<benefit>") })
+    }
+}

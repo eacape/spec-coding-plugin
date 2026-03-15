@@ -336,6 +336,72 @@ class SpecWorkflowOverviewPresenterTest {
     }
 
     @Test
+    fun `workbench builder should disable advance when requirements still show scaffold placeholders`() {
+        val workflow = workflow(
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = """
+                        # Requirements Document
+
+                        ## Functional Requirements
+                        - [ ] TODO: Describe required behavior.
+
+                        ## Non-Functional Requirements
+                        - [ ] TODO: Describe performance, security, and reliability constraints.
+
+                        ## User Stories
+                        As a <role>, I want <capability>, so that <benefit>.
+
+                        ## Acceptance Criteria
+                        - [ ] TODO: Add measurable acceptance criteria.
+                    """.trimIndent(),
+                ),
+            ),
+            currentStage = StageId.REQUIREMENTS,
+        )
+        val gateResult = GateResult.fromViolations(
+            listOf(
+                Violation(
+                    ruleId = "document-validation",
+                    severity = GateStatus.ERROR,
+                    fileName = "requirements.md",
+                    line = 1,
+                    message = "requirements.md still contains TODO placeholders. Replace them with concrete requirements before continuing.",
+                ),
+            ),
+        )
+        val overviewState = SpecWorkflowOverviewPresenter.buildState(
+            workflow = workflow,
+            gatePreview = StageTransitionGatePreview(
+                workflowId = workflow.id,
+                transitionType = StageTransitionType.ADVANCE,
+                fromStage = StageId.REQUIREMENTS,
+                targetStage = StageId.DESIGN,
+                evaluatedStages = listOf(StageId.REQUIREMENTS),
+                gateResult = gateResult,
+            ),
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = workflow,
+            overviewState = overviewState,
+            gateResult = gateResult,
+        )
+
+        assertEquals(3, workbenchState.progress.completedCheckCount)
+        assertEquals(5, workbenchState.progress.totalCheckCount)
+        assertFalse(workbenchState.primaryAction?.enabled ?: true)
+        assertTrue(
+            workbenchState.blockers.any { blocker ->
+                blocker.contains("TODO placeholders")
+            },
+        )
+    }
+
+    @Test
     fun `workbench builder should surface gate violations as blockers when preview fails`() {
         val workflow = workflow(
             documents = mapOf(

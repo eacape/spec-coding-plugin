@@ -125,7 +125,6 @@ class SpecWorkflowPanel(
         onExecuteTask = ::onTaskExecutionRequested,
         onOpenWorkflowChat = ::onTaskWorkflowChatRequested,
         onUpdateDependsOn = ::onTaskDependsOnUpdateRequested,
-        onUpdateRelatedFiles = ::onTaskRelatedFilesUpdateRequested,
         onCompleteWithRelatedFiles = ::onTaskCompleteRequested,
         onUpdateVerificationResult = ::onTaskVerificationResultUpdateRequested,
         suggestRelatedFiles = { taskId, existingRelatedFiles ->
@@ -3273,28 +3272,6 @@ class SpecWorkflowPanel(
             },
             onSuccess = {
                 setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.dependsOn.updated", taskId))
-                reloadCurrentWorkflow()
-            },
-        )
-    }
-
-    private fun onTaskRelatedFilesUpdateRequested(taskId: String, files: List<String>) {
-        val workflowId = selectedWorkflowId ?: return
-        val auditContext = buildTaskAuditContext(taskId, "UPDATE_RELATED_FILES")
-        SpecWorkflowActionSupport.runBackground(
-            project = project,
-            title = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.progress"),
-            task = {
-                specTasksService.updateRelatedFiles(
-                    workflowId = workflowId,
-                    taskId = taskId,
-                    files = files,
-                    auditContext = auditContext,
-                )
-            },
-            onSuccess = {
-                setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.updated", taskId))
-                publishWorkflowChatRefresh(workflowId, taskId, "spec_task_related_files_updated")
                 reloadCurrentWorkflow()
             },
         )

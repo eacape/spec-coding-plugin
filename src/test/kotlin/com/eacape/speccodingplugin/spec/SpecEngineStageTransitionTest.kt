@@ -138,6 +138,34 @@ class SpecEngineStageTransitionTest {
     }
 
     @Test
+    fun `advanceWorkflow should block when requirements still use scaffold placeholders`() {
+        val engine = SpecEngine(project, storage, generationHandler = ::generateValidDocument)
+        val created = engine.createWorkflow(
+            title = "Requirements Scaffold Workflow",
+            description = "scaffold should block advance",
+        ).getOrThrow()
+
+        val blocked = engine.advanceWorkflow(created.id)
+
+        assertTrue(blocked.isFailure)
+        val error = blocked.exceptionOrNull()
+        assertTrue(error is StageTransitionBlockedByGateError)
+        val gateResult = (error as StageTransitionBlockedByGateError).gateResult
+        assertEquals(GateStatus.ERROR, gateResult.status)
+        val validationRule = gateResult.ruleResults.first { it.ruleId == "document-validation" }
+        assertTrue(
+            validationRule.violations.any { violation ->
+                violation.message.contains("TODO placeholders")
+            },
+        )
+        assertTrue(
+            validationRule.violations.any { violation ->
+                violation.message.contains("<role>/<capability>/<benefit>")
+            },
+        )
+    }
+
+    @Test
     fun `preview advance from requirements should expose quick fixes for missing sections`() {
         val engine = SpecEngine(project, storage, generationHandler = ::generateValidDocument)
         val artifactService = SpecArtifactService(project)
