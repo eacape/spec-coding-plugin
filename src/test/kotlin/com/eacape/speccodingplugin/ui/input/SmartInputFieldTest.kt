@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.input
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.awt.Toolkit
 import java.awt.event.ActionEvent
@@ -54,6 +55,23 @@ class SmartInputFieldTest {
         }
 
         assertEquals(emptyList<String>(), sent)
+    }
+
+    @Test
+    fun `up and down should move caret between lines when popup is hidden`() {
+        val field = createField(mutableListOf())
+
+        runOnEdt {
+            field.text = "111\n222"
+            field.caretPosition = field.text.length
+
+            invokeKeyAction(field, KeyEvent.VK_UP, 0)
+            assertEquals(3, field.caretPosition)
+
+            invokeKeyAction(field, KeyEvent.VK_DOWN, 0)
+            assertTrue(field.caretPosition > 3)
+            assertEquals(field.text.length, field.caretPosition)
+        }
     }
 
     @Test

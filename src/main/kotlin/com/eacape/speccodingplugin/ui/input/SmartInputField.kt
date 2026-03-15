@@ -15,12 +15,16 @@ import java.awt.RenderingHints
 import java.awt.Toolkit
 import java.awt.event.KeyEvent
 import javax.swing.AbstractAction
+import javax.swing.Action
+import javax.swing.ActionMap
 import javax.swing.JComponent
+import javax.swing.InputMap
 import javax.swing.KeyStroke
 import javax.swing.JTextArea
 import javax.swing.Timer
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
+import javax.swing.text.BadLocationException
 import javax.swing.text.DefaultHighlighter
 
 /**
@@ -117,28 +121,21 @@ class SmartInputField(
             },
         )
 
-        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), ACTION_COMPLETION_UP)
-        actionMap.put(
-            ACTION_COMPLETION_UP,
-            object : AbstractAction() {
-                override fun actionPerformed(e: ActionEvent?) {
-                    if (completionPopup.isVisible) {
-                        completionPopup.moveUp()
-                    }
-                }
-            },
+        bindCompletionNavigationAction(
+            inputMap = inputMap,
+            actionMap = actionMap,
+            keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0),
+            actionKey = ACTION_COMPLETION_UP,
+            fallbackDirection = -1,
+            onCompletionNavigate = { completionPopup.moveUp() },
         )
-
-        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), ACTION_COMPLETION_DOWN)
-        actionMap.put(
-            ACTION_COMPLETION_DOWN,
-            object : AbstractAction() {
-                override fun actionPerformed(e: ActionEvent?) {
-                    if (completionPopup.isVisible) {
-                        completionPopup.moveDown()
-                    }
-                }
-            },
+        bindCompletionNavigationAction(
+            inputMap = inputMap,
+            actionMap = actionMap,
+            keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0),
+            actionKey = ACTION_COMPLETION_DOWN,
+            fallbackDirection = 1,
+            onCompletionNavigate = { completionPopup.moveDown() },
         )
 
         inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_TAB, 0), ACTION_COMPLETION_CONFIRM)
@@ -164,6 +161,66 @@ class SmartInputField(
                 }
             },
         )
+    }
+
+    private fun bindCompletionNavigationAction(
+        inputMap: InputMap,
+        actionMap: ActionMap,
+        keyStroke: KeyStroke,
+        actionKey: String,
+        fallbackDirection: Int,
+        onCompletionNavigate: () -> Unit,
+    ) {
+        val fallbackAction = resolveExistingAction(inputMap, actionMap, keyStroke)
+        inputMap.put(keyStroke, actionKey)
+        actionMap.put(
+            actionKey,
+            object : AbstractAction() {
+                override fun actionPerformed(e: ActionEvent?) {
+                    if (completionPopup.isVisible) {
+                        onCompletionNavigate()
+                        return
+                    }
+                    val handledByFallback = runCatching {
+                        fallbackAction?.actionPerformed(e)
+                        fallbackAction != null
+                    }.getOrDefault(false)
+                    if (!handledByFallback) {
+                        moveCaretByLogicalLine(fallbackDirection)
+                    }
+                }
+            },
+        )
+    }
+
+    private fun resolveExistingAction(
+        inputMap: InputMap,
+        actionMap: ActionMap,
+        keyStroke: KeyStroke,
+    ): Action? {
+        val existingActionKey = inputMap.get(keyStroke) ?: return null
+        return actionMap.get(existingActionKey)
+    }
+
+    private fun moveCaretByLogicalLine(direction: Int) {
+        val currentOffset = caretPosition.coerceIn(0, document.length)
+        val currentLine = runCatching { getLineOfOffset(currentOffset) }.getOrElse { return }
+        val targetLine = (currentLine + direction).coerceIn(0, lineCount - 1)
+        if (targetLine == currentLine) {
+            return
+        }
+        try {
+            val currentLineStart = getLineStartOffset(currentLine)
+            val targetLineStart = getLineStartOffset(targetLine)
+            val targetLineEnd = if (targetLine == lineCount - 1) {
+                document.length
+            } else {
+                (getLineEndOffset(targetLine) - 1).coerceAtMost(document.length)
+            }
+            val targetColumn = (currentOffset - currentLineStart).coerceAtLeast(0)
+            caretPosition = (targetLineStart + targetColumn).coerceAtMost(targetLineEnd)
+        } catch (_: BadLocationException) {
+        }
     }
 
     private fun setupDocumentListener() {

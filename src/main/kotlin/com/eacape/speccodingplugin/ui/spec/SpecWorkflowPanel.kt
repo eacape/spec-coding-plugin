@@ -298,14 +298,15 @@ class SpecWorkflowPanel(
         statusLabel.foreground = STATUS_TEXT_FG
         setupGenerationControls()
 
-        val controlsRow = createToolbarGroup(horizontalGap = 6).apply {
+        val controlsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
             add(providerComboBox)
-            add(createToolbarDivider())
             add(modelLabel)
             add(modelComboBox)
             add(statusChipPanel)
         }
-        val actionsRow = createToolbarGroup(horizontalGap = 4, leftPadding = 4, rightPadding = 4).apply {
+        val actionsRow = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(2), 0)).apply {
+            isOpaque = false
             add(switchWorkflowButton)
             add(createWorkflowButton)
             add(refreshButton)
@@ -313,7 +314,8 @@ class SpecWorkflowPanel(
         }
         val toolbarRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
-            add(controlsRow, BorderLayout.WEST)
+            border = JBUI.Borders.empty(1, 0)
+            add(controlsRow, BorderLayout.CENTER)
             add(actionsRow, BorderLayout.EAST)
         }
         statusChipPanel.isOpaque = true
@@ -328,24 +330,11 @@ class SpecWorkflowPanel(
         )
         statusChipPanel.removeAll()
         statusChipPanel.add(statusLabel, BorderLayout.CENTER)
-        val toolbarCard = JPanel(BorderLayout()).apply {
-            isOpaque = true
-            background = TOOLBAR_BG
-            border = SpecUiStyle.roundedCardBorder(
-                lineColor = TOOLBAR_BORDER,
-                arc = JBUI.scale(14),
-                top = 5,
-                left = 6,
-                bottom = 5,
-                right = 6,
-            )
-            add(toolbarRow, BorderLayout.CENTER)
-        }
         add(
             JPanel(BorderLayout()).apply {
                 isOpaque = false
-                border = JBUI.Borders.emptyBottom(4)
-                add(toolbarCard, BorderLayout.CENTER)
+                border = JBUI.Borders.emptyBottom(2)
+                add(toolbarRow, BorderLayout.CENTER)
             },
             BorderLayout.NORTH,
         )
@@ -779,15 +768,22 @@ class SpecWorkflowPanel(
         val iconOnly = button.icon != null && button.text.isNullOrBlank()
         button.isFocusable = false
         button.isFocusPainted = false
-        button.isContentAreaFilled = true
         button.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         button.margin = if (iconOnly) JBUI.insets(0, 0, 0, 0) else JBUI.insets(1, 4, 1, 4)
-        button.isOpaque = true
         button.foreground = BUTTON_FG
-        SpecUiStyle.applyRoundRect(button, arc = 10)
         if (iconOnly) {
-            SpecUiStyle.styleIconActionButton(button, size = 22, arc = 10)
+            installToolbarButtonCursorTracking(button)
+            button.putClientProperty("JButton.buttonType", "toolbar")
+            button.isContentAreaFilled = false
+            button.isOpaque = false
+            button.border = JBUI.Borders.empty(1)
+            val size = JBUI.size(JBUI.scale(22), JBUI.scale(22))
+            button.preferredSize = size
+            button.minimumSize = size
         } else {
+            button.isContentAreaFilled = true
+            button.isOpaque = true
+            SpecUiStyle.applyRoundRect(button, arc = 10)
             installToolbarButtonCursorTracking(button)
             button.background = BUTTON_BG
             button.border = BorderFactory.createCompoundBorder(
@@ -804,37 +800,6 @@ class SpecWorkflowPanel(
             )
             button.preferredSize = JBUI.size(width, JBUI.scale(26))
             button.minimumSize = button.preferredSize
-        }
-    }
-
-    private fun createToolbarGroup(
-        horizontalGap: Int,
-        leftPadding: Int = 8,
-        rightPadding: Int = 8,
-    ): JPanel {
-        return JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(horizontalGap), 0)).apply {
-            isOpaque = true
-            background = TOOLBAR_GROUP_BG
-            border = SpecUiStyle.roundedCardBorder(
-                lineColor = TOOLBAR_GROUP_BORDER,
-                arc = JBUI.scale(12),
-                top = 3,
-                left = leftPadding,
-                bottom = 3,
-                right = rightPadding,
-            )
-        }
-    }
-
-    private fun createToolbarDivider(height: Int = 16): JPanel {
-        val scaledHeight = JBUI.scale(height)
-        val size = JBUI.size(1, scaledHeight)
-        return JPanel().apply {
-            isOpaque = true
-            background = TOOLBAR_GROUP_DIVIDER
-            preferredSize = size
-            minimumSize = size
-            maximumSize = size
         }
     }
 
@@ -4979,11 +4944,6 @@ class SpecWorkflowPanel(
     }
 
     companion object {
-        private val TOOLBAR_BG = JBColor(Color(246, 249, 255), Color(57, 62, 70))
-        private val TOOLBAR_BORDER = JBColor(Color(204, 216, 236), Color(87, 98, 114))
-        private val TOOLBAR_GROUP_BG = JBColor(Color(252, 253, 255), Color(63, 69, 79))
-        private val TOOLBAR_GROUP_BORDER = JBColor(Color(214, 224, 240), Color(92, 103, 120))
-        private val TOOLBAR_GROUP_DIVIDER = JBColor(Color(204, 215, 234), Color(93, 104, 121))
         private val WORKSPACE_SUMMARY_BG = JBColor(Color(245, 249, 255), Color(56, 62, 72))
         private val WORKSPACE_SUMMARY_BORDER = JBColor(Color(201, 214, 235), Color(86, 96, 110))
         private val WORKSPACE_SUMMARY_TITLE_FG = JBColor(Color(42, 59, 94), Color(214, 223, 236))
