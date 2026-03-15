@@ -66,6 +66,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.BorderFactory
@@ -115,6 +117,7 @@ class SpecWorkflowPanel(
     )
     private val tasksPanel = SpecWorkflowTasksPanel(
         onTransitionStatus = ::onTaskStatusTransitionRequested,
+        onCancelExecution = ::onTaskExecutionCancelRequested,
         onExecuteTask = ::onTaskExecutionRequested,
         onOpenWorkflowChat = ::onTaskWorkflowChatRequested,
         onUpdateDependsOn = ::onTaskDependsOnUpdateRequested,
@@ -237,6 +240,8 @@ class SpecWorkflowPanel(
         deltaButton.isEnabled = false
         codeGraphButton.isEnabled = true
         archiveButton.isEnabled = false
+        codeGraphButton.isVisible = false
+        archiveButton.isVisible = false
         backToListButton.isEnabled = false
         createWorktreeButton.addActionListener { onCreateWorktree() }
         mergeWorktreeButton.addActionListener { onMergeWorktree() }
@@ -275,8 +280,6 @@ class SpecWorkflowPanel(
             isOpaque = false
             add(refreshButton)
             add(deltaButton)
-            add(codeGraphButton)
-            add(archiveButton)
         }
         val toolbarRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = false
@@ -3222,10 +3225,22 @@ class SpecWorkflowPanel(
         } else {
             "spec.toolwindow.tasks.execute.progress"
         }
+        val cancellationHandleRef =
+            AtomicReference<SpecTaskExecutionService.TaskExecutionCancellationHandle?>()
+        val cancelRequested = AtomicBoolean(false)
         SpecWorkflowActionSupport.runBackground(
             project = project,
             title = SpecCodingBundle.message(progressKey, taskId),
             task = {
+                val onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = { handle ->
+                    cancellationHandleRef.set(handle)
+                    if (cancelRequested.get()) {
+                        specTaskExecutionService.cancelExecutionRun(
+                            workflowId = handle.workflowId,
+                            runId = handle.runId,
+                        )
+                    }
+                }
                 val previousRunId = if (retry) {
                     specTaskExecutionService.listRuns(workflowId, taskId)
                         .firstOrNull { run -> run.status.isTerminal() }
@@ -3242,6 +3257,7 @@ class SpecWorkflowPanel(
                         operationMode = executionContext.operationMode,
                         previousRunId = previousRunId,
                         auditContext = auditContext,
+                        onRequestRegistered = onRequestRegistered,
                     )
                 } else {
                     specTaskExecutionService.startAiExecution(
@@ -3251,6 +3267,7 @@ class SpecWorkflowPanel(
                         modelId = executionContext.modelId,
                         operationMode = executionContext.operationMode,
                         auditContext = auditContext,
+                        onRequestRegistered = onRequestRegistered,
                     )
                 }
             },
@@ -3264,6 +3281,24 @@ class SpecWorkflowPanel(
                 publishWorkflowChatRefresh(workflowId, taskId, "spec_task_execution_updated")
                 reloadCurrentWorkflow()
             },
+            onCancelRequested = {
+                if (cancelRequested.compareAndSet(false, true)) {
+                    cancellationHandleRef.get()?.let { handle ->
+                        specTaskExecutionService.cancelExecutionRun(
+                            workflowId = handle.workflowId,
+                            runId = handle.runId,
+                        )
+                    }
+                    invokeLaterSafe {
+                        setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.execution.cancel.requested", taskId))
+                    }
+                }
+            },
+            onCancelled = {
+                setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.execution.cancelled", taskId))
+                publishWorkflowChatRefresh(workflowId, taskId, "spec_task_execution_cancelled")
+                reloadCurrentWorkflow()
+            },
             onFailure = { error ->
                 val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
                 setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
@@ -3274,6 +3309,25 @@ class SpecWorkflowPanel(
                     message,
                     SpecCodingBundle.message(progressKey, taskId),
                 )
+            },
+        )
+    }
+
+    private fun onTaskExecutionCancelRequested(taskId: String) {
+        val workflowId = selectedWorkflowId ?: return
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.toolwindow.tasks.execution.cancel.progress", taskId),
+            task = {
+                specTaskExecutionService.cancelExecution(
+                    workflowId = workflowId,
+                    taskId = taskId,
+                )
+            },
+            onSuccess = {
+                setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.execution.cancelled", taskId))
+                publishWorkflowChatRefresh(workflowId, taskId, "spec_task_execution_cancelled")
+                reloadCurrentWorkflow()
             },
         )
     }
@@ -4479,6 +4533,11 @@ class SpecWorkflowPanel(
                 if (!tasksPanel.requestCompletionForTask(taskId)) {
                     setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.complete.failed", taskId))
                 }
+            }
+
+            SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION -> {
+                val taskId = action.taskId ?: return
+                onTaskExecutionCancelRequested(taskId)
             }
 
             SpecWorkflowWorkbenchActionKind.RUN_VERIFY -> {

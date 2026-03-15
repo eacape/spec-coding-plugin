@@ -41,6 +41,12 @@ import com.intellij.openapi.wm.ToolWindowManager
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Locale
+import java.util.concurrent.Callable
+import java.util.concurrent.CancellationException
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal object SpecWorkflowActionSupport {
     private const val TOOL_WINDOW_ID = ChatToolWindowFactory.TOOL_WINDOW_ID
@@ -81,6 +87,8 @@ internal object SpecWorkflowActionSupport {
         cancellable: Boolean = true,
         task: () -> T,
         onSuccess: (T) -> Unit,
+        onCancelRequested: (() -> Unit)? = null,
+        onCancelled: (() -> Unit)? = null,
         onFailure: (Throwable) -> Unit = { error ->
             showErrorDialog(
                 project = project,
@@ -92,23 +100,107 @@ internal object SpecWorkflowActionSupport {
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, title, cancellable) {
                 private var outcome: Result<T>? = null
+                private val cancelHandled = AtomicBoolean(false)
+                private val completionHandled = AtomicBoolean(false)
 
                 override fun run(indicator: ProgressIndicator) {
                     indicator.isIndeterminate = true
                     indicator.text = title
+                    if (cancellable && onCancelRequested != null) {
+                        val worker = ApplicationManager.getApplication().executeOnPooledThread(
+                            Callable {
+                                captureBackgroundTaskOutcome(task)
+                            },
+                        )
+                        try {
+                            while (true) {
+                                if (indicator.isCanceled) {
+                                    if (cancelHandled.compareAndSet(false, true)) {
+                                        onCancelRequested.invoke()
+                                    }
+                                    worker.cancel(true)
+                                    throw ProcessCanceledException()
+                                }
+                                try {
+                                    outcome = unwrapBackgroundTaskOutcome(
+                                        outcome = worker.get(BACKGROUND_TASK_POLL_MILLIS, TimeUnit.MILLISECONDS),
+                                        indicatorCancelled = indicator.isCanceled,
+                                    )
+                                    return
+                                } catch (_: TimeoutException) {
+                                    continue
+                                } catch (cancel: CancellationException) {
+                                    if (indicator.isCanceled) {
+                                        throw ProcessCanceledException()
+                                    }
+                                    outcome = Result.failure(cancel)
+                                    return
+                                } catch (execution: ExecutionException) {
+                                    val cause = execution.cause ?: execution
+                                    if (cause is ProcessCanceledException) {
+                                        throw cause
+                                    }
+                                    if (cause is CancellationException && indicator.isCanceled) {
+                                        throw ProcessCanceledException()
+                                    }
+                                    outcome = Result.failure(cause)
+                                    return
+                                }
+                            }
+                        } finally {
+                            if (indicator.isCanceled && !worker.isDone) {
+                                worker.cancel(true)
+                            }
+                        }
+                    }
                     outcome = try {
                         Result.success(task())
                     } catch (cancel: ProcessCanceledException) {
-                        throw cancel
+                        Result.failure(cancel)
                     } catch (error: Throwable) {
                         Result.failure(error)
                     }
                 }
 
                 override fun onSuccess() {
-                    outcome
-                        ?.onSuccess(onSuccess)
-                        ?.onFailure(onFailure)
+                    deliverOutcome(cancelHandled.get())
+                }
+
+                override fun onCancel() {
+                    if (onCancelRequested != null && cancelHandled.compareAndSet(false, true)) {
+                        onCancelRequested.invoke()
+                    }
+                    if (outcome != null) {
+                        deliverOutcome(cancelled = true)
+                    }
+                }
+
+                private fun deliverOutcome(cancelled: Boolean) {
+                    if (!completionHandled.compareAndSet(false, true)) {
+                        return
+                    }
+                    val resolvedOutcome = outcome
+                    if (resolvedOutcome == null) {
+                        if (cancelled) {
+                            onCancelled?.invoke()
+                        }
+                        return
+                    }
+                    resolvedOutcome
+                        .onSuccess { result ->
+                            if (cancelled) {
+                                onCancelled?.invoke()
+                            } else {
+                                onSuccess(result)
+                            }
+                        }
+                        .onFailure { error ->
+                            if (cancelled || error is ProcessCanceledException || error is CancellationException) {
+                                onCancelled?.invoke()
+                            } else {
+                                onFailure(error)
+                            }
+                        }
                 }
             },
         )
@@ -606,6 +698,41 @@ internal object SpecWorkflowActionSupport {
         val plan: VerifyPlan,
         val scopeTasks: List<StructuredTask>,
     )
+
+    internal sealed interface BackgroundTaskOutcome<out T> {
+        data class Success<T>(val value: T) : BackgroundTaskOutcome<T>
+
+        data class Failure(val error: Throwable) : BackgroundTaskOutcome<Nothing>
+    }
+
+    private const val BACKGROUND_TASK_POLL_MILLIS = 50L
+
+    internal fun <T> captureBackgroundTaskOutcome(task: () -> T): BackgroundTaskOutcome<T> {
+        return try {
+            BackgroundTaskOutcome.Success(task())
+        } catch (error: Throwable) {
+            BackgroundTaskOutcome.Failure(error)
+        }
+    }
+
+    internal fun <T> unwrapBackgroundTaskOutcome(
+        outcome: BackgroundTaskOutcome<T>,
+        indicatorCancelled: Boolean,
+    ): Result<T> {
+        return when (outcome) {
+            is BackgroundTaskOutcome.Success -> Result.success(outcome.value)
+            is BackgroundTaskOutcome.Failure -> {
+                val error = outcome.error
+                if (error is ProcessCanceledException) {
+                    throw error
+                }
+                if (error is CancellationException && indicatorCancelled) {
+                    throw ProcessCanceledException()
+                }
+                Result.failure(error)
+            }
+        }
+    }
 
     private fun openSpecTab(project: Project, afterOpen: () -> Unit) {
         val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(TOOL_WINDOW_ID) ?: return

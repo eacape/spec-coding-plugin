@@ -6,7 +6,10 @@ import com.eacape.speccodingplugin.context.ContextSnapshot
 import com.eacape.speccodingplugin.context.ContextType
 import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.core.SpecCodingProjectService
+import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
+import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
 import com.eacape.speccodingplugin.llm.LlmResponse
+import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
@@ -22,6 +25,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
 
 @Service(Service.Level.PROJECT)
@@ -32,6 +37,14 @@ class SpecTaskExecutionService(private val project: Project) {
         val modelId: String?,
         val contextSnapshot: ContextSnapshot?,
         val operationMode: OperationMode,
+        val requestId: String,
+    )
+
+    data class TaskExecutionCancellationHandle(
+        val workflowId: String,
+        val taskId: String,
+        val runId: String,
+        val providerId: String?,
         val requestId: String,
     )
 
@@ -59,6 +72,7 @@ class SpecTaskExecutionService(private val project: Project) {
     private var _projectServiceOverride: SpecCodingProjectService? = null
     private var _sessionManagerOverride: SessionManager? = null
     private var _chatExecutorOverride: (suspend (TaskExecutionChatRequest) -> LlmResponse)? = null
+    private var _requestCancellerOverride: ((String?, String) -> Unit)? = null
 
     private val storage: SpecStorage by lazy { _storageOverride ?: SpecStorage.getInstance(project) }
     private val tasksService: SpecTasksService by lazy { _tasksServiceOverride ?: SpecTasksService(project) }
@@ -82,6 +96,10 @@ class SpecTaskExecutionService(private val project: Project) {
             )
         }
     }
+    private val requestCanceller: (String?, String) -> Unit by lazy {
+        _requestCancellerOverride ?: ::cancelRequestAcrossProviders
+    }
+    private val activeRequestHandles = ConcurrentHashMap<String, TaskExecutionCancellationHandle>()
 
     internal constructor(
         project: Project,
@@ -91,6 +109,7 @@ class SpecTaskExecutionService(private val project: Project) {
         projectService: SpecCodingProjectService,
         sessionManager: SessionManager,
         chatExecutor: suspend (TaskExecutionChatRequest) -> LlmResponse,
+        requestCanceller: (String?, String) -> Unit = { _, _ -> },
     ) : this(project) {
         _storageOverride = storage
         _tasksServiceOverride = tasksService
@@ -98,6 +117,7 @@ class SpecTaskExecutionService(private val project: Project) {
         _projectServiceOverride = projectService
         _sessionManagerOverride = sessionManager
         _chatExecutorOverride = chatExecutor
+        _requestCancellerOverride = requestCanceller
     }
 
     fun listRuns(workflowId: String, taskId: String? = null): List<TaskExecutionRun> {
@@ -122,6 +142,7 @@ class SpecTaskExecutionService(private val project: Project) {
         sessionId: String? = null,
         sessionSource: WorkflowChatEntrySource = WorkflowChatEntrySource.TASK_PANEL,
         auditContext: Map<String, String> = emptyMap(),
+        onRequestRegistered: (TaskExecutionCancellationHandle) -> Unit = {},
     ): TaskAiExecutionResult {
         return executeWithAi(
             workflowId = workflowId,
@@ -134,6 +155,7 @@ class SpecTaskExecutionService(private val project: Project) {
             sessionId = sessionId,
             sessionSource = sessionSource,
             auditContext = auditContext,
+            onRequestRegistered = onRequestRegistered,
         )
     }
 
@@ -147,6 +169,7 @@ class SpecTaskExecutionService(private val project: Project) {
         sessionId: String? = null,
         sessionSource: WorkflowChatEntrySource = WorkflowChatEntrySource.TASK_PANEL,
         auditContext: Map<String, String> = emptyMap(),
+        onRequestRegistered: (TaskExecutionCancellationHandle) -> Unit = {},
     ): TaskAiExecutionResult {
         return executeWithAi(
             workflowId = workflowId,
@@ -159,6 +182,7 @@ class SpecTaskExecutionService(private val project: Project) {
             sessionId = sessionId,
             sessionSource = sessionSource,
             auditContext = auditContext,
+            onRequestRegistered = onRequestRegistered,
         )
     }
 
@@ -209,6 +233,9 @@ class SpecTaskExecutionService(private val project: Project) {
             finishedAt = resolvedFinishedAt,
             summary = normalizedSummary,
         )
+        if (updatedRun.status.isTerminal()) {
+            activeRequestHandles.remove(updatedRun.runId)
+        }
         val updatedWorkflow = workflow.copy(
             taskExecutionRuns = replaceRun(workflow.taskExecutionRuns, updatedRun),
             updatedAt = System.currentTimeMillis(),
@@ -228,6 +255,51 @@ class SpecTaskExecutionService(private val project: Project) {
             ),
         ).getOrThrow()
         return updatedRun
+    }
+
+    fun cancelExecution(
+        workflowId: String,
+        taskId: String,
+        summary: String = USER_CANCELLED_RUN_SUMMARY,
+    ): TaskExecutionRun? {
+        val workflow = storage.loadWorkflow(workflowId).getOrThrow()
+        val normalizedTaskId = normalizeTaskId(taskId)
+        val activeRun = workflow.taskExecutionRuns
+            .asSequence()
+            .filter { run -> run.taskId == normalizedTaskId && !run.status.isTerminal() }
+            .maxWithOrNull(compareBy<TaskExecutionRun> { it.startedAt }.thenBy { it.runId })
+            ?: return null
+        return cancelExecutionRun(
+            workflowId = workflowId,
+            runId = activeRun.runId,
+            summary = summary,
+        )
+    }
+
+    fun cancelExecutionRun(
+        workflowId: String,
+        runId: String,
+        summary: String = USER_CANCELLED_RUN_SUMMARY,
+    ): TaskExecutionRun? {
+        val workflow = storage.loadWorkflow(workflowId).getOrThrow()
+        val normalizedRunId = runId.trim().takeIf(String::isNotBlank) ?: return null
+        val currentRun = workflow.taskExecutionRuns.firstOrNull { run -> run.runId == normalizedRunId } ?: return null
+        if (currentRun.status == TaskExecutionRunStatus.CANCELLED) {
+            return currentRun
+        }
+        if (currentRun.status.isTerminal() || !currentRun.status.canTransitionTo(TaskExecutionRunStatus.CANCELLED)) {
+            return currentRun
+        }
+        val cancellationHandle = activeRequestHandles[currentRun.runId]
+        val cancelledRun = updateRunStatus(
+            workflowId = workflowId,
+            runId = currentRun.runId,
+            status = TaskExecutionRunStatus.CANCELLED,
+            summary = summary,
+        )
+        activeRequestHandles.remove(currentRun.runId)
+        cancellationHandle?.let { handle -> requestCanceller(handle.providerId, handle.requestId) }
+        return cancelledRun
     }
 
     fun resolveWaitingConfirmationRun(
@@ -301,6 +373,7 @@ class SpecTaskExecutionService(private val project: Project) {
         sessionId: String?,
         sessionSource: WorkflowChatEntrySource,
         auditContext: Map<String, String>,
+        onRequestRegistered: (TaskExecutionCancellationHandle) -> Unit,
     ): TaskAiExecutionResult {
         val workflow = storage.loadWorkflow(workflowId).getOrThrow()
         val task = resolveTask(workflowId, taskId)
@@ -322,6 +395,15 @@ class SpecTaskExecutionService(private val project: Project) {
             sessionSource = sessionSource,
         )
         val requestId = UUID.randomUUID().toString()
+        val cancellationHandle = TaskExecutionCancellationHandle(
+            workflowId = workflowId,
+            taskId = task.id,
+            runId = queuedRun.runId,
+            providerId = providerId,
+            requestId = requestId,
+        )
+        activeRequestHandles[queuedRun.runId] = cancellationHandle
+        onRequestRegistered(cancellationHandle)
         val prompt = buildExecutionPrompt(
             workflow = workflow,
             task = task,
@@ -358,11 +440,13 @@ class SpecTaskExecutionService(private val project: Project) {
         normalizeTaskLifecycleForExecution(workflowId, task, executionAuditContext)
 
         return try {
+            ensureRunNotCancelled(workflowId, queuedRun.runId)
             updateRunStatus(
                 workflowId = workflowId,
                 runId = queuedRun.runId,
                 status = TaskExecutionRunStatus.RUNNING,
             )
+            ensureRunNotCancelled(workflowId, queuedRun.runId)
             val response = runBlocking {
                 chatExecutor(
                     TaskExecutionChatRequest(
@@ -375,6 +459,7 @@ class SpecTaskExecutionService(private val project: Project) {
                     ),
                 )
             }
+            ensureRunNotCancelled(workflowId, queuedRun.runId)
             val assistantReply = response.content.trim()
             val completedRun = updateRunStatus(
                 workflowId = workflowId,
@@ -402,7 +487,39 @@ class SpecTaskExecutionService(private val project: Project) {
                 assistantReply = assistantReply,
                 previousRunId = previousRun?.runId,
             )
+        } catch (cancel: CancellationException) {
+            val cancelSummary = summarizeCancellation(cancel)
+            persistExecutionMessage(
+                sessionId = session.id,
+                role = ConversationRole.SYSTEM,
+                content = cancelSummary,
+                run = loadRun(workflowId, queuedRun.runId) ?: queuedRun,
+                workflowId = workflowId,
+                requestId = requestId,
+                providerId = providerId,
+                modelId = modelId,
+                previousRunId = previousRun?.runId,
+            )
+            markRunCancelled(workflowId, queuedRun.runId, cancelSummary)
+            throw cancel
         } catch (error: Throwable) {
+            val cancelledRun = loadRun(workflowId, queuedRun.runId)
+                ?.takeIf { run -> run.status == TaskExecutionRunStatus.CANCELLED }
+            if (cancelledRun != null) {
+                val cancelSummary = cancelledRun.summary ?: USER_CANCELLED_RUN_SUMMARY
+                persistExecutionMessage(
+                    sessionId = session.id,
+                    role = ConversationRole.SYSTEM,
+                    content = cancelSummary,
+                    run = cancelledRun,
+                    workflowId = workflowId,
+                    requestId = requestId,
+                    providerId = providerId,
+                    modelId = modelId,
+                    previousRunId = previousRun?.runId,
+                )
+                throw CancellationException(cancelSummary)
+            }
             val failureSummary = summarizeFailure(error)
             persistExecutionMessage(
                 sessionId = session.id,
@@ -423,6 +540,8 @@ class SpecTaskExecutionService(private val project: Project) {
                 auditContext = executionAuditContext,
             )
             throw error
+        } finally {
+            activeRequestHandles.remove(queuedRun.runId)
         }
     }
 
@@ -898,6 +1017,41 @@ class SpecTaskExecutionService(private val project: Project) {
             ?: throw MissingStructuredTaskError(normalizedTaskId)
     }
 
+    private fun loadRun(workflowId: String, runId: String): TaskExecutionRun? {
+        val normalizedRunId = runId.trim().takeIf(String::isNotBlank) ?: return null
+        return storage.loadWorkflow(workflowId).getOrThrow()
+            .taskExecutionRuns
+            .firstOrNull { run -> run.runId == normalizedRunId }
+    }
+
+    private fun ensureRunNotCancelled(workflowId: String, runId: String) {
+        val currentRun = loadRun(workflowId, runId) ?: return
+        if (currentRun.status == TaskExecutionRunStatus.CANCELLED) {
+            throw CancellationException(currentRun.summary ?: USER_CANCELLED_RUN_SUMMARY)
+        }
+    }
+
+    private fun markRunCancelled(
+        workflowId: String,
+        runId: String,
+        cancelSummary: String,
+    ) {
+        val workflow = storage.loadWorkflow(workflowId).getOrThrow()
+        val currentRun = workflow.taskExecutionRuns.firstOrNull { run -> run.runId == runId } ?: return
+        if (currentRun.status == TaskExecutionRunStatus.CANCELLED) {
+            return
+        }
+        if (currentRun.status.isTerminal() || !currentRun.status.canTransitionTo(TaskExecutionRunStatus.CANCELLED)) {
+            return
+        }
+        updateRunStatus(
+            workflowId = workflowId,
+            runId = runId,
+            status = TaskExecutionRunStatus.CANCELLED,
+            summary = cancelSummary,
+        )
+    }
+
     private fun markRunFailed(
         workflowId: String,
         runId: String,
@@ -936,6 +1090,11 @@ class SpecTaskExecutionService(private val project: Project) {
         }
     }
 
+    private fun summarizeCancellation(error: CancellationException): String {
+        val message = error.message?.trim().orEmpty()
+        return message.takeIf(String::isNotBlank)?.take(RUN_SUMMARY_CHAR_LIMIT) ?: USER_CANCELLED_RUN_SUMMARY
+    }
+
     private fun buildQueuedSummary(
         trigger: ExecutionTrigger,
         previousRun: TaskExecutionRun?,
@@ -957,6 +1116,13 @@ class SpecTaskExecutionService(private val project: Project) {
         return normalizedTaskId
     }
 
+    private fun cancelRequestAcrossProviders(providerId: String?, requestId: String) {
+        val router = LlmRouter.getInstance()
+        router.cancel(providerId = providerId, requestId = requestId)
+        router.cancel(providerId = ClaudeCliLlmProvider.ID, requestId = requestId)
+        router.cancel(providerId = CodexCliLlmProvider.ID, requestId = requestId)
+    }
+
     companion object {
         private val TASK_ID_REGEX = Regex("""^T-\d{3}$""")
         private val ORDERED_LIST_REGEX = Regex("""^\d+\.\s+""")
@@ -967,6 +1133,7 @@ class SpecTaskExecutionService(private val project: Project) {
         private const val RUN_SUMMARY_CHAR_LIMIT = 260
         private const val DOCUMENT_SUMMARY_CHAR_LIMIT = 240
         private const val MAX_CLARIFICATION_LINES = 12
+        private const val USER_CANCELLED_RUN_SUMMARY = "AI execution cancelled by user."
 
         fun getInstance(project: Project): SpecTaskExecutionService = project.service()
     }

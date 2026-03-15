@@ -55,6 +55,7 @@ class WorkflowChatActionRouter(private val project: Project) {
         providerId: String?,
         modelId: String?,
         operationMode: OperationMode,
+        onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = {},
     ): SpecTaskExecutionService.TaskAiExecutionResult {
         val context = resolveBoundTaskContext(sessionId)
         return executionService.startAiExecution(
@@ -69,6 +70,7 @@ class WorkflowChatActionRouter(private val project: Project) {
                 context = context,
                 action = WorkflowChatActionIntent.EXECUTE_TASK,
             ),
+            onRequestRegistered = onRequestRegistered,
         )
     }
 
@@ -78,6 +80,7 @@ class WorkflowChatActionRouter(private val project: Project) {
         modelId: String?,
         operationMode: OperationMode,
         previousRunId: String? = null,
+        onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = {},
     ): SpecTaskExecutionService.TaskAiExecutionResult {
         val context = resolveBoundTaskContext(sessionId)
         return executionService.retryAiExecution(
@@ -93,6 +96,7 @@ class WorkflowChatActionRouter(private val project: Project) {
                 context = context,
                 action = WorkflowChatActionIntent.RETRY_TASK,
             ),
+            onRequestRegistered = onRequestRegistered,
         )
     }
 

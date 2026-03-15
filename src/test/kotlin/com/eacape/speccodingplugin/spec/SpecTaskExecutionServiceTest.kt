@@ -14,6 +14,7 @@ import io.mockk.mockk
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -21,6 +22,10 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CancellationException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 class SpecTaskExecutionServiceTest {
 
@@ -272,6 +277,122 @@ class SpecTaskExecutionServiceTest {
     }
 
     @Test
+    fun `cancelExecution should stop active run without blocking task lifecycle`() {
+        val workflowId = "wf-ai-cancel"
+        seedWorkflow(workflowId)
+
+        val requestReady = CountDownLatch(1)
+        val allowResponse = CountDownLatch(1)
+        val capturedHandle =
+            AtomicReference<SpecTaskExecutionService.TaskExecutionCancellationHandle?>()
+        val cancelledRequests = mutableListOf<String>()
+        val executionService = newExecutionService(
+            chatExecutor = {
+                requestReady.countDown()
+                allowResponse.await(5, TimeUnit.SECONDS)
+                LlmResponse(
+                    content = "Should not be applied after cancellation.",
+                    model = "mock-model-v1",
+                    usage = LlmUsage(),
+                    finishReason = "stop",
+                )
+            },
+            requestCanceller = { _, requestId ->
+                cancelledRequests += requestId
+            },
+        )
+
+        val executionThread = Thread {
+            runCatching {
+                executionService.startAiExecution(
+                    workflowId = workflowId,
+                    taskId = "T-001",
+                    providerId = "mock",
+                    modelId = "mock-model-v1",
+                    operationMode = OperationMode.AUTO,
+                    onRequestRegistered = capturedHandle::set,
+                )
+            }
+        }
+
+        executionThread.start()
+        assertTrue(requestReady.await(5, TimeUnit.SECONDS))
+
+        val handle = capturedHandle.get()
+        assertNotNull(handle)
+        val cancelledRun = executionService.cancelExecution(workflowId, "T-001")
+        allowResponse.countDown()
+        executionThread.join(5_000)
+
+        val persistedRun = executionService.listRuns(workflowId, "T-001").single()
+        val persistedTask = tasksService.parse(workflowId).single()
+
+        assertEquals(TaskExecutionRunStatus.CANCELLED, cancelledRun?.status)
+        assertEquals(TaskExecutionRunStatus.CANCELLED, persistedRun.status)
+        assertEquals(TaskStatus.PENDING, persistedTask.status)
+        assertEquals(listOf(handle!!.requestId), cancelledRequests)
+        assertTrue(persistedRun.summary.orEmpty().contains("cancelled", ignoreCase = true))
+    }
+
+    @Test
+    fun `startAiExecution should keep cancellation semantics when provider exits with error after stop request`() {
+        val workflowId = "wf-ai-cancel-provider-error"
+        seedWorkflow(workflowId)
+
+        val requestReady = CountDownLatch(1)
+        val allowFailure = CountDownLatch(1)
+        val capturedHandle =
+            AtomicReference<SpecTaskExecutionService.TaskExecutionCancellationHandle?>()
+        val capturedError = AtomicReference<Throwable?>()
+        val cancelledRequests = mutableListOf<String>()
+        val executionService = newExecutionService(
+            chatExecutor = {
+                requestReady.countDown()
+                allowFailure.await(5, TimeUnit.SECONDS)
+                throw IllegalStateException("CLI process destroyed")
+            },
+            requestCanceller = { _, requestId ->
+                cancelledRequests += requestId
+            },
+        )
+
+        val executionThread = Thread {
+            runCatching {
+                executionService.startAiExecution(
+                    workflowId = workflowId,
+                    taskId = "T-001",
+                    providerId = "mock",
+                    modelId = "mock-model-v1",
+                    operationMode = OperationMode.AUTO,
+                    onRequestRegistered = capturedHandle::set,
+                )
+            }.onFailure { error ->
+                capturedError.set(error)
+            }
+        }
+
+        executionThread.start()
+        assertTrue(requestReady.await(5, TimeUnit.SECONDS))
+
+        val handle = capturedHandle.get()
+        assertNotNull(handle)
+        executionService.cancelExecution(workflowId, "T-001")
+        allowFailure.countDown()
+        executionThread.join(5_000)
+
+        val persistedRun = executionService.listRuns(workflowId, "T-001").single()
+        val persistedTask = tasksService.parse(workflowId).single()
+        val session = sessionManager.listSessions().single()
+        val messages = sessionManager.listMessages(session.id)
+
+        assertTrue(capturedError.get() is CancellationException)
+        assertEquals(TaskExecutionRunStatus.CANCELLED, persistedRun.status)
+        assertEquals(TaskStatus.PENDING, persistedTask.status)
+        assertEquals(listOf(handle!!.requestId), cancelledRequests)
+        assertTrue(messages.last().content.contains("cancelled", ignoreCase = true))
+    }
+
+    @Test
     fun `startAiExecution should fail run and block task when chat execution fails`() {
         val workflowId = "wf-ai-fail"
         seedWorkflow(workflowId)
@@ -414,6 +535,7 @@ class SpecTaskExecutionServiceTest {
                 finishReason = "stop",
             )
         },
+        requestCanceller: (String?, String) -> Unit = { _, _ -> },
     ): SpecTaskExecutionService {
         return SpecTaskExecutionService(
             project = project,
@@ -423,6 +545,7 @@ class SpecTaskExecutionServiceTest {
             projectService = projectService,
             sessionManager = sessionManager,
             chatExecutor = chatExecutor,
+            requestCanceller = requestCanceller,
         )
     }
 

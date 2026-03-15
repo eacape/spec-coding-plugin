@@ -306,6 +306,11 @@ class SpecWorkflowOverviewPanelTest {
             snapshot.getValue("focusSummary"),
         )
         assertEquals(StageId.IMPLEMENT.name, snapshot.getValue("focusedStage"))
+        assertTrue(
+            snapshot.getValue("overflowActions").contains(
+                SpecCodingBundle.message("spec.toolwindow.overview.more.stopTaskExecution", "T-001"),
+            ),
+        )
 
         panel.clickPrimaryActionForTest()
         assertEquals(SpecWorkflowWorkbenchActionKind.COMPLETE_TASK, actionKind)

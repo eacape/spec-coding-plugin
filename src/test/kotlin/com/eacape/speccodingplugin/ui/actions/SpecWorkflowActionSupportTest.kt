@@ -19,10 +19,13 @@ import com.eacape.speccodingplugin.spec.VerifyRunResult
 import com.eacape.speccodingplugin.spec.WorkflowMeta
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
+import com.intellij.openapi.progress.ProcessCanceledException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import java.nio.file.Path
+import java.util.concurrent.CancellationException
 
 class SpecWorkflowActionSupportTest {
 
@@ -190,6 +193,35 @@ class SpecWorkflowActionSupportTest {
         assertTrue(summary.contains("gradle-test: SUCCESS"))
         assertTrue(summary.contains("truncated"))
         assertTrue(summary.contains("redacted"))
+    }
+
+    @Test
+    fun `capture background task outcome should keep cancellation as data instead of throwing`() {
+        val outcome = SpecWorkflowActionSupport.captureBackgroundTaskOutcome<String> {
+            throw CancellationException("AI execution cancelled by user.")
+        }
+
+        val resolved = SpecWorkflowActionSupport.unwrapBackgroundTaskOutcome(
+            outcome = outcome,
+            indicatorCancelled = false,
+        )
+
+        assertTrue(resolved.isFailure)
+        assertTrue(resolved.exceptionOrNull() is CancellationException)
+    }
+
+    @Test
+    fun `unwrap background task outcome should convert cancelled indicator to process cancelled exception`() {
+        val outcome = SpecWorkflowActionSupport.BackgroundTaskOutcome.Failure(
+            CancellationException("AI execution cancelled by user."),
+        )
+
+        assertThrows(ProcessCanceledException::class.java) {
+            SpecWorkflowActionSupport.unwrapBackgroundTaskOutcome(
+                outcome = outcome,
+                indicatorCancelled = true,
+            )
+        }
     }
 
     private fun workflowMeta(

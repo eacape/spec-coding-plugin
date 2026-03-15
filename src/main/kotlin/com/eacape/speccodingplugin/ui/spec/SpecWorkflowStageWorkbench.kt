@@ -21,6 +21,7 @@ internal enum class SpecWorkflowWorkbenchActionKind {
     START_TASK,
     RESUME_TASK,
     COMPLETE_TASK,
+    STOP_TASK_EXECUTION,
     RUN_VERIFY,
     PREVIEW_VERIFY_PLAN,
     OPEN_VERIFICATION,
@@ -160,6 +161,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 overviewState = overviewState,
                 focusedStage = resolvedFocusedStage,
                 verifyDeltaState = verifyDeltaState,
+                implementationFocus = implementationFocus,
             ),
             blockers = blockers,
             focusDetails = buildFocusDetails(
@@ -380,9 +382,26 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         overviewState: SpecWorkflowOverviewState,
         focusedStage: StageId,
         verifyDeltaState: SpecWorkflowVerifyDeltaState?,
+        implementationFocus: SpecWorkflowImplementationFocus?,
     ): List<SpecWorkflowWorkbenchAction> {
         return buildList {
             when (focusedStage) {
+                StageId.IMPLEMENT -> {
+                    if (implementationFocus?.status == TaskStatus.IN_PROGRESS) {
+                        add(
+                            SpecWorkflowWorkbenchAction(
+                                kind = SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION,
+                                label = SpecCodingBundle.message(
+                                    "spec.toolwindow.overview.more.stopTaskExecution",
+                                    implementationFocus.taskId,
+                                ),
+                                enabled = true,
+                                taskId = implementationFocus.taskId,
+                            ),
+                        )
+                    }
+                }
+
                 StageId.VERIFY -> {
                     if (verifyDeltaState?.verifyEnabled == true) {
                         add(

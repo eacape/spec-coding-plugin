@@ -503,6 +503,12 @@ class SpecWorkflowOverviewPresenterTest {
         assertEquals("T-001", workbenchState.implementationFocus?.taskId)
         assertEquals(TaskStatus.IN_PROGRESS, workbenchState.implementationFocus?.status)
         assertTrue(workbenchState.primaryAction?.enabled == true)
+        assertTrue(
+            workbenchState.overflowActions.any { action ->
+                action.kind == SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION &&
+                    action.taskId == "T-001"
+            },
+        )
     }
 
     @Test

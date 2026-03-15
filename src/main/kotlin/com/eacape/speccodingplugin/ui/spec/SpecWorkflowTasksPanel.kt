@@ -30,6 +30,7 @@ import javax.swing.SwingConstants
 
 internal class SpecWorkflowTasksPanel(
     private val onTransitionStatus: (taskId: String, to: TaskStatus) -> Unit = { _, _ -> },
+    private val onCancelExecution: (taskId: String) -> Unit = {},
     private val onExecuteTask: (taskId: String, retry: Boolean) -> Unit = { _, _ -> },
     private val onOpenWorkflowChat: (workflowId: String, taskId: String) -> Unit = { _, _ -> },
     private val onUpdateDependsOn: (taskId: String, dependsOn: List<String>) -> Unit = { _, _ -> },
@@ -302,7 +303,16 @@ internal class SpecWorkflowTasksPanel(
     internal fun triggerSecondaryActionForTest(targetStatus: TaskStatus): Boolean {
         val selectedTask = tasksList.selectedValue ?: return false
         val action = buildSecondaryActions(selectedTask).firstOrNull { it.targetStatus == targetStatus } ?: return false
-        onTransitionStatus(selectedTask.id, action.targetStatus)
+        action.perform()
+        return true
+    }
+
+    internal fun triggerStopExecutionForTest(): Boolean {
+        val selectedTask = tasksList.selectedValue ?: return false
+        val action = buildSecondaryActions(selectedTask)
+            .firstOrNull { it.actionId == TaskSecondaryActionId.STOP_EXECUTION }
+            ?: return false
+        action.perform()
         return true
     }
 
@@ -567,7 +577,7 @@ internal class SpecWorkflowTasksPanel(
         SpecUiStyle.applyIconActionPresentation(
             button = editRelatedFilesButton,
             presentation = SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.Edit,
+                icon = SpecWorkflowIcons.RelatedFilesEdit,
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"),
                 enabled = disabledReason == null,
@@ -614,7 +624,7 @@ internal class SpecWorkflowTasksPanel(
                     icon = action.icon
                     accessibleContext.accessibleName = action.label
                     accessibleContext.accessibleDescription = action.label
-                    addActionListener { onTransitionStatus(selectedTask.id, action.targetStatus) }
+                    addActionListener { action.perform() }
                 },
             )
         }
@@ -656,17 +666,16 @@ internal class SpecWorkflowTasksPanel(
     }
 
     private fun buildSecondaryActions(task: StructuredTask): List<TaskSecondaryAction> {
-        if (task.displayStatus == TaskStatus.IN_PROGRESS) {
-            return emptyList()
-        }
-        return when (task.status) {
+        return when (task.displayStatus) {
             TaskStatus.PENDING -> listOf(
-                TaskSecondaryAction(
+                lifecycleSecondaryAction(
+                    taskId = task.id,
                     targetStatus = TaskStatus.BLOCKED,
                     label = SpecCodingBundle.message("spec.toolwindow.tasks.secondary.block", task.id),
                     icon = SpecWorkflowIcons.Pause,
                 ),
-                TaskSecondaryAction(
+                lifecycleSecondaryAction(
+                    taskId = task.id,
                     targetStatus = TaskStatus.CANCELLED,
                     label = SpecCodingBundle.message("spec.toolwindow.tasks.secondary.cancel", task.id),
                     icon = SpecWorkflowIcons.Close,
@@ -674,23 +683,49 @@ internal class SpecWorkflowTasksPanel(
             )
 
             TaskStatus.BLOCKED -> listOf(
-                TaskSecondaryAction(
+                lifecycleSecondaryAction(
+                    taskId = task.id,
                     targetStatus = TaskStatus.PENDING,
                     label = SpecCodingBundle.message("spec.toolwindow.tasks.secondary.reopen", task.id),
                     icon = SpecWorkflowIcons.Back,
                 ),
-                TaskSecondaryAction(
+                lifecycleSecondaryAction(
+                    taskId = task.id,
                     targetStatus = TaskStatus.CANCELLED,
                     label = SpecCodingBundle.message("spec.toolwindow.tasks.secondary.cancel", task.id),
                     icon = SpecWorkflowIcons.Close,
                 ),
             )
 
-            TaskStatus.IN_PROGRESS,
+            TaskStatus.IN_PROGRESS -> listOf(
+                TaskSecondaryAction(
+                    actionId = TaskSecondaryActionId.STOP_EXECUTION,
+                    targetStatus = null,
+                    label = SpecCodingBundle.message("spec.toolwindow.tasks.secondary.stopExecution", task.id),
+                    icon = SpecWorkflowIcons.Close,
+                    perform = { onCancelExecution(task.id) },
+                ),
+            )
+
             TaskStatus.COMPLETED,
             TaskStatus.CANCELLED,
             -> emptyList()
         }
+    }
+
+    private fun lifecycleSecondaryAction(
+        taskId: String,
+        targetStatus: TaskStatus,
+        label: String,
+        icon: javax.swing.Icon,
+    ): TaskSecondaryAction {
+        return TaskSecondaryAction(
+            actionId = TaskSecondaryActionId.LIFECYCLE,
+            targetStatus = targetStatus,
+            label = label,
+            icon = icon,
+            perform = { onTransitionStatus(taskId, targetStatus) },
+        )
     }
 
     private fun handleEditDependsOn() {
@@ -842,10 +877,17 @@ internal class SpecWorkflowTasksPanel(
         }
     }
 
+    private enum class TaskSecondaryActionId {
+        LIFECYCLE,
+        STOP_EXECUTION,
+    }
+
     private data class TaskSecondaryAction(
-        val targetStatus: TaskStatus,
+        val actionId: TaskSecondaryActionId,
+        val targetStatus: TaskStatus?,
         val label: String,
         val icon: javax.swing.Icon,
+        val perform: () -> Unit,
     )
 
     companion object {

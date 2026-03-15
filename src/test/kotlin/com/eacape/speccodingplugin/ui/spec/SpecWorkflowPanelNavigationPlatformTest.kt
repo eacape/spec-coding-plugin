@@ -1,4 +1,4 @@
-package com.eacape.speccodingplugin.ui.spec
+﻿package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.ClarificationFollowUp
@@ -74,12 +74,8 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals("", toolbar.getValue("delta.text"))
         assertEquals("history", toolbar.getValue("delta.iconId"))
         assertEquals("true", toolbar.getValue("delta.focusable"))
-        assertEquals("", toolbar.getValue("codeGraph.text"))
-        assertEquals("openToolWindow", toolbar.getValue("codeGraph.iconId"))
-        assertEquals("true", toolbar.getValue("codeGraph.focusable"))
-        assertEquals("", toolbar.getValue("archive.text"))
-        assertEquals("save", toolbar.getValue("archive.iconId"))
-        assertEquals("true", toolbar.getValue("archive.focusable"))
+        assertEquals("false", toolbar.getValue("codeGraph.visible"))
+        assertEquals("false", toolbar.getValue("archive.visible"))
 
         ApplicationManager.getApplication().invokeAndWait {
             panel.clickBackToListForTest()
@@ -578,6 +574,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals(task.id, tasksSnapshot.getValue("selectedTaskId"))
         assertEquals("complete", tasksSnapshot.getValue("executeIconId"))
         assertEquals("true", tasksSnapshot.getValue("executeFocusable"))
+        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION))
         assertTrue(persistedTasks.contains("status: PENDING"))
         assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
     }
@@ -741,3 +738,4 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         fail("Condition was not met within ${timeoutMs}ms")
     }
 }
+

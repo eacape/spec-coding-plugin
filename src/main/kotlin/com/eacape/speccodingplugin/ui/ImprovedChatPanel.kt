@@ -60,6 +60,7 @@ import com.eacape.speccodingplugin.spec.DocumentRevisionConflictException
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecGenerationProgress
 import com.eacape.speccodingplugin.spec.SpecPhase
+import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
 import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageId
@@ -160,6 +161,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.imageio.ImageIO
 import javax.swing.AbstractAction
 import javax.swing.Box
@@ -205,6 +207,7 @@ class ImprovedChatPanel(
     private val skillExecutor: SkillExecutor = SkillExecutor.getInstance(project)
     private val specEngine = SpecEngine.getInstance(project)
     private val specTasksService = SpecTasksService.getInstance(project)
+    private val specTaskExecutionService = SpecTaskExecutionService.getInstance(project)
     private val workflowChatActionRouter = WorkflowChatActionRouter.getInstance(project)
     private val workflowChatContextAssembler = WorkflowChatContextAssembler.getInstance(project)
     private val workflowChatTaskIntentResolver = WorkflowChatTaskIntentResolver.getInstance(project)
@@ -1184,16 +1187,29 @@ class ImprovedChatPanel(
         } else {
             "spec.toolwindow.tasks.execute.progress"
         }
+        val cancellationHandleRef =
+            AtomicReference<SpecTaskExecutionService.TaskExecutionCancellationHandle?>()
+        val cancelRequested = AtomicBoolean(false)
         SpecWorkflowActionSupport.runBackground(
             project = project,
             title = SpecCodingBundle.message(progressKey, taskId),
             task = {
+                val onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = { handle ->
+                    cancellationHandleRef.set(handle)
+                    if (cancelRequested.get()) {
+                        specTaskExecutionService.cancelExecutionRun(
+                            workflowId = handle.workflowId,
+                            runId = handle.runId,
+                        )
+                    }
+                }
                 if (retry) {
                     workflowChatActionRouter.retryBoundTask(
                         sessionId = sessionId,
                         providerId = executionContext.providerId,
                         modelId = executionContext.modelId,
                         operationMode = executionContext.operationMode,
+                        onRequestRegistered = onRequestRegistered,
                     )
                 } else {
                     workflowChatActionRouter.executeBoundTask(
@@ -1201,6 +1217,7 @@ class ImprovedChatPanel(
                         providerId = executionContext.providerId,
                         modelId = executionContext.modelId,
                         operationMode = executionContext.operationMode,
+                        onRequestRegistered = onRequestRegistered,
                     )
                 }
             },
@@ -1220,6 +1237,29 @@ class ImprovedChatPanel(
                 } else {
                     "workflow_chat_execute_task"
                 })
+                updateWorkflowBindingUi()
+            },
+            onCancelRequested = {
+                if (cancelRequested.compareAndSet(false, true)) {
+                    cancellationHandleRef.get()?.let { handle ->
+                        specTaskExecutionService.cancelExecutionRun(
+                            workflowId = handle.workflowId,
+                            runId = handle.runId,
+                        )
+                    }
+                    showStatus(
+                        SpecCodingBundle.message("spec.toolwindow.tasks.execution.cancel.requested", taskId),
+                        autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                    )
+                }
+            },
+            onCancelled = {
+                loadSession(sessionId)
+                showStatus(
+                    SpecCodingBundle.message("spec.toolwindow.tasks.execution.cancelled", taskId),
+                    autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+                )
+                publishSpecWorkflowChanged(binding.workflowId, reason = "workflow_chat_task_execution_cancelled")
                 updateWorkflowBindingUi()
             },
             onFailure = { error ->

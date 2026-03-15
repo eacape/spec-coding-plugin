@@ -23,6 +23,10 @@ internal enum class SpecWorkflowActionIcon(
     HISTORY("history", AllIcons.Vcs.HistoryInline),
     SAVE("save", AllIcons.General.OpenDisk),
     EDIT("edit", AllIcons.Actions.Edit),
+    RELATED_FILES_EDIT(
+        "relatedFilesEdit",
+        IconLoader.getIcon("/icons/spec-task-related-files-edit.svg", SpecWorkflowActionIcon::class.java),
+    ),
     ADD("add", AllIcons.General.Add),
     BACK("back", AllIcons.Actions.Back),
     FORWARD("forward", AllIcons.Actions.Forward),
@@ -45,6 +49,7 @@ internal object SpecWorkflowIcons {
     val History: Icon = SpecWorkflowActionIcon.HISTORY.icon
     val Save: Icon = SpecWorkflowActionIcon.SAVE.icon
     val Edit: Icon = SpecWorkflowActionIcon.EDIT.icon
+    val RelatedFilesEdit: Icon = SpecWorkflowActionIcon.RELATED_FILES_EDIT.icon
     val Add: Icon = SpecWorkflowActionIcon.ADD.icon
     val Back: Icon = SpecWorkflowActionIcon.BACK.icon
     val Forward: Icon = SpecWorkflowActionIcon.FORWARD.icon
@@ -68,6 +73,7 @@ internal object SpecWorkflowIcons {
             -> Execute
 
             SpecWorkflowWorkbenchActionKind.RESUME_TASK -> Refresh
+            SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION -> Close
             SpecWorkflowWorkbenchActionKind.COMPLETE_TASK,
             SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW,
             -> Complete

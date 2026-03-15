@@ -111,7 +111,7 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("true", snapshot.getValue("dependsOnRolloverEnabled"))
         assertEquals("true", snapshot.getValue("dependsOnFocusable"))
         assertEquals("", snapshot.getValue("relatedFilesText"))
-        assertEquals("edit", snapshot.getValue("relatedFilesIconId"))
+        assertEquals("relatedFilesEdit", snapshot.getValue("relatedFilesIconId"))
         assertEquals(SpecCodingBundle.message("spec.toolwindow.tasks.relatedFiles.edit"), snapshot.getValue("relatedFilesTooltip"))
         assertEquals("true", snapshot.getValue("relatedFilesHasIcon"))
         assertEquals("true", snapshot.getValue("relatedFilesRolloverEnabled"))
@@ -340,6 +340,43 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("", snapshot.getValue("executeText"))
         assertEquals("complete", snapshot.getValue("executeIconId"))
         assertEquals("true", snapshot.getValue("executeEnabled"))
+        assertEquals("true", snapshot.getValue("secondaryEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.secondary.tooltip", "T-010"),
+            snapshot.getValue("secondaryTooltip"),
+        )
+    }
+
+    @Test
+    fun `in progress task should expose stop execution secondary action`() {
+        val cancellations = mutableListOf<String>()
+        val panel = SpecWorkflowTasksPanel(
+            onCancelExecution = { taskId -> cancellations += taskId },
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-stop",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-011",
+                    title = "Cancelable run",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-11",
+                        taskId = "T-011",
+                        status = TaskExecutionRunStatus.RUNNING,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-13T12:05:00Z",
+                    ),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.selectTask("T-011"))
+        assertTrue(panel.triggerStopExecutionForTest())
+        assertEquals(listOf("T-011"), cancellations)
     }
 
     @Test
