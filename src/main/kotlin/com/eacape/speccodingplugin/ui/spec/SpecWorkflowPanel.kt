@@ -151,6 +151,8 @@ class SpecWorkflowPanel(
     private val modelComboBox = ComboBox<ModelInfo>()
     private val createWorktreeButton = JButton()
     private val mergeWorktreeButton = JButton()
+    private val switchWorkflowButton = JButton()
+    private val createWorkflowButton = JButton()
     private val deltaButton = JButton()
     private val codeGraphButton = JButton()
     private val archiveButton = JButton()
@@ -208,6 +210,7 @@ class SpecWorkflowPanel(
     private var pendingOpenWorkflowRequest: SpecToolWindowOpenRequest? = null
     private var isWorkspaceMode: Boolean = false
     private var detailDividerLocation: Int = 210
+    private var workflowSwitcherPopup: SpecWorkflowSwitcherPopup? = null
 
     init {
         border = JBUI.Borders.empty(8)
@@ -217,7 +220,8 @@ class SpecWorkflowPanel(
             onOpenWorkflow = ::onWorkflowOpenedByUser,
             onCreateWorkflow = ::onCreateWorkflow,
             onEditWorkflow = ::onEditWorkflow,
-            onDeleteWorkflow = ::onDeleteWorkflow
+            onDeleteWorkflow = ::onDeleteWorkflow,
+            showCreateButton = false,
         )
 
         detailPanel = SpecDetailPanel(
@@ -252,6 +256,7 @@ class SpecWorkflowPanel(
         refreshButton.addActionListener { refreshWorkflows(showRefreshFeedback = true) }
         createWorktreeButton.isEnabled = false
         mergeWorktreeButton.isEnabled = false
+        switchWorkflowButton.isEnabled = false
         createWorktreeButton.isVisible = false
         mergeWorktreeButton.isVisible = false
         deltaButton.isEnabled = false
@@ -260,6 +265,8 @@ class SpecWorkflowPanel(
         codeGraphButton.isVisible = false
         archiveButton.isVisible = false
         backToListButton.isEnabled = false
+        switchWorkflowButton.addActionListener { onSwitchWorkflowRequested() }
+        createWorkflowButton.addActionListener { onCreateWorkflow() }
         createWorktreeButton.addActionListener { onCreateWorktree() }
         mergeWorktreeButton.addActionListener { onMergeWorktree() }
         deltaButton.addActionListener { onShowDelta() }
@@ -275,6 +282,8 @@ class SpecWorkflowPanel(
         styleToolbarButton(backToListButton)
 
         applyToolbarButtonPresentation()
+        styleToolbarButton(switchWorkflowButton)
+        styleToolbarButton(createWorkflowButton)
         styleToolbarButton(refreshButton)
         styleToolbarButton(createWorktreeButton)
         styleToolbarButton(mergeWorktreeButton)
@@ -295,6 +304,8 @@ class SpecWorkflowPanel(
         }
         val actionsRow = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(3), 0)).apply {
             isOpaque = false
+            add(switchWorkflowButton)
+            add(createWorkflowButton)
             add(refreshButton)
             add(deltaButton)
         }
@@ -825,6 +836,16 @@ class SpecWorkflowPanel(
     }
 
     private fun applyToolbarButtonPresentation() {
+        configureToolbarIconButton(
+            button = switchWorkflowButton,
+            icon = SpecWorkflowIcons.SwitchWorkflow,
+            tooltipKey = "spec.workflow.switch",
+        )
+        configureToolbarIconButton(
+            button = createWorkflowButton,
+            icon = SpecWorkflowIcons.Add,
+            tooltipKey = "spec.workflow.new",
+        )
         configureToolbarIconButton(
             button = refreshButton,
             icon = SpecWorkflowIcons.Refresh,
@@ -1494,9 +1515,8 @@ class SpecWorkflowPanel(
 
     fun refreshWorkflows(selectWorkflowId: String? = null, showRefreshFeedback: Boolean = false) {
         scope.launch(Dispatchers.IO) {
-            val ids = specEngine.listWorkflows()
-            val items = ids.mapNotNull { id ->
-                specEngine.loadWorkflow(id).getOrNull()?.let { wf ->
+            val items = specEngine.listWorkflowMetadata().mapNotNull { meta ->
+                specEngine.loadWorkflow(meta.workflowId).getOrNull()?.let { wf ->
                     SpecWorkflowListPanel.WorkflowListItem(
                         workflowId = wf.id,
                         title = wf.title.ifBlank { wf.id },
@@ -1511,12 +1531,18 @@ class SpecWorkflowPanel(
                 }
             }
             invokeLaterSafe {
+                workflowSwitcherPopup?.cancel()
                 listPanel.updateWorkflows(items)
+                switchWorkflowButton.isEnabled = items.isNotEmpty()
                 setStatusText(null)
-                val targetOpenedWorkflowId = selectWorkflowId
-                    ?: selectedWorkflowId?.takeIf { target -> items.any { it.workflowId == target } }
+                val workflowIds = items.asSequence().map { it.workflowId }.toSet()
+                val targetOpenedWorkflowId = selectWorkflowId?.takeIf(workflowIds::contains)
+                    ?: selectedWorkflowId?.takeIf(workflowIds::contains)
+                    ?: items.firstOrNull()?.workflowId?.takeIf {
+                        highlightedWorkflowId?.takeIf(workflowIds::contains) == null
+                    }
                 val targetHighlightedWorkflowId = targetOpenedWorkflowId
-                    ?: highlightedWorkflowId?.takeIf { target -> items.any { it.workflowId == target } }
+                    ?: highlightedWorkflowId?.takeIf(workflowIds::contains)
                 highlightedWorkflowId = targetHighlightedWorkflowId
                 listPanel.setSelectedWorkflow(targetHighlightedWorkflowId)
                 if (targetOpenedWorkflowId != null) {
@@ -2399,6 +2425,32 @@ class SpecWorkflowPanel(
             append("Repair requirements.md by filling the missing top-level sections: ")
             append(RequirementsSectionSupport.describeSections(missingSections))
             append(".")
+        }
+    }
+
+    private fun onSwitchWorkflowRequested() {
+        val currentItems = listPanel.currentItems()
+        if (currentItems.isEmpty()) {
+            return
+        }
+        workflowSwitcherPopup?.cancel()
+        workflowSwitcherPopup = SpecWorkflowSwitcherPopup(
+            items = currentItems,
+            initialSelectionWorkflowId = selectedWorkflowId ?: highlightedWorkflowId,
+            onOpenWorkflow = { workflowId ->
+                workflowSwitcherPopup = null
+                onWorkflowOpenedByUser(workflowId)
+            },
+            onEditWorkflow = { workflowId ->
+                workflowSwitcherPopup = null
+                onEditWorkflow(workflowId)
+            },
+            onDeleteWorkflow = { workflowId ->
+                workflowSwitcherPopup = null
+                onDeleteWorkflow(workflowId)
+            },
+        ).also { popup ->
+            popup.showUnderneathOf(switchWorkflowButton)
         }
     }
 
@@ -4035,6 +4087,7 @@ class SpecWorkflowPanel(
     }
 
     private fun refreshLocalizedTexts() {
+        workflowSwitcherPopup?.cancel()
         listPanel.refreshLocalizedTexts()
         detailPanel.refreshLocalizedTexts()
         overviewPanel.refreshLocalizedTexts()
@@ -4050,6 +4103,8 @@ class SpecWorkflowPanel(
         }
         applyToolbarButtonPresentation()
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
+        styleToolbarButton(switchWorkflowButton)
+        styleToolbarButton(createWorkflowButton)
         styleToolbarButton(refreshButton)
         styleToolbarButton(createWorktreeButton)
         styleToolbarButton(mergeWorktreeButton)
@@ -4508,6 +4563,30 @@ class SpecWorkflowPanel(
         backToListButton.doClick()
     }
 
+    internal fun clickSwitchWorkflowForTest() {
+        switchWorkflowButton.doClick()
+    }
+
+    internal fun isSwitchWorkflowPopupVisibleForTest(): Boolean {
+        return workflowSwitcherPopup?.isVisibleForTest() == true
+    }
+
+    internal fun switchWorkflowPopupVisibleWorkflowIdsForTest(): List<String> {
+        return workflowSwitcherPopup?.visibleWorkflowIdsForTest().orEmpty()
+    }
+
+    internal fun filterSwitchWorkflowPopupForTest(query: String) {
+        workflowSwitcherPopup?.applySearchForTest(query)
+    }
+
+    internal fun confirmSwitchWorkflowPopupSelectionForTest() {
+        workflowSwitcherPopup?.confirmSelectionForTest()
+    }
+
+    internal fun selectedSwitchWorkflowPopupSelectionForTest(): String? {
+        return workflowSwitcherPopup?.selectedWorkflowIdForTest()
+    }
+
     internal fun isBackButtonInlineForTest(): Boolean {
         return javax.swing.SwingUtilities.isDescendingFrom(backToListButton, workspaceCardPanel)
     }
@@ -4741,6 +4820,8 @@ class SpecWorkflowPanel(
 
         return buildMap {
             snapshot(backToListButton).forEach { (key, value) -> put("back.$key", value) }
+            snapshot(switchWorkflowButton).forEach { (key, value) -> put("switch.$key", value) }
+            snapshot(createWorkflowButton).forEach { (key, value) -> put("create.$key", value) }
             snapshot(refreshButton).forEach { (key, value) -> put("refresh.$key", value) }
             snapshot(deltaButton).forEach { (key, value) -> put("delta.$key", value) }
             snapshot(codeGraphButton).forEach { (key, value) -> put("codeGraph.$key", value) }
@@ -4784,6 +4865,7 @@ class SpecWorkflowPanel(
         CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
         liveProgressRefreshTimer.stop()
         specTaskExecutionService.removeLiveProgressListener(liveProgressListener)
+        workflowSwitcherPopup?.cancel()
         cancelActiveGenerationRequest("Spec workflow panel disposed")
         scope.cancel()
     }

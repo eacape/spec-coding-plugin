@@ -5,7 +5,6 @@ import com.eacape.speccodingplugin.spec.SpecChangeIntent
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -41,6 +40,7 @@ class SpecWorkflowListPanel(
     private val onCreateWorkflow: () -> Unit,
     private val onEditWorkflow: (String) -> Unit,
     private val onDeleteWorkflow: (String) -> Unit,
+    private val showCreateButton: Boolean = true,
 ) : JPanel(BorderLayout()) {
 
     data class WorkflowListItem(
@@ -124,7 +124,9 @@ class SpecWorkflowListPanel(
             JPanel(BorderLayout()).apply {
                 isOpaque = false
                 border = JBUI.Borders.emptyTop(8)
-                add(newButton, BorderLayout.CENTER)
+                if (showCreateButton) {
+                    add(newButton, BorderLayout.CENTER)
+                }
             },
             BorderLayout.SOUTH,
         )
@@ -167,8 +169,29 @@ class SpecWorkflowListPanel(
     fun refreshLocalizedTexts() {
         newButton.text = newButtonText()
         styleActionButton(newButton)
-        workflowList.emptyText.text = SpecCodingBundle.message("spec.workflow.empty")
+        setEmptyText(SpecCodingBundle.message("spec.workflow.empty"))
         workflowList.repaint()
+    }
+
+    fun setEmptyText(text: String) {
+        workflowList.emptyText.text = text
+    }
+
+    fun currentItems(): List<WorkflowListItem> {
+        return (0 until listModel.size()).map { listModel[it] }
+    }
+
+    fun requestListFocus(preferredWorkflowId: String? = workflowList.selectedValue?.workflowId) {
+        val targetWorkflowId = preferredWorkflowId
+            ?.takeIf { workflowId -> currentItems().any { item -> item.workflowId == workflowId } }
+            ?: currentItems().firstOrNull()?.workflowId
+        if (targetWorkflowId != null) {
+            setSelectedWorkflow(targetWorkflowId)
+        }
+        if (workflowList.selectedIndex >= 0) {
+            workflowList.ensureIndexIsVisible(workflowList.selectedIndex)
+        }
+        workflowList.requestFocusInWindow()
     }
 
     internal fun itemsForTest(): List<WorkflowListItem> {
@@ -567,10 +590,7 @@ class SpecWorkflowListPanel(
         }
 
         companion object {
-            private val WORKFLOW_ICON_OPEN = IconLoader.getIcon(
-                "/icons/spec-workflow-open.svg",
-                SpecWorkflowListPanel::class.java,
-            )
+            private val WORKFLOW_ICON_OPEN = SpecWorkflowIcons.OpenDocument
             private val ROW_BOTTOM_GAP = JBUI.scale(8)
             private val CARD_VERTICAL_PAD = JBUI.scale(8)
             private val CARD_LEFT_PAD = JBUI.scale(10)

@@ -10,6 +10,7 @@ internal enum class SpecWorkflowActionIcon(
     val icon: Icon,
 ) {
     ADVANCE("advance", AllIcons.General.ArrowRight),
+    SWITCH_WORKFLOW("switchWorkflow", AllIcons.Actions.Search),
     NEXT_STAGE(
         "nextStage",
         IconLoader.getIcon("/icons/spec-workflow-next-stage.svg", SpecWorkflowActionIcon::class.java),
@@ -50,6 +51,7 @@ internal enum class SpecWorkflowActionIcon(
 
 internal object SpecWorkflowIcons {
     val Advance: Icon = SpecWorkflowActionIcon.ADVANCE.icon
+    val SwitchWorkflow: Icon = SpecWorkflowActionIcon.SWITCH_WORKFLOW.icon
     val NextStage: Icon = SpecWorkflowActionIcon.NEXT_STAGE.icon
     val Execute: Icon = SpecWorkflowActionIcon.EXECUTE.icon
     val Refresh: Icon = SpecWorkflowActionIcon.RETRY.icon

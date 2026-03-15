@@ -31,23 +31,22 @@ import org.junit.Assert.assertTrue
 
 class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
 
-    fun `test workflow panel should default to list mode and return from detail mode`() {
-        val workflow = SpecEngine.getInstance(project).createWorkflow(
-            title = "Navigation Demo",
-            description = "list to detail navigation",
+    fun `test workflow panel should default to most recently updated workflow and expose toolbar entries`() {
+        val specEngine = SpecEngine.getInstance(project)
+        val olderWorkflow = specEngine.createWorkflow(
+            title = "Navigation Demo Older",
+            description = "older workflow",
+        ).getOrThrow()
+        val workflow = specEngine.createWorkflow(
+            title = "Navigation Demo Latest",
+            description = "latest workflow",
         ).getOrThrow()
         val panel = createPanel()
 
         waitUntil {
-            workflow.id in panel.workflowIdsForTest() && panel.isListModeForTest()
-        }
-        assertNull(panel.selectedWorkflowIdForTest())
-
-        ApplicationManager.getApplication().invokeAndWait {
-            panel.openWorkflowForTest(workflow.id)
-        }
-        waitUntil {
-            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
+            workflow.id in panel.workflowIdsForTest() &&
+                panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id
         }
         assertTrue(panel.isBackButtonInlineForTest())
         waitUntil {
@@ -68,6 +67,12 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals("", toolbar.getValue("back.text"))
         assertEquals("back", toolbar.getValue("back.iconId"))
         assertEquals("true", toolbar.getValue("back.focusable"))
+        assertEquals("", toolbar.getValue("switch.text"))
+        assertEquals("switchWorkflow", toolbar.getValue("switch.iconId"))
+        assertEquals("true", toolbar.getValue("switch.enabled"))
+        assertEquals("", toolbar.getValue("create.text"))
+        assertEquals("add", toolbar.getValue("create.iconId"))
+        assertEquals("true", toolbar.getValue("create.enabled"))
         assertEquals("", toolbar.getValue("refresh.text"))
         assertEquals("refresh", toolbar.getValue("refresh.iconId"))
         assertEquals("true", toolbar.getValue("refresh.focusable"))
@@ -78,12 +83,43 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals("false", toolbar.getValue("archive.visible"))
 
         ApplicationManager.getApplication().invokeAndWait {
-            panel.clickBackToListForTest()
+            panel.clickSwitchWorkflowForTest()
         }
         waitUntil {
-            panel.isListModeForTest() && panel.selectedWorkflowIdForTest() == null
+            panel.isSwitchWorkflowPopupVisibleForTest()
         }
-        assertEquals(workflow.id, panel.highlightedWorkflowIdForTest())
+        assertTrue(panel.isDetailModeForTest())
+        assertEquals(listOf(workflow.id, olderWorkflow.id), panel.switchWorkflowPopupVisibleWorkflowIdsForTest())
+        assertEquals(workflow.id, panel.selectedSwitchWorkflowPopupSelectionForTest())
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.filterSwitchWorkflowPopupForTest("Older")
+        }
+        waitUntil {
+            panel.switchWorkflowPopupVisibleWorkflowIdsForTest() == listOf(olderWorkflow.id)
+        }
+        assertEquals(olderWorkflow.id, panel.selectedSwitchWorkflowPopupSelectionForTest())
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.confirmSwitchWorkflowPopupSelectionForTest()
+        }
+        waitUntil {
+            panel.selectedWorkflowIdForTest() == olderWorkflow.id
+        }
+        assertEquals(olderWorkflow.id, panel.highlightedWorkflowIdForTest())
+    }
+
+    fun `test workflow panel should keep empty state when no workflows exist`() {
+        val panel = createPanel()
+
+        waitUntil {
+            panel.isListModeForTest() && panel.workflowIdsForTest().isEmpty()
+        }
+
+        assertNull(panel.selectedWorkflowIdForTest())
+        val toolbar = panel.toolbarSnapshotForTest()
+        assertEquals("false", toolbar.getValue("switch.enabled"))
+        assertEquals("true", toolbar.getValue("create.enabled"))
     }
 
     fun `test tool window selection event should still open detail view directly`() {
