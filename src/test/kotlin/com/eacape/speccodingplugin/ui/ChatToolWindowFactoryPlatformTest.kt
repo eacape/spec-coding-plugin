@@ -9,11 +9,15 @@ import com.eacape.speccodingplugin.spec.ExecutionLivePhase
 import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
+import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskStatus
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.stream.ChatTraceKind
+import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import com.eacape.speccodingplugin.ui.WorkflowChatRefreshEvent
 import com.eacape.speccodingplugin.ui.WorkflowChatRefreshListener
 import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
@@ -26,6 +30,7 @@ import com.intellij.openapi.wm.ToolWindowContentUiType
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.util.ui.UIUtil
+import java.time.Instant
 
 class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
 
@@ -141,6 +146,10 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             ),
             snapshot.getValue("taskChipTooltip"),
         )
+        assertEquals("", snapshot.getValue("taskChipIconId"))
+        assertEquals("false", snapshot.getValue("taskChipBorderPainted"))
+        assertEquals("false", snapshot.getValue("taskChipContentFilled"))
+        assertEquals("false", snapshot.getValue("taskChipOpaque"))
         assertEquals("false", snapshot.getValue("retryTaskVisible"))
         assertEquals("false", snapshot.getValue("retryTaskEnabled"))
         assertEquals("false", snapshot.getValue("executeTaskVisible"))
@@ -439,6 +448,110 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("false", snapshot.getValue("executeTaskVisible"))
         assertEquals("false", snapshot.getValue("retryTaskVisible"))
         assertEquals("false", snapshot.getValue("completeTaskVisible"))
+    }
+
+    fun `test workflow chat live progress should update bound task state and render execution trace`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Chat Live Progress",
+            description = "task 98",
+        ).getOrThrow()
+        val task = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Observe execution trace",
+            priority = TaskPriority.P0,
+        )
+        val toolWindow = registerSpecCodeToolWindow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val specPanel = currentSpecPanel(toolWindow)
+        val chatPanel = currentChatPanel(toolWindow)
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.openWorkflowForTest(workflow.id)
+        }
+        waitUntil {
+            specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(task.id)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(specPanel.selectTaskForTest(task.id))
+            specPanel.clickOpenWorkflowChatForSelectedTaskForTest()
+        }
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == task.id &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_EXECUTE"
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            chatPanel.applyTaskLiveProgressForTest(
+                TaskExecutionLiveProgress(
+                    workflowId = workflow.id,
+                    runId = "run-live-001",
+                    taskId = task.id,
+                    phase = ExecutionLivePhase.STREAMING,
+                    startedAt = Instant.parse("2026-03-15T11:00:00Z"),
+                    lastUpdatedAt = Instant.parse("2026-03-15T11:00:01Z"),
+                    lastDetail = "Applying workflow change",
+                    recentEvents = listOf(
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.READ,
+                            detail = "SpecWorkflowPanel.kt",
+                            status = ChatTraceStatus.RUNNING,
+                        ),
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.OUTPUT,
+                            detail = "Applying workflow change",
+                            status = ChatTraceStatus.RUNNING,
+                        ),
+                    ),
+                    providerId = "mock",
+                    modelId = "mock-model-v1",
+                ),
+            )
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_STOP" &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("taskChipText").contains(
+                    SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress"),
+                ) &&
+                chatPanel.liveTaskExecutionSnapshotForTest().getValue("visible") == "true"
+        }
+
+        val snapshot = chatPanel.workflowBindingSnapshotForTest()
+        val liveSnapshot = chatPanel.liveTaskExecutionSnapshotForTest()
+        assertTrue(
+            snapshot.getValue("taskChipText").contains(
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress"),
+            ),
+        )
+        assertEquals(
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.task.tooltip.run",
+                task.id,
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress"),
+                "run-live-001",
+                ExecutionLivePhase.STREAMING.name,
+            ),
+            snapshot.getValue("taskChipTooltip"),
+        )
+        assertEquals("TASK_STOP", snapshot.getValue("sendActionKind"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", task.id),
+            snapshot.getValue("sendTooltip"),
+        )
+        assertEquals("true", liveSnapshot.getValue("visible"))
+        assertEquals("run-live-001", liveSnapshot.getValue("runId"))
+        assertEquals(task.id, liveSnapshot.getValue("taskId"))
+        assertTrue(liveSnapshot.getValue("labels").contains(SpecCodingBundle.message("chat.timeline.summary.label")))
+        assertTrue(liveSnapshot.getValue("labels").contains(SpecCodingBundle.message("chat.timeline.kind.read")))
+        assertTrue(liveSnapshot.getValue("labels").contains(SpecCodingBundle.message("chat.timeline.kind.output")))
     }
 
     fun `test workflow attachment boundary should surface explicit status in bound chat`() {

@@ -24,6 +24,8 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
@@ -540,8 +542,11 @@ class SpecTaskExecutionService(private val project: Project) {
         )
         val contextSnapshot = buildRelatedFilesContextSnapshot(suggestedRelatedFiles)
         var sawStreamingSignal = false
+        val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
+        val executionStartedAtMillis = parseRunInstant(queuedRun.startedAt).toEpochMilli()
         val onChunk: suspend (LlmChunk) -> Unit = { chunk ->
             if (chunk.event != null) {
+                normalizeLiveEvent(chunk.event)?.let(streamedTraceEvents::add)
                 updateLiveProgress(
                     workflowId = workflowId,
                     runId = queuedRun.runId,
@@ -564,6 +569,7 @@ class SpecTaskExecutionService(private val project: Project) {
                         status = ChatTraceStatus.RUNNING,
                     )
                 }
+                fallbackEvent?.let(streamedTraceEvents::add)
                 updateLiveProgress(
                     workflowId = workflowId,
                     runId = queuedRun.runId,
@@ -671,6 +677,9 @@ class SpecTaskExecutionService(private val project: Project) {
                 providerId = providerId,
                 modelId = modelId,
                 previousRunId = previousRun?.runId,
+                traceEvents = streamedTraceEvents,
+                startedAtMillis = executionStartedAtMillis,
+                finishedAtMillis = System.currentTimeMillis(),
             )
             TaskAiExecutionResult(
                 run = completedRun,
@@ -1282,6 +1291,9 @@ class SpecTaskExecutionService(private val project: Project) {
         providerId: String?,
         modelId: String?,
         previousRunId: String?,
+        traceEvents: List<ChatStreamEvent> = emptyList(),
+        startedAtMillis: Long? = null,
+        finishedAtMillis: Long? = null,
     ) {
         sessionManager.addMessage(
             sessionId = sessionId,
@@ -1294,6 +1306,9 @@ class SpecTaskExecutionService(private val project: Project) {
                 providerId = providerId,
                 modelId = modelId,
                 previousRunId = previousRunId,
+                traceEvents = traceEvents,
+                startedAtMillis = startedAtMillis,
+                finishedAtMillis = finishedAtMillis,
             ),
         ).getOrThrow()
     }
@@ -1573,8 +1588,11 @@ internal object TaskExecutionSessionMetadataCodec {
         providerId: String?,
         modelId: String?,
         previousRunId: String?,
+        traceEvents: List<ChatStreamEvent> = emptyList(),
+        startedAtMillis: Long? = null,
+        finishedAtMillis: Long? = null,
     ): String {
-        val payload = linkedMapOf<String, JsonPrimitive>(
+        val payload = linkedMapOf<String, JsonElement>(
             "format" to JsonPrimitive("task_execution_session_v1"),
             "runId" to JsonPrimitive(run.runId),
             "taskId" to JsonPrimitive(run.taskId),
@@ -1585,8 +1603,42 @@ internal object TaskExecutionSessionMetadataCodec {
             providerId?.takeIf(String::isNotBlank)?.let { put("providerId", JsonPrimitive(it.trim())) }
             modelId?.takeIf(String::isNotBlank)?.let { put("modelId", JsonPrimitive(it.trim())) }
             previousRunId?.takeIf(String::isNotBlank)?.let { put("previousRunId", JsonPrimitive(it.trim())) }
+            startedAtMillis?.takeIf { it >= 0L }?.let { put("started_at_ms", JsonPrimitive(it)) }
+            finishedAtMillis?.takeIf { it >= 0L }?.let { put("finished_at_ms", JsonPrimitive(it)) }
+            val normalizedTraceEvents = traceEvents
+                .filter { it.detail.isNotBlank() }
+                .takeLast(MAX_TRACE_EVENTS)
+            if (normalizedTraceEvents.isNotEmpty()) {
+                put(
+                    "trace_events",
+                    JsonArray(normalizedTraceEvents.map { event -> event.toTraceMetadataJson() }),
+                )
+            }
         }
         return JsonObject(payload).toString()
+    }
+
+    private fun ChatStreamEvent.toTraceMetadataJson(): JsonObject {
+        return JsonObject(
+            linkedMapOf<String, JsonElement>(
+                "kind" to JsonPrimitive(kind.name),
+                "detail" to JsonPrimitive(detail),
+                "status" to JsonPrimitive(status.name),
+            ).apply {
+                id?.let { put("id", JsonPrimitive(it)) }
+                sequence?.let { put("sequence", JsonPrimitive(it)) }
+                if (metadata.isNotEmpty()) {
+                    put(
+                        "metadata",
+                        JsonObject(
+                            metadata.entries.associate { (key, value) ->
+                                key to JsonPrimitive(value)
+                            },
+                        ),
+                    )
+                }
+            },
+        )
     }
 
     fun decode(metadataJson: String?): DecodedMetadata {
@@ -1611,4 +1663,6 @@ internal object TaskExecutionSessionMetadataCodec {
             previousRunId = root["previousRunId"]?.toString()?.trim('"'),
         )
     }
+
+    private const val MAX_TRACE_EVENTS = 600
 }

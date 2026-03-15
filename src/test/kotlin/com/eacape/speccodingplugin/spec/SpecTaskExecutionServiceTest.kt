@@ -11,6 +11,7 @@ import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.stream.ChatTraceKind
 import com.eacape.speccodingplugin.stream.ChatTraceStatus
+import com.eacape.speccodingplugin.ui.chat.TraceEventMetadataCodec
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
@@ -329,6 +330,9 @@ class SpecTaskExecutionServiceTest {
         )
 
         val liveProgress = executionService.getLiveProgress(workflowId, result.run.runId)
+        val session = sessionManager.listSessions().single()
+        val messages = sessionManager.listMessages(session.id)
+        val assistantTrace = TraceEventMetadataCodec.decodePayload(messages.last().metadataJson)
 
         assertNotNull(liveProgress)
         assertEquals(ExecutionLivePhase.WAITING_CONFIRMATION, liveProgress!!.phase)
@@ -345,6 +349,11 @@ class SpecTaskExecutionServiceTest {
             event.kind == ChatTraceKind.READ && event.detail == "SpecWorkflowPanel.kt"
         })
         assertTrue(liveProgress.lastUpdatedAt >= liveProgress.startedAt)
+        assertNotNull(assistantTrace.startedAtMillis)
+        assertNotNull(assistantTrace.finishedAtMillis)
+        assertTrue(assistantTrace.events.any { event ->
+            event.kind == ChatTraceKind.READ && event.detail == "SpecWorkflowPanel.kt"
+        })
     }
 
     @Test

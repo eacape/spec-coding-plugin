@@ -62,6 +62,8 @@ import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecGenerationProgress
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
+import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
+import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgressListener
 import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageId
@@ -286,6 +288,8 @@ class ImprovedChatPanel(
     private val compactButton = JButton()
     private val sendButton = JButton()
     private var currentAssistantPanel: ChatMessagePanel? = null
+    private var activeTaskExecutionPanel: ActiveTaskExecutionPanel? = null
+    private var latestObservedTaskLiveProgress: TaskExecutionLiveProgress? = null
     private var statusAutoHideTimer: Timer? = null
     private var dividerPersistTimer: Timer? = null
     private var composerDividerPersistTimer: Timer? = null
@@ -333,11 +337,21 @@ class ImprovedChatPanel(
         val operationMode: OperationMode,
     )
 
+    private data class ActiveTaskExecutionPanel(
+        val sessionId: String,
+        val workflowId: String,
+        val taskId: String,
+        val runId: String,
+        val panel: ChatMessagePanel,
+        val seenEventKeys: MutableSet<String> = linkedSetOf(),
+        var finished: Boolean = false,
+    )
+
     private data class BoundTaskBindingState(
         val binding: WorkflowChatBinding,
         val taskId: String,
         val task: StructuredTask?,
-        val liveProgress: com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress?,
+        val liveProgress: TaskExecutionLiveProgress?,
     )
 
     private enum class TaskBindingActionKind {
@@ -383,6 +397,9 @@ class ImprovedChatPanel(
     }
 
     private var lastInteractionMode: ChatInteractionMode = ChatInteractionMode.VIBE
+    private val taskExecutionLiveProgressListener = TaskExecutionLiveProgressListener { progress ->
+        handleTaskExecutionLiveProgress(progress)
+    }
 
     init {
         inputField = SmartInputField(
@@ -423,6 +440,7 @@ class ImprovedChatPanel(
         subscribeToSpecWorkflowEvents()
         subscribeToWorkflowChatRefreshEvents()
         subscribeToLocaleEvents()
+        specTaskExecutionService.addLiveProgressListener(taskExecutionLiveProgressListener)
         refreshLocalizedTexts()
         restoreWindowStateIfNeeded()
     }
@@ -878,7 +896,7 @@ class ImprovedChatPanel(
         workflowBindingStrip.isOpaque = false
         workflowBindingStrip.border = JBUI.Borders.empty()
         workflowBindingStrip.isVisible = false
-        configureWorkflowBindingChip(taskBindingChip, icon = SpecWorkflowIcons.Execute, clearAction = false)
+        configureWorkflowBindingChip(taskBindingChip, clearAction = false)
         taskBindingChip.addActionListener { handleTaskBindingChipClicked() }
         taskBindingChip.addMouseListener(
             object : MouseAdapter() {
@@ -903,21 +921,20 @@ class ImprovedChatPanel(
         event.consume()
     }
 
-    private fun configureWorkflowBindingChip(button: JButton, icon: Icon, clearAction: Boolean) {
-        button.icon = icon
+    private fun configureWorkflowBindingChip(button: JButton, clearAction: Boolean) {
+        button.icon = null
         button.isFocusable = true
         button.isFocusPainted = false
         button.isBorderPainted = false
-        button.isContentAreaFilled = true
-        button.isOpaque = true
+        button.isContentAreaFilled = false
+        button.isOpaque = false
         button.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         button.horizontalAlignment = JButton.LEFT
-        button.iconTextGap = JBUI.scale(4)
-        button.margin = if (clearAction) JBUI.insets(3, 3, 3, 3) else JBUI.insets(3, 9, 3, 9)
+        button.iconTextGap = 0
+        button.margin = if (clearAction) JBUI.insets(0) else JBUI.insets(0)
         button.font = JBUI.Fonts.smallFont()
-        button.foreground = JBColor(Color(0x34516D), Color(0xC7D7F1))
-        button.background = JBColor(Color(0xEAF2FB), Color(0x39434F))
-        SpecUiStyle.applyRoundRect(button, arc = 12)
+        button.foreground = JBColor(Color(0x3F4A59), Color(0xC7D0DB))
+        button.border = JBUI.Borders.empty()
     }
 
     private fun configureWorkflowBindingActionButton(button: JButton, icon: Icon) {
@@ -951,6 +968,172 @@ class ImprovedChatPanel(
             workflowBindingStrip.isVisible || contextPreviewPanel.isVisible || imageAttachmentPreviewPanel.isVisible
         composerAccessoryStrip.revalidate()
         composerAccessoryStrip.repaint()
+    }
+
+    private fun handleTaskExecutionLiveProgress(progress: TaskExecutionLiveProgress) {
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || _isDisposed) {
+                return@invokeLater
+            }
+            if (!isRelevantTaskExecutionLiveProgress(progress)) {
+                return@invokeLater
+            }
+            rememberObservedTaskLiveProgress(progress)
+            updateWorkflowBindingUi()
+            syncActiveTaskExecutionPanel(progress)
+        }
+    }
+
+    private fun rememberObservedTaskLiveProgress(progress: TaskExecutionLiveProgress) {
+        val current = latestObservedTaskLiveProgress
+        if (progress.phase == ExecutionLivePhase.TERMINAL) {
+            if (current?.runId == progress.runId ||
+                (current?.workflowId == progress.workflowId && current.taskId == progress.taskId)
+            ) {
+                latestObservedTaskLiveProgress = null
+            }
+            return
+        }
+        latestObservedTaskLiveProgress = progress
+    }
+
+    private fun isRelevantTaskExecutionLiveProgress(progress: TaskExecutionLiveProgress): Boolean {
+        val activePanel = activeTaskExecutionPanel
+        if (activePanel != null &&
+            activePanel.sessionId == currentSessionId &&
+            activePanel.runId == progress.runId
+        ) {
+            return true
+        }
+        if (currentInteractionMode() != ChatInteractionMode.SPEC) {
+            return false
+        }
+        val binding = resolvedActiveWorkflowChatBinding() ?: return false
+        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return false
+        return binding.workflowId == progress.workflowId && taskId == progress.taskId
+    }
+
+    private fun syncActiveTaskExecutionPanel(progress: TaskExecutionLiveProgress) {
+        val sessionId = currentSessionId?.trim()?.ifBlank { null } ?: return
+        val state = when (val existing = activeTaskExecutionPanel) {
+            null -> {
+                if (resolvedActiveWorkflowChatBinding()?.workflowId != progress.workflowId ||
+                    resolvedActiveWorkflowChatBinding()?.taskId != progress.taskId
+                ) {
+                    return
+                }
+                createActiveTaskExecutionPanel(sessionId, progress).also { created ->
+                    activeTaskExecutionPanel = created
+                }
+            }
+
+            else -> when {
+                existing.sessionId == sessionId && existing.runId == progress.runId -> existing
+                resolvedActiveWorkflowChatBinding()?.workflowId == progress.workflowId &&
+                    resolvedActiveWorkflowChatBinding()?.taskId == progress.taskId -> {
+                    createActiveTaskExecutionPanel(sessionId, progress).also { created ->
+                        activeTaskExecutionPanel = created
+                    }
+                }
+
+                else -> return
+            }
+        }
+        val wasNearBottom = messagesPanel.isNearBottom()
+        val newEvents = collectNewTaskExecutionTraceEvents(state, progress)
+        if (newEvents.isNotEmpty()) {
+            state.panel.appendStreamContent(text = "", events = newEvents)
+        }
+        if (!state.finished &&
+            (progress.phase == ExecutionLivePhase.WAITING_CONFIRMATION || progress.phase == ExecutionLivePhase.TERMINAL)
+        ) {
+            state.panel.finishMessage()
+            state.finished = true
+        }
+        if (newEvents.isNotEmpty() && wasNearBottom) {
+            messagesPanel.scrollToBottom()
+        }
+    }
+
+    private fun createActiveTaskExecutionPanel(
+        sessionId: String,
+        progress: TaskExecutionLiveProgress,
+    ): ActiveTaskExecutionPanel {
+        val mode = currentInteractionMode()
+        val panel = ChatMessagePanel(
+            role = ChatMessagePanel.MessageRole.ASSISTANT,
+            onWorkflowFileOpen = ::handleWorkflowFileOpen,
+            onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
+            workflowSectionsEnabled = workflowSectionRenderingEnabledFor(mode),
+            timelineExpandButtonsVisible = timelineExpandButtonsVisibleFor(mode),
+            startedAtMillis = progress.startedAt.toEpochMilli(),
+            captureElapsedAutomatically = false,
+        )
+        messagesPanel.addMessage(panel)
+        return ActiveTaskExecutionPanel(
+            sessionId = sessionId,
+            workflowId = progress.workflowId,
+            taskId = progress.taskId,
+            runId = progress.runId,
+            panel = panel,
+        )
+    }
+
+    private fun collectNewTaskExecutionTraceEvents(
+        state: ActiveTaskExecutionPanel,
+        progress: TaskExecutionLiveProgress,
+    ): List<ChatStreamEvent> {
+        val candidates = progress.recentEvents
+            .mapNotNull(::sanitizeStreamEvent)
+            .ifEmpty {
+                listOfNotNull(buildFallbackTaskExecutionTraceEvent(progress))
+            }
+        return candidates.filter { event ->
+            state.seenEventKeys.add(taskExecutionTraceEventKey(progress.runId, event))
+        }
+    }
+
+    private fun buildFallbackTaskExecutionTraceEvent(progress: TaskExecutionLiveProgress): ChatStreamEvent? {
+        val detail = progress.lastDetail?.trim()?.takeIf(String::isNotBlank) ?: return null
+        val kind = if (progress.phase == ExecutionLivePhase.STREAMING) {
+            ChatTraceKind.OUTPUT
+        } else {
+            ChatTraceKind.TASK
+        }
+        val status = when (progress.phase) {
+            ExecutionLivePhase.QUEUED,
+            ExecutionLivePhase.PREPARING_CONTEXT,
+            ExecutionLivePhase.REQUEST_DISPATCHED,
+            ExecutionLivePhase.STREAMING,
+            ExecutionLivePhase.CANCELLING,
+            -> ChatTraceStatus.RUNNING
+
+            ExecutionLivePhase.WAITING_CONFIRMATION -> ChatTraceStatus.INFO
+            ExecutionLivePhase.TERMINAL -> ChatTraceStatus.DONE
+        }
+        return sanitizeStreamEvent(
+            ChatStreamEvent(
+                kind = kind,
+                detail = detail,
+                status = status,
+            ),
+        )
+    }
+
+    private fun taskExecutionTraceEventKey(runId: String, event: ChatStreamEvent): String {
+        return buildString {
+            append(runId)
+            append('|')
+            append(event.sequence ?: "")
+            append('|')
+            append(event.id.orEmpty())
+            append('|')
+            append(event.kind.name)
+            append('|')
+            append(event.status.name)
+            append('|')
+            append(event.detail)
+        }
     }
 
     private fun resolvedActiveWorkflowChatBinding(): WorkflowChatBinding? {
@@ -1015,6 +1198,12 @@ class ImprovedChatPanel(
         taskBindingChip.toolTipText = buildTaskBindingTooltip(taskId, state)
         taskBindingChip.accessibleContext.accessibleName = taskBindingChip.text
         taskBindingChip.accessibleContext.accessibleDescription = taskBindingChip.toolTipText
+        state.liveProgress
+            ?.takeIf { progress ->
+                progress.phase != ExecutionLivePhase.TERMINAL &&
+                    progress.phase != ExecutionLivePhase.WAITING_CONFIRMATION
+            }
+            ?.let(::syncActiveTaskExecutionPanel)
         workflowBindingStrip.revalidate()
         workflowBindingStrip.repaint()
         refreshComposerAccessoryStripVisibility()
@@ -1069,11 +1258,27 @@ class ImprovedChatPanel(
         binding: WorkflowChatBinding,
         taskId: String,
     ): BoundTaskBindingState {
+        val task = resolveBoundWorkflowTask(binding)
+        val serviceLiveProgress = specTaskExecutionService.getTaskLiveProgress(binding.workflowId, taskId)
+        val observedLiveProgress = latestObservedTaskLiveProgress
+            ?.takeIf { progress ->
+                progress.workflowId == binding.workflowId &&
+                    progress.taskId == taskId &&
+                    progress.phase != ExecutionLivePhase.TERMINAL
+            }
+            ?.takeIf { progress ->
+                serviceLiveProgress != null ||
+                    task?.activeExecutionRun?.runId == progress.runId ||
+                    task?.hasExecutionInFlight == true ||
+                    (task?.awaitingCompletionConfirmation == true &&
+                        progress.phase == ExecutionLivePhase.WAITING_CONFIRMATION)
+            }
         return BoundTaskBindingState(
             binding = binding,
             taskId = taskId,
-            task = resolveBoundWorkflowTask(binding),
-            liveProgress = specTaskExecutionService.getTaskLiveProgress(binding.workflowId, taskId),
+            task = task,
+            liveProgress = listOfNotNull(observedLiveProgress, serviceLiveProgress)
+                .maxByOrNull(TaskExecutionLiveProgress::lastUpdatedAt),
         )
     }
 
@@ -1086,6 +1291,9 @@ class ImprovedChatPanel(
             state?.task?.awaitingCompletionConfirmation == true ||
                 liveProgress?.phase == ExecutionLivePhase.WAITING_CONFIRMATION ->
                 SpecCodingBundle.message("toolwindow.workflow.binding.task.status.waitingConfirmation")
+
+            liveProgress != null ->
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress")
 
             else -> formatTaskStatus(state?.task?.displayStatus)
         }
@@ -4276,6 +4484,8 @@ class ImprovedChatPanel(
         clearImageAttachments()
         clearComposerInput()
         currentAssistantPanel = null
+        activeTaskExecutionPanel = null
+        latestObservedTaskLiveProgress = null
         updateWorkflowBindingUi()
     }
 
@@ -4353,6 +4563,8 @@ class ImprovedChatPanel(
         contextPreviewPanel.clear()
         clearImageAttachments()
         currentAssistantPanel = null
+        activeTaskExecutionPanel = null
+        latestObservedTaskLiveProgress = null
         val interactionMode = currentInteractionMode()
         val continueHandler = continueHandlerFor(interactionMode)
         val workflowSectionsEnabled = workflowSectionRenderingEnabledFor(interactionMode)
@@ -7098,6 +7310,9 @@ class ImprovedChatPanel(
         pendingPastedTextBlocks.clear()
         userMessageRawContent.clear()
         CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
+        specTaskExecutionService.removeLiveProgressListener(taskExecutionLiveProgressListener)
+        activeTaskExecutionPanel = null
+        latestObservedTaskLiveProgress = null
         scope.cancel()
     }
 
@@ -7198,6 +7413,10 @@ class ImprovedChatPanel(
             "taskChipVisible" to taskBindingChip.isVisible.toString(),
             "taskChipText" to taskBindingChip.text.orEmpty(),
             "taskChipTooltip" to taskBindingChip.toolTipText.orEmpty(),
+            "taskChipIconId" to SpecWorkflowIcons.debugId(taskBindingChip.icon),
+            "taskChipBorderPainted" to taskBindingChip.isBorderPainted.toString(),
+            "taskChipContentFilled" to taskBindingChip.isContentAreaFilled.toString(),
+            "taskChipOpaque" to taskBindingChip.isOpaque.toString(),
             "executeTaskVisible" to executeTaskBindingButton.isVisible.toString(),
             "executeTaskEnabled" to executeTaskBindingButton.isEnabled.toString(),
             "executeTaskIconId" to SpecWorkflowIcons.debugId(executeTaskBindingButton.icon),
@@ -7229,6 +7448,22 @@ class ImprovedChatPanel(
             "text" to statusLabel.text.orEmpty(),
             "tooltip" to statusLabel.toolTipText.orEmpty(),
             "visible" to statusLabel.isVisible.toString(),
+        )
+    }
+
+    internal fun liveTaskExecutionSnapshotForTest(): Map<String, String> {
+        val state = activeTaskExecutionPanel
+        val labels = state?.panel
+            ?.let(::collectComponentTextsForSnapshot)
+            .orEmpty()
+        return mapOf(
+            "visible" to (state != null).toString(),
+            "runId" to state?.runId.orEmpty(),
+            "taskId" to state?.taskId.orEmpty(),
+            "eventCount" to state?.seenEventKeys?.size?.toString().orEmpty(),
+            "finished" to (state?.finished ?: false).toString(),
+            "content" to state?.panel?.getContent().orEmpty(),
+            "labels" to labels.joinToString(" | "),
         )
     }
 
@@ -7266,6 +7501,10 @@ class ImprovedChatPanel(
 
     internal fun clickSendForTest() {
         handleSendOrStop()
+    }
+
+    internal fun applyTaskLiveProgressForTest(progress: TaskExecutionLiveProgress) {
+        handleTaskExecutionLiveProgress(progress)
     }
 
     companion object {
@@ -7595,5 +7834,18 @@ class ImprovedChatPanel(
             "gif",
             "bmp",
         )
+    }
+
+    private fun collectComponentTextsForSnapshot(component: java.awt.Component): List<String> {
+        val values = mutableListOf<String>()
+        when (component) {
+            is JLabel -> component.text?.trim()?.takeIf(String::isNotBlank)?.let(values::add)
+            is JButton -> component.text?.trim()?.takeIf(String::isNotBlank)?.let(values::add)
+        }
+        val container = component as? java.awt.Container ?: return values
+        container.components.forEach { child ->
+            values += collectComponentTextsForSnapshot(child)
+        }
+        return values
     }
 }
