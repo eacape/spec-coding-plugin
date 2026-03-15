@@ -163,8 +163,8 @@ internal class SpecWorkflowVerifyDeltaPanel(
         historyScrollPane,
         detailScrollPane,
     ).apply {
-        resizeWeight = 0.6
-        dividerLocation = JBUI.scale(120)
+        resizeWeight = DEFAULT_SPLIT_RESIZE_WEIGHT
+        dividerLocation = EMPTY_HISTORY_HEIGHT
         isContinuousLayout = true
         border = JBUI.Borders.empty()
         background = DETAIL_BG
@@ -233,6 +233,31 @@ internal class SpecWorkflowVerifyDeltaPanel(
         return maxOf(MIN_DETAIL_HEIGHT, lineBasedHeight, preferredTextHeight) + verticalBorder
     }
 
+    private fun applyPreferredSplitPaneLayout() {
+        val emptyHistory = historyListModel.isEmpty()
+        val historyTargetHeight = if (emptyHistory) {
+            EMPTY_HISTORY_HEIGHT
+        } else {
+            dynamicHistoryHeight().coerceAtMost(MAX_HISTORY_PANE_HEIGHT)
+        }
+        val detailReservedHeight = if (emptyHistory) {
+            EMPTY_STATE_DETAIL_RESERVED_HEIGHT
+        } else {
+            MIN_DETAIL_HEIGHT
+        }
+        val availableContentHeight = (contentSplitPane.height - contentSplitPane.dividerSize)
+            .takeIf { it > 0 }
+        val dividerLocation = if (availableContentHeight != null) {
+            val maxHistoryHeight = (availableContentHeight - detailReservedHeight)
+                .coerceAtLeast(MIN_HISTORY_PANE_HEIGHT)
+            historyTargetHeight.coerceAtMost(maxHistoryHeight)
+        } else {
+            historyTargetHeight
+        }
+        contentSplitPane.resizeWeight = if (emptyHistory) EMPTY_STATE_SPLIT_RESIZE_WEIGHT else DEFAULT_SPLIT_RESIZE_WEIGHT
+        contentSplitPane.dividerLocation = dividerLocation
+    }
+
     fun refreshLocalizedTexts() {
         headerTitleLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.title")
         baselineLabel.text = SpecCodingBundle.message("spec.toolwindow.verifyDelta.baseline.label")
@@ -253,6 +278,7 @@ internal class SpecWorkflowVerifyDeltaPanel(
         updateHeader()
         updateControls()
         updateDetail()
+        applyPreferredSplitPaneLayout()
         revalidate()
         repaint()
     }
@@ -267,6 +293,7 @@ internal class SpecWorkflowVerifyDeltaPanel(
         updateHeader()
         updateControls()
         updateDetail()
+        applyPreferredSplitPaneLayout()
         revalidate()
         repaint()
     }
@@ -300,6 +327,7 @@ internal class SpecWorkflowVerifyDeltaPanel(
         updateHeader()
         updateControls()
         updateDetail()
+        applyPreferredSplitPaneLayout()
         revalidate()
         repaint()
     }
@@ -314,6 +342,8 @@ internal class SpecWorkflowVerifyDeltaPanel(
             "workflowId" to currentState?.workflowId.orEmpty(),
             "historyCount" to historyListModel.size().toString(),
             "emptyText" to historyList.emptyText.text.orEmpty(),
+            "dividerLocation" to contentSplitPane.dividerLocation.toString(),
+            "resizeWeight" to contentSplitPane.resizeWeight.toString(),
             "runText" to runVerifyButton.text.orEmpty(),
             "runTooltip" to runVerifyButton.toolTipText.orEmpty(),
             "runHasIcon" to (runVerifyButton.icon != null).toString(),
@@ -738,9 +768,14 @@ internal class SpecWorkflowVerifyDeltaPanel(
     )
 
     companion object {
-        private val EMPTY_HISTORY_HEIGHT = JBUI.scale(96)
+        private val EMPTY_HISTORY_HEIGHT = JBUI.scale(72)
+        private val MIN_HISTORY_PANE_HEIGHT = JBUI.scale(56)
+        private val MAX_HISTORY_PANE_HEIGHT = JBUI.scale(132)
         private val MIN_DETAIL_HEIGHT = JBUI.scale(72)
+        private val EMPTY_STATE_DETAIL_RESERVED_HEIGHT = JBUI.scale(108)
         private const val MIN_DETAIL_LINE_COUNT = 4
+        private const val DEFAULT_SPLIT_RESIZE_WEIGHT = 0.5
+        private const val EMPTY_STATE_SPLIT_RESIZE_WEIGHT = 0.32
         private val HEADER_FG = JBColor(Color(35, 40, 47), Color(222, 226, 232))
         private val HEADER_SECONDARY_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
         private val DETAIL_BG = JBColor(Color(253, 254, 255), Color(45, 50, 58))

@@ -1,4 +1,4 @@
-package com.eacape.speccodingplugin.ui.spec
+﻿package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.StageId
@@ -132,5 +132,7 @@ class SpecWorkflowVerifyDeltaPanelTest {
             SpecCodingBundle.message("spec.toolwindow.verifyDelta.compare.disabled.noBaseline"),
             snapshot.getValue("compareTooltip"),
         )
+        assertEquals("72", snapshot.getValue("dividerLocation"))
+        assertEquals("0.32", snapshot.getValue("resizeWeight"))
     }
 }

@@ -125,11 +125,19 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("false", snapshot.getValue("workflowChipVisible"))
         assertEquals("true", snapshot.getValue("taskChipVisible"))
         assertEquals(
-            SpecCodingBundle.message("toolwindow.workflow.binding.task", task.id),
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.task.summary",
+                task.id,
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.pending"),
+            ),
             snapshot.getValue("taskChipText"),
         )
         assertEquals(
-            SpecCodingBundle.message("toolwindow.workflow.binding.task.tooltip.state", task.id, TaskStatus.PENDING.name),
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.task.tooltip.state",
+                task.id,
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.pending"),
+            ),
             snapshot.getValue("taskChipTooltip"),
         )
         assertEquals("true", snapshot.getValue("executeTaskVisible"))
@@ -139,29 +147,31 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", task.id),
             snapshot.getValue("executeTaskTooltip"),
         )
-        assertEquals("true", snapshot.getValue("retryTaskVisible"))
+        assertEquals("false", snapshot.getValue("retryTaskVisible"))
         assertEquals("false", snapshot.getValue("retryTaskEnabled"))
         assertEquals("refresh", snapshot.getValue("retryTaskIconId"))
         assertEquals(
             SpecCodingBundle.message(
                 "toolwindow.workflow.binding.retry.unavailable.state",
                 task.id,
-                TaskStatus.PENDING.name,
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.pending"),
             ),
             snapshot.getValue("retryTaskTooltip"),
         )
-        assertEquals("true", snapshot.getValue("completeTaskVisible"))
+        assertEquals("false", snapshot.getValue("completeTaskVisible"))
         assertEquals("false", snapshot.getValue("completeTaskEnabled"))
         assertEquals("complete", snapshot.getValue("completeTaskIconId"))
         assertEquals(
             SpecCodingBundle.message(
                 "toolwindow.workflow.binding.complete.unavailable.state",
                 task.id,
-                TaskStatus.PENDING.name,
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.pending"),
             ),
             snapshot.getValue("completeTaskTooltip"),
         )
-        assertEquals("true", snapshot.getValue("taskClearVisible"))
+        assertEquals("true", snapshot.getValue("taskMoreVisible"))
+        assertEquals("false", snapshot.getValue("taskClearVisible"))
+        assertEquals("true", snapshot.getValue("composerAccessoryVisible"))
         assertFalse(snapshot.getValue("sessionId").isBlank())
 
         ApplicationManager.getApplication().invokeAndWait {
@@ -181,6 +191,7 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("false", clearedSnapshot.getValue("executeTaskVisible"))
         assertEquals("false", clearedSnapshot.getValue("retryTaskVisible"))
         assertEquals("false", clearedSnapshot.getValue("completeTaskVisible"))
+        assertEquals("false", clearedSnapshot.getValue("taskMoreVisible"))
     }
 
     fun `test history open should normalize legacy spec session into workflow binding UI`() {
@@ -397,7 +408,7 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             SpecCodingBundle.message(
                 "toolwindow.workflow.binding.task.tooltip.run",
                 task.id,
-                TaskStatus.IN_PROGRESS.name,
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress"),
                 run.runId,
                 TaskExecutionRunStatus.WAITING_CONFIRMATION.name,
             ),
@@ -406,6 +417,9 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("false", snapshot.getValue("executeTaskEnabled"))
         assertEquals("false", snapshot.getValue("retryTaskEnabled"))
         assertEquals("true", snapshot.getValue("completeTaskEnabled"))
+        assertEquals("false", snapshot.getValue("executeTaskVisible"))
+        assertEquals("false", snapshot.getValue("retryTaskVisible"))
+        assertEquals("true", snapshot.getValue("completeTaskVisible"))
     }
 
     fun `test workflow attachment boundary should surface explicit status in bound chat`() {

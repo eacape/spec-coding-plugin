@@ -63,19 +63,18 @@ class ImageAttachmentPreviewPanelTest {
             )
         }
 
-        val aliases = collectDescendants(panel)
+        val labels = collectDescendants(panel)
             .filterIsInstance<JLabel>()
             .mapNotNull { it.text }
-            .filter { it.startsWith("image#") }
             .toList()
 
-        assertEquals(listOf("image#1", "image#2", "image#3"), aliases)
+        assertTrue(labels.any { it.contains("3") && !it.startsWith("image#") })
 
         val removeButtons = collectDescendants(panel)
             .filterIsInstance<JButton>()
             .filter { it.toolTipText?.isNotBlank() == true }
             .toList()
-        assertEquals(3, removeButtons.size)
+        assertEquals(1, removeButtons.size)
     }
 
     private fun collectDescendants(component: Component): Sequence<Component> = sequence {

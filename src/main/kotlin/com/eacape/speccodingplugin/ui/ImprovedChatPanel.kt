@@ -171,7 +171,9 @@ import javax.swing.JButton
 import javax.swing.Icon
 import javax.swing.JLabel
 import javax.swing.JList
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.KeyStroke
@@ -231,7 +233,6 @@ class ImprovedChatPanel(
     }
 
     // UI Components
-    private val providerLabel = JBLabel(SpecCodingBundle.message("toolwindow.provider.label"))
     private val modelLabel = JBLabel(SpecCodingBundle.message("toolwindow.model.label"))
     private val providerComboBox = ComboBox<String>()
     private val modelComboBox = ComboBox<ModelInfo>()
@@ -256,8 +257,15 @@ class ImprovedChatPanel(
     private val chatSplitPane = JSplitPane(JSplitPane.HORIZONTAL_SPLIT)
     private val contentSplitPane = JSplitPane(JSplitPane.VERTICAL_SPLIT)
     private val specSidebarToggleButton = JButton()
-    private val contextPreviewPanel = ContextPreviewPanel(project)
-    private val imageAttachmentPreviewPanel = ImageAttachmentPreviewPanel(onRemove = ::removeTransientClipboardImageIfNeeded)
+    private val composerAccessoryStrip = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+    private val contextPreviewPanel = ContextPreviewPanel(
+        project = project,
+        onStateChanged = ::refreshComposerAccessoryStripVisibility,
+    )
+    private val imageAttachmentPreviewPanel = ImageAttachmentPreviewPanel(
+        onRemove = ::removeTransientClipboardImageIfNeeded,
+        onStateChanged = ::refreshComposerAccessoryStripVisibility,
+    )
     private val composerHintLabel = JBLabel(SpecCodingBundle.message("toolwindow.composer.hint"))
     private val workflowBindingStrip = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
     private val workflowBindingChip = JButton()
@@ -266,6 +274,7 @@ class ImprovedChatPanel(
     private val retryTaskBindingButton = JButton()
     private val completeTaskBindingButton = JButton()
     private val clearTaskBindingButton = JButton()
+    private val taskBindingOverflowButton = JButton()
     private val specModeComboForeground = JBColor(
         Color(0x4A4F59), // #4A4F59
         Color(0xC6CBD3),
@@ -320,6 +329,13 @@ class ImprovedChatPanel(
         val modelId: String,
         val operationMode: OperationMode,
     )
+
+    private enum class TaskBindingPrimaryAction {
+        NONE,
+        EXECUTE,
+        RETRY,
+        COMPLETE,
+    }
 
     private enum class ChatInteractionMode(
         val key: String,
@@ -546,11 +562,11 @@ class ImprovedChatPanel(
     }
 
     private fun refreshLocalizedTexts() {
-        providerLabel.text = SpecCodingBundle.message("toolwindow.provider.label")
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
         composerHintLabel.text = SpecCodingBundle.message("toolwindow.composer.hint")
         composerHintLabel.toolTipText = composerHintLabel.text
         inputField.setPlaceholderText(SpecCodingBundle.message("toolwindow.input.placeholder"))
+        inputField.toolTipText = composerHintLabel.text
         operationModeSelector.refreshLocalizedTexts()
         refreshActionButtonTexts()
         updateSpecSidebarToggleButtonTexts()
@@ -695,9 +711,7 @@ class ImprovedChatPanel(
             minWidth = MODEL_COMBO_MIN_WIDTH,
             maxWidth = MODEL_COMBO_MAX_WIDTH,
         )
-        providerLabel.font = JBUI.Fonts.smallFont()
         modelLabel.font = JBUI.Fonts.smallFont()
-        providerLabel.foreground = JBColor.GRAY
         modelLabel.foreground = JBColor.GRAY
         composerHintLabel.foreground = JBColor.GRAY
         composerHintLabel.font = JBUI.Fonts.smallFont()
@@ -768,13 +782,7 @@ class ImprovedChatPanel(
         val composerMetaRow = JPanel(BorderLayout(JBUI.scale(8), 0))
         composerMetaRow.isOpaque = false
         composerMetaRow.border = JBUI.Borders.emptyTop(5)
-        val composerMetaInfoPanel = JPanel()
-        composerMetaInfoPanel.layout = BoxLayout(composerMetaInfoPanel, BoxLayout.Y_AXIS)
-        composerMetaInfoPanel.isOpaque = false
-        composerMetaInfoPanel.add(composerHintLabel)
-        composerMetaInfoPanel.add(Box.createVerticalStrut(JBUI.scale(4)))
-        composerMetaInfoPanel.add(workflowBindingStrip)
-        composerMetaRow.add(composerMetaInfoPanel, BorderLayout.CENTER)
+        composerMetaRow.add(composerHintLabel, BorderLayout.CENTER)
         val composerMetaActions = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
         composerMetaActions.isOpaque = false
         composerMetaActions.add(specWorkflowComboBox)
@@ -816,13 +824,12 @@ class ImprovedChatPanel(
         )
         composerContainer.add(inputScroll, BorderLayout.CENTER)
         composerContainer.add(composerMetaRow, BorderLayout.SOUTH)
-
-        val composerPreviewStack = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            add(contextPreviewPanel)
-            add(imageAttachmentPreviewPanel)
-        }
+        composerAccessoryStrip.isOpaque = false
+        composerAccessoryStrip.border = JBUI.Borders.emptyBottom(2)
+        composerAccessoryStrip.isVisible = false
+        composerAccessoryStrip.add(workflowBindingStrip)
+        composerAccessoryStrip.add(contextPreviewPanel)
+        composerAccessoryStrip.add(imageAttachmentPreviewPanel)
 
         val bottomPanel = JPanel(BorderLayout(0, JBUI.scale(8)))
         bottomPanel.isOpaque = true
@@ -832,7 +839,7 @@ class ImprovedChatPanel(
             JBUI.Borders.empty(8, 10, 8, 10),
         )
         bottomPanel.minimumSize = Dimension(0, JBUI.scale(CHAT_COMPOSER_MIN_HEIGHT))
-        bottomPanel.add(composerPreviewStack, BorderLayout.NORTH)
+        bottomPanel.add(composerAccessoryStrip, BorderLayout.NORTH)
         bottomPanel.add(composerContainer, BorderLayout.CENTER)
         bottomPanel.add(controlsRow, BorderLayout.SOUTH)
 
@@ -849,16 +856,18 @@ class ImprovedChatPanel(
         configureWorkflowBindingActionButton(retryTaskBindingButton, SpecWorkflowIcons.Refresh)
         configureWorkflowBindingActionButton(completeTaskBindingButton, SpecWorkflowIcons.Complete)
         configureWorkflowBindingChip(clearTaskBindingButton, icon = SpecWorkflowIcons.Close, clearAction = true)
+        configureWorkflowBindingOverflowButton()
         taskBindingChip.addActionListener { handleTaskBindingChipClicked() }
         executeTaskBindingButton.addActionListener { handleBoundTaskExecutionRequested(retry = false) }
         retryTaskBindingButton.addActionListener { handleBoundTaskExecutionRequested(retry = true) }
         completeTaskBindingButton.addActionListener { handleBoundTaskCompletionRequested() }
         clearTaskBindingButton.addActionListener { clearActiveTaskBinding() }
+        taskBindingOverflowButton.addActionListener { showTaskBindingOverflowMenu(taskBindingOverflowButton) }
         workflowBindingStrip.add(taskBindingChip)
         workflowBindingStrip.add(executeTaskBindingButton)
         workflowBindingStrip.add(retryTaskBindingButton)
         workflowBindingStrip.add(completeTaskBindingButton)
-        workflowBindingStrip.add(clearTaskBindingButton)
+        workflowBindingStrip.add(taskBindingOverflowButton)
         updateWorkflowBindingUi()
     }
 
@@ -888,6 +897,28 @@ class ImprovedChatPanel(
             accessibleName = "",
         )
         button.isVisible = false
+    }
+
+    private fun configureWorkflowBindingOverflowButton() {
+        taskBindingOverflowButton.text = "..."
+        taskBindingOverflowButton.font = JBUI.Fonts.smallFont()
+        taskBindingOverflowButton.isFocusable = false
+        taskBindingOverflowButton.isFocusPainted = false
+        taskBindingOverflowButton.isBorderPainted = false
+        taskBindingOverflowButton.isContentAreaFilled = true
+        taskBindingOverflowButton.isOpaque = true
+        taskBindingOverflowButton.background = JBColor(Color(0xEFF3F8), Color(0x343B45))
+        taskBindingOverflowButton.foreground = JBColor(Color(0x52606F), Color(0xC8D1DB))
+        taskBindingOverflowButton.margin = JBUI.insets(2, 7, 2, 7)
+        SpecUiStyle.applyRoundRect(taskBindingOverflowButton, arc = 10)
+        taskBindingOverflowButton.isVisible = false
+    }
+
+    private fun refreshComposerAccessoryStripVisibility() {
+        composerAccessoryStrip.isVisible =
+            workflowBindingStrip.isVisible || contextPreviewPanel.isVisible || imageAttachmentPreviewPanel.isVisible
+        composerAccessoryStrip.revalidate()
+        composerAccessoryStrip.repaint()
     }
 
     private fun resolvedActiveWorkflowChatBinding(): WorkflowChatBinding? {
@@ -936,20 +967,20 @@ class ImprovedChatPanel(
             executeTaskBindingButton.isVisible = false
             retryTaskBindingButton.isVisible = false
             completeTaskBindingButton.isVisible = false
+            taskBindingOverflowButton.isVisible = false
             clearTaskBindingButton.toolTipText = null
             clearTaskBindingButton.isVisible = false
             workflowBindingStrip.revalidate()
             workflowBindingStrip.repaint()
+            refreshComposerAccessoryStripVisibility()
             return
         }
 
         taskBindingChip.isVisible = true
-        clearTaskBindingButton.isVisible = true
-        executeTaskBindingButton.isVisible = true
-        retryTaskBindingButton.isVisible = true
-        completeTaskBindingButton.isVisible = true
+        taskBindingOverflowButton.isVisible = true
+        clearTaskBindingButton.isVisible = false
         val task = resolveBoundWorkflowTask(binding)
-        taskBindingChip.text = SpecCodingBundle.message("toolwindow.workflow.binding.task", taskId)
+        taskBindingChip.text = buildTaskBindingChipText(taskId, task)
         taskBindingChip.toolTipText = buildTaskBindingTooltip(taskId, task)
         clearTaskBindingButton.text = ""
         clearTaskBindingButton.toolTipText = SpecCodingBundle.message(
@@ -960,11 +991,28 @@ class ImprovedChatPanel(
             SpecCodingBundle.message("toolwindow.workflow.binding.task.clear")
         clearTaskBindingButton.accessibleContext.accessibleDescription =
             clearTaskBindingButton.toolTipText
+        taskBindingOverflowButton.toolTipText = SpecCodingBundle.message(
+            "toolwindow.workflow.binding.more.tooltip",
+            taskId,
+        )
+        taskBindingOverflowButton.accessibleContext.accessibleName =
+            SpecCodingBundle.message("toolwindow.workflow.binding.more")
+        taskBindingOverflowButton.accessibleContext.accessibleDescription =
+            taskBindingOverflowButton.toolTipText
         updateTaskBindingActionButtons(binding, taskId, task)
         taskBindingChip.accessibleContext.accessibleName = taskBindingChip.text
         taskBindingChip.accessibleContext.accessibleDescription = taskBindingChip.toolTipText
         workflowBindingStrip.revalidate()
         workflowBindingStrip.repaint()
+        refreshComposerAccessoryStripVisibility()
+    }
+
+    private fun buildTaskBindingChipText(taskId: String, task: StructuredTask?): String {
+        return SpecCodingBundle.message(
+            "toolwindow.workflow.binding.task.summary",
+            taskId,
+            formatTaskStatus(task?.displayStatus),
+        )
     }
 
     private fun buildTaskBindingTooltip(taskId: String, task: StructuredTask?): String {
@@ -976,13 +1024,13 @@ class ImprovedChatPanel(
             SpecCodingBundle.message(
                 "toolwindow.workflow.binding.task.tooltip.state",
                 taskId,
-                task.displayStatus.name,
+                formatTaskStatus(task.displayStatus),
             )
         } else {
             SpecCodingBundle.message(
                 "toolwindow.workflow.binding.task.tooltip.run",
                 taskId,
-                task.displayStatus.name,
+                formatTaskStatus(task.displayStatus),
                 activeRun.runId,
                 activeRun.status.name,
             )
@@ -1020,7 +1068,7 @@ class ImprovedChatPanel(
                     disabledReason = SpecCodingBundle.message(
                         "toolwindow.workflow.binding.execute.unavailable.state",
                         taskId,
-                        task.displayStatus.name,
+                        formatTaskStatus(task.displayStatus),
                     ),
                 )
             },
@@ -1051,7 +1099,7 @@ class ImprovedChatPanel(
                     disabledReason = SpecCodingBundle.message(
                         "toolwindow.workflow.binding.retry.unavailable.state",
                         taskId,
-                        task.displayStatus.name,
+                        formatTaskStatus(task.displayStatus),
                     ),
                 )
             },
@@ -1082,11 +1130,98 @@ class ImprovedChatPanel(
                     disabledReason = SpecCodingBundle.message(
                         "toolwindow.workflow.binding.complete.unavailable.state",
                         taskId,
-                        task.displayStatus.name,
+                        formatTaskStatus(task.displayStatus),
                     ),
                 )
             },
         )
+        val primaryAction = resolvePrimaryTaskBindingAction(task)
+        executeTaskBindingButton.isVisible = primaryAction == TaskBindingPrimaryAction.EXECUTE
+        retryTaskBindingButton.isVisible = primaryAction == TaskBindingPrimaryAction.RETRY
+        completeTaskBindingButton.isVisible = primaryAction == TaskBindingPrimaryAction.COMPLETE
+    }
+
+    private fun showTaskBindingOverflowMenu(anchor: JComponent) {
+        val binding = resolvedActiveWorkflowChatBinding() ?: return
+        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
+        val task = resolveBoundWorkflowTask(binding)
+        val primaryAction = resolvePrimaryTaskBindingAction(task)
+        val popup = JPopupMenu()
+        popup.add(createTaskBindingMenuItem(
+            text = SpecCodingBundle.message("toolwindow.workflow.binding.open"),
+            icon = AllIcons.Actions.MenuOpen,
+            tooltip = SpecCodingBundle.message("toolwindow.workflow.binding.open.tooltip", taskId),
+        ) {
+            handleTaskBindingChipClicked()
+        })
+        if (primaryAction != TaskBindingPrimaryAction.EXECUTE && task?.displayStatus == TaskStatus.PENDING) {
+            popup.add(createTaskBindingMenuItem(
+                text = SpecCodingBundle.message("toolwindow.workflow.binding.execute"),
+                icon = SpecWorkflowIcons.Execute,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
+            ) {
+                handleBoundTaskExecutionRequested(retry = false)
+            })
+        }
+        if (primaryAction != TaskBindingPrimaryAction.RETRY && task?.displayStatus == TaskStatus.BLOCKED) {
+            popup.add(createTaskBindingMenuItem(
+                text = SpecCodingBundle.message("toolwindow.workflow.binding.retry"),
+                icon = SpecWorkflowIcons.Refresh,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
+            ) {
+                handleBoundTaskExecutionRequested(retry = true)
+            })
+        }
+        if (primaryAction != TaskBindingPrimaryAction.COMPLETE && task?.displayStatus == TaskStatus.IN_PROGRESS) {
+            popup.add(createTaskBindingMenuItem(
+                text = SpecCodingBundle.message("toolwindow.workflow.binding.complete"),
+                icon = SpecWorkflowIcons.Complete,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
+            ) {
+                handleBoundTaskCompletionRequested()
+            })
+        }
+        popup.addSeparator()
+        popup.add(createTaskBindingMenuItem(
+            text = SpecCodingBundle.message("toolwindow.workflow.binding.task.clear"),
+            icon = SpecWorkflowIcons.Close,
+            tooltip = SpecCodingBundle.message("toolwindow.workflow.binding.task.clear.tooltip", taskId),
+        ) {
+            clearActiveTaskBinding()
+        })
+        popup.show(anchor, 0, anchor.height)
+    }
+
+    private fun createTaskBindingMenuItem(
+        text: String,
+        icon: Icon,
+        tooltip: String,
+        action: () -> Unit,
+    ): JMenuItem {
+        return JMenuItem(text, icon).apply {
+            toolTipText = tooltip
+            addActionListener { action() }
+        }
+    }
+
+    private fun resolvePrimaryTaskBindingAction(task: StructuredTask?): TaskBindingPrimaryAction {
+        return when (task?.displayStatus) {
+            TaskStatus.PENDING -> TaskBindingPrimaryAction.EXECUTE
+            TaskStatus.BLOCKED -> TaskBindingPrimaryAction.RETRY
+            TaskStatus.IN_PROGRESS -> TaskBindingPrimaryAction.COMPLETE
+            else -> TaskBindingPrimaryAction.NONE
+        }
+    }
+
+    private fun formatTaskStatus(status: TaskStatus?): String {
+        return when (status) {
+            TaskStatus.PENDING -> SpecCodingBundle.message("toolwindow.workflow.binding.task.status.pending")
+            TaskStatus.BLOCKED -> SpecCodingBundle.message("toolwindow.workflow.binding.task.status.blocked")
+            TaskStatus.IN_PROGRESS -> SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress")
+            TaskStatus.COMPLETED -> SpecCodingBundle.message("toolwindow.workflow.binding.task.status.completed")
+            TaskStatus.CANCELLED -> SpecCodingBundle.message("toolwindow.workflow.binding.task.status.cancelled")
+            null -> SpecCodingBundle.message("toolwindow.workflow.binding.task.status.unknown")
+        }
     }
 
     private fun applyUnavailableTaskBindingActionButtons() {
@@ -6843,8 +6978,13 @@ class ImprovedChatPanel(
             "completeTaskEnabled" to completeTaskBindingButton.isEnabled.toString(),
             "completeTaskIconId" to SpecWorkflowIcons.debugId(completeTaskBindingButton.icon),
             "completeTaskTooltip" to completeTaskBindingButton.toolTipText.orEmpty(),
+            "taskMoreVisible" to taskBindingOverflowButton.isVisible.toString(),
+            "taskMoreTooltip" to taskBindingOverflowButton.toolTipText.orEmpty(),
             "taskClearVisible" to clearTaskBindingButton.isVisible.toString(),
             "taskClearTooltip" to clearTaskBindingButton.toolTipText.orEmpty(),
+            "composerAccessoryVisible" to composerAccessoryStrip.isVisible.toString(),
+            "contextSummaryVisible" to contextPreviewPanel.isVisible.toString(),
+            "imageSummaryVisible" to imageAttachmentPreviewPanel.isVisible.toString(),
             "sessionId" to currentSessionId.orEmpty(),
         )
     }
@@ -6866,7 +7006,7 @@ class ImprovedChatPanel(
     }
 
     internal fun clearTaskBindingForTest() {
-        clearTaskBindingButton.doClick()
+        clearActiveTaskBinding()
     }
 
     internal fun clickTaskBindingChipForTest() {
@@ -6874,15 +7014,15 @@ class ImprovedChatPanel(
     }
 
     internal fun clickExecuteBoundTaskForTest() {
-        executeTaskBindingButton.doClick()
+        handleBoundTaskExecutionRequested(retry = false)
     }
 
     internal fun clickRetryBoundTaskForTest() {
-        retryTaskBindingButton.doClick()
+        handleBoundTaskExecutionRequested(retry = true)
     }
 
     internal fun clickCompleteBoundTaskForTest() {
-        completeTaskBindingButton.doClick()
+        handleBoundTaskCompletionRequested()
     }
 
     companion object {

@@ -330,11 +330,24 @@ class SpecWorkflowPanel(
         )
         statusChipPanel.removeAll()
         statusChipPanel.add(statusLabel, BorderLayout.CENTER)
+        val toolbarCard = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = TOOLBAR_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = TOOLBAR_BORDER,
+                arc = JBUI.scale(12),
+                top = 4,
+                left = 6,
+                bottom = 4,
+                right = 6,
+            )
+            add(toolbarRow, BorderLayout.CENTER)
+        }
         add(
             JPanel(BorderLayout()).apply {
                 isOpaque = false
-                border = JBUI.Borders.emptyBottom(2)
-                add(toolbarRow, BorderLayout.CENTER)
+                border = JBUI.Borders.emptyBottom(3)
+                add(toolbarCard, BorderLayout.CENTER)
             },
             BorderLayout.NORTH,
         )
@@ -4944,6 +4957,8 @@ class SpecWorkflowPanel(
     }
 
     companion object {
+        private val TOOLBAR_BG = JBColor(Color(248, 250, 254), Color(58, 64, 74))
+        private val TOOLBAR_BORDER = JBColor(Color(212, 222, 239), Color(89, 100, 117))
         private val WORKSPACE_SUMMARY_BG = JBColor(Color(245, 249, 255), Color(56, 62, 72))
         private val WORKSPACE_SUMMARY_BORDER = JBColor(Color(201, 214, 235), Color(86, 96, 110))
         private val WORKSPACE_SUMMARY_TITLE_FG = JBColor(Color(42, 59, 94), Color(214, 223, 236))
