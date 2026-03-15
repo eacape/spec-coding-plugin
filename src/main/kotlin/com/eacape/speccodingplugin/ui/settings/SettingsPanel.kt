@@ -421,15 +421,15 @@ class SettingsPanel(
             ),
         )
         val proxyPanel = createSectionBody(
-            createToggleSurface(useProxyCheckBox),
-            createFieldRow(
+            createCheckboxFieldRow(
+                useProxyCheckBox,
                 createSettingFieldGroup("settings.proxy.host", proxyHostField),
                 createSettingFieldGroup("settings.proxy.port", proxyPortField),
             ),
         )
         val otherPanel = createSectionBody(
-            createToggleSurface(autoSaveCheckBox),
-            createFieldRow(
+            createCheckboxFieldRow(
+                autoSaveCheckBox,
                 createSettingFieldGroup("settings.other.maxHistorySize", maxHistorySizeField),
                 createSettingFieldGroup("settings.other.chatOutputFontSize", chatOutputFontSizeField),
             ),
@@ -452,7 +452,6 @@ class SettingsPanel(
                         "settings.engine.claudePath",
                         "settings.engine.codexPath",
                     ),
-                    icon = AllIcons.General.InlineRefresh,
                     content = cliToolsPanel,
                     headerActions = createModuleHeaderActions(detectCliButton),
                 ),
@@ -466,7 +465,6 @@ class SettingsPanel(
                         "settings.general.defaultModel",
                         "settings.general.interfaceLanguage",
                     ),
-                    icon = AllIcons.General.GearPlain,
                     content = generalPanel,
                 ),
             )
@@ -478,7 +476,6 @@ class SettingsPanel(
                         "settings.teamSync.promptRepoUrl",
                         "settings.teamSync.promptBranch",
                     ),
-                    icon = AllIcons.General.Export,
                     content = teamSyncPanel,
                 ),
             )
@@ -491,7 +488,6 @@ class SettingsPanel(
                         "settings.proxy.host",
                         "settings.proxy.port",
                     ),
-                    icon = AllIcons.Actions.Forward,
                     content = proxyPanel,
                 ),
             )
@@ -504,7 +500,6 @@ class SettingsPanel(
                         "settings.other.maxHistorySize",
                         "settings.other.chatOutputFontSize",
                     ),
-                    icon = AllIcons.General.GreenCheckmark,
                     content = otherPanel,
                 ),
             )
@@ -513,7 +508,6 @@ class SettingsPanel(
                 createBasicModuleCard(
                     titleKey = "settings.section.operationMode",
                     summary = buildSectionSummary("settings.operationMode.defaultMode"),
-                    icon = AllIcons.Actions.Resume,
                     content = operationModePanel,
                 ),
             )
@@ -554,12 +548,6 @@ class SettingsPanel(
         }
         val titleRow = JPanel(BorderLayout(JBUI.scale(10), 0)).apply {
             isOpaque = false
-            add(
-                JLabel(AllIcons.General.GearPlain).apply {
-                    border = JBUI.Borders.emptyTop(1)
-                },
-                BorderLayout.WEST,
-            )
             add(titleStack, BorderLayout.CENTER)
         }
 
@@ -698,20 +686,24 @@ class SettingsPanel(
         }
     }
 
-    private fun createToggleSurface(checkBox: JBCheckBox): JPanel {
+    private fun createCheckboxRow(checkBox: JBCheckBox): JPanel {
         checkBox.isOpaque = false
         return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
-            isOpaque = true
-            background = TOGGLE_SURFACE_BG
-            border = SpecUiStyle.roundedCardBorder(
-                lineColor = TOGGLE_SURFACE_BORDER,
-                arc = JBUI.scale(10),
-                top = 6,
-                left = 8,
-                bottom = 6,
-                right = 8,
-            )
+            isOpaque = false
+            border = JBUI.Borders.empty(0)
             add(checkBox)
+        }
+    }
+
+    private fun createCheckboxFieldRow(
+        checkBox: JBCheckBox,
+        vararg fields: JPanel,
+    ): JPanel {
+        val fieldsPanel = createFieldRow(*fields)
+        return JPanel(BorderLayout(JBUI.scale(12), 0)).apply {
+            isOpaque = false
+            add(createCheckboxRow(checkBox), BorderLayout.WEST)
+            add(fieldsPanel, BorderLayout.CENTER)
         }
     }
 
@@ -940,7 +932,6 @@ class SettingsPanel(
                 "settings.skills.discover.refresh",
                 "settings.skills.editor.new",
             ),
-            icon = SKILL_ACTION_REFRESH_ICON,
             content = discoveryPanel,
         ).apply {
             minimumSize = JBUI.size(220, 0)
@@ -951,7 +942,6 @@ class SettingsPanel(
                 "settings.skills.editor.id",
                 "settings.skills.editor.markdown",
             ),
-            icon = SKILL_ACTION_SAVE_CURRENT_ICON,
             content = editorPanel,
         ).apply {
             minimumSize = JBUI.size(420, 0)
@@ -1021,7 +1011,6 @@ class SettingsPanel(
     private fun createBasicModuleCard(
         titleKey: String,
         summary: String,
-        icon: Icon,
         content: JPanel,
         headerActions: JComponent? = null,
     ): JPanel {
@@ -1041,21 +1030,11 @@ class SettingsPanel(
             add(Box.createVerticalStrut(JBUI.scale(2)))
             add(summaryLabel)
         }
-        val titleHost = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
-            isOpaque = false
-            add(
-                JLabel(icon).apply {
-                    border = JBUI.Borders.emptyTop(1)
-                },
-                BorderLayout.WEST,
-            )
-            add(titleStack, BorderLayout.CENTER)
-        }
         val header = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = true
             background = tone.headerBg
             border = BorderFactory.createMatteBorder(0, 0, 1, 0, tone.headerBorder)
-            add(titleHost, BorderLayout.CENTER)
+            add(titleStack, BorderLayout.CENTER)
             headerActions?.let { add(it, BorderLayout.EAST) }
         }
         val contentHost = JPanel(BorderLayout()).apply {
@@ -2776,52 +2755,50 @@ class SettingsPanel(
         private const val SIDEBAR_EXPANDED_WIDTH = 118
         private const val SIDEBAR_COLLAPSED_WIDTH = 52
         private const val SIDEBAR_ITEM_HEIGHT = 40
-        private val SIDEBAR_BG = JBColor(Color(237, 245, 255), Color(49, 57, 68))
-        private val SIDEBAR_BORDER = JBColor(Color(182, 204, 233), Color(81, 94, 113))
-        private val SIDEBAR_SURFACE_BG = JBColor(Color(245, 250, 255), Color(56, 65, 77))
-        private val SIDEBAR_SURFACE_BORDER = JBColor(Color(199, 217, 242), Color(90, 104, 125))
-        private val SIDEBAR_SELECTION_BG = JBColor(Color(214, 231, 255), Color(74, 93, 122))
-        private val SIDEBAR_SELECTION_FG = JBColor(Color(39, 64, 106), Color(224, 234, 248))
-        private val SIDEBAR_ITEM_BG = JBColor(Color(245, 250, 255), Color(56, 65, 77))
-        private val SIDEBAR_ITEM_BORDER = JBColor(Color(216, 229, 248), Color(97, 113, 136))
-        private val SIDEBAR_ITEM_FG = JBColor(Color(64, 84, 117), Color(194, 207, 227))
-        private val SIDEBAR_ITEM_SELECTED_BG = JBColor(Color(223, 237, 255), Color(78, 98, 129))
-        private val SIDEBAR_ITEM_SELECTED_BORDER = JBColor(Color(156, 184, 222), Color(114, 136, 169))
-        private val SIDEBAR_ITEM_SELECTED_GLOW = JBColor(Color(235, 244, 255), Color(96, 118, 150))
-        private val SIDEBAR_ITEM_SELECTED_FG = JBColor(Color(31, 55, 92), Color(233, 240, 251))
-        private val SIDEBAR_ITEM_ACCENT = JBColor(Color(73, 118, 191), Color(159, 186, 227))
-        private val CONTENT_BG = JBColor(Color(250, 252, 255), Color(50, 56, 64))
-        private val CONTENT_BORDER = JBColor(Color(204, 216, 234), Color(83, 91, 103))
-        private val MODULE_CARD_BG = JBColor(Color(245, 250, 255), Color(58, 65, 76))
-        private val MODULE_CARD_BORDER = JBColor(Color(205, 219, 239), Color(90, 101, 118))
-        private val MODULE_TITLE_FG = JBColor(Color(49, 72, 108), Color(211, 222, 241))
-        private val MODULE_SUMMARY_FG = JBColor(Color(88, 107, 136), Color(173, 188, 210))
-        private val MODULE_HEADER_BG = JBColor(Color(237, 245, 255), Color(66, 74, 87))
-        private val MODULE_HEADER_BORDER = JBColor(Color(199, 214, 236), Color(96, 108, 126))
-        private val MODULE_CARD_BG_PRIMARY = JBColor(Color(241, 248, 255), Color(56, 64, 75))
-        private val MODULE_CARD_BORDER_PRIMARY = JBColor(Color(192, 210, 235), Color(90, 103, 121))
-        private val MODULE_HEADER_BG_PRIMARY = JBColor(Color(227, 239, 255), Color(70, 83, 100))
-        private val MODULE_HEADER_BORDER_PRIMARY = JBColor(Color(177, 198, 229), Color(101, 116, 136))
-        private val MODULE_TITLE_FG_PRIMARY = JBColor(Color(35, 61, 100), Color(220, 230, 246))
-        private val MODULE_CARD_BG_MUTED = JBColor(Color(247, 251, 255), Color(60, 67, 78))
-        private val MODULE_CARD_BORDER_MUTED = JBColor(Color(208, 221, 239), Color(92, 104, 121))
-        private val MODULE_HEADER_BG_MUTED = JBColor(Color(241, 247, 255), Color(68, 76, 89))
-        private val MODULE_HEADER_BORDER_MUTED = JBColor(Color(203, 217, 236), Color(98, 109, 127))
-        private val MODULE_TITLE_FG_MUTED = JBColor(Color(56, 78, 112), Color(205, 218, 236))
-        private val OVERVIEW_CARD_BG = JBColor(Color(240, 247, 255), Color(58, 67, 79))
-        private val OVERVIEW_CARD_BORDER = JBColor(Color(187, 207, 235), Color(96, 110, 130))
-        private val OVERVIEW_TITLE_FG = JBColor(Color(33, 57, 94), Color(226, 235, 248))
-        private val OVERVIEW_SUMMARY_FG = JBColor(Color(89, 108, 137), Color(183, 197, 218))
-        private val OVERVIEW_CHIP_BG = JBColor(Color(249, 252, 255), Color(64, 74, 87))
-        private val OVERVIEW_CHIP_BORDER = JBColor(Color(200, 217, 241), Color(101, 116, 136))
-        private val OVERVIEW_CHIP_CAPTION_FG = JBColor(Color(92, 111, 139), Color(177, 191, 212))
-        private val OVERVIEW_CHIP_VALUE_FG = JBColor(Color(38, 62, 97), Color(225, 233, 246))
-        private val FIELD_LABEL_FG = JBColor(Color(73, 95, 126), Color(190, 203, 223))
-        private val TOGGLE_SURFACE_BG = JBColor(Color(250, 252, 255), Color(64, 73, 86))
-        private val TOGGLE_SURFACE_BORDER = JBColor(Color(201, 218, 241), Color(101, 116, 136))
-        private val STATUS_CHIP_BG = JBColor(Color(246, 250, 255), Color(63, 73, 86))
-        private val STATUS_CHIP_BORDER = JBColor(Color(203, 218, 240), Color(103, 117, 137))
-        private val STATUS_CHIP_CAPTION_FG = JBColor(Color(88, 107, 136), Color(179, 193, 214))
+        private val SIDEBAR_BG = JBColor(Color(248, 250, 254), Color(50, 56, 64))
+        private val SIDEBAR_BORDER = JBColor(Color(212, 222, 239), Color(84, 92, 105))
+        private val SIDEBAR_SURFACE_BG = JBColor(Color(250, 252, 255), Color(56, 62, 72))
+        private val SIDEBAR_SURFACE_BORDER = JBColor(Color(204, 215, 233), Color(89, 100, 117))
+        private val SIDEBAR_SELECTION_BG = JBColor(Color(232, 239, 249), Color(74, 84, 98))
+        private val SIDEBAR_SELECTION_FG = JBColor(Color(48, 66, 99), Color(222, 230, 242))
+        private val SIDEBAR_ITEM_BG = JBColor(Color(250, 252, 255), Color(56, 62, 72))
+        private val SIDEBAR_ITEM_BORDER = JBColor(Color(224, 231, 242), Color(95, 106, 122))
+        private val SIDEBAR_ITEM_FG = JBColor(Color(87, 102, 127), Color(188, 199, 216))
+        private val SIDEBAR_ITEM_SELECTED_BG = JBColor(Color(237, 242, 250), Color(76, 87, 101))
+        private val SIDEBAR_ITEM_SELECTED_BORDER = JBColor(Color(197, 208, 226), Color(104, 117, 136))
+        private val SIDEBAR_ITEM_SELECTED_GLOW = JBColor(Color(243, 247, 252), Color(86, 98, 114))
+        private val SIDEBAR_ITEM_SELECTED_FG = JBColor(Color(44, 61, 92), Color(229, 235, 244))
+        private val SIDEBAR_ITEM_ACCENT = JBColor(Color(102, 130, 178), Color(147, 171, 209))
+        private val CONTENT_BG = JBColor(Color(250, 252, 255), Color(51, 56, 64))
+        private val CONTENT_BORDER = JBColor(Color(204, 215, 233), Color(84, 92, 105))
+        private val MODULE_CARD_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
+        private val MODULE_CARD_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
+        private val MODULE_TITLE_FG = JBColor(Color(57, 72, 104), Color(214, 223, 236))
+        private val MODULE_SUMMARY_FG = JBColor(Color(101, 117, 145), Color(166, 176, 193))
+        private val MODULE_HEADER_BG = JBColor(Color(248, 250, 254), Color(58, 64, 74))
+        private val MODULE_HEADER_BORDER = JBColor(Color(212, 222, 239), Color(89, 100, 117))
+        private val MODULE_CARD_BG_PRIMARY = JBColor(Color(245, 249, 255), Color(56, 62, 72))
+        private val MODULE_CARD_BORDER_PRIMARY = JBColor(Color(201, 214, 235), Color(86, 96, 110))
+        private val MODULE_HEADER_BG_PRIMARY = JBColor(Color(248, 250, 254), Color(58, 64, 74))
+        private val MODULE_HEADER_BORDER_PRIMARY = JBColor(Color(212, 222, 239), Color(89, 100, 117))
+        private val MODULE_TITLE_FG_PRIMARY = JBColor(Color(42, 59, 94), Color(214, 223, 236))
+        private val MODULE_CARD_BG_MUTED = JBColor(Color(249, 252, 255), Color(51, 57, 66))
+        private val MODULE_CARD_BORDER_MUTED = JBColor(Color(210, 220, 236), Color(86, 96, 112))
+        private val MODULE_HEADER_BG_MUTED = JBColor(Color(247, 249, 253), Color(58, 64, 75))
+        private val MODULE_HEADER_BORDER_MUTED = JBColor(Color(214, 223, 237), Color(90, 100, 116))
+        private val MODULE_TITLE_FG_MUTED = JBColor(Color(62, 78, 109), Color(205, 216, 232))
+        private val OVERVIEW_CARD_BG = JBColor(Color(245, 249, 255), Color(56, 62, 72))
+        private val OVERVIEW_CARD_BORDER = JBColor(Color(201, 214, 235), Color(86, 96, 110))
+        private val OVERVIEW_TITLE_FG = JBColor(Color(42, 59, 94), Color(214, 223, 236))
+        private val OVERVIEW_SUMMARY_FG = JBColor(Color(94, 110, 139), Color(160, 171, 188))
+        private val OVERVIEW_CHIP_BG = JBColor(Color(249, 252, 255), Color(60, 67, 77))
+        private val OVERVIEW_CHIP_BORDER = JBColor(Color(204, 217, 236), Color(90, 100, 116))
+        private val OVERVIEW_CHIP_CAPTION_FG = JBColor(Color(112, 124, 143), Color(172, 182, 196))
+        private val OVERVIEW_CHIP_VALUE_FG = JBColor(Color(52, 72, 106), Color(201, 213, 232))
+        private val FIELD_LABEL_FG = JBColor(Color(87, 102, 127), Color(188, 199, 216))
+        private val STATUS_CHIP_BG = JBColor(Color(236, 244, 255), Color(66, 76, 91))
+        private val STATUS_CHIP_BORDER = JBColor(Color(178, 198, 226), Color(99, 116, 140))
+        private val STATUS_CHIP_CAPTION_FG = JBColor(Color(94, 110, 139), Color(160, 171, 188))
         private val ACTION_BUTTON_BG = JBColor(Color(238, 246, 255), Color(65, 73, 86))
         private val ACTION_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(103, 117, 138))
         private val ACTION_BUTTON_FG = JBColor(Color(45, 67, 103), Color(204, 216, 235))
