@@ -152,6 +152,56 @@ class SpecTaskExecutionServiceTest {
     }
 
     @Test
+    fun `startAiExecution should reject tasks whose dependencies are not completed`() {
+        val workflowId = "wf-ai-dependency-blocked"
+        seedWorkflow(
+            workflowId = workflowId,
+            tasksMarkdown = """
+                # Implement Document
+
+                ## Task List
+
+                ### T-001: Unfinished dependency
+                ```spec-task
+                status: PENDING
+                priority: P0
+                dependsOn: []
+                relatedFiles: []
+                verificationResult: null
+                ```
+
+                ### T-002: Blocked by dependency
+                ```spec-task
+                status: PENDING
+                priority: P1
+                dependsOn:
+                  - T-001
+                relatedFiles: []
+                verificationResult: null
+                ```
+            """.trimIndent(),
+        )
+        val executionService = newExecutionService()
+
+        val error = assertThrows(TaskExecutionBlockedByDependenciesError::class.java) {
+            executionService.startAiExecution(
+                workflowId = workflowId,
+                taskId = "T-002",
+                providerId = "mock",
+                modelId = "mock-model-v1",
+                operationMode = OperationMode.AUTO,
+            )
+        }
+
+        assertEquals(
+            "Task T-002 cannot execute until dependencies are COMPLETED: T-001",
+            error.message,
+        )
+        assertTrue(storage.loadWorkflow(workflowId).getOrThrow().taskExecutionRuns.isEmpty())
+        assertTrue(sessionManager.listSessions().isEmpty())
+    }
+
+    @Test
     fun `startAiExecution should create task scoped session with prompt context and waiting confirmation run`() {
         val workflowId = "wf-ai-start"
         val contextFile = tempDir.resolve("src/main/kotlin/demo/FeatureService.kt")

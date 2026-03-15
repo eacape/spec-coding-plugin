@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.session
 
 import com.eacape.speccodingplugin.spec.SpecStorage
+import com.eacape.speccodingplugin.spec.SpecTaskDependencyRules
 import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.StructuredTask
 import com.eacape.speccodingplugin.spec.TaskStatus
@@ -283,9 +284,7 @@ class WorkflowChatTaskIntentResolver(private val project: Project) {
         task: StructuredTask,
         tasksById: Map<String, StructuredTask>,
     ): Boolean {
-        return task.dependsOn.all { dependencyId ->
-            tasksById[dependencyId]?.status == TaskStatus.COMPLETED
-        }
+        return SpecTaskDependencyRules.executionConstraint(task, tasksById.values).executable
     }
 
     private fun looksLikeQuestion(rawInput: String): Boolean {

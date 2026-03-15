@@ -190,6 +190,89 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("false", clearedSnapshot.getValue("taskMoreVisible"))
     }
 
+    fun `test bound task should disable send until dependencies are completed`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Dependency Guard",
+            description = "task 99",
+        ).getOrThrow()
+        val tasksService = SpecTasksService(project)
+        val dependencyTask = tasksService.addTask(
+            workflowId = workflow.id,
+            title = "Dependency task",
+            priority = TaskPriority.P0,
+        )
+        val blockedTask = tasksService.addTask(
+            workflowId = workflow.id,
+            title = "Blocked until dependency completes",
+            priority = TaskPriority.P1,
+            dependsOn = listOf(dependencyTask.id),
+        )
+        val toolWindow = registerSpecCodeToolWindow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val specPanel = currentSpecPanel(toolWindow)
+        val chatPanel = currentChatPanel(toolWindow)
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.openWorkflowForTest(workflow.id)
+        }
+        waitUntil {
+            specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(blockedTask.id)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(specPanel.selectTaskForTest(blockedTask.id))
+            specPanel.clickOpenWorkflowChatForSelectedTaskForTest()
+        }
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == blockedTask.id
+        }
+
+        var snapshot = chatPanel.workflowBindingSnapshotForTest()
+        assertEquals("TASK_EXECUTE", snapshot.getValue("sendActionKind"))
+        assertEquals("false", snapshot.getValue("sendEnabled"))
+        assertEquals(
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.execute.dependenciesBlocked",
+                blockedTask.id,
+                dependencyTask.id,
+            ),
+            snapshot.getValue("sendTooltip"),
+        )
+
+        tasksService.transitionStatus(
+            workflowId = workflow.id,
+            taskId = dependencyTask.id,
+            to = TaskStatus.COMPLETED,
+        )
+        project.messageBus.syncPublisher(WorkflowChatRefreshListener.TOPIC)
+            .onWorkflowChatRefreshRequested(
+                WorkflowChatRefreshEvent(
+                    workflowId = workflow.id,
+                    taskId = blockedTask.id,
+                    focusedStage = StageId.IMPLEMENT,
+                    reason = "dependency_completed",
+                ),
+            )
+
+        waitUntil {
+            chatPanel.workflowBindingSnapshotForTest().getValue("sendEnabled") == "true"
+        }
+
+        snapshot = chatPanel.workflowBindingSnapshotForTest()
+        assertEquals("TASK_EXECUTE", snapshot.getValue("sendActionKind"))
+        assertEquals("true", snapshot.getValue("sendEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", blockedTask.id),
+            snapshot.getValue("sendTooltip"),
+        )
+    }
+
     fun `test history open should normalize legacy spec session into workflow binding UI`() {
         val workflow = SpecEngine.getInstance(project).createWorkflow(
             title = "Legacy Spec Session Upgrade",

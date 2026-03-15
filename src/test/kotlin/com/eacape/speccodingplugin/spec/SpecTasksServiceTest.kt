@@ -420,6 +420,117 @@ class SpecTasksServiceTest {
     }
 
     @Test
+    fun `transitionStatus should reject cancelling task while downstream tasks are not cancelled`() {
+        val workflowId = "wf-tasks-transition-cancel-blocked"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Shared dependency
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+
+            ### T-002: Completed dependent
+            ```spec-task
+            status: COMPLETED
+            priority: P1
+            dependsOn:
+              - T-001
+            relatedFiles: []
+            verificationResult: null
+            ```
+
+            ### T-003: Cancelled dependent
+            ```spec-task
+            status: CANCELLED
+            priority: P1
+            dependsOn:
+              - T-001
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+        val originalPersisted = artifactService.readArtifact(workflowId, StageId.TASKS)
+
+        val error = assertThrows(TaskCancellationBlockedByDependentsError::class.java) {
+            tasksService.transitionStatus(
+                workflowId = workflowId,
+                taskId = "T-001",
+                to = TaskStatus.CANCELLED,
+            )
+        }
+
+        assertEquals(
+            "Task T-001 cannot be cancelled while dependent tasks are not CANCELLED: T-002",
+            error.message,
+        )
+        assertEquals(originalPersisted, artifactService.readArtifact(workflowId, StageId.TASKS))
+        assertTrue(storage.listAuditEvents(workflowId).getOrThrow().isEmpty())
+    }
+
+    @Test
+    fun `transitionStatus should allow cancelling task after all downstream tasks are cancelled`() {
+        val workflowId = "wf-tasks-transition-cancel-allowed"
+        val markdown = """
+            # Implement Document
+
+            ## Task List
+
+            ### T-001: Shared dependency
+            ```spec-task
+            status: PENDING
+            priority: P0
+            dependsOn: []
+            relatedFiles: []
+            verificationResult: null
+            ```
+
+            ### T-002: Cancelled dependent
+            ```spec-task
+            status: CANCELLED
+            priority: P1
+            dependsOn:
+              - T-001
+            relatedFiles: []
+            verificationResult: null
+            ```
+
+            ### T-003: Another cancelled dependent
+            ```spec-task
+            status: CANCELLED
+            priority: P1
+            dependsOn:
+              - T-001
+            relatedFiles: []
+            verificationResult: null
+            ```
+        """.trimIndent()
+
+        artifactService.writeArtifact(workflowId, StageId.TASKS, markdown)
+
+        tasksService.transitionStatus(
+            workflowId = workflowId,
+            taskId = "T-001",
+            to = TaskStatus.CANCELLED,
+        )
+
+        val updatedTask = tasksService.parse(workflowId).first { task -> task.id == "T-001" }
+        val auditEvent = storage.listAuditEvents(workflowId).getOrThrow().last()
+
+        assertEquals(TaskStatus.CANCELLED, updatedTask.status)
+        assertEquals(SpecAuditEventType.TASK_STATUS_CHANGED, auditEvent.eventType)
+        assertEquals("CANCELLED", auditEvent.details["toStatus"])
+    }
+
+    @Test
     fun `addTask should normalize dependsOn ids to sorted distinct canonical values`() {
         val workflowId = "wf-tasks-add-depends-on"
         val markdown = """

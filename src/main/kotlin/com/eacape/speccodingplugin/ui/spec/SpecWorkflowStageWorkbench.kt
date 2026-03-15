@@ -5,6 +5,7 @@ import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
 import com.eacape.speccodingplugin.spec.RequirementsSectionSupport
 import com.eacape.speccodingplugin.spec.SpecPhase
+import com.eacape.speccodingplugin.spec.SpecTaskDependencyRules
 import com.eacape.speccodingplugin.spec.SpecValidator
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageId
@@ -1223,9 +1224,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         task: StructuredTask,
         tasksById: Map<String, StructuredTask>,
     ): Boolean {
-        return task.dependsOn.all { dependencyId ->
-            tasksById[dependencyId]?.status == TaskStatus.COMPLETED
-        }
+        return SpecTaskDependencyRules.executionConstraint(task, tasksById.values).executable
     }
 
     private fun focusedStageRequiresCompletion(overviewState: SpecWorkflowOverviewState): Boolean {

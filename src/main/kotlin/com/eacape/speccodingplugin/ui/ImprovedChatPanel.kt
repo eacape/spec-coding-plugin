@@ -61,6 +61,7 @@ import com.eacape.speccodingplugin.spec.ExecutionLivePhase
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecGenerationProgress
 import com.eacape.speccodingplugin.spec.SpecPhase
+import com.eacape.speccodingplugin.spec.SpecTaskDependencyRules
 import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
 import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgressListener
@@ -351,6 +352,7 @@ class ImprovedChatPanel(
         val binding: WorkflowChatBinding,
         val taskId: String,
         val task: StructuredTask?,
+        val workflowTasks: List<StructuredTask>,
         val liveProgress: TaskExecutionLiveProgress?,
     )
 
@@ -1258,7 +1260,14 @@ class ImprovedChatPanel(
         binding: WorkflowChatBinding,
         taskId: String,
     ): BoundTaskBindingState {
-        val task = resolveBoundWorkflowTask(binding)
+        val workflow = specEngine.loadWorkflow(binding.workflowId).getOrNull()
+        val workflowTasks = if (workflow == null) {
+            emptyList()
+        } else {
+            specTasksService.parse(binding.workflowId)
+                .attachActiveExecutionRuns(workflow.taskExecutionRuns)
+        }
+        val task = workflowTasks.firstOrNull { candidate -> candidate.id == taskId }
         val serviceLiveProgress = specTaskExecutionService.getTaskLiveProgress(binding.workflowId, taskId)
         val observedLiveProgress = latestObservedTaskLiveProgress
             ?.takeIf { progress ->
@@ -1277,6 +1286,7 @@ class ImprovedChatPanel(
             binding = binding,
             taskId = taskId,
             task = task,
+            workflowTasks = workflowTasks,
             liveProgress = listOfNotNull(observedLiveProgress, serviceLiveProgress)
                 .maxByOrNull(TaskExecutionLiveProgress::lastUpdatedAt),
         )
@@ -1328,12 +1338,17 @@ class ImprovedChatPanel(
         val taskId = state.taskId
         return when (actionKind) {
             TaskBindingActionKind.EXECUTE -> when (task?.status) {
-                TaskStatus.PENDING -> SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.Execute,
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("toolwindow.workflow.binding.execute"),
-                    enabled = true,
-                )
+                TaskStatus.PENDING -> {
+                    val blockedReason = boundTaskExecutionBlockedReason(state, retry = false)
+                    SpecIconActionPresentation(
+                        icon = SpecWorkflowIcons.Execute,
+                        tooltip = blockedReason
+                            ?: SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
+                        accessibleName = SpecCodingBundle.message("toolwindow.workflow.binding.execute"),
+                        enabled = blockedReason == null,
+                        disabledReason = blockedReason,
+                    )
+                }
 
                 null -> SpecIconActionPresentation(
                     icon = SpecWorkflowIcons.Execute,
@@ -1357,12 +1372,17 @@ class ImprovedChatPanel(
             }
 
             TaskBindingActionKind.RETRY -> when (task?.status) {
-                TaskStatus.BLOCKED -> SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.Refresh,
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("toolwindow.workflow.binding.retry"),
-                    enabled = true,
-                )
+                TaskStatus.BLOCKED -> {
+                    val blockedReason = boundTaskExecutionBlockedReason(state, retry = true)
+                    SpecIconActionPresentation(
+                        icon = SpecWorkflowIcons.Refresh,
+                        tooltip = blockedReason
+                            ?: SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
+                        accessibleName = SpecCodingBundle.message("toolwindow.workflow.binding.retry"),
+                        enabled = blockedReason == null,
+                        disabledReason = blockedReason,
+                    )
+                }
 
                 null -> SpecIconActionPresentation(
                     icon = SpecWorkflowIcons.Refresh,
@@ -1522,12 +1542,25 @@ class ImprovedChatPanel(
         SpecUiStyle.applyIconActionPresentation(button, presentation)
     }
 
-    private fun resolveBoundWorkflowTask(binding: WorkflowChatBinding): StructuredTask? {
-        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return null
-        val workflow = specEngine.loadWorkflow(binding.workflowId).getOrNull() ?: return null
-        return specTasksService.parse(binding.workflowId)
-            .attachActiveExecutionRuns(workflow.taskExecutionRuns)
-            .firstOrNull { task -> task.id == taskId }
+    private fun boundTaskExecutionBlockedReason(
+        state: BoundTaskBindingState,
+        retry: Boolean,
+    ): String? {
+        val task = state.task ?: return null
+        val constraint = SpecTaskDependencyRules.executionConstraint(task, state.workflowTasks)
+        if (constraint.executable) {
+            return null
+        }
+        val messageKey = if (retry) {
+            "toolwindow.workflow.binding.retry.dependenciesBlocked"
+        } else {
+            "toolwindow.workflow.binding.execute.dependenciesBlocked"
+        }
+        return SpecCodingBundle.message(
+            messageKey,
+            state.taskId,
+            constraint.unmetDependencyIds.joinToString(", "),
+        )
     }
 
     private fun resolveWorkflowBindingLabel(workflowId: String): String {

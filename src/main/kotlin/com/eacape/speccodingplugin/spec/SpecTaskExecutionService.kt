@@ -474,6 +474,16 @@ class SpecTaskExecutionService(private val project: Project) {
     ): TaskAiExecutionResult {
         val workflow = storage.loadWorkflow(workflowId).getOrThrow()
         val task = resolveTask(workflowId, taskId)
+        val executionConstraint = SpecTaskDependencyRules.executionConstraint(
+            task = task,
+            tasks = tasksService.parse(workflowId),
+        )
+        if (!executionConstraint.executable) {
+            throw TaskExecutionBlockedByDependenciesError(
+                task.id,
+                executionConstraint.unmetDependencyIds,
+            )
+        }
         val previousRun = resolvePreviousRun(workflow, task.id, previousRunId, trigger)
         val normalizedProviderId = normalizeProgressMetadataValue(providerId)
         val normalizedModelId = normalizeProgressMetadataValue(modelId)
@@ -1151,6 +1161,9 @@ class SpecTaskExecutionService(private val project: Project) {
             appendLine("## Execution Request")
             appendLine("Use the task-scoped context above to execute this structured task.")
             appendLine("Keep the response grounded in this repository and this task only.")
+            appendLine("Format the response as clean Markdown with section headings on their own lines.")
+            appendLine("Use only `## Plan`, `## Execute`, and `## Verify` as top-level headings when sections are needed.")
+            appendLine("Inside sections, use bullets or numbered lists only; do not use `###` sub-headings.")
             appendLine("Do not mark the task completed automatically.")
             appendLine("End with:")
             appendLine("1. a concise implementation summary,")

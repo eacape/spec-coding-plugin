@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.ExecutionLivePhase
+import com.eacape.speccodingplugin.spec.SpecTaskDependencyRules
 import com.eacape.speccodingplugin.spec.StructuredTask
 import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.TaskVerificationResult
@@ -326,6 +327,9 @@ internal class SpecWorkflowTasksPanel(
     internal fun triggerSecondaryActionForTest(targetStatus: TaskStatus): Boolean {
         val selectedTask = tasksList.selectedValue ?: return false
         val action = buildSecondaryActions(selectedTask).firstOrNull { it.targetStatus == targetStatus } ?: return false
+        if (!action.enabled) {
+            return false
+        }
         action.perform()
         return true
     }
@@ -449,19 +453,29 @@ internal class SpecWorkflowTasksPanel(
                 disabledReason = SpecCodingBundle.message("spec.toolwindow.tasks.execute.unavailable"),
             )
 
-            TaskStatus.PENDING -> SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.PENDING),
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
-                accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
-                enabled = true,
-            )
+            TaskStatus.PENDING -> {
+                val blockedReason = selected?.executionBlockedReason(retry = false)
+                SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.PENDING),
+                    tooltip = blockedReason
+                        ?: SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
+                    enabled = blockedReason == null,
+                    disabledReason = blockedReason,
+                )
+            }
 
-            TaskStatus.BLOCKED -> SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.BLOCKED),
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
-                accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"),
-                enabled = true,
-            )
+            TaskStatus.BLOCKED -> {
+                val blockedReason = selected?.executionBlockedReason(retry = true)
+                SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.BLOCKED),
+                    tooltip = blockedReason
+                        ?: SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"),
+                    enabled = blockedReason == null,
+                    disabledReason = blockedReason,
+                )
+            }
 
             TaskStatus.IN_PROGRESS -> when (progress?.phase) {
                 ExecutionLivePhase.WAITING_CONFIRMATION -> SpecIconActionPresentation(
@@ -641,11 +655,19 @@ internal class SpecWorkflowTasksPanel(
         val selectedTask = tasksList.selectedValue ?: return false
         val progress = executionPresentation(selectedTask)
         when (selectedTask.displayStatus) {
-            TaskStatus.PENDING,
-            -> onExecuteTask(selectedTask.id, false)
+            TaskStatus.PENDING -> {
+                if (selectedTask.executionBlockedReason(retry = false) != null) {
+                    return false
+                }
+                onExecuteTask(selectedTask.id, false)
+            }
 
-            TaskStatus.BLOCKED,
-            -> onExecuteTask(selectedTask.id, true)
+            TaskStatus.BLOCKED -> {
+                if (selectedTask.executionBlockedReason(retry = true) != null) {
+                    return false
+                }
+                onExecuteTask(selectedTask.id, true)
+            }
 
             TaskStatus.IN_PROGRESS -> when (progress?.phase) {
                 ExecutionLivePhase.WAITING_CONFIRMATION -> requestCompletionWithRelatedFiles(selectedTask)
@@ -668,9 +690,15 @@ internal class SpecWorkflowTasksPanel(
             menu.add(
                 JMenuItem(action.label).apply {
                     icon = action.icon
+                    isEnabled = action.enabled
+                    toolTipText = action.tooltip
                     accessibleContext.accessibleName = action.label
-                    accessibleContext.accessibleDescription = action.label
-                    addActionListener { action.perform() }
+                    accessibleContext.accessibleDescription = action.tooltip
+                    addActionListener {
+                        if (action.enabled) {
+                            action.perform()
+                        }
+                    }
                 },
             )
         }
@@ -712,6 +740,7 @@ internal class SpecWorkflowTasksPanel(
     }
 
     private fun buildSecondaryActions(task: StructuredTask): List<TaskSecondaryAction> {
+        val cancellationBlockedReason = task.cancellationBlockedReason()
         return when (task.displayStatus) {
             TaskStatus.PENDING -> listOf(
                 lifecycleSecondaryAction(
@@ -725,6 +754,9 @@ internal class SpecWorkflowTasksPanel(
                     targetStatus = TaskStatus.CANCELLED,
                     label = SpecCodingBundle.message("spec.toolwindow.tasks.secondary.cancel", task.id),
                     icon = SpecWorkflowIcons.Close,
+                    enabled = cancellationBlockedReason == null,
+                    tooltip = cancellationBlockedReason
+                        ?: SpecCodingBundle.message("spec.toolwindow.tasks.secondary.cancel", task.id),
                 ),
             )
 
@@ -740,6 +772,9 @@ internal class SpecWorkflowTasksPanel(
                     targetStatus = TaskStatus.CANCELLED,
                     label = SpecCodingBundle.message("spec.toolwindow.tasks.secondary.cancel", task.id),
                     icon = SpecWorkflowIcons.Close,
+                    enabled = cancellationBlockedReason == null,
+                    tooltip = cancellationBlockedReason
+                        ?: SpecCodingBundle.message("spec.toolwindow.tasks.secondary.cancel", task.id),
                 ),
             )
 
@@ -756,13 +791,46 @@ internal class SpecWorkflowTasksPanel(
         targetStatus: TaskStatus,
         label: String,
         icon: javax.swing.Icon,
+        enabled: Boolean = true,
+        tooltip: String = label,
     ): TaskSecondaryAction {
         return TaskSecondaryAction(
             actionId = TaskSecondaryActionId.LIFECYCLE,
             targetStatus = targetStatus,
             label = label,
             icon = icon,
+            enabled = enabled,
+            tooltip = tooltip,
             perform = { onTransitionStatus(taskId, targetStatus) },
+        )
+    }
+
+    private fun StructuredTask.executionBlockedReason(retry: Boolean): String? {
+        val constraint = SpecTaskDependencyRules.executionConstraint(this, currentTasksById.values)
+        if (constraint.executable) {
+            return null
+        }
+        val messageKey = if (retry) {
+            "spec.toolwindow.tasks.execute.dependenciesBlocked.retry"
+        } else {
+            "spec.toolwindow.tasks.execute.dependenciesBlocked"
+        }
+        return SpecCodingBundle.message(
+            messageKey,
+            id,
+            constraint.unmetDependencyIds.joinToString(", "),
+        )
+    }
+
+    private fun StructuredTask.cancellationBlockedReason(): String? {
+        val constraint = SpecTaskDependencyRules.cancellationConstraint(this, currentTasksById.values)
+        if (constraint.cancellable) {
+            return null
+        }
+        return SpecCodingBundle.message(
+            "spec.toolwindow.tasks.secondary.cancel.blocked",
+            id,
+            constraint.blockingDependentTaskIds.joinToString(", "),
         )
     }
 
@@ -939,6 +1007,8 @@ internal class SpecWorkflowTasksPanel(
         val targetStatus: TaskStatus?,
         val label: String,
         val icon: javax.swing.Icon,
+        val enabled: Boolean,
+        val tooltip: String,
         val perform: () -> Unit,
     )
 

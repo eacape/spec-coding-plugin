@@ -69,6 +69,10 @@ class ClaudeCodeEngine(
     ): List<String> {
         val args = mutableListOf<String>()
         val promptViaStdin = request.options["prompt_via_stdin"]?.equals("true", ignoreCase = true) == true
+        val inlineSystemPromptIntoStdin = shouldInlineSystemPromptIntoStdin(
+            request = request,
+            promptViaStdin = promptViaStdin,
+        )
         args.add("--print")
         args.add("--output-format")
         args.add(outputFormat)
@@ -105,7 +109,7 @@ class ClaudeCodeEngine(
             args.add(it)
         }
 
-        if (supportsImageFlag()) {
+        if (request.imagePaths.isNotEmpty() && supportsImageFlag()) {
             request.imagePaths.forEach { imagePath ->
                 args.add("--image")
                 args.add(imagePath)
@@ -119,7 +123,9 @@ class ClaudeCodeEngine(
             args.add("--dangerously-skip-permissions")
         }
 
-        request.options["system_prompt"]?.let {
+        request.options["system_prompt"]
+            ?.takeUnless { inlineSystemPromptIntoStdin }
+            ?.let {
             args.add("--system-prompt")
             args.add(it)
         }
@@ -137,7 +143,38 @@ class ClaudeCodeEngine(
 
     protected override fun stdinPayload(request: EngineRequest): String? {
         val promptViaStdin = request.options["prompt_via_stdin"]?.equals("true", ignoreCase = true) == true
-        return if (promptViaStdin) request.prompt else null
+        return if (promptViaStdin) {
+            buildStdinPayload(request)
+        } else {
+            null
+        }
+    }
+
+    private fun shouldInlineSystemPromptIntoStdin(
+        request: EngineRequest,
+        promptViaStdin: Boolean,
+    ): Boolean {
+        if (!promptViaStdin || !isWindows()) {
+            return false
+        }
+        return request.options["system_prompt"]?.isNotBlank() == true
+    }
+
+    private fun buildStdinPayload(request: EngineRequest): String {
+        val systemPrompt = request.options["system_prompt"]?.takeIf(String::isNotBlank)
+            ?: return request.prompt
+        if (!shouldInlineSystemPromptIntoStdin(request, promptViaStdin = true)) {
+            return request.prompt
+        }
+        return buildString {
+            appendLine("Follow these system instructions as highest priority:")
+            appendLine(systemPrompt)
+            if (request.prompt.isNotBlank()) {
+                appendLine()
+                appendLine("User request:")
+                append(request.prompt)
+            }
+        }.trimEnd()
     }
 
     private fun detectImageFlagSupport(): Boolean {
@@ -174,7 +211,7 @@ class ClaudeCodeEngine(
         }.getOrNull()
     }
 
-    private fun isWindows(): Boolean =
+    protected open fun isWindows(): Boolean =
         System.getProperty("os.name").lowercase().contains("win")
 
     override suspend fun getVersion(): String? {

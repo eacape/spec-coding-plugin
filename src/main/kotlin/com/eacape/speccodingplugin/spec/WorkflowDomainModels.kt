@@ -847,6 +847,17 @@ class StageTransitionBlockedByGateError(
 class InvalidTaskStateTransitionError(taskId: String, from: TaskStatus, to: TaskStatus) :
     WorkflowDomainError("Invalid task state transition for $taskId: $from -> $to")
 
+class TaskExecutionBlockedByDependenciesError(taskId: String, dependencyIds: List<String>) :
+    WorkflowDomainError(
+        "Task $taskId cannot execute until dependencies are COMPLETED: ${dependencyIds.joinToString(", ")}",
+    )
+
+class TaskCancellationBlockedByDependentsError(taskId: String, dependentTaskIds: List<String>) :
+    WorkflowDomainError(
+        "Task $taskId cannot be cancelled while dependent tasks are not CANCELLED: " +
+            dependentTaskIds.joinToString(", "),
+    )
+
 class DuplicateTaskIdError(taskId: String) :
     WorkflowDomainError("Duplicate task id detected: $taskId")
 

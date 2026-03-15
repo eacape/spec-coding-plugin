@@ -731,14 +731,67 @@ open class ChatMessagePanel(
         val normalized = content
             .replace("\r\n", "\n")
             .replace('\r', '\n')
-        val withoutThinkingTags = THINKING_TAG_REGEX.replace(normalized, "")
+        val repairedMarkdown = repairMalformedMarkdownLayout(normalized)
+        val withoutThinkingTags = THINKING_TAG_REGEX.replace(repairedMarkdown, "")
             .replace(EXCESSIVE_EMPTY_LINES_REGEX, "\n\n")
             .trim()
         return if (withoutThinkingTags.isBlank()) {
-            normalized.trim()
+            repairedMarkdown.trim()
         } else {
             withoutThinkingTags
         }
+    }
+
+    private fun repairMalformedMarkdownLayout(content: String): String {
+        if (content.isBlank()) return content
+        val lines = content.lines()
+        var inCodeFence = false
+        return buildString(content.length + 32) {
+            lines.forEachIndexed { index, rawLine ->
+                val trimmed = rawLine.trimStart()
+                val isFenceLine = trimmed.startsWith("```")
+                val repairedLine = if (!inCodeFence && !isFenceLine) {
+                    demoteOrderedMarkdownSubheadings(
+                        repairInlineMarkdownHeadings(rawLine),
+                    )
+                } else {
+                    rawLine
+                }
+                append(repairedLine)
+                if (index < lines.lastIndex) {
+                    append('\n')
+                }
+                if (isFenceLine) {
+                    inCodeFence = !inCodeFence
+                }
+            }
+        }
+    }
+
+    private fun repairInlineMarkdownHeadings(line: String): String {
+        var repaired = line
+        while (true) {
+            val match = INLINE_MARKDOWN_HEADING_REGEX.find(repaired) ?: return repaired
+            val prefix = match.groupValues[1]
+            val heading = match.groupValues[2].trimStart()
+            val next = repaired.replaceRange(match.range, "$prefix\n\n$heading")
+            if (next == repaired) {
+                return repaired
+            }
+            repaired = next
+        }
+    }
+
+    private fun demoteOrderedMarkdownSubheadings(text: String): String {
+        return text.lineSequence()
+            .joinToString("\n") { line ->
+                ORDERED_SUBHEADING_LINE_REGEX.replace(line) { match ->
+                    val indent = match.groupValues[1]
+                    val orderedPrefix = match.groupValues[2]
+                    val body = match.groupValues[3]
+                    "$indent$orderedPrefix $body"
+                }
+            }
     }
 
     private fun hasAssistantAcknowledgementPrefix(content: String): Boolean {
@@ -2894,6 +2947,8 @@ open class ChatMessagePanel(
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+[.)、）．](?:\s+|(?=[^\s\d])).+$""")
         private val MARKDOWN_INLINE_LINK_REGEX = Regex("""(?<!!)\[[^\]\n]+]\(([^()\n]|\\[()])+\)""")
         private val WORKFLOW_MARKDOWN_HEADING_REGEX = Regex("""^##+(?:\s+|(?=\S)).+$""")
+        private val INLINE_MARKDOWN_HEADING_REGEX = Regex("""(\S)\s*(#{2,6}\s*(?:\d+[.)、）．]\s*)?[^\s#].*)""")
+        private val ORDERED_SUBHEADING_LINE_REGEX = Regex("""^(\s*)#{3,6}\s*(\d+[.)、）．])\s*(.+)$""")
         private val PIPE_TABLE_ROW_REGEX = Regex("""^\s*\|?(?:[^|\n]+\|){1,}[^|\n]*\|?\s*$""")
         private val PIPE_TABLE_SEPARATOR_REGEX = Regex("""^\s*\|?(?:\s*:?-{3,}:?\s*\|){1,}\s*$""")
         private val MARKDOWN_ASTERISK_ALIASES = charArrayOf(

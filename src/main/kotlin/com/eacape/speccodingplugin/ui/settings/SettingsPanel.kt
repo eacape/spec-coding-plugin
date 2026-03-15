@@ -61,6 +61,7 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.GridLayout
 import java.awt.Insets
 import java.awt.Point
 import java.awt.RenderingHints
@@ -82,6 +83,7 @@ import javax.swing.DefaultListCellRenderer
 import javax.swing.DefaultListModel
 import javax.swing.Icon
 import javax.swing.JButton
+import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JList
 import javax.swing.JPanel
@@ -127,6 +129,14 @@ class SettingsPanel(
     private val interfaceLanguageCombo = ComboBox(InterfaceLanguage.entries.toTypedArray())
     private val teamPromptRepoUrlField = JBTextField()
     private val teamPromptRepoBranchField = JBTextField()
+    private var basicOverviewTitleLabel: JBLabel? = null
+    private var basicOverviewSummaryLabel: JBLabel? = null
+    private var basicOverviewProviderValueLabel: JBLabel? = null
+    private var basicOverviewModelValueLabel: JBLabel? = null
+    private var basicOverviewLanguageValueLabel: JBLabel? = null
+    private var basicOverviewAutoSaveValueLabel: JBLabel? = null
+    private var basicOverviewProxyValueLabel: JBLabel? = null
+    private var basicOverviewModeValueLabel: JBLabel? = null
 
     private val skillRefreshButton = JButton(SpecCodingBundle.message("settings.skills.discover.refresh"))
     private val skillNewDraftButton = JButton(SpecCodingBundle.message("settings.skills.editor.new"))
@@ -383,84 +393,130 @@ class SettingsPanel(
     }
 
     private fun createBasicSection(): JPanel {
-        val cliDetectPanel = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
-            isOpaque = false
-            add(detectCliButton)
-        }
-
-        val cliToolsPanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent(SpecCodingBundle.message("settings.engine.claudePath"), claudeCodeCliPathField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.engine.codexPath"), codexCliPathField)
-            .addLabeledComponent(" ", cliDetectPanel)
-            .addLabeledComponent(SpecCodingBundle.message("settings.cli.claudeLabel"), claudeCliStatusLabel)
-            .addLabeledComponent(SpecCodingBundle.message("settings.cli.codexLabel"), codexCliStatusLabel)
-            .panel.apply {
-                isOpaque = false
-                border = JBUI.Borders.empty()
-            }
-
         val defaultProviderComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(defaultProviderCombo)
         val defaultModelComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(defaultModelCombo)
         val interfaceLanguageComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(interfaceLanguageCombo)
-        val generalPanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultProvider"), defaultProviderComboHost)
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.defaultModel"), defaultModelComboHost)
-            .addLabeledComponent(SpecCodingBundle.message("settings.general.interfaceLanguage"), interfaceLanguageComboHost)
-            .panel.apply {
-                isOpaque = false
-                border = JBUI.Borders.empty()
-            }
-
-        val teamSyncPanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.promptRepoUrl"), teamPromptRepoUrlField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.teamSync.promptBranch"), teamPromptRepoBranchField)
-            .panel.apply {
-                isOpaque = false
-                border = JBUI.Borders.empty()
-            }
-
-        val proxyPanel = FormBuilder.createFormBuilder()
-            .addComponent(useProxyCheckBox.apply { text = SpecCodingBundle.message("settings.proxy.use") })
-            .addLabeledComponent(SpecCodingBundle.message("settings.proxy.host"), proxyHostField)
-            .addLabeledComponent(SpecCodingBundle.message("settings.proxy.port"), proxyPortField)
-            .panel.apply {
-                isOpaque = false
-                border = JBUI.Borders.empty()
-            }
-
-        val otherPanel = FormBuilder.createFormBuilder()
-            .addComponent(autoSaveCheckBox.apply { text = SpecCodingBundle.message("settings.other.autoSave") })
-            .addLabeledComponent(SpecCodingBundle.message("settings.other.maxHistorySize"), maxHistorySizeField)
-            .addLabeledComponent(
-                SpecCodingBundle.message("settings.other.chatOutputFontSize"),
-                chatOutputFontSizeField,
-            )
-            .panel.apply {
-                isOpaque = false
-                border = JBUI.Borders.empty()
-            }
-
-        val operationModePanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent(SpecCodingBundle.message("settings.operationMode.defaultMode"), defaultModeField)
-            .panel.apply {
-                isOpaque = false
-                border = JBUI.Borders.empty()
-            }
+        val overviewCard = createBasicOverviewCard()
+        val cliToolsPanel = createSectionBody(
+            createFieldRow(
+                createSettingFieldGroup("settings.engine.claudePath", claudeCodeCliPathField),
+                createSettingFieldGroup("settings.engine.codexPath", codexCliPathField),
+            ),
+            createInlineChipRow(
+                createStatusChip("settings.cli.claudeLabel", claudeCliStatusLabel),
+                createStatusChip("settings.cli.codexLabel", codexCliStatusLabel),
+            ),
+        )
+        val generalPanel = createSectionBody(
+            createFieldRow(
+                createSettingFieldGroup("settings.general.defaultProvider", defaultProviderComboHost),
+                createSettingFieldGroup("settings.general.defaultModel", defaultModelComboHost),
+                createSettingFieldGroup("settings.general.interfaceLanguage", interfaceLanguageComboHost),
+            ),
+        )
+        val teamSyncPanel = createSectionBody(
+            createFieldRow(
+                createSettingFieldGroup("settings.teamSync.promptRepoUrl", teamPromptRepoUrlField),
+                createSettingFieldGroup("settings.teamSync.promptBranch", teamPromptRepoBranchField),
+            ),
+        )
+        val proxyPanel = createSectionBody(
+            createToggleSurface(useProxyCheckBox),
+            createFieldRow(
+                createSettingFieldGroup("settings.proxy.host", proxyHostField),
+                createSettingFieldGroup("settings.proxy.port", proxyPortField),
+            ),
+        )
+        val otherPanel = createSectionBody(
+            createToggleSurface(autoSaveCheckBox),
+            createFieldRow(
+                createSettingFieldGroup("settings.other.maxHistorySize", maxHistorySizeField),
+                createSettingFieldGroup("settings.other.chatOutputFontSize", chatOutputFontSizeField),
+            ),
+        )
+        val operationModePanel = createSectionBody(
+            createFieldRow(
+                createSettingFieldGroup("settings.operationMode.defaultMode", defaultModeField),
+            ),
+        )
 
         val stackPanel = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            add(createBasicModuleCard("settings.section.cliTools", cliToolsPanel))
+            add(overviewCard)
             add(Box.createVerticalStrut(JBUI.scale(8)))
-            add(createBasicModuleCard("settings.section.general", generalPanel))
+            add(
+                createBasicModuleCard(
+                    titleKey = "settings.section.cliTools",
+                    summary = buildSectionSummary(
+                        "settings.engine.claudePath",
+                        "settings.engine.codexPath",
+                    ),
+                    icon = AllIcons.General.InlineRefresh,
+                    content = cliToolsPanel,
+                    headerActions = createModuleHeaderActions(detectCliButton),
+                ),
+            )
             add(Box.createVerticalStrut(JBUI.scale(8)))
-            add(createBasicModuleCard("settings.section.teamSync", teamSyncPanel))
+            add(
+                createBasicModuleCard(
+                    titleKey = "settings.section.general",
+                    summary = buildSectionSummary(
+                        "settings.general.defaultProvider",
+                        "settings.general.defaultModel",
+                        "settings.general.interfaceLanguage",
+                    ),
+                    icon = AllIcons.General.GearPlain,
+                    content = generalPanel,
+                ),
+            )
             add(Box.createVerticalStrut(JBUI.scale(8)))
-            add(createBasicModuleCard("settings.section.proxy", proxyPanel))
+            add(
+                createBasicModuleCard(
+                    titleKey = "settings.section.teamSync",
+                    summary = buildSectionSummary(
+                        "settings.teamSync.promptRepoUrl",
+                        "settings.teamSync.promptBranch",
+                    ),
+                    icon = AllIcons.General.Export,
+                    content = teamSyncPanel,
+                ),
+            )
             add(Box.createVerticalStrut(JBUI.scale(8)))
-            add(createBasicModuleCard("settings.section.other", otherPanel))
+            add(
+                createBasicModuleCard(
+                    titleKey = "settings.section.proxy",
+                    summary = buildSectionSummary(
+                        "settings.proxy.use",
+                        "settings.proxy.host",
+                        "settings.proxy.port",
+                    ),
+                    icon = AllIcons.Actions.Forward,
+                    content = proxyPanel,
+                ),
+            )
             add(Box.createVerticalStrut(JBUI.scale(8)))
-            add(createBasicModuleCard("settings.section.operationMode", operationModePanel))
+            add(
+                createBasicModuleCard(
+                    titleKey = "settings.section.other",
+                    summary = buildSectionSummary(
+                        "settings.other.autoSave",
+                        "settings.other.maxHistorySize",
+                        "settings.other.chatOutputFontSize",
+                    ),
+                    icon = AllIcons.General.GreenCheckmark,
+                    content = otherPanel,
+                ),
+            )
+            add(Box.createVerticalStrut(JBUI.scale(8)))
+            add(
+                createBasicModuleCard(
+                    titleKey = "settings.section.operationMode",
+                    summary = buildSectionSummary("settings.operationMode.defaultMode"),
+                    icon = AllIcons.Actions.Resume,
+                    content = operationModePanel,
+                ),
+            )
             add(Box.createVerticalGlue())
         }
 
@@ -468,11 +524,274 @@ class SettingsPanel(
             border = JBUI.Borders.empty()
             viewport.isOpaque = false
             isOpaque = false
+            SpecUiStyle.applyFastVerticalScrolling(this)
         }
 
         return JPanel(BorderLayout()).apply {
             isOpaque = false
             add(scrollPane, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createBasicOverviewCard(): JPanel {
+        val titleLabel = JBLabel().apply {
+            font = font.deriveFont(Font.BOLD, 14f)
+            foreground = OVERVIEW_TITLE_FG
+        }
+        val summaryLabel = JBLabel().apply {
+            font = JBUI.Fonts.smallFont()
+            foreground = OVERVIEW_SUMMARY_FG
+        }
+        basicOverviewTitleLabel = titleLabel
+        basicOverviewSummaryLabel = summaryLabel
+
+        val titleStack = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(titleLabel)
+            add(Box.createVerticalStrut(JBUI.scale(3)))
+            add(summaryLabel)
+        }
+        val titleRow = JPanel(BorderLayout(JBUI.scale(10), 0)).apply {
+            isOpaque = false
+            add(
+                JLabel(AllIcons.General.GearPlain).apply {
+                    border = JBUI.Borders.emptyTop(1)
+                },
+                BorderLayout.WEST,
+            )
+            add(titleStack, BorderLayout.CENTER)
+        }
+
+        val chipsPanel = createInlineChipRow(
+            createOverviewChip("settings.general.defaultProvider") { basicOverviewProviderValueLabel = it },
+            createOverviewChip("settings.general.defaultModel") { basicOverviewModelValueLabel = it },
+            createOverviewChip("settings.general.interfaceLanguage") { basicOverviewLanguageValueLabel = it },
+            createOverviewChip("settings.other.autoSave") { basicOverviewAutoSaveValueLabel = it },
+            createOverviewChip("settings.section.proxy") { basicOverviewProxyValueLabel = it },
+            createOverviewChip("settings.section.operationMode") { basicOverviewModeValueLabel = it },
+        )
+
+        refreshBasicOverviewCard()
+        return JPanel(BorderLayout(0, JBUI.scale(10))).apply {
+            isOpaque = true
+            background = OVERVIEW_CARD_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = OVERVIEW_CARD_BORDER,
+                arc = JBUI.scale(14),
+                top = 10,
+                left = 12,
+                bottom = 10,
+                right = 12,
+            )
+            add(titleRow, BorderLayout.NORTH)
+            add(chipsPanel, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createOverviewChip(
+        titleKey: String,
+        captureValueLabel: (JBLabel) -> Unit,
+    ): JPanel {
+        val captionLabel = JBLabel(stripSettingLabel(SpecCodingBundle.message(titleKey))).apply {
+            font = JBUI.Fonts.miniFont()
+            foreground = OVERVIEW_CHIP_CAPTION_FG
+        }
+        val valueLabel = JBLabel("-").apply {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            foreground = OVERVIEW_CHIP_VALUE_FG
+        }
+        captureValueLabel(valueLabel)
+        return JPanel(BorderLayout(0, JBUI.scale(2))).apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = true
+            background = OVERVIEW_CHIP_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = OVERVIEW_CHIP_BORDER,
+                arc = JBUI.scale(10),
+                top = 4,
+                left = 8,
+                bottom = 4,
+                right = 8,
+            )
+            add(captionLabel)
+            add(valueLabel)
+        }
+    }
+
+    private fun refreshBasicOverviewCard() {
+        basicOverviewTitleLabel?.text = buildString {
+            append(SpecCodingBundle.message("toolwindow.title"))
+            append(" · ")
+            append(SpecCodingBundle.message("settings.tab.title"))
+        }
+        basicOverviewSummaryLabel?.text = buildString {
+            append(buildSectionSummary("settings.section.cliTools", "settings.section.general", "settings.section.teamSync"))
+            append(" · ")
+            append(buildSectionSummary("settings.section.proxy", "settings.section.operationMode"))
+        }
+        basicOverviewProviderValueLabel?.text = providerDisplayText(
+            (defaultProviderCombo.selectedItem as? String).orEmpty().ifBlank { settings.defaultProvider },
+        ).ifBlank { "-" }
+        basicOverviewModelValueLabel?.text = modelDisplayText(
+            defaultModelCombo.selectedItem as? ModelInfo,
+            settings.selectedCliModel,
+        )
+        basicOverviewLanguageValueLabel?.text = languageDisplayText(
+            (interfaceLanguageCombo.selectedItem as? InterfaceLanguage) ?: InterfaceLanguage.fromCode(settings.interfaceLanguage),
+        )
+        basicOverviewAutoSaveValueLabel?.text = enabledStateText(autoSaveCheckBox.isSelected)
+        basicOverviewProxyValueLabel?.text = proxyOverviewText()
+        basicOverviewModeValueLabel?.text = defaultModeField.text
+            .trim()
+            .ifBlank { settings.defaultOperationMode.lowercase(Locale.ROOT) }
+            .lowercase(Locale.ROOT)
+    }
+
+    private fun createSectionBody(vararg rows: JPanel): JPanel {
+        return JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            rows.forEachIndexed { index, row ->
+                add(row)
+                if (index < rows.lastIndex) {
+                    add(Box.createVerticalStrut(JBUI.scale(10)))
+                }
+            }
+        }
+    }
+
+    private fun createFieldRow(vararg fields: JPanel): JPanel {
+        return when (fields.size) {
+            0 -> JPanel().apply { isOpaque = false }
+            1 -> JPanel(BorderLayout()).apply {
+                isOpaque = false
+                add(fields[0], BorderLayout.CENTER)
+            }
+            else -> JPanel(GridLayout(1, fields.size, JBUI.scale(10), 0)).apply {
+                isOpaque = false
+                fields.forEach(::add)
+            }
+        }
+    }
+
+    private fun createInlineChipRow(vararg chips: JPanel): JPanel {
+        return JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            chips.forEach(::add)
+        }
+    }
+
+    private fun createSettingFieldGroup(
+        labelKey: String,
+        component: JComponent,
+    ): JPanel {
+        val label = JBLabel(stripSettingLabel(SpecCodingBundle.message(labelKey))).apply {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            foreground = FIELD_LABEL_FG
+            border = JBUI.Borders.emptyBottom(4)
+        }
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(label, BorderLayout.NORTH)
+            add(component, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createToggleSurface(checkBox: JBCheckBox): JPanel {
+        checkBox.isOpaque = false
+        return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = true
+            background = TOGGLE_SURFACE_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = TOGGLE_SURFACE_BORDER,
+                arc = JBUI.scale(10),
+                top = 6,
+                left = 8,
+                bottom = 6,
+                right = 8,
+            )
+            add(checkBox)
+        }
+    }
+
+    private fun createStatusChip(
+        titleKey: String,
+        valueLabel: JBLabel,
+    ): JPanel {
+        val captionLabel = JBLabel(stripSettingLabel(SpecCodingBundle.message(titleKey))).apply {
+            font = JBUI.Fonts.miniFont()
+            foreground = STATUS_CHIP_CAPTION_FG
+        }
+        valueLabel.font = JBUI.Fonts.smallFont()
+        return JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
+            isOpaque = true
+            background = STATUS_CHIP_BG
+            border = SpecUiStyle.roundedCardBorder(
+                lineColor = STATUS_CHIP_BORDER,
+                arc = JBUI.scale(9),
+                top = 3,
+                left = 8,
+                bottom = 3,
+                right = 8,
+            )
+            add(captionLabel, BorderLayout.WEST)
+            add(valueLabel, BorderLayout.CENTER)
+        }
+    }
+
+    private fun createModuleHeaderActions(component: JComponent): JPanel {
+        return JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+            isOpaque = false
+            add(component)
+        }
+    }
+
+    private fun buildSectionSummary(vararg titleKeys: String): String {
+        return titleKeys.joinToString(" · ") { key ->
+            lowerUiText(stripSettingLabel(SpecCodingBundle.message(key)))
+        }
+    }
+
+    private fun stripSettingLabel(text: String): String {
+        return text.trim().trimEnd(':', '：')
+    }
+
+    private fun modelDisplayText(
+        modelInfo: ModelInfo?,
+        fallback: String,
+    ): String {
+        return lowerUiText(
+            modelInfo?.name
+                ?.takeIf { it.isNotBlank() }
+                ?: fallback.takeIf { it.isNotBlank() }
+                ?: "-",
+        )
+    }
+
+    private fun languageDisplayText(language: InterfaceLanguage): String {
+        return lowerUiText(
+            SpecCodingBundle.messageOrDefault(language.labelKey, language.code),
+        )
+    }
+
+    private fun enabledStateText(enabled: Boolean): String {
+        return SpecCodingBundle.message(
+            if (enabled) "settings.state.enabled" else "settings.state.disabled",
+        )
+    }
+
+    private fun proxyOverviewText(): String {
+        if (!useProxyCheckBox.isSelected) {
+            return enabledStateText(false)
+        }
+        val host = proxyHostField.text.trim()
+        val port = proxyPortField.text.trim()
+        return when {
+            host.isBlank() && port.isBlank() -> enabledStateText(true)
+            port.isBlank() -> host
+            host.isBlank() -> port
+            else -> "$host:$port"
         }
     }
 
@@ -615,10 +934,26 @@ class SettingsPanel(
                 border = JBUI.Borders.empty()
             }
 
-        val discoveryCard = createBasicModuleCard("settings.skills.discovery.title", discoveryPanel).apply {
+        val discoveryCard = createBasicModuleCard(
+            titleKey = "settings.skills.discovery.title",
+            summary = buildSectionSummary(
+                "settings.skills.discover.refresh",
+                "settings.skills.editor.new",
+            ),
+            icon = SKILL_ACTION_REFRESH_ICON,
+            content = discoveryPanel,
+        ).apply {
             minimumSize = JBUI.size(220, 0)
         }
-        val editorCard = createBasicModuleCard("settings.skills.editor.title", editorPanel).apply {
+        val editorCard = createBasicModuleCard(
+            titleKey = "settings.skills.editor.title",
+            summary = buildSectionSummary(
+                "settings.skills.editor.id",
+                "settings.skills.editor.markdown",
+            ),
+            icon = SKILL_ACTION_SAVE_CURRENT_ICON,
+            content = editorPanel,
+        ).apply {
             minimumSize = JBUI.size(420, 0)
         }
 
@@ -685,23 +1020,47 @@ class SettingsPanel(
 
     private fun createBasicModuleCard(
         titleKey: String,
+        summary: String,
+        icon: Icon,
         content: JPanel,
+        headerActions: JComponent? = null,
     ): JPanel {
         val tone = moduleTone(titleKey)
         val titleLabel = JBLabel(SpecCodingBundle.message(titleKey)).apply {
             font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
             foreground = tone.titleColor
-            border = JBUI.Borders.empty(0, 2, 0, 2)
         }
-        val header = JPanel(BorderLayout()).apply {
+        val summaryLabel = JBLabel(summary).apply {
+            font = JBUI.Fonts.miniFont()
+            foreground = MODULE_SUMMARY_FG
+        }
+        val titleStack = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(titleLabel)
+            add(Box.createVerticalStrut(JBUI.scale(2)))
+            add(summaryLabel)
+        }
+        val titleHost = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            add(
+                JLabel(icon).apply {
+                    border = JBUI.Borders.emptyTop(1)
+                },
+                BorderLayout.WEST,
+            )
+            add(titleStack, BorderLayout.CENTER)
+        }
+        val header = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque = true
             background = tone.headerBg
             border = BorderFactory.createMatteBorder(0, 0, 1, 0, tone.headerBorder)
-            add(titleLabel, BorderLayout.WEST)
+            add(titleHost, BorderLayout.CENTER)
+            headerActions?.let { add(it, BorderLayout.EAST) }
         }
         val contentHost = JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyTop(8)
+            border = JBUI.Borders.emptyTop(10)
             add(content, BorderLayout.CENTER)
         }
 
@@ -951,6 +1310,7 @@ class SettingsPanel(
             sectionList.repaint()
             updateCliStatusLabels()
             updateSettingsContentTitle()
+            refreshBasicOverviewCard()
             revalidate()
             repaint()
         }
@@ -983,6 +1343,7 @@ class SettingsPanel(
         if (syncingUi || isDisposed || project.isDisposed) {
             return
         }
+        refreshBasicOverviewCard()
         autoSaveTimer.restart()
     }
 
@@ -1054,6 +1415,7 @@ class SettingsPanel(
         codexCliPathField.text = settings.codexCliPath
         claudeCodeCliPathField.text = settings.claudeCodeCliPath
         defaultModeField.text = settings.defaultOperationMode.lowercase(Locale.ROOT)
+        refreshBasicOverviewCard()
     }
 
     private fun applyLanguageImmediately(reason: String) {
@@ -1173,6 +1535,7 @@ class SettingsPanel(
                 )
                 detectCliButton.isEnabled = true
                 detectCliButton.text = SpecCodingBundle.message("settings.cli.detectButton")
+                refreshBasicOverviewCard()
             }
         }
     }
@@ -2432,6 +2795,7 @@ class SettingsPanel(
         private val MODULE_CARD_BG = JBColor(Color(245, 250, 255), Color(58, 65, 76))
         private val MODULE_CARD_BORDER = JBColor(Color(205, 219, 239), Color(90, 101, 118))
         private val MODULE_TITLE_FG = JBColor(Color(49, 72, 108), Color(211, 222, 241))
+        private val MODULE_SUMMARY_FG = JBColor(Color(88, 107, 136), Color(173, 188, 210))
         private val MODULE_HEADER_BG = JBColor(Color(237, 245, 255), Color(66, 74, 87))
         private val MODULE_HEADER_BORDER = JBColor(Color(199, 214, 236), Color(96, 108, 126))
         private val MODULE_CARD_BG_PRIMARY = JBColor(Color(241, 248, 255), Color(56, 64, 75))
@@ -2444,6 +2808,20 @@ class SettingsPanel(
         private val MODULE_HEADER_BG_MUTED = JBColor(Color(241, 247, 255), Color(68, 76, 89))
         private val MODULE_HEADER_BORDER_MUTED = JBColor(Color(203, 217, 236), Color(98, 109, 127))
         private val MODULE_TITLE_FG_MUTED = JBColor(Color(56, 78, 112), Color(205, 218, 236))
+        private val OVERVIEW_CARD_BG = JBColor(Color(240, 247, 255), Color(58, 67, 79))
+        private val OVERVIEW_CARD_BORDER = JBColor(Color(187, 207, 235), Color(96, 110, 130))
+        private val OVERVIEW_TITLE_FG = JBColor(Color(33, 57, 94), Color(226, 235, 248))
+        private val OVERVIEW_SUMMARY_FG = JBColor(Color(89, 108, 137), Color(183, 197, 218))
+        private val OVERVIEW_CHIP_BG = JBColor(Color(249, 252, 255), Color(64, 74, 87))
+        private val OVERVIEW_CHIP_BORDER = JBColor(Color(200, 217, 241), Color(101, 116, 136))
+        private val OVERVIEW_CHIP_CAPTION_FG = JBColor(Color(92, 111, 139), Color(177, 191, 212))
+        private val OVERVIEW_CHIP_VALUE_FG = JBColor(Color(38, 62, 97), Color(225, 233, 246))
+        private val FIELD_LABEL_FG = JBColor(Color(73, 95, 126), Color(190, 203, 223))
+        private val TOGGLE_SURFACE_BG = JBColor(Color(250, 252, 255), Color(64, 73, 86))
+        private val TOGGLE_SURFACE_BORDER = JBColor(Color(201, 218, 241), Color(101, 116, 136))
+        private val STATUS_CHIP_BG = JBColor(Color(246, 250, 255), Color(63, 73, 86))
+        private val STATUS_CHIP_BORDER = JBColor(Color(203, 218, 240), Color(103, 117, 137))
+        private val STATUS_CHIP_CAPTION_FG = JBColor(Color(88, 107, 136), Color(179, 193, 214))
         private val ACTION_BUTTON_BG = JBColor(Color(238, 246, 255), Color(65, 73, 86))
         private val ACTION_BUTTON_BORDER = JBColor(Color(178, 198, 226), Color(103, 117, 138))
         private val ACTION_BUTTON_FG = JBColor(Color(45, 67, 103), Color(204, 216, 235))

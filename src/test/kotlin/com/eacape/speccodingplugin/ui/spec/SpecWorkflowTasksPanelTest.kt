@@ -270,6 +270,86 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
+    fun `pending task with unfinished dependencies should disable execute action`() {
+        val executions = mutableListOf<String>()
+        val panel = SpecWorkflowTasksPanel(
+            onExecuteTask = { taskId, retry -> executions += "$taskId:$retry" },
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-dependency-disabled",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "Dependency",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+                StructuredTask(
+                    id = "T-002",
+                    title = "Blocked task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                    dependsOn = listOf("T-001"),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.selectTask("T-002"))
+        val snapshot = panel.snapshotForTest()
+
+        assertEquals("execute", snapshot.getValue("executeIconId"))
+        assertEquals("false", snapshot.getValue("executeEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.dependenciesBlocked", "T-002", "T-001"),
+            snapshot.getValue("executeTooltip"),
+        )
+        assertFalse(panel.requestExecutionForTask("T-002"))
+        assertTrue(executions.isEmpty())
+    }
+
+    @Test
+    fun `blocked task with unfinished dependencies should disable retry action`() {
+        val executions = mutableListOf<String>()
+        val panel = SpecWorkflowTasksPanel(
+            onExecuteTask = { taskId, retry -> executions += "$taskId:$retry" },
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-dependency-retry-disabled",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "Dependency",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+                StructuredTask(
+                    id = "T-002",
+                    title = "Retry blocked task",
+                    status = TaskStatus.BLOCKED,
+                    priority = TaskPriority.P1,
+                    dependsOn = listOf("T-001"),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.selectTask("T-002"))
+        val snapshot = panel.snapshotForTest()
+
+        assertEquals("refresh", snapshot.getValue("executeIconId"))
+        assertEquals("false", snapshot.getValue("executeEnabled"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.dependenciesBlocked.retry", "T-002", "T-001"),
+            snapshot.getValue("executeTooltip"),
+        )
+        assertFalse(panel.requestExecutionForTask("T-002"))
+        assertTrue(executions.isEmpty())
+    }
+
+    @Test
     fun `triggerSecondaryActionForTest should route lifecycle secondary actions without status apply button`() {
         val transitions = mutableListOf<String>()
         val panel = SpecWorkflowTasksPanel(
@@ -305,6 +385,38 @@ class SpecWorkflowTasksPanelTest {
             listOf("T-001:BLOCKED", "T-002:PENDING", "T-002:CANCELLED"),
             transitions,
         )
+    }
+
+    @Test
+    fun `cancel secondary action should stay disabled while downstream tasks are not cancelled`() {
+        val transitions = mutableListOf<String>()
+        val panel = SpecWorkflowTasksPanel(
+            onTransitionStatus = { taskId, to -> transitions += "$taskId:${to.name}" },
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-cancel-blocked",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "Shared dependency",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+                StructuredTask(
+                    id = "T-002",
+                    title = "Downstream task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                    dependsOn = listOf("T-001"),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.selectTask("T-001"))
+        assertFalse(panel.triggerSecondaryActionForTest(TaskStatus.CANCELLED))
+        assertTrue(transitions.isEmpty())
     }
 
     @Test

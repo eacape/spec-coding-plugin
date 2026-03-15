@@ -265,9 +265,21 @@ class SpecTasksService(private val project: Project) {
         val normalizedReason = reason
             ?.trim()
             ?.takeIf(String::isNotEmpty)
-        updateTaskMetadata(workflowId, taskId) { targetTask, _ ->
+        updateTaskMetadata(workflowId, taskId) { targetTask, editableDocument ->
             if (!targetTask.status.canTransitionTo(to)) {
                 throw InvalidTaskStateTransitionError(targetTask.id, targetTask.status, to)
+            }
+            if (to == TaskStatus.CANCELLED) {
+                val cancellationConstraint = SpecTaskDependencyRules.cancellationConstraint(
+                    task = targetTask,
+                    tasks = editableDocument.tasksById,
+                )
+                if (!cancellationConstraint.cancellable) {
+                    throw TaskCancellationBlockedByDependentsError(
+                        targetTask.id,
+                        cancellationConstraint.blockingDependentTaskIds,
+                    )
+                }
             }
             val updatedTask = targetTask.copy(status = to)
             val details = linkedMapOf(
