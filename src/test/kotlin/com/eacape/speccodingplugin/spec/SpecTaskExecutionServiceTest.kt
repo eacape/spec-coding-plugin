@@ -8,6 +8,9 @@ import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
 import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.stream.ChatTraceKind
+import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
@@ -277,6 +280,70 @@ class SpecTaskExecutionServiceTest {
     }
 
     @Test
+    fun `startAiExecution should publish live progress milestones and aggregate trace events`() {
+        val workflowId = "wf-ai-live-progress"
+        seedWorkflow(workflowId)
+        val observedPhases = mutableListOf<ExecutionLivePhase>()
+        val executionService = newExecutionService(
+            chatExecutor = { request ->
+                request.onChunk(
+                    com.eacape.speccodingplugin.llm.LlmChunk(
+                        delta = "",
+                        event = ChatStreamEvent(
+                            kind = ChatTraceKind.READ,
+                            detail = "SpecWorkflowPanel.kt",
+                            status = ChatTraceStatus.RUNNING,
+                        ),
+                    ),
+                )
+                request.onChunk(
+                    com.eacape.speccodingplugin.llm.LlmChunk(
+                        delta = "Applying change",
+                        isLast = false,
+                    ),
+                )
+                LlmResponse(
+                    content = "Implemented task update.",
+                    model = "mock-model-v1",
+                    usage = LlmUsage(),
+                    finishReason = "stop",
+                )
+            },
+        )
+        executionService.addLiveProgressListener { progress ->
+            if (progress.workflowId == workflowId) {
+                observedPhases += progress.phase
+            }
+        }
+
+        val result = executionService.startAiExecution(
+            workflowId = workflowId,
+            taskId = "T-001",
+            providerId = "mock",
+            modelId = "mock-model-v1",
+            operationMode = OperationMode.AUTO,
+        )
+
+        val liveProgress = executionService.getLiveProgress(workflowId, result.run.runId)
+
+        assertNotNull(liveProgress)
+        assertEquals(ExecutionLivePhase.WAITING_CONFIRMATION, liveProgress!!.phase)
+        assertEquals("mock", liveProgress.providerId)
+        assertEquals("mock-model-v1", liveProgress.modelId)
+        assertTrue(observedPhases.containsAll(listOf(
+            ExecutionLivePhase.QUEUED,
+            ExecutionLivePhase.PREPARING_CONTEXT,
+            ExecutionLivePhase.REQUEST_DISPATCHED,
+            ExecutionLivePhase.STREAMING,
+            ExecutionLivePhase.WAITING_CONFIRMATION,
+        )))
+        assertTrue(liveProgress.recentEvents.any { event ->
+            event.kind == ChatTraceKind.READ && event.detail == "SpecWorkflowPanel.kt"
+        })
+        assertTrue(liveProgress.lastUpdatedAt >= liveProgress.startedAt)
+    }
+
+    @Test
     fun `cancelExecution should stop active run without blocking task lifecycle`() {
         val workflowId = "wf-ai-cancel"
         seedWorkflow(workflowId)
@@ -335,6 +402,56 @@ class SpecTaskExecutionServiceTest {
     }
 
     @Test
+    fun `cancelExecutionRun should expose cancelling live progress before terminal cancellation`() {
+        val workflowId = "wf-ai-live-cancelling"
+        seedWorkflow(workflowId)
+
+        val requestReady = CountDownLatch(1)
+        val allowResponse = CountDownLatch(1)
+        val capturedHandle =
+            AtomicReference<SpecTaskExecutionService.TaskExecutionCancellationHandle?>()
+        val executionService = newExecutionService(
+            chatExecutor = {
+                requestReady.countDown()
+                allowResponse.await(5, TimeUnit.SECONDS)
+                throw CancellationException("AI execution cancelled by user.")
+            },
+        )
+
+        val executionThread = Thread {
+            runCatching {
+                executionService.startAiExecution(
+                    workflowId = workflowId,
+                    taskId = "T-001",
+                    providerId = "mock",
+                    modelId = "mock-model-v1",
+                    operationMode = OperationMode.AUTO,
+                    onRequestRegistered = capturedHandle::set,
+                )
+            }
+        }
+
+        executionThread.start()
+        assertTrue(requestReady.await(5, TimeUnit.SECONDS))
+
+        val handle = capturedHandle.get()
+        assertNotNull(handle)
+        executionService.cancelExecutionRun(workflowId, handle!!.runId)
+
+        val cancellingProgress = executionService.getLiveProgress(workflowId, handle.runId)
+        assertNotNull(cancellingProgress)
+        assertEquals(ExecutionLivePhase.CANCELLING, cancellingProgress!!.phase)
+
+        allowResponse.countDown()
+        executionThread.join(5_000)
+
+        val terminalProgress = executionService.getLiveProgress(workflowId, handle.runId)
+        assertNotNull(terminalProgress)
+        assertEquals(ExecutionLivePhase.TERMINAL, terminalProgress!!.phase)
+        assertTrue(terminalProgress.lastDetail.orEmpty().contains("cancelled", ignoreCase = true))
+    }
+
+    @Test
     fun `startAiExecution should keep cancellation semantics when provider exits with error after stop request`() {
         val workflowId = "wf-ai-cancel-provider-error"
         seedWorkflow(workflowId)
@@ -390,6 +507,28 @@ class SpecTaskExecutionServiceTest {
         assertEquals(TaskStatus.PENDING, persistedTask.status)
         assertEquals(listOf(handle!!.requestId), cancelledRequests)
         assertTrue(messages.last().content.contains("cancelled", ignoreCase = true))
+    }
+
+    @Test
+    fun `listLiveProgress should synthesize waiting confirmation state from persisted run without memory snapshot`() {
+        val workflowId = "wf-ai-live-recovery"
+        seedWorkflow(workflowId)
+        val executionService = newExecutionService()
+        val run = executionService.createRun(
+            workflowId = workflowId,
+            taskId = "T-001",
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            trigger = ExecutionTrigger.SYSTEM_RECOVERY,
+            startedAt = "2026-03-15T10:00:00Z",
+            summary = "Recovered run awaiting confirmation.",
+        )
+
+        val liveProgress = executionService.listLiveProgress(workflowId, "T-001").single()
+
+        assertEquals(run.runId, liveProgress.runId)
+        assertEquals(ExecutionLivePhase.WAITING_CONFIRMATION, liveProgress.phase)
+        assertEquals("Recovered run awaiting confirmation.", liveProgress.lastDetail)
+        assertTrue(liveProgress.recentEvents.isNotEmpty())
     }
 
     @Test

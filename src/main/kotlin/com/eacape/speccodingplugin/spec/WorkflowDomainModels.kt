@@ -673,6 +673,29 @@ data class TaskExecutionRun(
     val summary: String? = null,
 )
 
+enum class ExecutionLivePhase {
+    QUEUED,
+    PREPARING_CONTEXT,
+    REQUEST_DISPATCHED,
+    STREAMING,
+    WAITING_CONFIRMATION,
+    CANCELLING,
+    TERMINAL,
+}
+
+data class TaskExecutionLiveProgress(
+    val workflowId: String,
+    val runId: String,
+    val taskId: String,
+    val phase: ExecutionLivePhase,
+    val startedAt: java.time.Instant,
+    val lastUpdatedAt: java.time.Instant,
+    val lastDetail: String? = null,
+    val recentEvents: List<com.eacape.speccodingplugin.stream.ChatStreamEvent> = emptyList(),
+    val providerId: String? = null,
+    val modelId: String? = null,
+)
+
 data class VerifyCommandExecutionRequest(
     val commandId: String,
     val displayName: String?,

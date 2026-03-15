@@ -8,6 +8,7 @@ import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.core.SpecCodingProjectService
 import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
 import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
+import com.eacape.speccodingplugin.llm.LlmChunk
 import com.eacape.speccodingplugin.llm.LlmResponse
 import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.session.ConversationRole
@@ -15,6 +16,9 @@ import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
 import com.eacape.speccodingplugin.session.WorkflowChatBinding
 import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.stream.ChatTraceKind
+import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
@@ -27,6 +31,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.UUID
 
 @Service(Service.Level.PROJECT)
@@ -38,6 +43,7 @@ class SpecTaskExecutionService(private val project: Project) {
         val contextSnapshot: ContextSnapshot?,
         val operationMode: OperationMode,
         val requestId: String,
+        val onChunk: suspend (LlmChunk) -> Unit,
     )
 
     data class TaskExecutionCancellationHandle(
@@ -92,7 +98,7 @@ class SpecTaskExecutionService(private val project: Project) {
                 contextSnapshot = request.contextSnapshot,
                 operationMode = request.operationMode,
                 requestId = request.requestId,
-                onChunk = {},
+                onChunk = request.onChunk,
             )
         }
     }
@@ -100,6 +106,8 @@ class SpecTaskExecutionService(private val project: Project) {
         _requestCancellerOverride ?: ::cancelRequestAcrossProviders
     }
     private val activeRequestHandles = ConcurrentHashMap<String, TaskExecutionCancellationHandle>()
+    private val liveProgressByRunId = ConcurrentHashMap<String, TaskExecutionLiveProgress>()
+    private val liveProgressListeners = CopyOnWriteArrayList<TaskExecutionLiveProgressListener>()
 
     internal constructor(
         project: Project,
@@ -131,6 +139,63 @@ class SpecTaskExecutionService(private val project: Project) {
             .filter { run -> normalizedTaskId == null || run.taskId == normalizedTaskId }
             .sortedWith(compareByDescending<TaskExecutionRun> { it.startedAt }.thenByDescending { it.runId })
             .toList()
+    }
+
+    fun listLiveProgress(workflowId: String, taskId: String? = null): List<TaskExecutionLiveProgress> {
+        val workflow = storage.loadWorkflow(workflowId).getOrThrow()
+        val normalizedTaskId = taskId
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+            ?.let(::normalizeTaskId)
+        val persistedRuns = workflow.taskExecutionRuns
+            .asSequence()
+            .filter { run -> normalizedTaskId == null || run.taskId == normalizedTaskId }
+            .toList()
+
+        val progressByRunId = linkedMapOf<String, TaskExecutionLiveProgress>()
+        persistedRuns.forEach { run ->
+            val liveProgress = liveProgressByRunId[run.runId] ?: synthesizeLiveProgress(workflowId, run)
+            if (liveProgress.phase != ExecutionLivePhase.TERMINAL) {
+                progressByRunId[run.runId] = liveProgress
+            }
+        }
+        liveProgressByRunId.values
+            .asSequence()
+            .filter { progress ->
+                progress.workflowId == workflowId &&
+                    progress.phase != ExecutionLivePhase.TERMINAL &&
+                    (normalizedTaskId == null || progress.taskId == normalizedTaskId)
+            }
+            .forEach { progress ->
+                progressByRunId.putIfAbsent(progress.runId, progress)
+            }
+
+        return progressByRunId.values
+            .sortedWith(compareByDescending<TaskExecutionLiveProgress> { it.lastUpdatedAt }.thenByDescending { it.runId })
+    }
+
+    fun getLiveProgress(workflowId: String, runId: String): TaskExecutionLiveProgress? {
+        val normalizedRunId = runId.trim().takeIf(String::isNotBlank) ?: return null
+        val existing = liveProgressByRunId[normalizedRunId]
+        if (existing != null && existing.workflowId == workflowId) {
+            return existing
+        }
+        return loadRun(workflowId, normalizedRunId)?.let { run ->
+            liveProgressByRunId[normalizedRunId] ?: synthesizeLiveProgress(workflowId, run)
+        }
+    }
+
+    fun getTaskLiveProgress(workflowId: String, taskId: String): TaskExecutionLiveProgress? {
+        val normalizedTaskId = normalizeTaskId(taskId)
+        return listLiveProgress(workflowId, normalizedTaskId).firstOrNull()
+    }
+
+    fun addLiveProgressListener(listener: TaskExecutionLiveProgressListener) {
+        liveProgressListeners += listener
+    }
+
+    fun removeLiveProgressListener(listener: TaskExecutionLiveProgressListener) {
+        liveProgressListeners -= listener
     }
 
     fun startAiExecution(
@@ -291,6 +356,18 @@ class SpecTaskExecutionService(private val project: Project) {
             return currentRun
         }
         val cancellationHandle = activeRequestHandles[currentRun.runId]
+        updateLiveProgress(
+            workflowId = workflowId,
+            runId = currentRun.runId,
+            taskId = currentRun.taskId,
+            phase = ExecutionLivePhase.CANCELLING,
+            startedAt = parseRunInstant(currentRun.startedAt),
+            detail = LIVE_PROGRESS_CANCELLING_DETAIL,
+            event = milestoneEvent(
+                detail = LIVE_PROGRESS_CANCELLING_DETAIL,
+                status = ChatTraceStatus.RUNNING,
+            ),
+        )
         val cancelledRun = updateRunStatus(
             workflowId = workflowId,
             runId = currentRun.runId,
@@ -299,6 +376,13 @@ class SpecTaskExecutionService(private val project: Project) {
         )
         activeRequestHandles.remove(currentRun.runId)
         cancellationHandle?.let { handle -> requestCanceller(handle.providerId, handle.requestId) }
+        if (cancellationHandle == null && cancelledRun != null) {
+            finishLiveProgress(
+                workflowId = workflowId,
+                run = cancelledRun,
+                detail = cancelledRun.summary ?: summary,
+            )
+        }
         return cancelledRun
     }
 
@@ -323,7 +407,13 @@ class SpecTaskExecutionService(private val project: Project) {
             runId = run.runId,
             status = TaskExecutionRunStatus.SUCCEEDED,
             summary = summary,
-        )
+        ).also { resolvedRun ->
+            finishLiveProgress(
+                workflowId = workflowId,
+                run = resolvedRun,
+                detail = resolvedRun.summary ?: LIVE_PROGRESS_COMPLETED_DETAIL,
+            )
+        }
     }
 
     fun migrateLegacyInProgressTasks(workflow: SpecWorkflow): LegacyTaskExecutionMigrationResult {
@@ -378,7 +468,8 @@ class SpecTaskExecutionService(private val project: Project) {
         val workflow = storage.loadWorkflow(workflowId).getOrThrow()
         val task = resolveTask(workflowId, taskId)
         val previousRun = resolvePreviousRun(workflow, task.id, previousRunId, trigger)
-        val suggestedRelatedFiles = relatedFilesResolver(task.id, task.relatedFiles)
+        val normalizedProviderId = normalizeProgressMetadataValue(providerId)
+        val normalizedModelId = normalizeProgressMetadataValue(modelId)
         val queuedRun = createRun(
             workflow = workflow,
             taskId = task.id,
@@ -386,6 +477,35 @@ class SpecTaskExecutionService(private val project: Project) {
             trigger = trigger,
             summary = buildQueuedSummary(trigger, previousRun),
         ).second
+        updateLiveProgress(
+            workflowId = workflowId,
+            runId = queuedRun.runId,
+            taskId = task.id,
+            phase = ExecutionLivePhase.QUEUED,
+            startedAt = parseRunInstant(queuedRun.startedAt),
+            detail = queuedRun.summary ?: LIVE_PROGRESS_QUEUED_DETAIL,
+            providerId = normalizedProviderId,
+            modelId = normalizedModelId,
+            event = milestoneEvent(
+                detail = queuedRun.summary ?: LIVE_PROGRESS_QUEUED_DETAIL,
+                status = ChatTraceStatus.INFO,
+            ),
+        )
+        updateLiveProgress(
+            workflowId = workflowId,
+            runId = queuedRun.runId,
+            taskId = task.id,
+            phase = ExecutionLivePhase.PREPARING_CONTEXT,
+            startedAt = parseRunInstant(queuedRun.startedAt),
+            detail = LIVE_PROGRESS_PREPARING_DETAIL,
+            providerId = normalizedProviderId,
+            modelId = normalizedModelId,
+            event = milestoneEvent(
+                detail = LIVE_PROGRESS_PREPARING_DETAIL,
+                status = ChatTraceStatus.RUNNING,
+            ),
+        )
+        val suggestedRelatedFiles = relatedFilesResolver(task.id, task.relatedFiles)
         val session = resolveExecutionSession(
             workflow = workflow,
             task = task,
@@ -413,6 +533,45 @@ class SpecTaskExecutionService(private val project: Project) {
             suggestedRelatedFiles = suggestedRelatedFiles,
         )
         val contextSnapshot = buildRelatedFilesContextSnapshot(suggestedRelatedFiles)
+        var sawStreamingSignal = false
+        val onChunk: suspend (LlmChunk) -> Unit = { chunk ->
+            if (chunk.event != null) {
+                updateLiveProgress(
+                    workflowId = workflowId,
+                    runId = queuedRun.runId,
+                    taskId = task.id,
+                    phase = ExecutionLivePhase.STREAMING,
+                    startedAt = parseRunInstant(queuedRun.startedAt),
+                    providerId = normalizedProviderId,
+                    modelId = normalizedModelId,
+                    event = chunk.event,
+                    detail = chunk.event.detail,
+                )
+                sawStreamingSignal = true
+            } else if (chunk.delta.isNotBlank()) {
+                val fallbackEvent = if (sawStreamingSignal) {
+                    null
+                } else {
+                    milestoneEvent(
+                        kind = ChatTraceKind.OUTPUT,
+                        detail = LIVE_PROGRESS_STREAMING_DETAIL,
+                        status = ChatTraceStatus.RUNNING,
+                    )
+                }
+                updateLiveProgress(
+                    workflowId = workflowId,
+                    runId = queuedRun.runId,
+                    taskId = task.id,
+                    phase = ExecutionLivePhase.STREAMING,
+                    startedAt = parseRunInstant(queuedRun.startedAt),
+                    providerId = normalizedProviderId,
+                    modelId = normalizedModelId,
+                    event = fallbackEvent,
+                    detail = LIVE_PROGRESS_STREAMING_DETAIL,
+                )
+                sawStreamingSignal = true
+            }
+        }
         val executionAuditContext = buildExecutionAuditContext(
             auditContext = auditContext,
             task = task,
@@ -446,6 +605,20 @@ class SpecTaskExecutionService(private val project: Project) {
                 runId = queuedRun.runId,
                 status = TaskExecutionRunStatus.RUNNING,
             )
+            updateLiveProgress(
+                workflowId = workflowId,
+                runId = queuedRun.runId,
+                taskId = task.id,
+                phase = ExecutionLivePhase.REQUEST_DISPATCHED,
+                startedAt = parseRunInstant(queuedRun.startedAt),
+                detail = LIVE_PROGRESS_REQUEST_DISPATCHED_DETAIL,
+                providerId = normalizedProviderId,
+                modelId = normalizedModelId,
+                event = milestoneEvent(
+                    detail = LIVE_PROGRESS_REQUEST_DISPATCHED_DETAIL,
+                    status = ChatTraceStatus.INFO,
+                ),
+            )
             ensureRunNotCancelled(workflowId, queuedRun.runId)
             val response = runBlocking {
                 chatExecutor(
@@ -456,6 +629,7 @@ class SpecTaskExecutionService(private val project: Project) {
                         contextSnapshot = contextSnapshot,
                         operationMode = operationMode,
                         requestId = requestId,
+                        onChunk = onChunk,
                     ),
                 )
             }
@@ -466,6 +640,20 @@ class SpecTaskExecutionService(private val project: Project) {
                 runId = queuedRun.runId,
                 status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
                 summary = summarizeAssistantReply(assistantReply),
+            )
+            updateLiveProgress(
+                workflowId = workflowId,
+                runId = queuedRun.runId,
+                taskId = task.id,
+                phase = ExecutionLivePhase.WAITING_CONFIRMATION,
+                startedAt = parseRunInstant(queuedRun.startedAt),
+                detail = completedRun.summary ?: LIVE_PROGRESS_WAITING_CONFIRMATION_DETAIL,
+                providerId = normalizedProviderId,
+                modelId = normalizedModelId,
+                event = milestoneEvent(
+                    detail = LIVE_PROGRESS_WAITING_CONFIRMATION_DETAIL,
+                    status = ChatTraceStatus.INFO,
+                ),
             )
             persistExecutionMessage(
                 sessionId = session.id,
@@ -501,6 +689,17 @@ class SpecTaskExecutionService(private val project: Project) {
                 previousRunId = previousRun?.runId,
             )
             markRunCancelled(workflowId, queuedRun.runId, cancelSummary)
+            finishLiveProgress(
+                workflowId = workflowId,
+                run = loadRun(workflowId, queuedRun.runId) ?: queuedRun.copy(
+                    status = TaskExecutionRunStatus.CANCELLED,
+                    summary = cancelSummary,
+                    finishedAt = Instant.now().toString(),
+                ),
+                detail = cancelSummary,
+                providerId = normalizedProviderId,
+                modelId = normalizedModelId,
+            )
             throw cancel
         } catch (error: Throwable) {
             val cancelledRun = loadRun(workflowId, queuedRun.runId)
@@ -518,6 +717,13 @@ class SpecTaskExecutionService(private val project: Project) {
                     modelId = modelId,
                     previousRunId = previousRun?.runId,
                 )
+                finishLiveProgress(
+                    workflowId = workflowId,
+                    run = cancelledRun,
+                    detail = cancelSummary,
+                    providerId = normalizedProviderId,
+                    modelId = normalizedModelId,
+                )
                 throw CancellationException(cancelSummary)
             }
             val failureSummary = summarizeFailure(error)
@@ -533,6 +739,17 @@ class SpecTaskExecutionService(private val project: Project) {
                 previousRunId = previousRun?.runId,
             )
             markRunFailed(workflowId, queuedRun.runId, failureSummary)
+            finishLiveProgress(
+                workflowId = workflowId,
+                run = loadRun(workflowId, queuedRun.runId) ?: queuedRun.copy(
+                    status = TaskExecutionRunStatus.FAILED,
+                    summary = failureSummary,
+                    finishedAt = Instant.now().toString(),
+                ),
+                detail = failureSummary,
+                providerId = normalizedProviderId,
+                modelId = normalizedModelId,
+            )
             transitionTaskToBlocked(
                 workflowId = workflowId,
                 taskId = task.id,
@@ -598,6 +815,164 @@ class SpecTaskExecutionService(private val project: Project) {
             ),
         ).getOrThrow()
         return updatedWorkflow to run
+    }
+
+    private fun synthesizeLiveProgress(
+        workflowId: String,
+        run: TaskExecutionRun,
+    ): TaskExecutionLiveProgress {
+        val phase = when (run.status) {
+            TaskExecutionRunStatus.QUEUED -> ExecutionLivePhase.QUEUED
+            TaskExecutionRunStatus.RUNNING -> ExecutionLivePhase.REQUEST_DISPATCHED
+            TaskExecutionRunStatus.WAITING_CONFIRMATION -> ExecutionLivePhase.WAITING_CONFIRMATION
+            TaskExecutionRunStatus.FAILED,
+            TaskExecutionRunStatus.CANCELLED,
+            TaskExecutionRunStatus.SUCCEEDED,
+            -> ExecutionLivePhase.TERMINAL
+        }
+        val detail = when (run.status) {
+            TaskExecutionRunStatus.QUEUED -> run.summary ?: LIVE_PROGRESS_QUEUED_DETAIL
+            TaskExecutionRunStatus.RUNNING -> run.summary ?: LIVE_PROGRESS_REQUEST_DISPATCHED_DETAIL
+            TaskExecutionRunStatus.WAITING_CONFIRMATION -> run.summary ?: LIVE_PROGRESS_WAITING_CONFIRMATION_DETAIL
+            TaskExecutionRunStatus.CANCELLED -> run.summary ?: USER_CANCELLED_RUN_SUMMARY
+            TaskExecutionRunStatus.FAILED -> run.summary ?: LIVE_PROGRESS_FAILED_DETAIL
+            TaskExecutionRunStatus.SUCCEEDED -> run.summary ?: LIVE_PROGRESS_COMPLETED_DETAIL
+        }
+        return TaskExecutionLiveProgress(
+            workflowId = workflowId,
+            runId = run.runId,
+            taskId = run.taskId,
+            phase = phase,
+            startedAt = parseRunInstant(run.startedAt),
+            lastUpdatedAt = parseRunInstant(run.finishedAt ?: run.startedAt),
+            lastDetail = detail,
+            recentEvents = listOfNotNull(
+                milestoneEvent(
+                    detail = detail,
+                    status = when (run.status) {
+                        TaskExecutionRunStatus.FAILED -> ChatTraceStatus.ERROR
+                        TaskExecutionRunStatus.SUCCEEDED -> ChatTraceStatus.DONE
+                        else -> ChatTraceStatus.INFO
+                    },
+                ),
+            ),
+        )
+    }
+
+    private fun updateLiveProgress(
+        workflowId: String,
+        runId: String,
+        taskId: String,
+        phase: ExecutionLivePhase,
+        startedAt: Instant,
+        detail: String? = null,
+        providerId: String? = null,
+        modelId: String? = null,
+        event: ChatStreamEvent? = null,
+    ) {
+        val existing = liveProgressByRunId[runId]
+        val normalizedEvent = normalizeLiveEvent(event)
+        val normalizedDetail = detail?.trim()?.takeIf(String::isNotBlank)?.take(LIVE_PROGRESS_DETAIL_CHAR_LIMIT)
+        val updated = TaskExecutionLiveProgress(
+            workflowId = workflowId,
+            runId = runId,
+            taskId = taskId,
+            phase = phase,
+            startedAt = existing?.startedAt ?: startedAt,
+            lastUpdatedAt = Instant.now(),
+            lastDetail = normalizedDetail ?: normalizedEvent?.detail ?: existing?.lastDetail,
+            recentEvents = appendRecentEvent(existing?.recentEvents.orEmpty(), normalizedEvent),
+            providerId = normalizeProgressMetadataValue(providerId) ?: existing?.providerId,
+            modelId = normalizeProgressMetadataValue(modelId) ?: existing?.modelId,
+        )
+        liveProgressByRunId[runId] = updated
+        notifyLiveProgressUpdated(updated)
+    }
+
+    private fun finishLiveProgress(
+        workflowId: String,
+        run: TaskExecutionRun,
+        detail: String? = null,
+        providerId: String? = null,
+        modelId: String? = null,
+    ) {
+        val resolvedDetail = detail?.trim()?.takeIf(String::isNotBlank) ?: when (run.status) {
+            TaskExecutionRunStatus.CANCELLED -> run.summary ?: USER_CANCELLED_RUN_SUMMARY
+            TaskExecutionRunStatus.FAILED -> run.summary ?: LIVE_PROGRESS_FAILED_DETAIL
+            TaskExecutionRunStatus.SUCCEEDED -> run.summary ?: LIVE_PROGRESS_COMPLETED_DETAIL
+            TaskExecutionRunStatus.WAITING_CONFIRMATION -> run.summary ?: LIVE_PROGRESS_WAITING_CONFIRMATION_DETAIL
+            TaskExecutionRunStatus.RUNNING -> run.summary ?: LIVE_PROGRESS_STREAMING_DETAIL
+            TaskExecutionRunStatus.QUEUED -> run.summary ?: LIVE_PROGRESS_QUEUED_DETAIL
+        }
+        updateLiveProgress(
+            workflowId = workflowId,
+            runId = run.runId,
+            taskId = run.taskId,
+            phase = ExecutionLivePhase.TERMINAL,
+            startedAt = parseRunInstant(run.startedAt),
+            detail = resolvedDetail,
+            providerId = providerId,
+            modelId = modelId,
+            event = milestoneEvent(
+                detail = resolvedDetail,
+                status = when (run.status) {
+                    TaskExecutionRunStatus.FAILED -> ChatTraceStatus.ERROR
+                    TaskExecutionRunStatus.SUCCEEDED -> ChatTraceStatus.DONE
+                    else -> ChatTraceStatus.INFO
+                },
+            ),
+        )
+    }
+
+    private fun appendRecentEvent(
+        existing: List<ChatStreamEvent>,
+        event: ChatStreamEvent?,
+    ): List<ChatStreamEvent> {
+        val normalizedEvent = normalizeLiveEvent(event) ?: return existing
+        val deduplicated = if (existing.lastOrNull()?.let { last ->
+                last.kind == normalizedEvent.kind &&
+                    last.status == normalizedEvent.status &&
+                    last.detail == normalizedEvent.detail
+            } == true
+        ) {
+            existing
+        } else {
+            existing + normalizedEvent
+        }
+        return deduplicated.takeLast(MAX_RECENT_LIVE_EVENTS)
+    }
+
+    private fun notifyLiveProgressUpdated(progress: TaskExecutionLiveProgress) {
+        liveProgressListeners.forEach { listener ->
+            listener.onLiveProgressUpdated(progress)
+        }
+    }
+
+    private fun normalizeLiveEvent(event: ChatStreamEvent?): ChatStreamEvent? {
+        event ?: return null
+        val normalizedDetail = event.detail.trim().takeIf(String::isNotBlank)?.take(LIVE_PROGRESS_DETAIL_CHAR_LIMIT) ?: return null
+        return event.copy(detail = normalizedDetail)
+    }
+
+    private fun milestoneEvent(
+        detail: String,
+        kind: ChatTraceKind = ChatTraceKind.TASK,
+        status: ChatTraceStatus = ChatTraceStatus.INFO,
+    ): ChatStreamEvent {
+        return ChatStreamEvent(
+            kind = kind,
+            detail = detail,
+            status = status,
+        )
+    }
+
+    private fun parseRunInstant(value: String?): Instant {
+        val normalized = value?.trim().orEmpty()
+        return runCatching { Instant.parse(normalized) }.getOrElse { Instant.now() }
+    }
+
+    private fun normalizeProgressMetadataValue(value: String?): String? {
+        return value?.trim()?.takeIf(String::isNotBlank)
     }
 
     private fun ensureTaskExists(workflowId: String, taskId: String) {
@@ -1133,10 +1508,24 @@ class SpecTaskExecutionService(private val project: Project) {
         private const val RUN_SUMMARY_CHAR_LIMIT = 260
         private const val DOCUMENT_SUMMARY_CHAR_LIMIT = 240
         private const val MAX_CLARIFICATION_LINES = 12
+        private const val MAX_RECENT_LIVE_EVENTS = 5
+        private const val LIVE_PROGRESS_DETAIL_CHAR_LIMIT = 220
         private const val USER_CANCELLED_RUN_SUMMARY = "AI execution cancelled by user."
+        private const val LIVE_PROGRESS_QUEUED_DETAIL = "Execution queued."
+        private const val LIVE_PROGRESS_PREPARING_DETAIL = "Preparing task context."
+        private const val LIVE_PROGRESS_REQUEST_DISPATCHED_DETAIL = "Request dispatched to provider."
+        private const val LIVE_PROGRESS_STREAMING_DETAIL = "AI is returning content."
+        private const val LIVE_PROGRESS_WAITING_CONFIRMATION_DETAIL = "Waiting for confirmation."
+        private const val LIVE_PROGRESS_CANCELLING_DETAIL = "Cancelling execution."
+        private const val LIVE_PROGRESS_COMPLETED_DETAIL = "AI execution completed."
+        private const val LIVE_PROGRESS_FAILED_DETAIL = "AI execution failed."
 
         fun getInstance(project: Project): SpecTaskExecutionService = project.service()
     }
+}
+
+fun interface TaskExecutionLiveProgressListener {
+    fun onLiveProgressUpdated(progress: TaskExecutionLiveProgress)
 }
 
 private fun ExecutionTrigger.toExecutionActionName(): String {
