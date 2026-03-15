@@ -181,8 +181,7 @@ internal object SpecYamlCodec {
             is Map<*, *> -> {
                 val sortedEntries = value.entries
                     .map { (rawKey, rawValue) ->
-                        val key = rawKey as? String
-                            ?: throw IllegalArgumentException("Only string mapping keys are supported.")
+                        val key = normalizeMappingKey(rawKey)
                         key to normalizeNode(rawValue)
                     }
                     .sortedBy { (key, _) -> key }
@@ -213,8 +212,7 @@ internal object SpecYamlCodec {
             }
 
             is Map<*, *> -> value.forEach { (rawKey, rawValue) ->
-                val key = rawKey as? String
-                    ?: throw IllegalArgumentException("Only string mapping keys are supported at $path.")
+                val key = normalizeMappingKey(rawKey, path)
                 if (key == "<<") {
                     throw IllegalArgumentException("YAML merge key '<<' is not allowed at $path.")
                 }
@@ -224,6 +222,20 @@ internal object SpecYamlCodec {
             else -> throw IllegalArgumentException(
                 "Only YAML scalar/sequence/mapping nodes are supported at $path.",
             )
+        }
+    }
+
+    private fun normalizeMappingKey(rawKey: Any?, path: String? = null): String {
+        return when (rawKey) {
+            is String -> rawKey
+            is Number,
+            is Boolean,
+            -> rawKey.toString()
+
+            else -> {
+                val suffix = path?.let { " at $it" }.orEmpty()
+                throw IllegalArgumentException("Only scalar mapping keys are supported$suffix.")
+            }
         }
     }
 }

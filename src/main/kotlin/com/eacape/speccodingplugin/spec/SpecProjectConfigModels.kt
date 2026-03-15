@@ -28,7 +28,17 @@ data class SpecTemplatePolicy(
     val implementEnabledByDefault: Boolean,
 ) {
     fun defaultStagePlan(): WorkflowStagePlan {
-        return definition.buildStagePlan(defaultActivationOptions())
+        return stagePlan()
+    }
+
+    fun stagePlan(
+        verifyEnabled: Boolean? = null,
+        implementEnabled: Boolean? = null,
+    ): WorkflowStagePlan {
+        val overrides = defaultActivationOptions().stageOverrides.toMutableMap()
+        verifyEnabled?.let { overrides[StageId.VERIFY] = it }
+        implementEnabled?.let { overrides[StageId.IMPLEMENT] = it }
+        return definition.buildStagePlan(StageActivationOptions(stageOverrides = overrides))
     }
 
     fun defaultActiveStages(): List<StageId> {

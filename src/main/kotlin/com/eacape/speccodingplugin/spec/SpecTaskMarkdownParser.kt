@@ -305,16 +305,25 @@ object SpecTaskMarkdownParser {
         if (rawValue == null) {
             return emptyList()
         }
-        val list = rawValue as? List<*>
-        if (list == null || list.any { it !is String }) {
-            issues += ParseIssue(
-                line = line,
-                message = "Task $taskId field `$fieldName` must be a YAML string list.",
-                fixHint = "Represent `$fieldName` as a YAML sequence, for example `$fieldName: []`.",
-            )
-            return emptyList()
+        val normalizedList = when (rawValue) {
+            is List<*> -> rawValue.takeIf { list -> list.all { item -> item is String } }
+                ?.filterIsInstance<String>()
+
+            is Map<*, *> -> rawValue.entries
+                .takeIf { entries -> entries.all { (_, value) -> value is String } }
+                ?.map { (_, value) -> value as String }
+
+            else -> null
         }
-        return list.filterIsInstance<String>()
+        if (normalizedList != null) {
+            return normalizedList
+        }
+        issues += ParseIssue(
+            line = line,
+            message = "Task $taskId field `$fieldName` must be a YAML string list.",
+            fixHint = "Represent `$fieldName` as a YAML sequence, for example `$fieldName: []`.",
+        )
+        return emptyList()
     }
 
     private fun parseVerificationResult(

@@ -1670,6 +1670,7 @@ class SpecWorkflowPanel(
                 val title = dialog.resultTitle ?: return@invokeLaterSafe
                 val desc = dialog.resultDescription ?: ""
                 val template = dialog.resultTemplate
+                val verifyEnabled = dialog.resultVerifyEnabled
                 val changeIntent = dialog.resultChangeIntent
                 val baselineWorkflowId = dialog.resultBaselineWorkflowId
                 scope.launch(Dispatchers.IO) {
@@ -1677,6 +1678,7 @@ class SpecWorkflowPanel(
                         title = title,
                         description = desc,
                         template = template,
+                        verifyEnabled = verifyEnabled,
                         changeIntent = changeIntent,
                         baselineWorkflowId = baselineWorkflowId,
                     ).onSuccess { wf ->

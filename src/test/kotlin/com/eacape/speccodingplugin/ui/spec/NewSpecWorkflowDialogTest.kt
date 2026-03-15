@@ -76,6 +76,48 @@ class NewSpecWorkflowDialogTest {
     }
 
     @Test
+    fun `buildTemplatePresentation should omit verify stage and artifact when verify unchecked`() {
+        val presentation = NewSpecWorkflowDialog.buildTemplatePresentation(
+            template = WorkflowTemplate.QUICK_TASK,
+            verifyEnabled = false,
+        )
+
+        assertEquals(
+            listOf(
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS),
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.ARCHIVE),
+            ).joinToString(" -> "),
+            presentation.stageSummary,
+        )
+        assertEquals("tasks.md", presentation.artifactSummary)
+    }
+
+    @Test
+    fun `buildTemplatePresentation should include verify stage and artifact when verify checked`() {
+        val presentation = NewSpecWorkflowDialog.buildTemplatePresentation(
+            template = WorkflowTemplate.DIRECT_IMPLEMENT,
+            verifyEnabled = true,
+        )
+
+        assertEquals(
+            listOf(
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.IMPLEMENT),
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.VERIFY),
+                SpecWorkflowOverviewPresenter.stageLabel(StageId.ARCHIVE),
+            ).joinToString(" -> "),
+            presentation.stageSummary,
+        )
+        assertEquals(
+            listOf(
+                SpecCodingBundle.message("spec.dialog.template.generatedValue", "tasks.md"),
+                "verification.md",
+            ).joinToString(", "),
+            presentation.artifactSummary,
+        )
+    }
+
+    @Test
     fun `buildTemplatePresentation should explain direct implement scaffolded artifacts`() {
         val presentation = NewSpecWorkflowDialog.buildTemplatePresentation(WorkflowTemplate.DIRECT_IMPLEMENT)
 

@@ -105,9 +105,14 @@ class SpecArtifactService(
         workflowId: String,
         template: WorkflowTemplate,
         templatePolicy: SpecTemplatePolicy,
+        verifyEnabled: Boolean? = null,
     ): List<SpecArtifactWriteResult> {
         validateWorkflowId(workflowId)
-        val requiredArtifacts = requiredArtifacts(template, templatePolicy)
+        val requiredArtifacts = requiredArtifacts(
+            template = template,
+            templatePolicy = templatePolicy,
+            verifyEnabled = verifyEnabled,
+        )
         return lockManager.withWorkflowLock(workflowId) {
             val workflowDir = workspaceInitializer.initializeWorkflowWorkspace(workflowId).workflowDir
             requiredArtifacts.map { (stageId, fileName) ->
@@ -183,9 +188,10 @@ class SpecArtifactService(
     private fun requiredArtifacts(
         template: WorkflowTemplate,
         templatePolicy: SpecTemplatePolicy,
+        verifyEnabled: Boolean? = null,
     ): List<Pair<StageId, String>> {
         val ordered = LinkedHashMap<String, StageId>()
-        val stagePlan = templatePolicy.defaultStagePlan()
+        val stagePlan = templatePolicy.stagePlan(verifyEnabled = verifyEnabled)
 
         // DIRECT_IMPLEMENT must still materialize a minimal tasks.md for task traceability.
         if (template == WorkflowTemplate.DIRECT_IMPLEMENT) {

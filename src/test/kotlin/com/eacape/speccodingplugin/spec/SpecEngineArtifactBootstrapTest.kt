@@ -92,6 +92,38 @@ class SpecEngineArtifactBootstrapTest {
     }
 
     @Test
+    fun `createWorkflow should honor explicit verify override from dialog`() {
+        val configPath = tempDir.resolve(".spec-coding").resolve("config.yaml")
+        Files.createDirectories(configPath.parent)
+        Files.writeString(
+            configPath,
+            """
+            schemaVersion: 1
+            defaultTemplate: DIRECT_IMPLEMENT
+            templates:
+              DIRECT_IMPLEMENT:
+                verifyEnabled: true
+            """.trimIndent() + "\n",
+        )
+
+        val engine = SpecEngine(project, storage) { SpecGenerationResult.Failure("not used") }
+        val workflow = engine.createWorkflow(
+            title = "direct implement without verify",
+            description = "explicit verify override",
+            verifyEnabled = false,
+        ).getOrThrow()
+
+        val workflowDir = tempDir
+            .resolve(".spec-coding")
+            .resolve("specs")
+            .resolve(workflow.id)
+        assertFalse(workflow.verifyEnabled)
+        assertFalse(workflow.stageStates.getValue(StageId.VERIFY).active)
+        assertTrue(Files.exists(workflowDir.resolve("tasks.md")))
+        assertFalse(Files.exists(workflowDir.resolve("verification.md")))
+    }
+
+    @Test
     fun `createWorkflow should honor explicit template selection over project default`() {
         val configPath = tempDir.resolve(".spec-coding").resolve("config.yaml")
         Files.createDirectories(configPath.parent)

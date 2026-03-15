@@ -12,6 +12,7 @@ import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.JBColor
 import com.intellij.ui.CollectionComboBoxModel
 import com.intellij.ui.SimpleListCellRenderer
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBTextArea
@@ -78,6 +79,9 @@ class NewSpecWorkflowDialog(
             }
         }
     }
+    private val verifyCheckBox = JBCheckBox(SpecCodingBundle.message("spec.dialog.field.verify"), false).apply {
+        toolTipText = SpecCodingBundle.message("spec.dialog.field.verify.help")
+    }
     private val templateDetailTitleLabel = JBLabel().apply {
         font = font.deriveFont(font.style or Font.BOLD)
     }
@@ -102,6 +106,8 @@ class NewSpecWorkflowDialog(
         private set
     var resultTemplate: WorkflowTemplate = defaultTemplate
         private set
+    var resultVerifyEnabled: Boolean? = null
+        private set
     var resultChangeIntent: SpecChangeIntent = SpecChangeIntent.FULL
         private set
     var resultBaselineWorkflowId: String? = null
@@ -113,6 +119,7 @@ class NewSpecWorkflowDialog(
             add(incrementalIntentRadio)
         }
         templateCombo.addActionListener { updateFormState() }
+        verifyCheckBox.addActionListener { updateFormState() }
         fullIntentRadio.addActionListener { updateFormState() }
         incrementalIntentRadio.addActionListener { updateFormState() }
         init()
@@ -149,6 +156,11 @@ class NewSpecWorkflowDialog(
         panel.add(templateLabel)
         panel.add(javax.swing.Box.createVerticalStrut(4))
 
+        val templateRow = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            alignmentX = JComponent.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(30))
+        }
         templateCombo.alignmentX = JComponent.LEFT_ALIGNMENT
         ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
             comboBox = templateCombo,
@@ -156,7 +168,11 @@ class NewSpecWorkflowDialog(
             maxWidth = JBUI.scale(640),
             height = JBUI.scale(30),
         )
-        panel.add(templateCombo)
+        verifyCheckBox.alignmentY = JComponent.CENTER_ALIGNMENT
+        templateRow.add(templateCombo)
+        templateRow.add(javax.swing.Box.createHorizontalStrut(8))
+        templateRow.add(verifyCheckBox)
+        panel.add(templateRow)
         panel.add(javax.swing.Box.createVerticalStrut(8))
         templateHelpArea.alignmentX = JComponent.LEFT_ALIGNMENT
         panel.add(templateHelpArea)
@@ -209,6 +225,7 @@ class NewSpecWorkflowDialog(
         resultTitle = titleField.text.trim()
         resultDescription = descriptionArea.text.trim()
         resultTemplate = selectedTemplate()
+        resultVerifyEnabled = selectedVerifyEnabled(resultTemplate)
         resultChangeIntent = normalizeChangeIntent(
             template = resultTemplate,
             requestedIntent = if (incrementalIntentRadio.isSelected) {
@@ -226,8 +243,19 @@ class NewSpecWorkflowDialog(
     }
 
     private fun updateFormState() {
-        updateTemplatePresentation(selectedTemplate())
-        val supportsRequirementScope = templateSupportsRequirementScope(selectedTemplate())
+        val template = selectedTemplate()
+        val supportsVerifySelection = templateSupportsVerifySelection(template)
+        verifyCheckBox.isVisible = supportsVerifySelection
+        verifyCheckBox.isEnabled = supportsVerifySelection
+        if (!supportsVerifySelection) {
+            verifyCheckBox.isSelected = false
+        }
+
+        updateTemplatePresentation(
+            template = template,
+            verifyEnabled = selectedVerifyEnabled(template),
+        )
+        val supportsRequirementScope = templateSupportsRequirementScope(template)
         intentLabel.isVisible = supportsRequirementScope
         fullIntentRadio.isVisible = supportsRequirementScope
         incrementalIntentRadio.isVisible = supportsRequirementScope
@@ -256,6 +284,14 @@ class NewSpecWorkflowDialog(
 
     private fun selectedTemplate(): WorkflowTemplate {
         return (templateCombo.selectedItem as? WorkflowTemplate) ?: WorkflowTemplate.FULL_SPEC
+    }
+
+    private fun selectedVerifyEnabled(template: WorkflowTemplate): Boolean? {
+        return if (templateSupportsVerifySelection(template)) {
+            verifyCheckBox.isSelected
+        } else {
+            null
+        }
     }
 
     private fun createTemplateDetailPanel(): JComponent {
@@ -296,8 +332,11 @@ class NewSpecWorkflowDialog(
         return section
     }
 
-    private fun updateTemplatePresentation(template: WorkflowTemplate) {
-        val presentation = buildTemplatePresentation(template)
+    private fun updateTemplatePresentation(template: WorkflowTemplate, verifyEnabled: Boolean?) {
+        val presentation = buildTemplatePresentation(
+            template = template,
+            verifyEnabled = verifyEnabled,
+        )
         templateCombo.toolTipText = presentation.bestFor
         templateDetailTitleLabel.text = SpecWorkflowOverviewPresenter.templateLabel(template)
         templateDescriptionArea.text = presentation.description
@@ -330,6 +369,13 @@ class NewSpecWorkflowDialog(
                 .contains(StageId.REQUIREMENTS)
         }
 
+        internal fun templateSupportsVerifySelection(template: WorkflowTemplate): Boolean {
+            return WorkflowTemplates
+                .definitionOf(template)
+                .stagePlan
+                .any { item -> item.id == StageId.VERIFY && item.optional }
+        }
+
         internal fun normalizeChangeIntent(
             template: WorkflowTemplate,
             requestedIntent: SpecChangeIntent,
@@ -341,24 +387,53 @@ class NewSpecWorkflowDialog(
             }
         }
 
-        internal fun buildTemplatePresentation(template: WorkflowTemplate): TemplatePresentation {
+        internal fun buildTemplatePresentation(
+            template: WorkflowTemplate,
+            verifyEnabled: Boolean? = null,
+        ): TemplatePresentation {
             val definition = WorkflowTemplates.definitionOf(template)
             return TemplatePresentation(
                 description = SpecCodingBundle.message(templateMessageKey("description", template)),
                 bestFor = SpecCodingBundle.message(templateMessageKey("bestFor", template)),
-                stageSummary = definition.stagePlan.joinToString(" -> ") { item ->
-                    decorateOptional(
+                stageSummary = buildStageSummary(
+                    definition = definition,
+                    verifyEnabled = verifyEnabled,
+                ),
+                artifactSummary = buildArtifactSummary(
+                    template = template,
+                    definition = definition,
+                    verifyEnabled = verifyEnabled,
+                ),
+            )
+        }
+
+        private fun buildStageSummary(
+            definition: com.eacape.speccodingplugin.spec.TemplateDefinition,
+            verifyEnabled: Boolean?,
+        ): String {
+            return definition.stagePlan.mapNotNull { item ->
+                when {
+                    item.id == StageId.VERIFY && templateSupportsVerifySelection(definition.template) -> when (verifyEnabled) {
+                        false -> null
+                        true -> SpecWorkflowOverviewPresenter.stageLabel(item.id)
+                        else -> decorateOptional(
+                            value = SpecWorkflowOverviewPresenter.stageLabel(item.id),
+                            optional = item.optional,
+                        )
+                    }
+
+                    else -> decorateOptional(
                         value = SpecWorkflowOverviewPresenter.stageLabel(item.id),
                         optional = item.optional,
                     )
-                },
-                artifactSummary = buildArtifactSummary(template, definition),
-            )
+                }
+            }.joinToString(" -> ")
         }
 
         private fun buildArtifactSummary(
             template: WorkflowTemplate,
             definition: com.eacape.speccodingplugin.spec.TemplateDefinition,
+            verifyEnabled: Boolean?,
         ): String {
             val artifacts = mutableListOf<String>()
             if (template == WorkflowTemplate.DIRECT_IMPLEMENT) {
@@ -369,7 +444,15 @@ class NewSpecWorkflowDialog(
             }
             definition.stagePlan.forEach { item ->
                 val fileName = item.id.artifactFileName ?: return@forEach
-                artifacts += decorateOptional(fileName, item.optional)
+                if (item.id == StageId.VERIFY && templateSupportsVerifySelection(definition.template)) {
+                    when (verifyEnabled) {
+                        false -> Unit
+                        true -> artifacts += fileName
+                        else -> artifacts += decorateOptional(fileName, item.optional)
+                    }
+                } else {
+                    artifacts += decorateOptional(fileName, item.optional)
+                }
             }
             return artifacts.distinct().joinToString(", ")
         }

@@ -139,6 +139,7 @@ class SpecEngine(private val project: Project) {
         title: String,
         description: String,
         template: WorkflowTemplate? = null,
+        verifyEnabled: Boolean? = null,
         changeIntent: SpecChangeIntent = SpecChangeIntent.FULL,
         baselineWorkflowId: String? = null,
     ): Result<SpecWorkflow> {
@@ -167,6 +168,7 @@ class SpecEngine(private val project: Project) {
             val stageMetadata = initializeStageMetadata(
                 templatePolicy = templatePolicy,
                 timestampMillis = createdAt,
+                verifyEnabled = verifyEnabled,
             )
             val workflow = SpecWorkflow(
                 id = workflowId,
@@ -196,6 +198,7 @@ class SpecEngine(private val project: Project) {
                 workflowId = workflowId,
                 template = selectedTemplate,
                 templatePolicy = templatePolicy,
+                verifyEnabled = stageMetadata.verifyEnabled,
             )
             activeWorkflows[workflowId] = workflow
 
@@ -2022,8 +2025,9 @@ class SpecEngine(private val project: Project) {
     private fun initializeStageMetadata(
         templatePolicy: SpecTemplatePolicy,
         timestampMillis: Long,
+        verifyEnabled: Boolean? = null,
     ): StageMetadataState {
-        val stagePlan = templatePolicy.defaultStagePlan()
+        val stagePlan = templatePolicy.stagePlan(verifyEnabled = verifyEnabled)
         val enteredAt = Instant.ofEpochMilli(timestampMillis).toString()
         return StageMetadataState(
             currentStage = stagePlan.firstActiveStage,
