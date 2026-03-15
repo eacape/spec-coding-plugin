@@ -141,6 +141,126 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test deleting opened workflow should reopen next recent workflow`() {
+        val specEngine = SpecEngine.getInstance(project)
+        val olderWorkflow = specEngine.createWorkflow(
+            title = "Delete Older",
+            description = "first workflow",
+        ).getOrThrow()
+        val latestWorkflow = specEngine.createWorkflow(
+            title = "Delete Latest",
+            description = "second workflow",
+        ).getOrThrow()
+        val panel = createPanel()
+
+        waitUntil {
+            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == latestWorkflow.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.deleteWorkflowForTest(latestWorkflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == olderWorkflow.id &&
+                panel.highlightedWorkflowIdForTest() == olderWorkflow.id
+        }
+
+        assertEquals(listOf(olderWorkflow.id), panel.workflowIdsForTest())
+    }
+
+    fun `test deleting workflow from list mode should stay in list mode and fall back to remaining item`() {
+        val specEngine = SpecEngine.getInstance(project)
+        val olderWorkflow = specEngine.createWorkflow(
+            title = "List Delete Older",
+            description = "first workflow",
+        ).getOrThrow()
+        val latestWorkflow = specEngine.createWorkflow(
+            title = "List Delete Latest",
+            description = "second workflow",
+        ).getOrThrow()
+        val panel = createPanel()
+
+        waitUntil {
+            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == latestWorkflow.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickBackToListForTest()
+        }
+
+        waitUntil {
+            panel.isListModeForTest() &&
+                panel.selectedWorkflowIdForTest() == null &&
+                panel.highlightedWorkflowIdForTest() == latestWorkflow.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.deleteWorkflowForTest(latestWorkflow.id)
+        }
+
+        waitUntil {
+            panel.isListModeForTest() &&
+                panel.selectedWorkflowIdForTest() == null &&
+                panel.highlightedWorkflowIdForTest() == olderWorkflow.id
+        }
+
+        assertEquals(listOf(olderWorkflow.id), panel.workflowIdsForTest())
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.deleteWorkflowForTest(olderWorkflow.id)
+        }
+
+        waitUntil {
+            panel.isListModeForTest() &&
+                panel.workflowIdsForTest().isEmpty() &&
+                panel.selectedWorkflowIdForTest() == null &&
+                panel.highlightedWorkflowIdForTest() == null
+        }
+    }
+
+    fun `test external open request should focus current workflow and clear missing request`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Open Request Compatibility",
+            description = "keep external open stable",
+        ).getOrThrow()
+        val panel = createPanel()
+
+        waitUntil {
+            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
+        }
+
+        project.messageBus.syncPublisher(SpecToolWindowControlListener.TOPIC)
+            .onOpenWorkflowRequested(
+                SpecToolWindowOpenRequest(
+                    workflowId = workflow.id,
+                    focusedStage = StageId.DESIGN,
+                ),
+            )
+
+        waitUntil {
+            panel.focusedStageForTest() == StageId.DESIGN &&
+                panel.pendingOpenWorkflowRequestForTest() == null
+        }
+
+        project.messageBus.syncPublisher(SpecToolWindowControlListener.TOPIC)
+            .onOpenWorkflowRequested(
+                SpecToolWindowOpenRequest(
+                    workflowId = "wf-missing-open-request",
+                    focusedStage = StageId.VERIFY,
+                ),
+            )
+
+        waitUntil {
+            panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.pendingOpenWorkflowRequestForTest() == null
+        }
+
+        assertTrue(panel.isDetailModeForTest())
+        assertEquals(StageId.DESIGN, panel.focusedStageForTest())
+    }
+
     fun `test requirements workflow should keep continue checks visible for repair actions`() {
         val workflow = SpecEngine.getInstance(project).createWorkflow(
             title = "Section Visibility",

@@ -4,7 +4,6 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.SpecChangeIntent
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.WorkflowStatus
-import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
@@ -278,9 +277,9 @@ class SpecWorkflowListPanel(
         private val metaRow = JPanel(BorderLayout())
         private val rightPanel = JPanel(BorderLayout(0, RIGHT_PANEL_VERTICAL_GAP))
         private val actionPanel = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, ACTION_ICON_GAP, 0))
-        private val openActionLabel = JLabel(WORKFLOW_ICON_OPEN)
-        private val editActionLabel = JLabel(AllIcons.Actions.Edit)
-        private val deleteActionLabel = JLabel(AllIcons.Actions.GC)
+        private val openActionLabel = JLabel(SpecWorkflowIcons.OpenDocument)
+        private val editActionLabel = JLabel(SpecWorkflowIcons.Edit)
+        private val deleteActionLabel = JLabel(SpecWorkflowIcons.Delete)
 
         init {
             rowPanel.isOpaque = false
@@ -426,7 +425,6 @@ class SpecWorkflowListPanel(
             }
 
             cardPanel.updateColors(cardBg, cardBorder)
-            editActionLabel.icon = if (isSelected) AllIcons.Actions.EditSource else AllIcons.Actions.Edit
             return rowPanel
         }
 
@@ -590,7 +588,6 @@ class SpecWorkflowListPanel(
         }
 
         companion object {
-            private val WORKFLOW_ICON_OPEN = SpecWorkflowIcons.OpenDocument
             private val ROW_BOTTOM_GAP = JBUI.scale(8)
             private val CARD_VERTICAL_PAD = JBUI.scale(8)
             private val CARD_LEFT_PAD = JBUI.scale(10)

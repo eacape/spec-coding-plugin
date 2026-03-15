@@ -1513,7 +1513,31 @@ class SpecWorkflowPanel(
         showWorkspaceEmptyState()
     }
 
-    fun refreshWorkflows(selectWorkflowId: String? = null, showRefreshFeedback: Boolean = false) {
+    private fun resolveDeleteRefreshTarget(workflowId: String): WorkflowRefreshTarget {
+        val remainingItems = listPanel.currentItems()
+            .filterNot { item -> item.workflowId == workflowId }
+        val remainingIds = remainingItems.asSequence()
+            .map { item -> item.workflowId }
+            .toSet()
+        val preservedSelectedWorkflowId = selectedWorkflowId
+            ?.takeIf { candidate -> candidate != workflowId && candidate in remainingIds }
+        if (preservedSelectedWorkflowId != null) {
+            return WorkflowRefreshTarget(selectWorkflowId = preservedSelectedWorkflowId, preserveListMode = false)
+        }
+        if (selectedWorkflowId == workflowId) {
+            return WorkflowRefreshTarget(
+                selectWorkflowId = remainingItems.firstOrNull()?.workflowId,
+                preserveListMode = false,
+            )
+        }
+        return WorkflowRefreshTarget(selectWorkflowId = null, preserveListMode = true)
+    }
+
+    fun refreshWorkflows(
+        selectWorkflowId: String? = null,
+        showRefreshFeedback: Boolean = false,
+        preserveListMode: Boolean = false,
+    ) {
         scope.launch(Dispatchers.IO) {
             val items = specEngine.listWorkflowMetadata().mapNotNull { meta ->
                 specEngine.loadWorkflow(meta.workflowId).getOrNull()?.let { wf ->
@@ -1536,13 +1560,21 @@ class SpecWorkflowPanel(
                 switchWorkflowButton.isEnabled = items.isNotEmpty()
                 setStatusText(null)
                 val workflowIds = items.asSequence().map { it.workflowId }.toSet()
+                if (pendingOpenWorkflowRequest?.workflowId?.let { it !in workflowIds } == true) {
+                    pendingOpenWorkflowRequest = null
+                }
+                val validHighlightedWorkflowId = highlightedWorkflowId?.takeIf(workflowIds::contains)
                 val targetOpenedWorkflowId = selectWorkflowId?.takeIf(workflowIds::contains)
                     ?: selectedWorkflowId?.takeIf(workflowIds::contains)
                     ?: items.firstOrNull()?.workflowId?.takeIf {
-                        highlightedWorkflowId?.takeIf(workflowIds::contains) == null
+                        !preserveListMode && validHighlightedWorkflowId == null
                     }
                 val targetHighlightedWorkflowId = targetOpenedWorkflowId
-                    ?: highlightedWorkflowId?.takeIf(workflowIds::contains)
+                    ?: if (preserveListMode) {
+                        validHighlightedWorkflowId ?: items.firstOrNull()?.workflowId
+                    } else {
+                        validHighlightedWorkflowId
+                    }
                 highlightedWorkflowId = targetHighlightedWorkflowId
                 listPanel.setSelectedWorkflow(targetHighlightedWorkflowId)
                 if (targetOpenedWorkflowId != null) {
@@ -1776,13 +1808,23 @@ class SpecWorkflowPanel(
     }
 
     private fun onDeleteWorkflow(workflowId: String) {
+        val refreshTarget = resolveDeleteRefreshTarget(workflowId)
         scope.launch(Dispatchers.IO) {
-            specEngine.deleteWorkflow(workflowId)
-            invokeLaterSafe {
-                if (selectedWorkflowId == workflowId) {
-                    clearOpenedWorkflowUi(resetHighlight = false)
+            specEngine.deleteWorkflow(workflowId).onSuccess {
+                invokeLaterSafe {
+                    if (pendingOpenWorkflowRequest?.workflowId == workflowId) {
+                        pendingOpenWorkflowRequest = null
+                    }
+                    refreshWorkflows(
+                        selectWorkflowId = refreshTarget.selectWorkflowId,
+                        preserveListMode = refreshTarget.preserveListMode,
+                    )
                 }
-                refreshWorkflows()
+            }.onFailure { error ->
+                invokeLaterSafe {
+                    val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                    setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                }
             }
         }
     }
@@ -2893,6 +2935,11 @@ class SpecWorkflowPanel(
         val workflowId: String,
         val providerId: String?,
         val requestId: String,
+    )
+
+    private data class WorkflowRefreshTarget(
+        val selectWorkflowId: String?,
+        val preserveListMode: Boolean,
     )
 
     private fun ClarificationRetryPayload?.toWritebackPayload(
@@ -4008,7 +4055,7 @@ class SpecWorkflowPanel(
                 override fun onSelectWorkflowRequested(workflowId: String) {
                     invokeLaterSafe {
                         if (project.isDisposed || _isDisposed) return@invokeLaterSafe
-                        refreshWorkflows(selectWorkflowId = workflowId)
+                        openWorkflowFromRequest(SpecToolWindowOpenRequest(workflowId = workflowId))
                     }
                 }
 
@@ -4632,6 +4679,12 @@ class SpecWorkflowPanel(
             workflowId = normalizedWorkflowId,
             taskId = request.taskId?.trim()?.ifBlank { null },
         )
+        if (selectedWorkflowId == normalizedWorkflowId && currentWorkflow?.id == normalizedWorkflowId) {
+            applyPendingOpenWorkflowRequestIfNeeded(normalizedWorkflowId)
+            if (pendingOpenWorkflowRequest == null) {
+                return
+            }
+        }
         refreshWorkflows(selectWorkflowId = normalizedWorkflowId)
     }
 
@@ -4836,6 +4889,12 @@ class SpecWorkflowPanel(
     internal fun currentDocumentMetaTextForTest(): String = detailPanel.currentDocumentMetaTextForTest()
 
     internal fun isClarifyingForTest(): Boolean = detailPanel.isClarifyingForTest()
+
+    internal fun pendingOpenWorkflowRequestForTest(): SpecToolWindowOpenRequest? = pendingOpenWorkflowRequest
+
+    internal fun deleteWorkflowForTest(workflowId: String) {
+        onDeleteWorkflow(workflowId)
+    }
 
     internal fun currentClarificationQuestionsTextForTest(): String = detailPanel.clarificationQuestionsTextForTest()
 

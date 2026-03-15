@@ -455,6 +455,50 @@ class SpecWorkflowListPanelTest {
         assertTrue(openedIds.isEmpty())
     }
 
+    @Test
+    fun `workflow row actions should keep the same official icons regardless of selection state`() {
+        val panel = runOnEdtResult {
+            SpecWorkflowListPanel(
+                onWorkflowFocused = {},
+                onOpenWorkflow = {},
+                onCreateWorkflow = {},
+                onEditWorkflow = {},
+                onDeleteWorkflow = {},
+            )
+        }
+
+        runOnEdt {
+            panel.updateWorkflows(
+                listOf(
+                    SpecWorkflowListPanel.WorkflowListItem(
+                        workflowId = "wf-icons",
+                        title = "Icon Workflow",
+                        description = "icon consistency",
+                        currentPhase = SpecPhase.SPECIFY,
+                        status = WorkflowStatus.IN_PROGRESS,
+                        updatedAt = 1L,
+                    ),
+                ),
+            )
+
+            val list = extractWorkflowList(panel)
+            list.setSize(220, 100)
+            list.doLayout()
+            val cellBounds = list.getCellBounds(0, 0)
+            assertNotNull(cellBounds)
+
+            val selectedRow = rendererComponentFor(list, panel.itemsForTest().first(), cellBounds!!, isSelected = true)
+            val unselectedRow = rendererComponentFor(list, panel.itemsForTest().first(), cellBounds, isSelected = false)
+
+            assertEquals("openDocument", actionIconId(selectedRow, SpecCodingBundle.message("spec.workflow.open")))
+            assertEquals("edit", actionIconId(selectedRow, SpecCodingBundle.message("spec.workflow.edit")))
+            assertEquals("delete", actionIconId(selectedRow, SpecCodingBundle.message("spec.workflow.delete")))
+            assertEquals("openDocument", actionIconId(unselectedRow, SpecCodingBundle.message("spec.workflow.open")))
+            assertEquals("edit", actionIconId(unselectedRow, SpecCodingBundle.message("spec.workflow.edit")))
+            assertEquals("delete", actionIconId(unselectedRow, SpecCodingBundle.message("spec.workflow.delete")))
+        }
+    }
+
     private fun item(id: String, title: String, phase: SpecPhase): SpecWorkflowListPanel.WorkflowListItem {
         return SpecWorkflowListPanel.WorkflowListItem(
             workflowId = id,
@@ -477,13 +521,20 @@ class SpecWorkflowListPanelTest {
         list: JList<SpecWorkflowListPanel.WorkflowListItem>,
         item: SpecWorkflowListPanel.WorkflowListItem,
         cellBounds: Rectangle,
+        isSelected: Boolean = true,
     ): Component {
         @Suppress("UNCHECKED_CAST")
         val renderer = list.cellRenderer as ListCellRenderer<SpecWorkflowListPanel.WorkflowListItem>
-        val component = renderer.getListCellRendererComponent(list, item, 0, true, false)
+        val component = renderer.getListCellRendererComponent(list, item, 0, isSelected, false)
         component.setBounds(0, 0, cellBounds.width, cellBounds.height)
         layoutRecursively(component)
         return component
+    }
+
+    private fun actionIconId(component: Component, tooltip: String): String {
+        val label = findLabelByTooltip(component, tooltip)
+        assertNotNull(label)
+        return SpecWorkflowIcons.debugId(label!!.icon)
     }
 
     private fun layoutRecursively(component: Component) {
