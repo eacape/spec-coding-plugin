@@ -74,6 +74,7 @@ internal object SpecWorkflowIcons {
 
             SpecWorkflowWorkbenchActionKind.RESUME_TASK -> Refresh
             SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION -> Close
+            SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT -> OpenToolWindow
             SpecWorkflowWorkbenchActionKind.COMPLETE_TASK,
             SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW,
             -> Complete

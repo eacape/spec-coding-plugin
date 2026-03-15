@@ -1,14 +1,17 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ExecutionLivePhase
 import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.TaskExecutionRun
 import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskVerificationResult
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.VerificationConclusion
+import java.time.Instant
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -340,9 +343,19 @@ class SpecWorkflowTasksPanelTest {
         assertEquals("", snapshot.getValue("executeText"))
         assertEquals("complete", snapshot.getValue("executeIconId"))
         assertEquals("true", snapshot.getValue("executeEnabled"))
-        assertEquals("true", snapshot.getValue("secondaryEnabled"))
+        assertEquals("false", snapshot.getValue("secondaryEnabled"))
+        assertEquals("WAITING_CONFIRMATION", snapshot.getValue("selectedTaskPhase"))
         assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.tasks.secondary.tooltip", "T-010"),
+            SpecCodingBundle.message("spec.toolwindow.execution.chip.waitingConfirmation"),
+            snapshot.getValue("selectedTaskChip"),
+        )
+        assertTrue(
+            snapshot.getValue("selectedTaskMeta").contains(
+                SpecCodingBundle.message("spec.toolwindow.execution.phase.waitingConfirmation"),
+            ),
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.secondary.waitingConfirmation", "T-010"),
             snapshot.getValue("secondaryTooltip"),
         )
     }
@@ -353,6 +366,7 @@ class SpecWorkflowTasksPanelTest {
         val panel = SpecWorkflowTasksPanel(
             onCancelExecution = { taskId -> cancellations += taskId },
         )
+        val now = Instant.now()
 
         panel.updateTasks(
             workflowId = "wf-stop",
@@ -371,12 +385,88 @@ class SpecWorkflowTasksPanelTest {
                     ),
                 ),
             ),
+            liveProgressByTaskId = mapOf(
+                "T-011" to TaskExecutionLiveProgress(
+                    workflowId = "wf-stop",
+                    runId = "run-11",
+                    taskId = "T-011",
+                    phase = ExecutionLivePhase.STREAMING,
+                    startedAt = now.minusSeconds(90),
+                    lastUpdatedAt = now.minusSeconds(3),
+                    lastDetail = "Reading task context",
+                ),
+            ),
             refreshedAtMillis = 1_710_000_000_000,
         )
 
         assertTrue(panel.selectTask("T-011"))
+        val snapshot = panel.snapshotForTest()
+        assertEquals("close", snapshot.getValue("executeIconId"))
+        assertEquals("true", snapshot.getValue("executeEnabled"))
+        assertEquals("STREAMING", snapshot.getValue("selectedTaskPhase"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.execution.chip.running"),
+            snapshot.getValue("selectedTaskChip"),
+        )
+        assertEquals("Reading task context", snapshot.getValue("selectedTaskExecutionDetail"))
         assertTrue(panel.triggerStopExecutionForTest())
         assertEquals(listOf("T-011"), cancellations)
+    }
+
+    @Test
+    fun `cancelling task should disable primary execution action and show cancelling chip`() {
+        val panel = SpecWorkflowTasksPanel()
+        val now = Instant.now()
+
+        panel.updateTasks(
+            workflowId = "wf-cancelling",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-012",
+                    title = "Cancelling run",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-12",
+                        taskId = "T-012",
+                        status = TaskExecutionRunStatus.RUNNING,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = now.minusSeconds(45).toString(),
+                    ),
+                ),
+            ),
+            liveProgressByTaskId = mapOf(
+                "T-012" to TaskExecutionLiveProgress(
+                    workflowId = "wf-cancelling",
+                    runId = "run-12",
+                    taskId = "T-012",
+                    phase = ExecutionLivePhase.CANCELLING,
+                    startedAt = now.minusSeconds(45),
+                    lastUpdatedAt = now.minusSeconds(1),
+                    lastDetail = "Cancelling execution",
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.selectTask("T-012"))
+        val snapshot = panel.snapshotForTest()
+        assertEquals("close", snapshot.getValue("executeIconId"))
+        assertEquals("false", snapshot.getValue("executeEnabled"))
+        assertEquals("CANCELLING", snapshot.getValue("selectedTaskPhase"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.execution.chip.cancelling"),
+            snapshot.getValue("selectedTaskChip"),
+        )
+        assertTrue(
+            snapshot.getValue("selectedTaskMeta").contains(
+                SpecCodingBundle.message("spec.toolwindow.execution.phase.cancelling"),
+            ),
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling.tooltip", "T-012"),
+            snapshot.getValue("executeTooltip"),
+        )
     }
 
     @Test

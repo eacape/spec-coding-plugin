@@ -284,6 +284,9 @@ class SpecWorkflowOverviewPresenterTest {
 
                         ## User Stories
                         As a user, I want offline support.
+
+                        ## Acceptance Criteria
+                        - Users can access saved requirements without network connectivity.
                     """.trimIndent(),
                 ),
             ),
@@ -505,7 +508,7 @@ class SpecWorkflowOverviewPresenterTest {
         assertTrue(workbenchState.primaryAction?.enabled == true)
         assertTrue(
             workbenchState.overflowActions.any { action ->
-                action.kind == SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION &&
+                action.kind == SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT &&
                     action.taskId == "T-001"
             },
         )

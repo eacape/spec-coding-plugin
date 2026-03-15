@@ -76,6 +76,7 @@ import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.ScrollPaneConstants
+import javax.swing.Timer
 
 class SpecWorkflowPanel(
     private val project: Project
@@ -180,10 +181,23 @@ class SpecWorkflowPanel(
     private var currentVerifyDeltaState: SpecWorkflowVerifyDeltaState? = null
     private var currentGateResult: GateResult? = null
     private var currentStructuredTasks: List<StructuredTask> = emptyList()
+    private var currentTaskLiveProgressByTaskId: Map<String, TaskExecutionLiveProgress> = emptyMap()
     private val pendingClarificationRetryByWorkflowId = mutableMapOf<String, ClarificationRetryPayload>()
     private var activeGenerationJob: Job? = null
     private var activeGenerationRequest: ActiveGenerationRequest? = null
     private var pendingDocumentReloadJob: Job? = null
+    private val liveProgressListener = TaskExecutionLiveProgressListener { progress ->
+        if (progress.workflowId == selectedWorkflowId) {
+            invokeLaterSafe {
+                refreshCurrentLiveProgressPresentation()
+            }
+        }
+    }
+    private val liveProgressRefreshTimer = Timer(1_000) {
+        refreshCurrentLiveProgressPresentation()
+    }.apply {
+        isRepeats = true
+    }
 
     private var selectedWorkflowId: String? = null
     private var highlightedWorkflowId: String? = null
@@ -228,6 +242,7 @@ class SpecWorkflowPanel(
         subscribeToToolWindowControlEvents()
         subscribeToWorkflowEvents()
         subscribeToDocumentFileEvents()
+        specTaskExecutionService.addLiveProgressListener(liveProgressListener)
         refreshWorkflows()
     }
 
@@ -699,6 +714,8 @@ class SpecWorkflowPanel(
         currentVerifyDeltaState = null
         currentGateResult = null
         currentStructuredTasks = emptyList()
+        currentTaskLiveProgressByTaskId = emptyMap()
+        liveProgressRefreshTimer.stop()
         focusedStage = null
         workspaceSummaryTitleLabel.text = ""
         workspaceSummaryMetaLabel.text = ""
@@ -983,15 +1000,63 @@ class SpecWorkflowPanel(
             workflow = workflow,
             overviewState = overviewState,
             tasks = currentStructuredTasks,
+            liveProgressByTaskId = currentTaskLiveProgressByTaskId,
             verifyDeltaState = verifyDeltaState,
             gateResult = currentGateResult,
         )
+    }
+
+    private fun refreshCurrentLiveProgressPresentation() {
+        val workflow = currentWorkflow ?: return
+        val workflowId = selectedWorkflowId ?: return
+        if (workflow.id != workflowId) {
+            return
+        }
+        val updatedLiveProgress = buildTaskLiveProgressByTaskId(workflowId)
+        currentTaskLiveProgressByTaskId = updatedLiveProgress
+        tasksPanel.updateLiveProgress(
+            tasks = currentStructuredTasks,
+            liveProgressByTaskId = updatedLiveProgress,
+        )
+        refreshWorkspacePresentation()
+    }
+
+    private fun decorateTasksWithExecutionState(
+        workflow: SpecWorkflow,
+        tasks: List<StructuredTask>,
+        liveProgressByTaskId: Map<String, TaskExecutionLiveProgress>,
+    ): List<StructuredTask> {
+        return tasks.attachActiveExecutionRuns(workflow.taskExecutionRuns)
+    }
+
+    private fun buildTaskLiveProgressByTaskId(workflowId: String): Map<String, TaskExecutionLiveProgress> {
+        return runCatching {
+            specTaskExecutionService.listLiveProgress(workflowId)
+        }.getOrElse { error ->
+            logger.debug("Unable to load live execution progress for workflow $workflowId", error)
+            emptyList()
+        }.associateBy(TaskExecutionLiveProgress::taskId)
+    }
+
+    private fun updateLiveProgressRefreshTimer(
+        tasks: List<StructuredTask>,
+        liveProgressByTaskId: Map<String, TaskExecutionLiveProgress>,
+    ) {
+        val hasLiveProgress = liveProgressByTaskId.isNotEmpty() || tasks.any(StructuredTask::hasExecutionInFlight)
+        if (hasLiveProgress) {
+            if (!liveProgressRefreshTimer.isRunning) {
+                liveProgressRefreshTimer.start()
+            }
+        } else {
+            liveProgressRefreshTimer.stop()
+        }
     }
 
     private fun updateWorkspacePresentation(
         workflow: SpecWorkflow,
         overviewState: SpecWorkflowOverviewState,
         tasks: List<StructuredTask>,
+        liveProgressByTaskId: Map<String, TaskExecutionLiveProgress>,
         verifyDeltaState: SpecWorkflowVerifyDeltaState,
         gateResult: GateResult?,
     ) {
@@ -1002,6 +1067,7 @@ class SpecWorkflowPanel(
                 workflow = workflow,
                 overviewState = overviewState,
                 tasks = tasks,
+                liveProgressByTaskId = liveProgressByTaskId,
                 verifyDeltaState = verifyDeltaState,
                 gateResult = gateResult,
                 focusedStage = focusedStage,
@@ -1013,6 +1079,7 @@ class SpecWorkflowPanel(
         currentVerifyDeltaState = verifyDeltaState
         currentGateResult = gateResult
         currentStructuredTasks = tasks
+        currentTaskLiveProgressByTaskId = liveProgressByTaskId
 
         showWorkspaceContent()
         overviewPanel.updateOverview(
@@ -1079,6 +1146,7 @@ class SpecWorkflowPanel(
                 else -> WorkspaceChipTone.INFO
             },
         )
+        updateLiveProgressRefreshTimer(tasks, liveProgressByTaskId)
         updateWorkspaceMetric(
             metric = workspaceVerifyMetric,
             title = SpecCodingBundle.message("spec.toolwindow.section.verify"),
@@ -1476,6 +1544,7 @@ class SpecWorkflowPanel(
             val wf = specEngine.reloadWorkflow(workflowId).getOrNull()
             val uiSnapshot = wf?.let(::buildWorkflowUiSnapshot)
             val tasksResult = runCatching { specTasksService.parse(workflowId) }
+            val liveProgressByTaskId = wf?.let { buildTaskLiveProgressByTaskId(it.id) }.orEmpty()
             currentWorkflow = wf
             invokeLaterSafe {
                 if (selectedWorkflowId != workflowId) {
@@ -1494,16 +1563,22 @@ class SpecWorkflowPanel(
                     )
                     detailPanel.updateWorkflow(wf)
                     tasksResult.onSuccess { tasks ->
-                        val decoratedTasks = tasks.attachActiveExecutionRuns(wf.taskExecutionRuns)
+                        val decoratedTasks = decorateTasksWithExecutionState(
+                            workflow = wf,
+                            tasks = tasks,
+                            liveProgressByTaskId = liveProgressByTaskId,
+                        )
                         tasksPanel.updateTasks(
                             workflowId = workflowId,
                             tasks = decoratedTasks,
+                            liveProgressByTaskId = liveProgressByTaskId,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
                             tasks = decoratedTasks,
+                            liveProgressByTaskId = liveProgressByTaskId,
                             verifyDeltaState = snapshot.verifyDeltaState,
                             gateResult = snapshot.gateResult,
                         )
@@ -1511,12 +1586,14 @@ class SpecWorkflowPanel(
                         tasksPanel.updateTasks(
                             workflowId = workflowId,
                             tasks = emptyList(),
+                            liveProgressByTaskId = emptyMap(),
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
                             tasks = emptyList(),
+                            liveProgressByTaskId = emptyMap(),
                             verifyDeltaState = snapshot.verifyDeltaState,
                             gateResult = snapshot.gateResult,
                         )
@@ -4144,6 +4221,7 @@ class SpecWorkflowPanel(
             val wf = specEngine.reloadWorkflow(wfId).getOrNull()
             val uiSnapshot = wf?.let(::buildWorkflowUiSnapshot)
             val tasksResult = runCatching { specTasksService.parse(wfId) }
+            val liveProgressByTaskId = wf?.let { buildTaskLiveProgressByTaskId(it.id) }.orEmpty()
             currentWorkflow = wf
             invokeLaterSafe {
                 if (wf != null) {
@@ -4159,16 +4237,22 @@ class SpecWorkflowPanel(
                     )
                     detailPanel.updateWorkflow(wf, followCurrentPhase = followCurrentPhase)
                     tasksResult.onSuccess { tasks ->
-                        val decoratedTasks = tasks.attachActiveExecutionRuns(wf.taskExecutionRuns)
+                        val decoratedTasks = decorateTasksWithExecutionState(
+                            workflow = wf,
+                            tasks = tasks,
+                            liveProgressByTaskId = liveProgressByTaskId,
+                        )
                         tasksPanel.updateTasks(
                             workflowId = wf.id,
                             tasks = decoratedTasks,
+                            liveProgressByTaskId = liveProgressByTaskId,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
                             tasks = decoratedTasks,
+                            liveProgressByTaskId = liveProgressByTaskId,
                             verifyDeltaState = snapshot.verifyDeltaState,
                             gateResult = snapshot.gateResult,
                         )
@@ -4176,12 +4260,14 @@ class SpecWorkflowPanel(
                         tasksPanel.updateTasks(
                             workflowId = wf.id,
                             tasks = emptyList(),
+                            liveProgressByTaskId = emptyMap(),
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
                             tasks = emptyList(),
+                            liveProgressByTaskId = emptyMap(),
                             verifyDeltaState = snapshot.verifyDeltaState,
                             gateResult = snapshot.gateResult,
                         )
@@ -4437,6 +4523,7 @@ class SpecWorkflowPanel(
             workflow = workflow,
             overviewState = overviewState,
             tasks = currentStructuredTasks,
+            liveProgressByTaskId = currentTaskLiveProgressByTaskId,
             verifyDeltaState = verifyState,
             gateResult = currentGateResult,
         )
@@ -4538,6 +4625,12 @@ class SpecWorkflowPanel(
             SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION -> {
                 val taskId = action.taskId ?: return
                 onTaskExecutionCancelRequested(taskId)
+            }
+
+            SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT -> {
+                val workflowId = currentWorkflow?.id ?: return
+                val taskId = action.taskId ?: return
+                onTaskWorkflowChatRequested(workflowId, taskId)
             }
 
             SpecWorkflowWorkbenchActionKind.RUN_VERIFY -> {
@@ -4675,6 +4768,8 @@ class SpecWorkflowPanel(
         _isDisposed = true
         pendingDocumentReloadJob?.cancel()
         CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
+        liveProgressRefreshTimer.stop()
+        specTaskExecutionService.removeLiveProgressListener(liveProgressListener)
         cancelActiveGenerationRequest("Spec workflow panel disposed")
         scope.cancel()
     }

@@ -83,11 +83,27 @@ internal object SpecWorkflowStageGuidanceBuilder {
     private fun buildImplementSummary(workbenchState: SpecWorkflowStageWorkbenchState): String {
         val implementationFocus = workbenchState.implementationFocus
         return when (implementationFocus?.status) {
-            com.eacape.speccodingplugin.spec.TaskStatus.IN_PROGRESS -> SpecCodingBundle.message(
-                "spec.toolwindow.overview.focus.summary.implement.inProgress",
-                implementationFocus.taskId,
-                implementationFocus.title,
-            )
+            com.eacape.speccodingplugin.spec.TaskStatus.IN_PROGRESS -> when (implementationFocus.progress?.phase) {
+                com.eacape.speccodingplugin.spec.ExecutionLivePhase.WAITING_CONFIRMATION -> SpecCodingBundle.message(
+                    "spec.toolwindow.overview.focus.summary.implement.waitingConfirmation",
+                    implementationFocus.taskId,
+                    implementationFocus.title,
+                )
+
+                com.eacape.speccodingplugin.spec.ExecutionLivePhase.CANCELLING -> SpecCodingBundle.message(
+                    "spec.toolwindow.overview.focus.summary.implement.cancelling",
+                    implementationFocus.taskId,
+                    implementationFocus.title,
+                )
+
+                else -> SpecCodingBundle.message(
+                    "spec.toolwindow.overview.focus.summary.implement.running",
+                    implementationFocus.taskId,
+                    implementationFocus.title,
+                    implementationFocus.progress?.phaseLabel
+                        ?: SpecCodingBundle.message("spec.toolwindow.execution.phase.requestDispatched"),
+                )
+            }
 
             com.eacape.speccodingplugin.spec.TaskStatus.PENDING -> SpecCodingBundle.message(
                 "spec.toolwindow.overview.focus.summary.implement.start",

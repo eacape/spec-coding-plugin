@@ -1,7 +1,9 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ExecutionLivePhase
 import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.TaskVerificationResult
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.intellij.openapi.application.ApplicationManager
@@ -98,6 +100,7 @@ internal class SpecWorkflowTasksPanel(
 
     private var currentWorkflowId: String? = null
     private var currentTasksById: Map<String, StructuredTask> = emptyMap()
+    private var currentLiveProgressByTaskId: Map<String, TaskExecutionLiveProgress> = emptyMap()
     private var lastRefreshedAtMillis: Long? = null
     private val controlsPanel = buildControls()
 
@@ -150,6 +153,7 @@ internal class SpecWorkflowTasksPanel(
     fun showEmpty() {
         currentWorkflowId = null
         currentTasksById = emptyMap()
+        currentLiveProgressByTaskId = emptyMap()
         lastRefreshedAtMillis = null
         listModel.clear()
         tasksList.emptyText.text = SpecCodingBundle.message("spec.toolwindow.tasks.empty")
@@ -160,6 +164,7 @@ internal class SpecWorkflowTasksPanel(
     fun showLoading() {
         currentWorkflowId = null
         currentTasksById = emptyMap()
+        currentLiveProgressByTaskId = emptyMap()
         lastRefreshedAtMillis = null
         listModel.clear()
         tasksList.emptyText.text = SpecCodingBundle.message("spec.toolwindow.tasks.loading")
@@ -170,11 +175,13 @@ internal class SpecWorkflowTasksPanel(
     fun updateTasks(
         workflowId: String,
         tasks: List<StructuredTask>,
+        liveProgressByTaskId: Map<String, TaskExecutionLiveProgress> = emptyMap(),
         refreshedAtMillis: Long,
     ) {
         val previousSelection = tasksList.selectedValue?.id
         currentWorkflowId = workflowId
         currentTasksById = tasks.associateBy { it.id }
+        currentLiveProgressByTaskId = liveProgressByTaskId
         lastRefreshedAtMillis = refreshedAtMillis
 
         listModel.clear()
@@ -190,7 +197,31 @@ internal class SpecWorkflowTasksPanel(
         updateControlsForSelection()
     }
 
+    fun updateLiveProgress(
+        tasks: List<StructuredTask>,
+        liveProgressByTaskId: Map<String, TaskExecutionLiveProgress>,
+    ) {
+        val workflowId = currentWorkflowId ?: return
+        val previousSelection = tasksList.selectedValue?.id
+        currentTasksById = tasks.associateBy { it.id }
+        currentLiveProgressByTaskId = liveProgressByTaskId
+        listModel.clear()
+        tasks.forEach { listModel.addElement(it) }
+        if (previousSelection != null) {
+            val index = tasks.indexOfFirst { it.id == previousSelection }
+            if (index >= 0) {
+                tasksList.selectedIndex = index
+            }
+        }
+        tasksList.emptyText.text = SpecCodingBundle.message("spec.toolwindow.tasks.emptyForWorkflow")
+        currentWorkflowId = workflowId
+        updateControlsForSelection()
+        tasksList.repaint()
+    }
+
     internal fun snapshotForTest(): Map<String, String> {
+        val selectedTask = tasksList.selectedValue
+        val selectedProgress = selectedTask?.let(::executionPresentation)
         val tasks = (0 until listModel.size()).joinToString(" | ") { index ->
             val task = listModel[index]
             "${task.id}:${task.displayStatus.name}:${task.priority.name}"
@@ -204,6 +235,10 @@ internal class SpecWorkflowTasksPanel(
             "headerRefreshed" to headerRefreshedLabel.text.orEmpty(),
             "tasks" to tasks,
             "selectedTaskId" to selectedId,
+            "selectedTaskMeta" to selectedTask?.let(::taskMetaText).orEmpty(),
+            "selectedTaskChip" to selectedTask?.let(::taskChipText).orEmpty(),
+            "selectedTaskPhase" to selectedProgress?.phase?.name.orEmpty(),
+            "selectedTaskExecutionDetail" to selectedProgress?.detailText.orEmpty(),
             "executeText" to executeTaskButton.text.orEmpty(),
             "executeIconId" to SpecWorkflowIcons.debugId(executeTaskButton.icon),
             "executeHasIcon" to (executeTaskButton.icon != null).toString(),
@@ -311,9 +346,20 @@ internal class SpecWorkflowTasksPanel(
         val selectedTask = tasksList.selectedValue ?: return false
         val action = buildSecondaryActions(selectedTask)
             .firstOrNull { it.actionId == TaskSecondaryActionId.STOP_EXECUTION }
-            ?: return false
-        action.perform()
-        return true
+        if (action != null) {
+            action.perform()
+            return true
+        }
+        val progress = executionPresentation(selectedTask)
+        if (
+            selectedTask.displayStatus == TaskStatus.IN_PROGRESS &&
+            progress?.phase != ExecutionLivePhase.WAITING_CONFIRMATION &&
+            progress?.phase != ExecutionLivePhase.CANCELLING
+        ) {
+            executeTaskButton.doClick()
+            return true
+        }
+        return false
     }
 
     private fun buildHeader(): JPanel {
@@ -409,6 +455,7 @@ internal class SpecWorkflowTasksPanel(
 
     private fun updateExecuteButtonPresentation(selected: StructuredTask?) {
         val taskId = selected?.id.orEmpty()
+        val progress = selected?.let(::executionPresentation)
         val presentation = when (selected?.displayStatus) {
             null -> SpecIconActionPresentation(
                 icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.PENDING),
@@ -432,12 +479,29 @@ internal class SpecWorkflowTasksPanel(
                 enabled = true,
             )
 
-            TaskStatus.IN_PROGRESS -> SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.IN_PROGRESS),
-                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
-                accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete"),
-                enabled = true,
-            )
+            TaskStatus.IN_PROGRESS -> when (progress?.phase) {
+                ExecutionLivePhase.WAITING_CONFIRMATION -> SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.IN_PROGRESS),
+                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete"),
+                    enabled = true,
+                )
+
+                ExecutionLivePhase.CANCELLING -> SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.Close,
+                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling"),
+                    enabled = false,
+                    disabledReason = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling.tooltip", taskId),
+                )
+
+                else -> SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.Close,
+                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop"),
+                    enabled = true,
+                )
+            }
 
             TaskStatus.COMPLETED -> SpecIconActionPresentation(
                 icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.COMPLETED),
@@ -522,10 +586,21 @@ internal class SpecWorkflowTasksPanel(
     private fun updateSecondaryActionsButtonPresentation(selected: StructuredTask?) {
         val taskId = selected?.id.orEmpty()
         val actions = selected?.let(::buildSecondaryActions).orEmpty()
+        val progress = selected?.let(::executionPresentation)
         val disabledReason = when {
             selected == null -> SpecCodingBundle.message("spec.toolwindow.tasks.secondary.unavailable")
-            actions.isEmpty() && selected.displayStatus == TaskStatus.IN_PROGRESS -> {
-                SpecCodingBundle.message("spec.toolwindow.tasks.secondary.inProgress", taskId)
+            actions.isEmpty() && selected.displayStatus == TaskStatus.IN_PROGRESS -> when (progress?.phase) {
+                ExecutionLivePhase.WAITING_CONFIRMATION -> SpecCodingBundle.message(
+                    "spec.toolwindow.tasks.secondary.waitingConfirmation",
+                    taskId,
+                )
+
+                ExecutionLivePhase.CANCELLING -> SpecCodingBundle.message(
+                    "spec.toolwindow.tasks.secondary.cancelling",
+                    taskId,
+                )
+
+                else -> SpecCodingBundle.message("spec.toolwindow.tasks.secondary.inProgress", taskId)
             }
             actions.isEmpty() -> SpecCodingBundle.message("spec.toolwindow.tasks.secondary.none", taskId)
             else -> null
@@ -598,6 +673,7 @@ internal class SpecWorkflowTasksPanel(
 
     private fun requestExecutionForSelection(): Boolean {
         val selectedTask = tasksList.selectedValue ?: return false
+        val progress = executionPresentation(selectedTask)
         when (selectedTask.displayStatus) {
             TaskStatus.PENDING,
             -> onExecuteTask(selectedTask.id, false)
@@ -605,7 +681,11 @@ internal class SpecWorkflowTasksPanel(
             TaskStatus.BLOCKED,
             -> onExecuteTask(selectedTask.id, true)
 
-            TaskStatus.IN_PROGRESS -> requestCompletionWithRelatedFiles(selectedTask)
+            TaskStatus.IN_PROGRESS -> when (progress?.phase) {
+                ExecutionLivePhase.WAITING_CONFIRMATION -> requestCompletionWithRelatedFiles(selectedTask)
+                ExecutionLivePhase.CANCELLING -> return false
+                else -> onCancelExecution(selectedTask.id)
+            }
             else -> return false
         }
         return true
@@ -697,15 +777,7 @@ internal class SpecWorkflowTasksPanel(
                 ),
             )
 
-            TaskStatus.IN_PROGRESS -> listOf(
-                TaskSecondaryAction(
-                    actionId = TaskSecondaryActionId.STOP_EXECUTION,
-                    targetStatus = null,
-                    label = SpecCodingBundle.message("spec.toolwindow.tasks.secondary.stopExecution", task.id),
-                    icon = SpecWorkflowIcons.Close,
-                    perform = { onCancelExecution(task.id) },
-                ),
-            )
+            TaskStatus.IN_PROGRESS -> emptyList()
 
             TaskStatus.COMPLETED,
             TaskStatus.CANCELLED,
@@ -767,7 +839,38 @@ internal class SpecWorkflowTasksPanel(
         onUpdateVerificationResult(selectedTask.id, dialog.result)
     }
 
-    private class TaskCellRenderer : javax.swing.ListCellRenderer<StructuredTask> {
+    private fun executionPresentation(task: StructuredTask): SpecWorkflowExecutionProgressPresentation? {
+        return SpecWorkflowExecutionProgressUi.resolve(
+            task = task,
+            liveProgress = currentLiveProgressByTaskId[task.id],
+        )
+    }
+
+    private fun taskMetaText(task: StructuredTask): String {
+        val progress = executionPresentation(task)
+        return if (progress != null) {
+            SpecCodingBundle.message(
+                "spec.toolwindow.tasks.row.meta.live",
+                task.priority.name,
+                progress.phaseLabel,
+                progress.elapsedText,
+                progress.lastActivityText,
+            )
+        } else {
+            SpecCodingBundle.message(
+                "spec.toolwindow.tasks.row.meta.default",
+                task.priority.name,
+                task.dependsOn.size,
+                task.relatedFiles.size,
+            )
+        }
+    }
+
+    private fun taskChipText(task: StructuredTask): String {
+        return executionPresentation(task)?.chipLabel ?: task.displayStatus.name
+    }
+
+    private inner class TaskCellRenderer : javax.swing.ListCellRenderer<StructuredTask> {
         private val panel = JPanel(BorderLayout(JBUI.scale(8), 0))
         private val titleLabel = JBLabel()
         private val metaLabel = JBLabel()
@@ -817,14 +920,20 @@ internal class SpecWorkflowTasksPanel(
             val background = if (isSelected) SELECTED_BG else ROW_BG
             panel.background = background
             titleLabel.text = "${value.id}: ${value.title}"
-            metaLabel.text = "${value.priority.name} | dependsOn=${value.dependsOn.size}, relatedFiles=${value.relatedFiles.size}"
-            statusChipLabel.text = value.displayStatus.name
-            applyChipStyle(statusChipLabel, value.displayStatus, isSelected)
+            metaLabel.text = taskMetaText(value)
+            statusChipLabel.text = taskChipText(value)
+            applyChipStyle(statusChipLabel, value, isSelected)
             return panel
         }
 
-        private fun applyChipStyle(label: JBLabel, status: TaskStatus, selected: Boolean) {
-            val palette = when (status) {
+        private fun applyChipStyle(label: JBLabel, task: StructuredTask, selected: Boolean) {
+            val progress = executionPresentation(task)
+            val paletteStatus = when (progress?.phase) {
+                ExecutionLivePhase.WAITING_CONFIRMATION -> TaskStatus.PENDING
+                ExecutionLivePhase.CANCELLING -> TaskStatus.BLOCKED
+                else -> task.displayStatus
+            }
+            val palette = when (paletteStatus) {
                 TaskStatus.PENDING -> ChipPalette(
                     bg = JBColor(Color(230, 239, 252), Color(72, 86, 104)),
                     fg = JBColor(Color(32, 89, 163), Color(195, 220, 255)),
@@ -863,18 +972,6 @@ internal class SpecWorkflowTasksPanel(
             )
         }
 
-        private data class ChipPalette(
-            val bg: Color,
-            val fg: Color,
-            val border: Color,
-        )
-
-        companion object {
-            private val TITLE_FG = JBColor(Color(30, 36, 44), Color(225, 229, 235))
-            private val META_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
-            private val ROW_BG = JBColor(Color(255, 255, 255), Color(47, 51, 56))
-            private val SELECTED_BG = JBColor(Color(231, 241, 255), Color(59, 77, 92))
-        }
     }
 
     private enum class TaskSecondaryActionId {
@@ -890,10 +987,20 @@ internal class SpecWorkflowTasksPanel(
         val perform: () -> Unit,
     )
 
+    private data class ChipPalette(
+        val bg: Color,
+        val fg: Color,
+        val border: Color,
+    )
+
     companion object {
         private val EMPTY_LIST_HEIGHT = JBUI.scale(72)
         private val HEADER_FG = JBColor(Color(35, 40, 47), Color(222, 226, 232))
         private val HEADER_SECONDARY_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
         private val REFRESHED_AT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+        private val TITLE_FG = JBColor(Color(30, 36, 44), Color(225, 229, 235))
+        private val META_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
+        private val ROW_BG = JBColor(Color(255, 255, 255), Color(47, 51, 56))
+        private val SELECTED_BG = JBColor(Color(231, 241, 255), Color(59, 77, 92))
     }
 }

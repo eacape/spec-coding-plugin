@@ -1,6 +1,7 @@
 ﻿package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ExecutionLivePhase
 import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.GateResult
 import com.eacape.speccodingplugin.spec.GateStatus
@@ -12,6 +13,7 @@ import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageState
 import com.eacape.speccodingplugin.spec.StructuredTask
+import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.TaskExecutionRun
 import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
@@ -23,6 +25,7 @@ import com.eacape.speccodingplugin.spec.VerifyRunHistoryEntry
 import com.eacape.speccodingplugin.spec.Violation
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.spec.WorkflowTemplate
+import java.time.Instant
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -299,7 +302,7 @@ class SpecWorkflowOverviewPanelTest {
         )
         assertEquals(
             SpecCodingBundle.message(
-                "spec.toolwindow.overview.focus.summary.implement.inProgress",
+                "spec.toolwindow.overview.focus.summary.implement.waitingConfirmation",
                 "T-001",
                 "Task T-001",
             ),
@@ -308,12 +311,81 @@ class SpecWorkflowOverviewPanelTest {
         assertEquals(StageId.IMPLEMENT.name, snapshot.getValue("focusedStage"))
         assertTrue(
             snapshot.getValue("overflowActions").contains(
-                SpecCodingBundle.message("spec.toolwindow.overview.more.stopTaskExecution", "T-001"),
+                SpecCodingBundle.message("spec.toolwindow.overview.more.openTaskChat", "T-001"),
             ),
         )
 
         panel.clickPrimaryActionForTest()
         assertEquals(SpecWorkflowWorkbenchActionKind.COMPLETE_TASK, actionKind)
+    }
+
+    @Test
+    fun `updateOverview should render stop action for actively running implementation task`() {
+        val now = Instant.now()
+        val panel = SpecWorkflowOverviewPanel()
+        val overviewState = overviewState(
+            currentStage = StageId.IMPLEMENT,
+            nextStage = StageId.ARCHIVE,
+            gateStatus = null,
+            gateSummary = null,
+        )
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = overviewWorkflow(documents = emptyMap(), currentStage = StageId.IMPLEMENT),
+            overviewState = overviewState,
+            tasks = listOf(
+                task(
+                    id = "T-010",
+                    status = TaskStatus.PENDING,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-10",
+                        taskId = "T-010",
+                        status = TaskExecutionRunStatus.RUNNING,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = now.minusSeconds(90).toString(),
+                    ),
+                ),
+            ),
+            liveProgressByTaskId = mapOf(
+                "T-010" to TaskExecutionLiveProgress(
+                    workflowId = "wf-42",
+                    runId = "run-10",
+                    taskId = "T-010",
+                    phase = ExecutionLivePhase.STREAMING,
+                    startedAt = now.minusSeconds(90),
+                    lastUpdatedAt = now.minusSeconds(4),
+                    lastDetail = "Reading SpecWorkflowPanel.kt",
+                ),
+            ),
+            gateResult = null,
+        )
+
+        panel.updateOverview(overviewState, workbenchState)
+
+        val snapshot = panel.snapshotForTest()
+        assertEquals("close", snapshot.getValue("primaryActionIconId"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.stopTask", "T-010"),
+            snapshot.getValue("primaryActionTooltip"),
+        )
+        assertEquals(
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.summary.implement.running",
+                "T-010",
+                "Task T-010",
+                SpecCodingBundle.message("spec.toolwindow.execution.phase.streaming"),
+            ),
+            snapshot.getValue("focusSummary"),
+        )
+        assertTrue(
+            snapshot.getValue("focusDetails").contains(
+                SpecCodingBundle.message("spec.toolwindow.execution.phase.streaming"),
+            ),
+        )
+        assertTrue(
+            snapshot.getValue("overflowActions").contains(
+                SpecCodingBundle.message("spec.toolwindow.overview.more.openTaskChat", "T-010"),
+            ),
+        )
     }
 
     @Test

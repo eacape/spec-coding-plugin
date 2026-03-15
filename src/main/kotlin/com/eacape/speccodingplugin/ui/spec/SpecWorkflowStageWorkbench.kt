@@ -22,6 +22,7 @@ internal enum class SpecWorkflowWorkbenchActionKind {
     RESUME_TASK,
     COMPLETE_TASK,
     STOP_TASK_EXECUTION,
+    OPEN_TASK_CHAT,
     RUN_VERIFY,
     PREVIEW_VERIFY_PLAN,
     OPEN_VERIFICATION,
@@ -77,6 +78,7 @@ internal data class SpecWorkflowImplementationFocus(
     val taskId: String,
     val title: String,
     val status: TaskStatus,
+    val progress: SpecWorkflowExecutionProgressPresentation? = null,
 )
 
 internal data class SpecWorkflowStageWorkbenchState(
@@ -97,6 +99,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         workflow: SpecWorkflow,
         overviewState: SpecWorkflowOverviewState,
         tasks: List<StructuredTask> = emptyList(),
+        liveProgressByTaskId: Map<String, com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress> = emptyMap(),
         verifyDeltaState: SpecWorkflowVerifyDeltaState? = null,
         gateResult: GateResult? = null,
         focusedStage: StageId? = null,
@@ -129,6 +132,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         val implementationFocus = buildImplementationFocus(
             focusedStage = resolvedFocusedStage,
             tasks = tasks,
+            liveProgressByTaskId = liveProgressByTaskId,
         )
         val blockers = buildBlockers(
             overviewState = overviewState,
@@ -169,6 +173,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 overviewState = overviewState,
                 focusedStage = resolvedFocusedStage,
                 tasks = tasks,
+                implementationFocus = implementationFocus,
                 verifyDeltaState = verifyDeltaState,
             ),
             artifactBinding = buildArtifactBinding(
@@ -319,15 +324,41 @@ internal object SpecWorkflowStageWorkbenchBuilder {
             .filter { it.status == TaskStatus.COMPLETED }
             .all { it.relatedFiles.isNotEmpty() }
         return when (implementationFocus?.status) {
-            TaskStatus.IN_PROGRESS -> SpecWorkflowWorkbenchAction(
-                kind = SpecWorkflowWorkbenchActionKind.COMPLETE_TASK,
-                label = SpecCodingBundle.message(
-                    "spec.toolwindow.overview.primary.implement.completeTask",
-                    implementationFocus.taskId,
-                ),
-                enabled = true,
-                taskId = implementationFocus.taskId,
-            )
+            TaskStatus.IN_PROGRESS -> when (implementationFocus.progress?.phase) {
+                com.eacape.speccodingplugin.spec.ExecutionLivePhase.WAITING_CONFIRMATION -> SpecWorkflowWorkbenchAction(
+                    kind = SpecWorkflowWorkbenchActionKind.COMPLETE_TASK,
+                    label = SpecCodingBundle.message(
+                        "spec.toolwindow.overview.primary.implement.completeTask",
+                        implementationFocus.taskId,
+                    ),
+                    enabled = true,
+                    taskId = implementationFocus.taskId,
+                )
+
+                com.eacape.speccodingplugin.spec.ExecutionLivePhase.CANCELLING -> SpecWorkflowWorkbenchAction(
+                    kind = SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION,
+                    label = SpecCodingBundle.message(
+                        "spec.toolwindow.overview.primary.implement.cancellingTask",
+                        implementationFocus.taskId,
+                    ),
+                    enabled = false,
+                    taskId = implementationFocus.taskId,
+                    disabledReason = SpecCodingBundle.message(
+                        "spec.toolwindow.overview.primary.implement.cancellingTask",
+                        implementationFocus.taskId,
+                    ),
+                )
+
+                else -> SpecWorkflowWorkbenchAction(
+                    kind = SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION,
+                    label = SpecCodingBundle.message(
+                        "spec.toolwindow.overview.primary.implement.stopTask",
+                        implementationFocus.taskId,
+                    ),
+                    enabled = true,
+                    taskId = implementationFocus.taskId,
+                )
+            }
 
             TaskStatus.PENDING -> SpecWorkflowWorkbenchAction(
                 kind = SpecWorkflowWorkbenchActionKind.START_TASK,
@@ -390,9 +421,9 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                     if (implementationFocus?.status == TaskStatus.IN_PROGRESS) {
                         add(
                             SpecWorkflowWorkbenchAction(
-                                kind = SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION,
+                                kind = SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT,
                                 label = SpecCodingBundle.message(
-                                    "spec.toolwindow.overview.more.stopTaskExecution",
+                                    "spec.toolwindow.overview.more.openTaskChat",
                                     implementationFocus.taskId,
                                 ),
                                 enabled = true,
@@ -463,13 +494,14 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         overviewState: SpecWorkflowOverviewState,
         focusedStage: StageId,
         tasks: List<StructuredTask>,
+        implementationFocus: SpecWorkflowImplementationFocus?,
         verifyDeltaState: SpecWorkflowVerifyDeltaState?,
     ): List<String> {
         return when (focusedStage) {
             StageId.REQUIREMENTS -> buildRequirementsFocusDetails(workflow)
             StageId.DESIGN -> buildDesignFocusDetails(workflow)
             StageId.TASKS -> buildTasksFocusDetails(workflow, tasks)
-            StageId.IMPLEMENT -> buildImplementFocusDetails(tasks)
+            StageId.IMPLEMENT -> buildImplementFocusDetails(tasks, implementationFocus)
             StageId.VERIFY -> buildVerifyFocusDetails(workflow, verifyDeltaState)
             StageId.ARCHIVE -> buildArchiveFocusDetails(workflow, overviewState, verifyDeltaState)
         }
@@ -516,7 +548,10 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         )
     }
 
-    private fun buildImplementFocusDetails(tasks: List<StructuredTask>): List<String> {
+    private fun buildImplementFocusDetails(
+        tasks: List<StructuredTask>,
+        implementationFocus: SpecWorkflowImplementationFocus?,
+    ): List<String> {
         val completedCount = tasks.count { it.status == TaskStatus.COMPLETED }
         val inProgressCount = tasks.count { it.displayStatus == TaskStatus.IN_PROGRESS }
         val pendingCount = tasks.count { task ->
@@ -533,10 +568,26 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                 pendingCount,
             )
         }
+        val progress = implementationFocus?.progress
+        if (progress == null) {
+            return listOf(
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.implement.source"),
+                tasksLine,
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.implement.workspace"),
+            )
+        }
         return listOf(
-            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.implement.source"),
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.detail.implement.execution",
+                progress.phaseLabel,
+                progress.elapsedText,
+                progress.lastActivityText,
+            ),
+            SpecCodingBundle.message(
+                "spec.toolwindow.overview.focus.detail.implement.latest",
+                progress.detailText,
+            ),
             tasksLine,
-            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.implement.workspace"),
         )
     }
 
@@ -1073,6 +1124,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
     private fun buildImplementationFocus(
         focusedStage: StageId,
         tasks: List<StructuredTask>,
+        liveProgressByTaskId: Map<String, com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress>,
     ): SpecWorkflowImplementationFocus? {
         if (focusedStage != StageId.IMPLEMENT || tasks.isEmpty()) {
             return null
@@ -1090,6 +1142,10 @@ internal object SpecWorkflowStageWorkbenchBuilder {
             taskId = focusedTask.id,
             title = focusedTask.title,
             status = focusedTask.displayStatus,
+            progress = SpecWorkflowExecutionProgressUi.resolve(
+                task = focusedTask,
+                liveProgress = liveProgressByTaskId[focusedTask.id],
+            ),
         )
     }
 

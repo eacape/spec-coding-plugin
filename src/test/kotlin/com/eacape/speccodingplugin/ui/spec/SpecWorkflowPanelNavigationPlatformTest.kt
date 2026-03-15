@@ -574,7 +574,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals(task.id, tasksSnapshot.getValue("selectedTaskId"))
         assertEquals("complete", tasksSnapshot.getValue("executeIconId"))
         assertEquals("true", tasksSnapshot.getValue("executeFocusable"))
-        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION))
+        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT))
         assertTrue(persistedTasks.contains("status: PENDING"))
         assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
     }
