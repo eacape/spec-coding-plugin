@@ -430,6 +430,69 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
+    fun `updateLiveProgress should refresh selected task execution summary and keep selection`() {
+        val panel = SpecWorkflowTasksPanel()
+        val start = Instant.parse("2026-03-13T12:05:00Z")
+        val task = StructuredTask(
+            id = "T-013",
+            title = "Refresh live state",
+            status = TaskStatus.PENDING,
+            priority = TaskPriority.P0,
+            activeExecutionRun = TaskExecutionRun(
+                runId = "run-13",
+                taskId = "T-013",
+                status = TaskExecutionRunStatus.RUNNING,
+                trigger = ExecutionTrigger.USER_EXECUTE,
+                startedAt = start.toString(),
+            ),
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-refresh-live",
+            tasks = listOf(task),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.selectTask("T-013"))
+        var snapshot = panel.snapshotForTest()
+        assertEquals("T-013", snapshot.getValue("selectedTaskId"))
+        assertEquals("REQUEST_DISPATCHED", snapshot.getValue("selectedTaskPhase"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.execution.detail.requestDispatched"),
+            snapshot.getValue("selectedTaskExecutionDetail"),
+        )
+
+        panel.updateLiveProgress(
+            tasks = listOf(task),
+            liveProgressByTaskId = mapOf(
+                "T-013" to TaskExecutionLiveProgress(
+                    workflowId = "wf-refresh-live",
+                    runId = "run-13",
+                    taskId = "T-013",
+                    phase = ExecutionLivePhase.STREAMING,
+                    startedAt = start,
+                    lastUpdatedAt = start.plusSeconds(87),
+                    lastDetail = "Reading task context",
+                    recentEvents = listOf(
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.READ,
+                            detail = "SpecWorkflowPanel.kt",
+                            status = ChatTraceStatus.RUNNING,
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        snapshot = panel.snapshotForTest()
+        assertEquals("T-013", snapshot.getValue("selectedTaskId"))
+        assertEquals("STREAMING", snapshot.getValue("selectedTaskPhase"))
+        assertEquals("Reading task context", snapshot.getValue("selectedTaskExecutionDetail"))
+        assertTrue(snapshot.getValue("selectedTaskMeta").contains("Read: SpecWorkflowPanel.kt"))
+        assertEquals("close", snapshot.getValue("executeIconId"))
+    }
+
+    @Test
     fun `cancelling task should disable primary execution action and show cancelling chip`() {
         val panel = SpecWorkflowTasksPanel()
         val now = Instant.now()

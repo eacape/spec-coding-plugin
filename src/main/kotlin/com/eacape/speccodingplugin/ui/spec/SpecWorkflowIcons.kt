@@ -17,6 +17,10 @@ internal enum class SpecWorkflowActionIcon(
     EXECUTE("execute", AllIcons.Actions.Execute),
     RETRY("refresh", AllIcons.General.InlineRefresh),
     COMPLETE("complete", AllIcons.General.GreenCheckmark),
+    INTENTION_BULB(
+        "intentionBulb",
+        IconLoader.getIcon("/icons/spec-workflow-intention-bulb.svg", SpecWorkflowActionIcon::class.java),
+    ),
     PAUSE("pause", AllIcons.General.InspectionsPause),
     RESUME("resume", AllIcons.Actions.Resume),
     OPEN_DOCUMENT("openDocument", AllIcons.Actions.MenuOpen),
@@ -43,6 +47,7 @@ internal object SpecWorkflowIcons {
     val Execute: Icon = SpecWorkflowActionIcon.EXECUTE.icon
     val Refresh: Icon = SpecWorkflowActionIcon.RETRY.icon
     val Complete: Icon = SpecWorkflowActionIcon.COMPLETE.icon
+    val IntentionBulb: Icon = SpecWorkflowActionIcon.INTENTION_BULB.icon
     val Pause: Icon = SpecWorkflowActionIcon.PAUSE.icon
     val Resume: Icon = SpecWorkflowActionIcon.RESUME.icon
     val OpenDocument: Icon = SpecWorkflowActionIcon.OPEN_DOCUMENT.icon
@@ -75,9 +80,8 @@ internal object SpecWorkflowIcons {
             SpecWorkflowWorkbenchActionKind.RESUME_TASK -> Refresh
             SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION -> Close
             SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT -> OpenToolWindow
-            SpecWorkflowWorkbenchActionKind.COMPLETE_TASK,
-            SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW,
-            -> Complete
+            SpecWorkflowWorkbenchActionKind.COMPLETE_TASK -> Complete
+            SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW -> Complete
 
             SpecWorkflowWorkbenchActionKind.OPEN_VERIFICATION -> OpenDocument
             SpecWorkflowWorkbenchActionKind.SHOW_DELTA -> History

@@ -1,4 +1,4 @@
-﻿package com.eacape.speccodingplugin.ui.spec
+package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.ClarificationFollowUp
@@ -577,6 +577,104 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT))
         assertTrue(persistedTasks.contains("status: PENDING"))
         assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
+    }
+
+    fun `test reopening panel should restore waiting confirmation ui from persisted run without mutating tasks document`() {
+        val engine = SpecEngine.getInstance(project)
+        val tasksService = SpecTasksService(project)
+        val executionService = SpecTaskExecutionService.getInstance(project)
+        val artifactService = SpecArtifactService(project)
+        val workflow = engine.createWorkflow(
+            title = "Execution Run Reopen Restore",
+            description = "task 91 waiting confirmation recovery",
+        ).getOrThrow()
+        val task = tasksService.addTask(workflow.id, "Recover waiting confirmation", TaskPriority.P0)
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+        val tasksBeforeOpen = artifactService.readArtifact(workflow.id, StageId.TASKS).orEmpty()
+        executionService.createRun(
+            workflowId = workflow.id,
+            taskId = task.id,
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            trigger = ExecutionTrigger.SYSTEM_RECOVERY,
+            startedAt = "2026-03-15T10:00:00Z",
+            summary = "Recovered run awaiting confirmation.",
+        )
+
+        val firstPanel = createPanel()
+        waitUntil {
+            workflow.id in firstPanel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            firstPanel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            firstPanel.isDetailModeForTest() &&
+                firstPanel.selectedWorkflowIdForTest() == workflow.id &&
+                firstPanel.tasksSnapshotForTest().getValue("selectedTaskPhase") == "WAITING_CONFIRMATION" &&
+                firstPanel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK
+        }
+
+        val firstTasksSnapshot = firstPanel.tasksSnapshotForTest()
+        val firstOverviewSnapshot = firstPanel.overviewSnapshotForTest()
+        assertEquals(task.id, firstTasksSnapshot.getValue("selectedTaskId"))
+        assertEquals("complete", firstTasksSnapshot.getValue("executeIconId"))
+        assertEquals(
+            "Recovered run awaiting confirmation.",
+            firstTasksSnapshot.getValue("selectedTaskExecutionDetail"),
+        )
+        assertEquals("complete", firstOverviewSnapshot.getValue("primaryActionIconId"))
+        assertEquals("intentionBulb", firstOverviewSnapshot.getValue("overflowIconId"))
+
+        ApplicationManager.getApplication().invokeAndWait {
+            Disposer.dispose(firstPanel)
+        }
+
+        val reopenedPanel = createPanel()
+        waitUntil {
+            workflow.id in reopenedPanel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            reopenedPanel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            reopenedPanel.isDetailModeForTest() &&
+                reopenedPanel.selectedWorkflowIdForTest() == workflow.id &&
+                reopenedPanel.tasksSnapshotForTest().getValue("selectedTaskPhase") == "WAITING_CONFIRMATION" &&
+                reopenedPanel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK
+        }
+
+        val reopenedTasksSnapshot = reopenedPanel.tasksSnapshotForTest()
+        val reopenedOverviewSnapshot = reopenedPanel.overviewSnapshotForTest()
+        val tasksAfterReopen = artifactService.readArtifact(workflow.id, StageId.TASKS).orEmpty()
+
+        assertEquals(task.id, reopenedTasksSnapshot.getValue("selectedTaskId"))
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.execution.chip.waitingConfirmation"),
+            reopenedTasksSnapshot.getValue("selectedTaskChip"),
+        )
+        assertEquals(
+            "Recovered run awaiting confirmation.",
+            reopenedTasksSnapshot.getValue("selectedTaskExecutionDetail"),
+        )
+        assertEquals("complete", reopenedOverviewSnapshot.getValue("primaryActionIconId"))
+        assertEquals("intentionBulb", reopenedOverviewSnapshot.getValue("overflowIconId"))
+        assertTrue(
+            reopenedPanel.currentOverflowActionKindsForTest().contains(
+                SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT,
+            ),
+        )
+        assertEquals(tasksBeforeOpen, tasksAfterReopen)
+        assertTrue(tasksAfterReopen.contains("status: PENDING"))
+        assertFalse(tasksAfterReopen.contains("status: IN_PROGRESS"))
     }
 
     fun `test clarify then fill should reuse clarification ui and persist repair retry metadata`() {

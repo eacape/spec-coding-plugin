@@ -82,7 +82,6 @@ class SpecDetailPanel(
     private val documentTree = JTree(treeModel)
     private val phaseStepperRail = PhaseStepperRail()
     private val documentTabsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
-    private val documentMetaLabel = JBLabel()
     private val documentTabButtons = linkedMapOf<SpecPhase, JButton>()
 
     private val previewPane = JTextPane()
@@ -100,6 +99,7 @@ class SpecDetailPanel(
     private val clarificationChecklistPanel = JPanel()
     private val editorArea = JBTextArea(14, 40)
     private val validationLabel = JBLabel("")
+    private lateinit var validationBannerPanel: JPanel
     private val inputArea = JBTextArea(3, 40)
     private lateinit var clarificationSplitPane: JSplitPane
     private lateinit var clarificationPreviewSection: JPanel
@@ -110,7 +110,6 @@ class SpecDetailPanel(
     private lateinit var processTimelineSection: JPanel
     private lateinit var processTimelineBodyContainer: JPanel
     private lateinit var processTimelineToggleButton: JButton
-    private lateinit var documentToolbarPanel: JPanel
     private lateinit var composerSectionBodyContainer: JPanel
     private lateinit var composerSectionToggleButton: JButton
     private lateinit var inputSectionContainer: JPanel
@@ -210,6 +209,7 @@ class SpecDetailPanel(
             createSectionContainer(
                 JBScrollPane(previewPane).apply {
                     border = JBUI.Borders.empty()
+                    SpecUiStyle.applyFastVerticalScrolling(this)
                 },
                 backgroundColor = PREVIEW_SECTION_BG,
                 borderColor = PREVIEW_SECTION_BORDER,
@@ -224,6 +224,7 @@ class SpecDetailPanel(
                     border = JBUI.Borders.empty()
                     horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+                    SpecUiStyle.applyFastVerticalScrolling(this)
                 },
                 backgroundColor = PREVIEW_SECTION_BG,
                 borderColor = PREVIEW_SECTION_BORDER,
@@ -235,21 +236,7 @@ class SpecDetailPanel(
         switchPreviewCard(CARD_PREVIEW)
         processTimelineSection = createProcessTimelineSection()
         setProcessTimelineVisible(false)
-        previewPanel.add(
-            JPanel(BorderLayout(0, JBUI.scale(6))).apply {
-                isOpaque = false
-                add(
-                    createSectionContainer(
-                        buildDocumentToolbar().also { documentToolbarPanel = it },
-                        backgroundColor = PREVIEW_SECTION_BG,
-                        borderColor = PREVIEW_SECTION_BORDER,
-                    ),
-                    BorderLayout.NORTH,
-                )
-                add(processTimelineSection, BorderLayout.CENTER)
-            },
-            BorderLayout.NORTH,
-        )
+        previewPanel.add(processTimelineSection, BorderLayout.NORTH)
         previewPanel.add(
             previewCardPanel,
             BorderLayout.CENTER,
@@ -258,6 +245,7 @@ class SpecDetailPanel(
         validationLabel.font = JBUI.Fonts.smallFont()
         previewPanel.add(
             JPanel(BorderLayout()).apply {
+                validationBannerPanel = this
                 isOpaque = true
                 background = STATUS_BG
                 border = SpecUiStyle.roundedCardBorder(
@@ -269,17 +257,22 @@ class SpecDetailPanel(
                     right = 6,
                 )
                 add(validationLabel, BorderLayout.CENTER)
+                isVisible = false
             },
             BorderLayout.SOUTH,
         )
         val composerContent = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
-            isOpaque = true
-            background = INPUT_COLUMN_BG
-            border = JBUI.Borders.emptyTop(6)
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 4, 2, 4)
         }
 
         inputArea.lineWrap = true
         inputArea.wrapStyleWord = true
+        inputArea.isOpaque = true
+        inputArea.background = COMPOSER_EDITOR_BG
+        inputArea.foreground = TREE_TEXT
+        inputArea.caretColor = TREE_TEXT
+        inputArea.border = JBUI.Borders.empty()
         inputArea.document.addDocumentListener(
             object : DocumentListener {
                 override fun insertUpdate(e: DocumentEvent?) = onClarificationInputEdited()
@@ -290,33 +283,47 @@ class SpecDetailPanel(
         updateInputPlaceholder(null)
         val inputScroll = JBScrollPane(inputArea)
         inputScroll.border = JBUI.Borders.empty()
+        inputScroll.isOpaque = false
+        inputScroll.viewport.isOpaque = true
+        inputScroll.viewport.background = COMPOSER_EDITOR_BG
         inputScroll.preferredSize = java.awt.Dimension(0, JBUI.scale(56))
         inputScroll.minimumSize = java.awt.Dimension(0, JBUI.scale(56))
-        inputSectionContainer = createSectionContainer(
-            inputScroll,
-            backgroundColor = INPUT_SECTION_BG,
-            borderColor = INPUT_SECTION_BORDER,
-        )
+        SpecUiStyle.applyFastVerticalScrolling(inputScroll)
+        inputSectionContainer = JPanel(BorderLayout()).apply {
+            isOpaque = true
+            background = COMPOSER_EDITOR_BG
+            border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(COMPOSER_EDITOR_BORDER, JBUI.scale(12)),
+                JBUI.Borders.empty(8, 10, 8, 10),
+            )
+            add(inputScroll, BorderLayout.CENTER)
+        }
         composerContent.add(inputSectionContainer, BorderLayout.CENTER)
 
-        actionButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, 3, 0)).apply {
+        actionButtonPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(JBUI.scale(1))
+            border = JBUI.Borders.empty()
         }
         setupButtons(actionButtonPanel)
         composerContent.add(
-            createSectionContainer(
-                JBScrollPane(actionButtonPanel).apply {
-                    border = JBUI.Borders.empty(1, 3)
-                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
-                    verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
-                    viewport.isOpaque = false
-                    isOpaque = false
-                    SpecUiStyle.applySlimHorizontalScrollBar(this, height = 7)
-                },
-                backgroundColor = ACTIONS_SECTION_BG,
-                borderColor = ACTIONS_SECTION_BORDER,
-            ),
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(JBUI.scale(1), 0, 0, 0, COMPOSER_FOOTER_DIVIDER),
+                    JBUI.Borders.empty(8, 2, 0, 2),
+                )
+                add(
+                    JBScrollPane(actionButtonPanel).apply {
+                        border = JBUI.Borders.empty(1, 3)
+                        horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+                        verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_NEVER
+                        viewport.isOpaque = false
+                        isOpaque = false
+                        SpecUiStyle.applySlimHorizontalScrollBar(this, height = 7)
+                    },
+                    BorderLayout.CENTER,
+                )
+            },
             BorderLayout.SOUTH,
         )
         composerTitleLabel.text = SpecCodingBundle.message("spec.detail.composer.title")
@@ -325,8 +332,8 @@ class SpecDetailPanel(
             titleLabel = composerTitleLabel,
             content = createSectionContainer(
                 composerContent,
-                backgroundColor = INPUT_COLUMN_BG,
-                borderColor = INPUT_SECTION_BORDER,
+                backgroundColor = COMPOSER_CARD_BG,
+                borderColor = COMPOSER_CARD_BORDER,
             ),
             expanded = true,
             onToggle = { expanded ->
@@ -442,19 +449,23 @@ class SpecDetailPanel(
                     }
                     .firstOrNull { (_, detail) -> detail.isBlank() }
                 if (firstMissingDetail != null) {
-                    validationLabel.text = SpecCodingBundle.message(
-                        "spec.detail.clarify.checklist.detail.required",
-                        firstMissingDetail.first,
+                    setValidationMessage(
+                        SpecCodingBundle.message(
+                            "spec.detail.clarify.checklist.detail.required",
+                            firstMissingDetail.first,
+                        ),
+                        JBColor(Color(213, 52, 52), Color(255, 140, 140)),
                     )
-                    validationLabel.foreground = JBColor(Color(213, 52, 52), Color(255, 140, 140))
                     return@addActionListener
                 }
             }
             val confirmed = resolveClarificationConfirmedContext(state)
             val allowBlank = state.phase == SpecPhase.DESIGN || state.phase == SpecPhase.IMPLEMENT
             if (confirmed.isBlank() && !allowBlank) {
-                validationLabel.text = SpecCodingBundle.message("spec.detail.clarify.detailsRequired")
-                validationLabel.foreground = JBColor(Color(213, 52, 52), Color(255, 140, 140))
+                setValidationMessage(
+                    SpecCodingBundle.message("spec.detail.clarify.detailsRequired"),
+                    JBColor(Color(213, 52, 52), Color(255, 140, 140)),
+                )
                 return@addActionListener
             }
             setClarificationChecklistReadOnly(true)
@@ -579,9 +590,6 @@ class SpecDetailPanel(
 
     private fun configureDocumentTabsPanel() {
         documentTabsPanel.isOpaque = false
-        documentMetaLabel.font = JBUI.Fonts.smallFont()
-        documentMetaLabel.foreground = TREE_FILE_TEXT
-        documentMetaLabel.border = JBUI.Borders.empty(1, 4, 0, 2)
         documentTabsPanel.removeAll()
         documentTabButtons.clear()
         SpecPhase.entries.forEach { phase ->
@@ -603,18 +611,6 @@ class SpecDetailPanel(
             documentTabButtons[phase] = button
         }
         updatePhaseStepperVisuals()
-    }
-
-    private fun buildDocumentToolbar(): JPanel {
-        val headerLeft = JPanel(BorderLayout(0, JBUI.scale(2))).apply {
-            isOpaque = false
-            add(documentMetaLabel, BorderLayout.CENTER)
-        }
-        return JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty(2, 2)
-            add(headerLeft, BorderLayout.CENTER)
-        }
     }
 
     private fun phaseStepperTitle(phase: SpecPhase): String {
@@ -658,14 +654,6 @@ class SpecDetailPanel(
         return true
     }
 
-    private fun activeDocumentMetaText(): String {
-        return when {
-            isWorkbenchArtifactOnlyView() -> workbenchArtifactBinding?.fileName ?: workbenchArtifactBinding?.title.orEmpty()
-            selectedPhase != null -> selectedPhase?.outputFileName.orEmpty()
-            else -> ""
-        }
-    }
-
     private fun setPhaseStepperEnabled(enabled: Boolean) {
         isPhaseStepperEnabled = enabled
         updatePhaseStepperVisuals()
@@ -687,8 +675,6 @@ class SpecDetailPanel(
             completed = completedPhases,
             interactive = isPhaseStepperEnabled && workflow != null,
         )
-        documentMetaLabel.text = activeDocumentMetaText()
-        documentMetaLabel.isVisible = documentMetaLabel.text.isNotBlank()
     }
 
     private fun documentPhaseForStage(stageId: StageId): SpecPhase? {
@@ -1010,6 +996,7 @@ class SpecDetailPanel(
         clarificationQuestionsCardPanel.add(
             JBScrollPane(clarificationQuestionsPane).apply {
                 border = JBUI.Borders.empty()
+                SpecUiStyle.applyFastVerticalScrolling(this)
             },
             CLARIFY_QUESTIONS_CARD_MARKDOWN,
         )
@@ -1022,6 +1009,7 @@ class SpecDetailPanel(
                         border = JBUI.Borders.empty()
                         horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
                         verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+                        SpecUiStyle.applyFastVerticalScrolling(this)
                     },
                     BorderLayout.CENTER,
                 )
@@ -1055,6 +1043,7 @@ class SpecDetailPanel(
             content = createSectionContainer(
                 JBScrollPane(clarificationPreviewPane).apply {
                     border = JBUI.Borders.empty()
+                    SpecUiStyle.applyFastVerticalScrolling(this)
                 },
                 backgroundColor = CLARIFICATION_PREVIEW_BG,
                 borderColor = CLARIFICATION_PREVIEW_BORDER,
@@ -1101,6 +1090,7 @@ class SpecDetailPanel(
                     horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
                     preferredSize = JBUI.size(0, JBUI.scale(96))
+                    SpecUiStyle.applyFastVerticalScrolling(this)
                 },
                 backgroundColor = PROCESS_SECTION_BG,
                 borderColor = PROCESS_SECTION_BORDER,
@@ -1245,8 +1235,25 @@ class SpecDetailPanel(
 
     private fun showInputRequiredHint(phase: SpecPhase?) {
         if (phase != SpecPhase.SPECIFY) return
-        validationLabel.text = SpecCodingBundle.message("spec.detail.input.required")
-        validationLabel.foreground = JBColor(Color(213, 52, 52), Color(255, 140, 140))
+        setValidationMessage(
+            SpecCodingBundle.message("spec.detail.input.required"),
+            JBColor(Color(213, 52, 52), Color(255, 140, 140)),
+        )
+    }
+
+    private fun setValidationMessage(text: String?, foreground: Color = JBColor.GRAY) {
+        val message = text.orEmpty()
+        validationLabel.text = message
+        validationLabel.foreground = foreground
+        if (::validationBannerPanel.isInitialized) {
+            validationBannerPanel.isVisible = message.isNotBlank()
+            validationBannerPanel.parent?.revalidate()
+            validationBannerPanel.parent?.repaint()
+        }
+    }
+
+    private fun clearValidationMessage() {
+        setValidationMessage("", JBColor.GRAY)
     }
 
     private fun createSectionContainer(
@@ -1384,7 +1391,7 @@ class SpecDetailPanel(
         updateClarificationPreview()
         refreshInputAreaMode()
         if (currentWorkflow == null) {
-            validationLabel.text = SpecCodingBundle.message("spec.detail.noWorkflow")
+            setValidationMessage(SpecCodingBundle.message("spec.detail.noWorkflow"))
         } else {
             showActivePreview()
         }
@@ -1465,8 +1472,7 @@ class SpecDetailPanel(
         clarificationChecklistPanel.removeAll()
         clarificationChecklistHintLabel.text = SpecCodingBundle.message("spec.detail.clarify.checklist.hint")
         clarificationPreviewPane.text = ""
-        validationLabel.text = SpecCodingBundle.message("spec.detail.noWorkflow")
-        validationLabel.foreground = JBColor.GRAY
+        setValidationMessage(SpecCodingBundle.message("spec.detail.noWorkflow"))
         inputArea.isEnabled = true
         inputArea.isEditable = true
         inputArea.toolTipText = null
@@ -1565,16 +1571,18 @@ class SpecDetailPanel(
             updateGeneratingLabel()
             return
         }
-        validationLabel.text = if (binding.available) {
-            SpecCodingBundle.message("spec.detail.workbench.readOnly", artifactName)
-        } else {
-            binding.unavailableMessage ?: SpecCodingBundle.message("spec.detail.workbench.unavailable", artifactName)
-        }
-        validationLabel.foreground = if (binding.available) {
-            JBColor.GRAY
-        } else {
-            JBColor(Color(213, 52, 52), Color(255, 140, 140))
-        }
+        setValidationMessage(
+            if (binding.available) {
+                SpecCodingBundle.message("spec.detail.workbench.readOnly", artifactName)
+            } else {
+                binding.unavailableMessage ?: SpecCodingBundle.message("spec.detail.workbench.unavailable", artifactName)
+            },
+            if (binding.available) {
+                JBColor.GRAY
+            } else {
+                JBColor(Color(213, 52, 52), Color(255, 140, 140))
+            },
+        )
     }
 
     private fun resolveEditablePhase(workflow: SpecWorkflow): SpecPhase? {
@@ -1741,8 +1749,7 @@ class SpecDetailPanel(
         switchPreviewCard(CARD_CLARIFY)
         updateClarificationPreview()
         persistClarificationDraftSnapshot()
-        validationLabel.text = SpecCodingBundle.message("spec.workflow.clarify.hint")
-        validationLabel.foreground = TREE_TEXT
+        setValidationMessage(SpecCodingBundle.message("spec.workflow.clarify.hint"), TREE_TEXT)
         currentWorkflow?.let { updateButtonStates(it) } ?: disableAllButtons()
     }
 
@@ -2295,8 +2302,7 @@ class SpecDetailPanel(
         syncClarificationInputFromSelection(nextState)
         updateClarificationPreview()
         persistClarificationDraftSnapshot(nextState)
-        validationLabel.text = SpecCodingBundle.message("spec.workflow.clarify.hint")
-        validationLabel.foreground = TREE_TEXT
+        setValidationMessage(SpecCodingBundle.message("spec.workflow.clarify.hint"), TREE_TEXT)
         currentWorkflow?.let { updateButtonStates(it) }
     }
 
@@ -2371,8 +2377,7 @@ class SpecDetailPanel(
         syncClarificationInputFromSelection(nextState)
         updateClarificationPreview()
         persistClarificationDraftSnapshot(nextState)
-        validationLabel.text = SpecCodingBundle.message("spec.workflow.clarify.hint")
-        validationLabel.foreground = TREE_TEXT
+        setValidationMessage(SpecCodingBundle.message("spec.workflow.clarify.hint"), TREE_TEXT)
         currentWorkflow?.let { updateButtonStates(it) }
     }
 
@@ -3116,8 +3121,7 @@ class SpecDetailPanel(
         setClarificationChecklistReadOnly(false)
         val workflow = currentWorkflow
         if (workflow == null) {
-            validationLabel.text = SpecCodingBundle.message("spec.detail.validation.none")
-            validationLabel.foreground = JBColor.GRAY
+            setValidationMessage(SpecCodingBundle.message("spec.detail.noWorkflow"))
             return
         }
         updateButtonStates(workflow)
@@ -3141,8 +3145,10 @@ class SpecDetailPanel(
         setClarificationChecklistReadOnly(false)
         renderPreviewMarkdown(buildValidationPreviewMarkdown(phase, validation))
         switchPreviewCard(CARD_PREVIEW)
-        validationLabel.text = buildValidationFailureLabel(validation)
-        validationLabel.foreground = JBColor(java.awt.Color(244, 67, 54), java.awt.Color(239, 83, 80))
+        setValidationMessage(
+            buildValidationFailureLabel(validation),
+            JBColor(java.awt.Color(244, 67, 54), java.awt.Color(239, 83, 80)),
+        )
         if (inputArea.text.isBlank()) {
             inputArea.text = buildValidationRepairTemplate(validation)
             inputArea.caretPosition = inputArea.text.length
@@ -3178,18 +3184,20 @@ class SpecDetailPanel(
                 updateGeneratingLabel()
             } else {
                 if (vr != null) {
-                    validationLabel.text = if (vr.valid) {
-                        SpecCodingBundle.message("spec.detail.validation.passed")
-                    } else {
-                        SpecCodingBundle.message("spec.detail.validation.failed")
-                    }
-                    validationLabel.foreground = if (vr.valid)
-                        JBColor(java.awt.Color(76, 175, 80), java.awt.Color(76, 175, 80))
-                    else
-                        JBColor(java.awt.Color(244, 67, 54), java.awt.Color(239, 83, 80))
+                    setValidationMessage(
+                        if (vr.valid) {
+                            SpecCodingBundle.message("spec.detail.validation.passed")
+                        } else {
+                            SpecCodingBundle.message("spec.detail.validation.failed")
+                        },
+                        if (vr.valid) {
+                            JBColor(java.awt.Color(76, 175, 80), java.awt.Color(76, 175, 80))
+                        } else {
+                            JBColor(java.awt.Color(244, 67, 54), java.awt.Color(239, 83, 80))
+                        },
+                    )
                 } else {
-                    validationLabel.text = SpecCodingBundle.message("spec.detail.validation.none")
-                    validationLabel.foreground = JBColor.GRAY
+                    clearValidationMessage()
                 }
             }
         } else {
@@ -3200,8 +3208,7 @@ class SpecDetailPanel(
             if (isGeneratingActive && keepGeneratingIndicator) {
                 updateGeneratingLabel()
             } else {
-                validationLabel.text = workbenchBinding?.unavailableMessage.orEmpty()
-                validationLabel.foreground = JBColor.GRAY
+                setValidationMessage(workbenchBinding?.unavailableMessage, JBColor.GRAY)
             }
         }
     }
@@ -3370,8 +3377,7 @@ class SpecDetailPanel(
         } else {
             SpecCodingBundle.message("spec.detail.generating.percent", generatingPercent)
         }
-        validationLabel.text = "$text $frame"
-        validationLabel.foreground = GENERATING_FG
+        setValidationMessage("$text $frame", GENERATING_FG)
     }
 
     private fun updateButtonStates(workflow: SpecWorkflow) {
@@ -3458,8 +3464,12 @@ class SpecDetailPanel(
         return validationLabel.text
     }
 
+    internal fun isValidationBannerVisibleForTest(): Boolean {
+        return ::validationBannerPanel.isInitialized && validationBannerPanel.isVisible
+    }
+
     internal fun currentDocumentMetaTextForTest(): String {
-        return documentMetaLabel.text.orEmpty()
+        return ""
     }
 
     internal fun currentInputTextForTest(): String {
@@ -3711,10 +3721,7 @@ class SpecDetailPanel(
     }
 
     internal fun documentToolbarActionCountForTest(): Int {
-        if (!::documentToolbarPanel.isInitialized) {
-            return 0
-        }
-        return collectButtons(documentToolbarPanel).size
+        return 0
     }
 
     internal fun visibleComposerActionOrderForTest(): List<String> {
@@ -3951,11 +3958,11 @@ class SpecDetailPanel(
         private val PREVIEW_COLUMN_BG = JBColor(Color(244, 249, 255), Color(55, 61, 71))
         private val PREVIEW_SECTION_BG = JBColor(Color(250, 253, 255), Color(49, 55, 64))
         private val PREVIEW_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(83, 93, 109))
-        private val INPUT_COLUMN_BG = JBColor(Color(239, 245, 253), Color(58, 65, 75))
-        private val INPUT_SECTION_BG = JBColor(Color(247, 251, 255), Color(52, 58, 68))
-        private val INPUT_SECTION_BORDER = JBColor(Color(200, 214, 234), Color(86, 97, 113))
-        private val ACTIONS_SECTION_BG = JBColor(Color(236, 244, 255), Color(63, 70, 81))
-        private val ACTIONS_SECTION_BORDER = JBColor(Color(190, 208, 234), Color(95, 108, 126))
+        private val COMPOSER_CARD_BG = JBColor(Color(241, 246, 253), Color(57, 64, 74))
+        private val COMPOSER_CARD_BORDER = JBColor(Color(196, 210, 229), Color(86, 97, 113))
+        private val COMPOSER_EDITOR_BG = JBColor(Color(251, 253, 255), Color(50, 57, 66))
+        private val COMPOSER_EDITOR_BORDER = JBColor(Color(205, 217, 234), Color(79, 90, 105))
+        private val COMPOSER_FOOTER_DIVIDER = JBColor(Color(211, 222, 237), Color(84, 95, 111))
         private val PROCESS_SECTION_BG = JBColor(Color(246, 251, 255), Color(55, 62, 73))
         private val PROCESS_SECTION_BORDER = JBColor(Color(199, 215, 237), Color(90, 101, 118))
         private val CLARIFICATION_CARD_BG = JBColor(Color(244, 249, 255), Color(56, 62, 72))

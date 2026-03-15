@@ -659,7 +659,7 @@ internal class SpecWorkflowOverviewPanel(
         SpecUiStyle.applyIconActionPresentation(
             button = overflowActionsButton,
             presentation = SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.Overflow,
+                icon = SpecWorkflowIcons.IntentionBulb,
                 tooltip = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
                 enabled = actions.any { it.enabled },
@@ -715,7 +715,7 @@ internal class SpecWorkflowOverviewPanel(
         SpecUiStyle.applyIconActionPresentation(
             button = overflowActionsButton,
             presentation = SpecIconActionPresentation(
-                icon = SpecWorkflowIcons.Overflow,
+                icon = SpecWorkflowIcons.IntentionBulb,
                 tooltip = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.overview.more.tooltip"),
                 enabled = false,

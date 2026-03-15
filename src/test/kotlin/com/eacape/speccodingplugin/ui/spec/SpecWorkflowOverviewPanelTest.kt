@@ -1,4 +1,4 @@
-﻿package com.eacape.speccodingplugin.ui.spec
+package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.ExecutionLivePhase
@@ -317,6 +317,7 @@ class SpecWorkflowOverviewPanelTest {
                 SpecCodingBundle.message("spec.toolwindow.overview.more.openTaskChat", "T-001"),
             ),
         )
+        assertEquals("intentionBulb", snapshot.getValue("overflowIconId"))
 
         panel.clickPrimaryActionForTest()
         assertEquals(SpecWorkflowWorkbenchActionKind.COMPLETE_TASK, actionKind)

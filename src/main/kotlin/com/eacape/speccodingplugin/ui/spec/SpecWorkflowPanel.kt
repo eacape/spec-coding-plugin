@@ -57,6 +57,7 @@ import java.awt.Color
 import java.awt.Component
 import java.awt.Cursor
 import java.awt.Dimension
+import java.awt.Rectangle
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
 import java.awt.FlowLayout
@@ -76,6 +77,8 @@ import javax.swing.Icon
 import javax.swing.JPanel
 import javax.swing.JSplitPane
 import javax.swing.ScrollPaneConstants
+import javax.swing.Scrollable
+import javax.swing.SwingConstants
 import javax.swing.Timer
 
 class SpecWorkflowPanel(
@@ -486,7 +489,32 @@ class SpecWorkflowPanel(
     }
 
     private fun buildWorkspaceCardPanel(): JPanel {
-        val sectionsStack = JPanel().apply {
+        val sectionsStack = object : JPanel(), Scrollable {
+            override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
+
+            override fun getScrollableUnitIncrement(
+                visibleRect: Rectangle,
+                orientation: Int,
+                direction: Int,
+            ): Int = JBUI.scale(WORKSPACE_SCROLL_UNIT_INCREMENT)
+
+            override fun getScrollableBlockIncrement(
+                visibleRect: Rectangle,
+                orientation: Int,
+                direction: Int,
+            ): Int {
+                val unit = getScrollableUnitIncrement(visibleRect, orientation, direction)
+                return if (orientation == SwingConstants.VERTICAL) {
+                    (visibleRect.height - unit).coerceAtLeast(unit)
+                } else {
+                    (visibleRect.width - unit).coerceAtLeast(unit)
+                }
+            }
+
+            override fun getScrollableTracksViewportWidth(): Boolean = true
+
+            override fun getScrollableTracksViewportHeight(): Boolean = false
+        }.apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
             border = JBUI.Borders.empty(0, 0, 4, 0)
@@ -542,14 +570,20 @@ class SpecWorkflowPanel(
 
         val contentPanel = JPanel(BorderLayout()).apply {
             isOpaque = false
+            val workspaceScrollPane = JBScrollPane(sectionsStack).apply {
+                border = JBUI.Borders.empty()
+                horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+                viewport.isOpaque = false
+                isOpaque = false
+                SpecUiStyle.applyFastVerticalScrolling(
+                    scrollPane = this,
+                    unitIncrement = WORKSPACE_SCROLL_UNIT_INCREMENT,
+                    blockIncrement = WORKSPACE_SCROLL_BLOCK_INCREMENT,
+                )
+            }
             add(
-                JBScrollPane(sectionsStack).apply {
-                    border = JBUI.Borders.empty()
-                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-                    verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                    viewport.isOpaque = false
-                    isOpaque = false
-                },
+                workspaceScrollPane,
                 BorderLayout.CENTER,
             )
         }
@@ -4806,6 +4840,8 @@ class SpecWorkflowPanel(
         private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
         private const val WORKSPACE_SECTION_CARD_PADDING = 12
         private val SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT = JBUI.scale(320)
+        private const val WORKSPACE_SCROLL_UNIT_INCREMENT = 24
+        private const val WORKSPACE_SCROLL_BLOCK_INCREMENT = 96
         private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "—", "...", "…", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")

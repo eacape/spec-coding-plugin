@@ -571,6 +571,35 @@ class SpecTaskExecutionServiceTest {
     }
 
     @Test
+    fun `listLiveProgress should not rewrite tasks markdown when restoring persisted waiting confirmation state`() {
+        val workflowId = "wf-ai-live-recovery-no-writeback"
+        seedWorkflow(workflowId)
+        val executionService = newExecutionService()
+        val tasksBeforeRestore = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
+
+        executionService.createRun(
+            workflowId = workflowId,
+            taskId = "T-001",
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            trigger = ExecutionTrigger.SYSTEM_RECOVERY,
+            startedAt = "2026-03-15T10:00:00Z",
+            summary = "Recovered run awaiting confirmation.",
+        )
+
+        val liveProgress = executionService.getTaskLiveProgress(workflowId, "T-001")
+        val tasksAfterRestore = artifactService.readArtifact(workflowId, StageId.TASKS).orEmpty()
+        val persistedTask = tasksService.parse(workflowId).single()
+
+        assertNotNull(liveProgress)
+        assertEquals(ExecutionLivePhase.WAITING_CONFIRMATION, liveProgress!!.phase)
+        assertEquals("Recovered run awaiting confirmation.", liveProgress.lastDetail)
+        assertEquals(tasksBeforeRestore, tasksAfterRestore)
+        assertEquals(TaskStatus.PENDING, persistedTask.status)
+        assertTrue(tasksAfterRestore.contains("status: PENDING"))
+        assertFalse(tasksAfterRestore.contains("status: IN_PROGRESS"))
+    }
+
+    @Test
     fun `startAiExecution should fail run and block task when chat execution fails`() {
         val workflowId = "wf-ai-fail"
         seedWorkflow(workflowId)

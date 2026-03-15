@@ -77,6 +77,7 @@ internal class SpecWorkflowTasksPanel(
         verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
         viewport.isOpaque = false
         isOpaque = false
+        SpecUiStyle.applyFastVerticalScrolling(this)
     }
 
     private val executeTaskButton = createIconActionButton {

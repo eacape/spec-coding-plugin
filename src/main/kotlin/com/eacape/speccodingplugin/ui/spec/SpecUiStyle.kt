@@ -18,6 +18,7 @@ import javax.swing.JButton
 import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.SwingConstants
+import javax.swing.JViewport
 import javax.swing.border.AbstractBorder
 import javax.swing.border.Border
 import javax.swing.border.CompoundBorder
@@ -151,6 +152,20 @@ internal object SpecUiStyle {
             putClientProperty("JScrollBar.trackColor", trackColor)
             putClientProperty("JScrollBar.thumbColor", thumbColor)
         }
+        scrollPane.putClientProperty("JScrollPane.smoothScrolling", true)
+    }
+
+    fun applyFastVerticalScrolling(
+        scrollPane: JScrollPane,
+        unitIncrement: Int = 24,
+        blockIncrement: Int = 96,
+    ) {
+        val unit = JBUI.scale(unitIncrement)
+        val block = JBUI.scale(blockIncrement).coerceAtLeast(unit * 2)
+        scrollPane.verticalScrollBar.unitIncrement = unit
+        scrollPane.verticalScrollBar.blockIncrement = block
+        scrollPane.verticalScrollBar.putClientProperty("JScrollBar.fastWheelScrolling", true)
+        scrollPane.viewport.scrollMode = JViewport.BLIT_SCROLL_MODE
         scrollPane.putClientProperty("JScrollPane.smoothScrolling", true)
     }
 

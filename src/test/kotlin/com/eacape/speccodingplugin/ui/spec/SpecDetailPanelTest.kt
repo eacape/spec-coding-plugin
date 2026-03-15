@@ -331,7 +331,7 @@ class SpecDetailPanelTest {
             SpecCodingBundle.message("spec.detail.workbench.readOnly", "verification.md"),
             panel.currentValidationTextForTest(),
         )
-        assertEquals("verification.md", panel.currentDocumentMetaTextForTest())
+        assertEquals("", panel.currentDocumentMetaTextForTest())
         assertEquals(null, panel.selectedPhaseNameForTest())
         assertFalse(panel.areDocumentTabsVisibleForTest())
 
@@ -399,7 +399,7 @@ class SpecDetailPanelTest {
 
         assertEquals(emptyMessage, panel.currentPreviewTextForTest())
         assertEquals(emptyMessage, panel.currentValidationTextForTest())
-        assertEquals("requirements.md", panel.currentDocumentMetaTextForTest())
+        assertEquals("", panel.currentDocumentMetaTextForTest())
         assertEquals(SpecPhase.SPECIFY.name, panel.selectedPhaseNameForTest())
         assertFalse(panel.areDocumentTabsVisibleForTest())
     }
@@ -458,7 +458,7 @@ class SpecDetailPanelTest {
 
         assertEquals(emptyMessage, panel.currentPreviewTextForTest())
         assertEquals(emptyMessage, panel.currentValidationTextForTest())
-        assertEquals("verification.md", panel.currentDocumentMetaTextForTest())
+        assertEquals("", panel.currentDocumentMetaTextForTest())
         assertEquals(null, panel.selectedPhaseNameForTest())
         assertFalse(panel.areDocumentTabsVisibleForTest())
     }

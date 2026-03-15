@@ -363,11 +363,13 @@ internal class SpecWorkflowVerifyDeltaPanel(
                 verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
                 viewport.isOpaque = false
                 isOpaque = false
+                SpecUiStyle.applyFastVerticalScrolling(this)
             },
             JBScrollPane(detailArea).apply {
                 border = JBUI.Borders.empty()
                 horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
                 verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+                SpecUiStyle.applyFastVerticalScrolling(this)
             },
         ).apply {
             resizeWeight = 0.6
