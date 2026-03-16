@@ -61,6 +61,11 @@ internal object SpecGateQuickFixSupport {
     private fun presentation(descriptor: GateQuickFixDescriptor): Presentation {
         val detail = requirementsSectionDetail(descriptor.payload as? MissingRequirementsSectionsQuickFixPayload)
         return when (descriptor.kind) {
+            GateQuickFixKind.REPAIR_REQUIREMENTS_ARTIFACT -> Presentation(
+                descriptor = descriptor,
+                title = SpecCodingBundle.message("spec.toolwindow.gate.quickFix.repairRequirements"),
+            )
+
             GateQuickFixKind.REPAIR_TASKS_ARTIFACT -> Presentation(
                 descriptor = descriptor,
                 title = SpecCodingBundle.message("spec.toolwindow.gate.quickFix.repairTasks"),

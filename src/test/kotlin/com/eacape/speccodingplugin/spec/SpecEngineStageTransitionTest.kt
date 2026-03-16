@@ -163,6 +163,17 @@ class SpecEngineStageTransitionTest {
                 violation.message.contains("<role>/<capability>/<benefit>")
             },
         )
+        assertTrue(
+            validationRule.violations
+                .filter { violation ->
+                    violation.message.contains("TODO placeholders") ||
+                        violation.message.contains("<role>/<capability>/<benefit>")
+                }
+                .all { violation ->
+                    violation.quickFixes.map { quickFix -> quickFix.kind } ==
+                        listOf(GateQuickFixKind.REPAIR_REQUIREMENTS_ARTIFACT)
+                },
+        )
     }
 
     @Test

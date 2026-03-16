@@ -100,6 +100,43 @@ class SpecWorkflowGateDetailsPanelUnitTest {
     }
 
     @Test
+    fun `triggerQuickFixForTest should route requirements repair with workflow id`() {
+        var capturedWorkflowId: String? = null
+        val panel = SpecWorkflowGateDetailsPanel(
+            project = project,
+            showHeader = true,
+            onRepairRequirementsRequested = { workflowId ->
+                capturedWorkflowId = workflowId
+                true
+            },
+        )
+
+        panel.updateGateResult(
+            workflowId = "wf-unit-repair-requirements",
+            gateResult = GateResult.fromViolations(
+                listOf(
+                    Violation(
+                        ruleId = "document-validation",
+                        severity = GateStatus.ERROR,
+                        fileName = "requirements.md",
+                        line = 1,
+                        message = "requirements.md still contains TODO placeholders.",
+                        quickFixes = listOf(
+                            GateQuickFixDescriptor(
+                                kind = GateQuickFixKind.REPAIR_REQUIREMENTS_ARTIFACT,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.triggerQuickFixForTest(0, GateQuickFixKind.REPAIR_REQUIREMENTS_ARTIFACT))
+        assertEquals("wf-unit-repair-requirements", capturedWorkflowId)
+    }
+
+    @Test
     fun `selected quick fixes should keep clarify and manual enabled when ai fill is unavailable`() {
         val payload = MissingRequirementsSectionsQuickFixPayload(
             listOf(RequirementsSectionId.NON_FUNCTIONAL),

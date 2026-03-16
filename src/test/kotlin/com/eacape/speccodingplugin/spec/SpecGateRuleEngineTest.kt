@@ -229,6 +229,49 @@ class SpecGateRuleEngineTest {
     }
 
     @Test
+    fun `evaluate should expose requirements repair quick fix for scaffold placeholders`() {
+        val markdown = """
+            # Requirements Document
+
+            ## Functional Requirements
+            - [ ] TODO: Describe required behavior.
+
+            ## Non-Functional Requirements
+            - [ ] TODO: Describe performance, security, and reliability constraints.
+
+            ## User Stories
+            As a <role>, I want <capability>, so that <benefit>.
+
+            ## Acceptance Criteria
+            - [ ] TODO: Add measurable acceptance criteria.
+        """.trimIndent()
+        val engine = SpecGateRuleEngine(
+            artifactService,
+            listOf(DocumentValidationRule()),
+        )
+
+        val result = engine.evaluate(
+            request = stageRequest(workflowId = "spec-test-requirements-quick-fix", requirementsContent = markdown),
+            projectConfig = configService.load(),
+        )
+
+        assertEquals(GateStatus.ERROR, result.status)
+        val validationResult = result.ruleResults.single()
+        assertEquals("document-validation", validationResult.ruleId)
+        assertTrue(
+            validationResult.violations
+                .filter { violation ->
+                    violation.message.contains("TODO placeholders") ||
+                        violation.message.contains("<role>/<capability>/<benefit>")
+                }
+                .all { violation ->
+                    violation.quickFixes.map { quickFix -> quickFix.kind } ==
+                        listOf(GateQuickFixKind.REPAIR_REQUIREMENTS_ARTIFACT)
+                },
+        )
+    }
+
+    @Test
     fun `evaluate should report duplicate task ids and missing dependencies`() {
         val workflowId = "spec-test-task-duplicates"
         val markdown = """

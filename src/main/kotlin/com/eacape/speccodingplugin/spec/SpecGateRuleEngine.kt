@@ -473,6 +473,7 @@ class DocumentValidationRule : Rule {
             val phase = artifact.phase ?: return@forEach
             val document = artifact.document ?: return@forEach
             val validation = SpecValidator.validate(document)
+            val requirementsDraftQuickFixes = requirementsDraftRepairQuickFixes(stageId, document.content)
             validation.errors.forEach { message ->
                 violations += Violation(
                     ruleId = id,
@@ -480,10 +481,32 @@ class DocumentValidationRule : Rule {
                     fileName = phase.outputFileName,
                     line = 1,
                     message = message,
+                    quickFixes = if (RequirementsDraftIssueKind.fromViolationMessage(message) != null) {
+                        requirementsDraftQuickFixes
+                    } else {
+                        emptyList()
+                    },
                 )
             }
         }
         return violations
+    }
+
+    private fun requirementsDraftRepairQuickFixes(
+        stageId: StageId,
+        content: String,
+    ): List<GateQuickFixDescriptor> {
+        if (stageId != StageId.REQUIREMENTS) {
+            return emptyList()
+        }
+        if (SpecValidator.requirementsDraftIssueKinds(content).isEmpty()) {
+            return emptyList()
+        }
+        return listOf(
+            GateQuickFixDescriptor(
+                kind = GateQuickFixKind.REPAIR_REQUIREMENTS_ARTIFACT,
+            ),
+        )
     }
 }
 

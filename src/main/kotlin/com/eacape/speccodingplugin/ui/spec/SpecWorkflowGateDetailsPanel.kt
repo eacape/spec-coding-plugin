@@ -49,6 +49,7 @@ internal class SpecWorkflowGateDetailsPanel(
     private val onClarifyThenFillRequested: ((String, List<RequirementsSectionId>) -> Boolean)? = null,
     private val onAiFillRequested: ((String, List<RequirementsSectionId>) -> Boolean)? = null,
     private val aiFillUnavailableReasonProvider: (() -> String?)? = null,
+    private val onRepairRequirementsRequested: ((String) -> Boolean)? = null,
     private val onRepairTasksRequested: ((String) -> Boolean)? = null,
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
@@ -479,6 +480,12 @@ internal class SpecWorkflowGateDetailsPanel(
         quickFix: SpecGateQuickFixSupport.Presentation,
     ) {
         when (quickFix.descriptor.kind) {
+            GateQuickFixKind.REPAIR_REQUIREMENTS_ARTIFACT -> {
+                if (onRepairRequirementsRequested?.invoke(workflowId) != true) {
+                    showFixPlaceholder(violation)
+                }
+            }
+
             GateQuickFixKind.REPAIR_TASKS_ARTIFACT -> {
                 if (onRepairTasksRequested?.invoke(workflowId) != true) {
                     showFixPlaceholder(violation)

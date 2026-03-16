@@ -307,6 +307,10 @@ object SpecArchitectureContract {
             layer = Layer.APPLICATION,
         ),
         SourceRule(
+            fileName = "SpecRequirementsQuickFixService.kt",
+            layer = Layer.APPLICATION,
+        ),
+        SourceRule(
             fileName = "SpecArtifactService.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,

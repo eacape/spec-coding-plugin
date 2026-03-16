@@ -253,26 +253,54 @@ object SpecValidator {
     }
 
     private fun requirementsDraftErrors(content: String): List<String> {
-        val normalized = content
-            .replace("\r\n", "\n")
-            .replace('\r', '\n')
-        val errors = mutableListOf<String>()
+        return requirementsDraftIssueKinds(content).map(RequirementsDraftIssueKind::violationMessage)
+    }
 
-        if (REQUIREMENTS_TODO_PATTERN.containsMatchIn(normalized)) {
-            errors.add("requirements.md still contains TODO placeholders. Replace them with concrete requirements before continuing.")
-        }
-        if (REQUIREMENTS_USER_STORY_TEMPLATE_PATTERN.containsMatchIn(normalized)) {
-            errors.add("requirements.md still uses the user story template placeholders <role>/<capability>/<benefit>.")
-        }
-
-        return errors
+    internal fun requirementsDraftIssueKinds(content: String): List<RequirementsDraftIssueKind> {
+        return RequirementsDraftIssueKind.detect(content)
     }
 
     private fun containsAnyMarker(content: String, markers: List<String>): Boolean {
         return markers.any { marker -> content.contains(marker, ignoreCase = true) }
     }
 
-    private val REQUIREMENTS_TODO_PATTERN = Regex("""(?im)^\s*[-*]?\s*(?:\[[ xX]\]\s*)?TODO\s*:""")
-    private val REQUIREMENTS_USER_STORY_TEMPLATE_PATTERN =
-        Regex("""(?i)<role>|<capability>|<benefit>""")
+}
+
+enum class RequirementsDraftIssueKind(
+    val violationMessage: String,
+) {
+    TODO_PLACEHOLDERS(
+        violationMessage = "requirements.md still contains TODO placeholders. Replace them with concrete requirements before continuing.",
+    ),
+    USER_STORY_TEMPLATE(
+        violationMessage = "requirements.md still uses the user story template placeholders <role>/<capability>/<benefit>.",
+    ),
+    ;
+
+    companion object {
+        private val TODO_LINE_PATTERN = Regex("""(?im)^\s*[-*]?\s*(?:\[[ xX]\]\s*)?TODO\s*:""")
+        private val USER_STORY_TEMPLATE_PATTERN = Regex("""(?i)<role>|<capability>|<benefit>""")
+
+        fun detect(content: String): List<RequirementsDraftIssueKind> {
+            val normalized = content
+                .replace("\r\n", "\n")
+                .replace('\r', '\n')
+            return buildList {
+                if (TODO_LINE_PATTERN.containsMatchIn(normalized)) {
+                    add(TODO_PLACEHOLDERS)
+                }
+                if (USER_STORY_TEMPLATE_PATTERN.containsMatchIn(normalized)) {
+                    add(USER_STORY_TEMPLATE)
+                }
+            }
+        }
+
+        fun fromViolationMessage(message: String): RequirementsDraftIssueKind? {
+            return entries.firstOrNull { issue -> issue.violationMessage == message }
+        }
+
+        internal fun containsTodoPlaceholder(line: String): Boolean = TODO_LINE_PATTERN.containsMatchIn(line)
+
+        internal fun containsUserStoryTemplate(line: String): Boolean = USER_STORY_TEMPLATE_PATTERN.containsMatchIn(line)
+    }
 }

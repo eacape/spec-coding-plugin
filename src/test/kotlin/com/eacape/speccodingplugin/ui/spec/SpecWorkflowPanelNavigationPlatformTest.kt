@@ -453,6 +453,62 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals("verification.md", panel.currentDocumentMetaTextForTest())
     }
 
+
+    fun `test advancing stage should sync document workspace to the new current stage`() {
+        val engine = SpecEngine.getInstance(project)
+        val storage = SpecStorage.getInstance(project)
+        val workflow = engine.createWorkflow(
+            title = "Advance Sync",
+            description = "document workspace should follow stage advance",
+        ).getOrThrow()
+        val current = storage.loadWorkflow(workflow.id).getOrThrow()
+        storage.saveWorkflow(
+            current.copy(
+                currentPhase = SpecPhase.DESIGN,
+                currentStage = StageId.DESIGN,
+                verifyEnabled = false,
+                stageStates = buildStageStates(current.stageStates, StageId.DESIGN, verifyEnabled = false),
+                documents = mapOf(
+                    SpecPhase.SPECIFY to requirementsDocument(workflow.id),
+                    SpecPhase.DESIGN to designDocument(workflow.id),
+                ),
+                status = WorkflowStatus.IN_PROGRESS,
+                updatedAt = System.currentTimeMillis(),
+            ),
+        ).getOrThrow()
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.focusedStageForTest() == StageId.DESIGN &&
+                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.ADVANCE &&
+                panel.selectedDocumentPhaseForTest() == SpecPhase.DESIGN.name
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickOverviewPrimaryActionForTest()
+        }
+
+        waitUntil {
+            panel.focusedStageForTest() == StageId.TASKS &&
+                panel.selectedDocumentPhaseForTest() == SpecPhase.IMPLEMENT.name &&
+                panel.workspaceSummarySnapshotForTest().getValue("stageValue").contains(
+                    SpecWorkflowOverviewPresenter.stageLabel(StageId.TASKS),
+                )
+        }
+
+        assertEquals(StageId.TASKS.name, panel.overviewSnapshotForTest().getValue("focusedStage"))
+    }
+
     fun `test implement workbench primary action should follow task lifecycle states`() {
         val engine = SpecEngine.getInstance(project)
         val tasksService = SpecTasksService(project)
@@ -978,6 +1034,59 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             StageId.ARCHIVE,
             -> SpecPhase.IMPLEMENT
         }
+    }
+
+    private fun requirementsDocument(workflowId: String): SpecDocument {
+        return SpecDocument(
+            id = "$workflowId-requirements",
+            phase = SpecPhase.SPECIFY,
+            content = """
+                # Requirements Document
+
+                ## Functional Requirements
+                - The stage workspace should move to the next stage after a successful advance.
+
+                ## Non-Functional Requirements
+                - The document workspace should refresh in the same UI cycle.
+                - Stage and document state must remain consistent.
+
+                ## User Stories
+                As a reviewer, I want the document workspace to follow the current stage, so that I can continue editing without manually changing tabs.
+
+                ## Acceptance Criteria
+                - Advancing from design updates the current stage and document workspace together.
+            """.trimIndent(),
+            metadata = SpecMetadata(
+                title = "requirements.md",
+                description = "advance sync requirements",
+            ),
+        )
+    }
+
+    private fun designDocument(workflowId: String): SpecDocument {
+        return SpecDocument(
+            id = "$workflowId-design",
+            phase = SpecPhase.DESIGN,
+            content = """
+                # Design Document
+
+                ## Architecture Design
+                - `SpecWorkflowPanel` rebuilds the workbench state from the current workflow stage.
+
+                ## Technology Stack
+                - Kotlin, IntelliJ Platform Swing UI, and coroutine-backed refreshes.
+
+                ## Data Model
+                - The panel maps the focused stage to a document binding and preview state.
+
+                ## API Design
+                - Stage advance refreshes workflow metadata and document bindings together.
+            """.trimIndent(),
+            metadata = SpecMetadata(
+                title = "design.md",
+                description = "advance sync design",
+            ),
+        )
     }
 
     private fun waitUntil(timeoutMs: Long = 5_000, condition: () -> Boolean) {

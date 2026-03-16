@@ -38,6 +38,30 @@ class SpecGateQuickFixSupportTest {
     }
 
     @Test
+    fun `presentations should expose repair requirements title`() {
+        val presentations = SpecGateQuickFixSupport.presentations(
+            Violation(
+                ruleId = "document-validation",
+                severity = GateStatus.ERROR,
+                fileName = "requirements.md",
+                line = 1,
+                message = "requirements.md still contains TODO placeholders.",
+                quickFixes = listOf(
+                    GateQuickFixDescriptor(
+                        kind = GateQuickFixKind.REPAIR_REQUIREMENTS_ARTIFACT,
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(1, presentations.size)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.gate.quickFix.repairRequirements"),
+            presentations.single().title,
+        )
+    }
+
+    @Test
     fun `summary should expose all quick fix titles for missing requirements sections`() {
         val violation = missingRequirementsViolation()
 

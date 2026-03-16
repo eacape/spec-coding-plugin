@@ -95,6 +95,7 @@ class SpecWorkflowPanel(
     private val specTaskCompletionService = SpecTaskCompletionService.getInstance(project)
     private val specRelatedFilesService = SpecRelatedFilesService.getInstance(project)
     private val specVerificationService = SpecVerificationService.getInstance(project)
+    private val specRequirementsQuickFixService = SpecRequirementsQuickFixService(project)
     private val specTasksQuickFixService = SpecTasksQuickFixService(project)
     private val artifactService = SpecArtifactService(project)
     private val codeGraphService = CodeGraphService.getInstance(project)
@@ -146,6 +147,7 @@ class SpecWorkflowPanel(
         project = project,
         showHeader = false,
         onClarifyThenFillRequested = ::startRequirementsClarifyThenFill,
+        onRepairRequirementsRequested = ::repairRequirementsArtifactFromGate,
         onRepairTasksRequested = ::repairTasksArtifactFromGate,
     )
     private val statusLabel = JBLabel("")
@@ -1083,7 +1085,17 @@ class SpecWorkflowPanel(
         tasks: List<StructuredTask>,
         liveProgressByTaskId: Map<String, TaskExecutionLiveProgress>,
     ): List<StructuredTask> {
-        return tasks.attachActiveExecutionRuns(workflow.taskExecutionRuns)
+        if (tasks.isEmpty()) {
+            return emptyList()
+        }
+        val activeRunsByTaskId = workflow.taskExecutionRuns
+            .asSequence()
+            .filter { run -> !run.status.isTerminal() }
+            .sortedBy(TaskExecutionRun::startedAt)
+            .associateBy(TaskExecutionRun::taskId)
+        return tasks.map { task ->
+            task.copy(activeExecutionRun = activeRunsByTaskId[task.id])
+        }
     }
 
     private fun buildTaskLiveProgressByTaskId(workflowId: String): Map<String, TaskExecutionLiveProgress> {
@@ -2272,6 +2284,56 @@ class SpecWorkflowPanel(
                             ),
                         )
                         SpecWorkflowActionSupport.openFile(project, result.tasksDocumentPath)
+                    }
+                }
+                refreshWorkflows(selectWorkflowId = result.workflowId)
+            },
+        )
+        return true
+    }
+
+    private fun repairRequirementsArtifactFromGate(workflowId: String): Boolean {
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.editor.fixRequirements.progress"),
+            task = {
+                specRequirementsQuickFixService.repairRequirementsArtifact(
+                    workflowId = workflowId,
+                    trigger = SpecRequirementsQuickFixService.TRIGGER_GATE_QUICK_FIX,
+                )
+            },
+            onSuccess = { result ->
+                SpecWorkflowActionSupport.rememberWorkflow(project, result.workflowId)
+                when {
+                    result.issuesBefore.isEmpty() -> {
+                        SpecWorkflowActionSupport.showInfo(
+                            project = project,
+                            title = SpecCodingBundle.message("spec.action.editor.fixRequirements.none.title"),
+                            message = SpecCodingBundle.message("spec.action.editor.fixRequirements.none.message"),
+                        )
+                    }
+
+                    result.issuesAfter.isNotEmpty() -> {
+                        SpecWorkflowActionSupport.showInfo(
+                            project = project,
+                            title = SpecCodingBundle.message("spec.action.editor.fixRequirements.partial.title"),
+                            message = SpecCodingBundle.message(
+                                "spec.action.editor.fixRequirements.partial.message",
+                                result.issuesAfter.size,
+                            ),
+                        )
+                        SpecWorkflowActionSupport.openFile(project, result.requirementsDocumentPath, 1)
+                    }
+
+                    else -> {
+                        SpecWorkflowActionSupport.notifySuccess(
+                            project = project,
+                            message = SpecCodingBundle.message(
+                                "spec.action.editor.fixRequirements.success.message",
+                                result.issuesBefore.size,
+                            ),
+                        )
+                        SpecWorkflowActionSupport.openFile(project, result.requirementsDocumentPath)
                     }
                 }
                 refreshWorkflows(selectWorkflowId = result.workflowId)
@@ -3929,6 +3991,7 @@ class SpecWorkflowPanel(
 
     private fun handleStageTransitionCompleted(workflowId: String, successMessage: String) {
         SpecWorkflowActionSupport.notifySuccess(project, successMessage)
+        focusedStage = null
         publishWorkflowSelection(workflowId)
         refreshWorkflows(selectWorkflowId = workflowId)
     }
@@ -4394,6 +4457,9 @@ class SpecWorkflowPanel(
         onUpdated: ((SpecWorkflow) -> Unit)? = null,
     ) {
         val wfId = selectedWorkflowId ?: return
+        if (followCurrentPhase) {
+            focusedStage = null
+        }
         invokeLaterSafe {
             showWorkspaceContent()
             overviewPanel.showLoading()
@@ -4629,7 +4695,7 @@ class SpecWorkflowPanel(
         if (compact.length <= maxLength) {
             return compact
         }
-        return compact.take(maxLength - 1).trimEnd() + "â€¦"
+        return compact.take(maxLength - 1).trimEnd() + "¡­"
     }
 
     private fun isMeaningfulErrorMessage(message: String): Boolean {
@@ -5045,7 +5111,7 @@ class SpecWorkflowPanel(
         private val SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT = JBUI.scale(320)
         private const val WORKSPACE_SCROLL_UNIT_INCREMENT = 24
         private const val WORKSPACE_SCROLL_BLOCK_INCREMENT = 96
-        private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "â€”", "...", "â€¦", "null", "none", "unknown")
+        private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "¡­", "...", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")
         private const val DOCUMENT_RELOAD_DEBOUNCE_MILLIS = 300L
