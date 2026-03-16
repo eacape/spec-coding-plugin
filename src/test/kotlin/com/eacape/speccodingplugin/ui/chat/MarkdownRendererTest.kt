@@ -327,6 +327,31 @@ class MarkdownRendererTest {
     }
 
     @Test
+    fun `render should support blockquote syntax in plain markdown mode`() {
+        val pane = JTextPane()
+
+        runOnEdt {
+            MarkdownRenderer.render(
+                pane,
+                """
+                > quote text
+                plain text
+                """.trimIndent(),
+            )
+        }
+
+        val text = pane.text
+        assertTrue(text.contains("quote text"))
+        assertTrue(text.contains("plain text"))
+        assertFalse(text.contains("> quote text"))
+
+        val quoteIndex = text.indexOf("quote text")
+        assertTrue(quoteIndex >= 0)
+        val quoteParagraphAttrs = pane.styledDocument.getParagraphElement(quoteIndex).attributes
+        assertTrue(StyleConstants.getLeftIndent(quoteParagraphAttrs) >= 8f)
+    }
+
+    @Test
     fun `render should remove code fences and keep code body`() {
         val pane = JTextPane()
 

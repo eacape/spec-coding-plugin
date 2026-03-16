@@ -1368,7 +1368,7 @@ open class ChatMessagePanel(
                 expanded -> lineCount
                 else -> lineCount.coerceIn(1, CODE_CARD_COLLAPSED_VISIBLE_LINES)
             }
-            val preferredHeight = lineHeight * visibleLines + JBUI.scale(12)
+            val preferredHeight = lineHeight * visibleLines + JBUI.scale(12) + codeCardHorizontalScrollbarSafeInset(scrollPane)
             scrollPane.preferredSize = Dimension(0, preferredHeight)
             toggleButton?.let { btn ->
                 val textKey = if (expanded) {
@@ -1399,6 +1399,13 @@ open class ChatMessagePanel(
         card.add(header, BorderLayout.NORTH)
         card.add(scrollPane, BorderLayout.CENTER)
         return card
+    }
+
+    private fun codeCardHorizontalScrollbarSafeInset(scrollPane: JScrollPane): Int {
+        if (!System.getProperty("os.name").lowercase(Locale.ROOT).contains("mac")) {
+            return 0
+        }
+        return scrollPane.horizontalScrollBar.preferredSize.height.coerceAtLeast(JBUI.scale(CODE_CARD_MAC_SCROLLBAR_SAFE_INSET))
     }
 
     private fun applyCodeSyntaxHighlight(
@@ -1770,6 +1777,7 @@ open class ChatMessagePanel(
                 return true
             }
             val matched = MARKDOWN_HEADING_REGEX.matches(trimmed) ||
+                BLOCKQUOTE_LINE_REGEX.matches(trimmed) ||
                 UNORDERED_LIST_ITEM_REGEX.matches(trimmed) ||
                 ORDERED_LIST_ITEM_REGEX.matches(trimmed)
             if (matched) {
@@ -2868,6 +2876,7 @@ open class ChatMessagePanel(
         private const val CODE_CARD_COLLAPSE_THRESHOLD_LINES = 8
         private const val CODE_CARD_COLLAPSED_VISIBLE_LINES = 4
         private const val CODE_CARD_HIGHLIGHT_MAX_CHARS = 20_000
+        private const val CODE_CARD_MAC_SCROLLBAR_SAFE_INSET = 12
         private const val TRACE_DETAIL_PREVIEW_LENGTH = 220
         private const val TRACE_OUTPUT_PREVIEW_LENGTH = 140
         private const val TRACE_GROUP_DETAIL_PREVIEW_LENGTH = 96
@@ -2928,6 +2937,7 @@ open class ChatMessagePanel(
         )
         private val MARKDOWN_HEADING_REGEX = Regex("""^#{1,6}(?:\s+|(?=[^\s#])).+$""")
         private val MARKDOWN_HORIZONTAL_RULE_REGEX = Regex("""^(?:-{3,}|\*{3,}|_{3,})\s*$""")
+        private val BLOCKQUOTE_LINE_REGEX = Regex("""^\s{0,3}>\s?.*$""")
         private val UNORDERED_LIST_ITEM_REGEX = Regex("""^(?:[-*]|[•●·・▪◦‣])\s*.+$""")
         private val ORDERED_LIST_ITEM_REGEX = Regex("""^\d+[.)、）．](?:\s+|(?=[^\s\d])).+$""")
         private val MARKDOWN_INLINE_LINK_REGEX = Regex("""(?<!!)\[[^\]\n]+]\(([^()\n]|\\[()])+\)""")

@@ -1226,11 +1226,10 @@ class ChatMessagePanelTraceStreamingTest {
             .count()
             .coerceAtLeast(1)
         val lineHeight = codeArea.getFontMetrics(codeArea.font).height
-        val expectedExpandedHeight = lineHeight * lineCount + JBUI.scale(12)
-        assertEquals(
-            expectedExpandedHeight,
-            expandedHeight,
-            "Expanded code card should reserve full height for every code line",
+        val minimumExpandedHeight = lineHeight * lineCount + JBUI.scale(12)
+        assertTrue(
+            expandedHeight >= minimumExpandedHeight,
+            "Expanded code card should reserve full height for every code line and scrollbar-safe chrome",
         )
     }
 

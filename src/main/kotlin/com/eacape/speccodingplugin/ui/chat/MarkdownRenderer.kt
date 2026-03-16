@@ -29,6 +29,7 @@ import javax.swing.text.StyledDocument
  * - 有序列表 (1. item)
  * - 分隔线 (---)
  * - 表格 (| col | col |)
+ * - 引用块 (> quote)
  */
 object MarkdownRenderer {
 
@@ -41,6 +42,12 @@ object MarkdownRenderer {
     private val BLOCK_CODE_BG_DARK = Color(38, 44, 52)
     private val BLOCK_CODE_FG_LIGHT = Color(44, 52, 63)
     private val BLOCK_CODE_FG_DARK = Color(216, 223, 234)
+    private val BLOCKQUOTE_BORDER_LIGHT = Color(205, 216, 231)
+    private val BLOCKQUOTE_BORDER_DARK = Color(88, 101, 118)
+    private val BLOCKQUOTE_BG_LIGHT = Color(247, 249, 253)
+    private val BLOCKQUOTE_BG_DARK = Color(43, 49, 58)
+    private val BLOCKQUOTE_MARKER_FG_LIGHT = Color(110, 124, 145)
+    private val BLOCKQUOTE_MARKER_FG_DARK = Color(156, 174, 201)
     private val CODE_LANG_FG_LIGHT = Color(104, 120, 142)
     private val CODE_LANG_FG_DARK = Color(148, 164, 187)
     private val LINK_FG_LIGHT = Color(45, 111, 214)
@@ -124,6 +131,15 @@ object MarkdownRenderer {
                 firstBlock = false
                 renderTable(doc, tableBlock, proseFontFamily, baseFontSize)
                 i = tableBlock.nextIndex
+                continue
+            }
+
+            val blockquoteBlock = parseBlockquoteBlock(lines, i)
+            if (blockquoteBlock != null) {
+                if (!firstBlock) insertNewline(doc)
+                firstBlock = false
+                renderBlockquote(doc, blockquoteBlock, proseFontFamily, baseFontSize)
+                i = blockquoteBlock.nextIndex
                 continue
             }
 
@@ -212,6 +228,26 @@ object MarkdownRenderer {
         doc.insertString(doc.length, codeText, codeAttrs)
 
         return i
+    }
+
+    private fun parseBlockquoteBlock(lines: List<String>, startIndex: Int): BlockquoteBlock? {
+        val quoteLines = mutableListOf<String>()
+        var index = startIndex
+        while (index < lines.size) {
+            val content = stripBlockquoteMarker(lines[index]) ?: break
+            quoteLines += content
+            index += 1
+        }
+        if (quoteLines.isEmpty()) return null
+        return BlockquoteBlock(
+            lines = quoteLines,
+            nextIndex = index,
+        )
+    }
+
+    private fun stripBlockquoteMarker(line: String): String? {
+        val match = BLOCKQUOTE_LINE_REGEX.matchEntire(line) ?: return null
+        return match.groupValues[1]
     }
 
     private fun parseTableBlock(lines: List<String>, startIndex: Int): TableBlock? {
@@ -929,6 +965,17 @@ object MarkdownRenderer {
                 continue
             }
 
+            val blockquoteBlock = parseBlockquoteBlock(lines, lineIndex)
+            if (blockquoteBlock != null) {
+                closeTextScopes()
+                val innerMarkdown = blockquoteBlock.lines.joinToString("\n")
+                html.append("<blockquote>")
+                html.append(convertBasicMarkdownToHtml(innerMarkdown))
+                html.append("</blockquote>")
+                lineIndex = blockquoteBlock.nextIndex
+                continue
+            }
+
             if (trimmed == "---" || trimmed == "***" || trimmed == "___") {
                 closeTextScopes()
                 html.append("<hr/>")
@@ -1076,6 +1123,8 @@ object MarkdownRenderer {
         val inlineCodeFg = toCssColor(JBColor(CODE_FG_LIGHT, CODE_FG_DARK))
         val blockCodeBg = toCssColor(JBColor(BLOCK_CODE_BG_LIGHT, BLOCK_CODE_BG_DARK))
         val blockCodeFg = toCssColor(JBColor(BLOCK_CODE_FG_LIGHT, BLOCK_CODE_FG_DARK))
+        val blockquoteBorder = toCssColor(JBColor(BLOCKQUOTE_BORDER_LIGHT, BLOCKQUOTE_BORDER_DARK))
+        val blockquoteBg = toCssColor(JBColor(BLOCKQUOTE_BG_LIGHT, BLOCKQUOTE_BG_DARK))
         val linkFg = toCssColor(JBColor(LINK_FG_LIGHT, LINK_FG_DARK))
         val css = """
             html, body { margin: 0; padding: 0; background: transparent; }
@@ -1088,6 +1137,13 @@ object MarkdownRenderer {
             ul, ol { padding-left: 20px; }
             li { margin: 0 0 5px 0; }
             li:last-child { margin-bottom: 0; }
+            blockquote {
+                margin: 0 0 10px 0;
+                padding: 6px 10px;
+                border-left: 3px solid $blockquoteBorder;
+                background: $blockquoteBg;
+            }
+            blockquote > :last-child { margin-bottom: 0; }
             a {
                 color: $linkFg;
                 text-decoration: underline;
@@ -1121,7 +1177,7 @@ object MarkdownRenderer {
                 background: $blockCodeBg;
                 color: $blockCodeFg;
                 border-radius: 8px;
-                padding: 8px 10px;
+                padding: 8px 10px 12px 10px;
                 overflow-x: auto;
             }
             pre code {
@@ -1186,6 +1242,37 @@ object MarkdownRenderer {
         if (!textPane.contentType.equals(PLAIN_TEXT_CONTENT_TYPE, ignoreCase = true)) {
             textPane.contentType = PLAIN_TEXT_CONTENT_TYPE
         }
+    }
+
+    private fun renderBlockquote(
+        doc: StyledDocument,
+        blockquoteBlock: BlockquoteBlock,
+        proseFontFamily: String,
+        baseFontSize: Int,
+    ) {
+        val paragraphStart = doc.length
+        blockquoteBlock.lines.forEachIndexed { index, line ->
+            val markerAttrs = SimpleAttributeSet().apply {
+                applyProseTextAttrs(this, proseFontFamily, baseFontSize)
+                StyleConstants.setBold(this, true)
+                StyleConstants.setForeground(this, JBColor(BLOCKQUOTE_MARKER_FG_LIGHT, BLOCKQUOTE_MARKER_FG_DARK))
+            }
+            doc.insertString(doc.length, "$BLOCKQUOTE_MARKER ", markerAttrs)
+            if (line.isNotEmpty()) {
+                renderInlineMarkdown(doc, line, proseFontFamily, baseFontSize)
+            }
+            if (index < blockquoteBlock.lines.lastIndex) {
+                insertNewline(doc)
+            }
+        }
+
+        val length = (doc.length - paragraphStart).coerceAtLeast(1)
+        val paragraphAttrs = SimpleAttributeSet().apply {
+            StyleConstants.setLeftIndent(this, BLOCKQUOTE_LEFT_INDENT)
+            StyleConstants.setSpaceAbove(this, BLOCKQUOTE_SPACE_ABOVE)
+            StyleConstants.setSpaceBelow(this, BLOCKQUOTE_SPACE_BELOW)
+        }
+        doc.setParagraphAttributes(paragraphStart, length, paragraphAttrs, false)
     }
 
     private fun renderTable(
@@ -1582,6 +1669,7 @@ object MarkdownRenderer {
     private val LOOSE_DASH_UNORDERED_LIST_REGEX = Regex("""^(\s*)-([^\s-].*)$""")
     private val ORDERED_LIST_REGEX = Regex("""^(\d+)[.)]\s+(.*)$""")
     private val CHECKLIST_ITEM_REGEX = Regex("""^\[( |x|X)]\s+(.*)$""")
+    private val BLOCKQUOTE_LINE_REGEX = Regex("""^\s{0,3}>\s?(.*)$""")
     private val TABLE_OPEN_TAG_REGEX = Regex("""<table\b([^>]*)>""", RegexOption.IGNORE_CASE)
     private val TABLE_CLOSE_TAG_REGEX = Regex("""</table\s*>""", RegexOption.IGNORE_CASE)
     private val TABLE_BORDER_ATTR_REGEX = Regex("""\bborder\s*=""", RegexOption.IGNORE_CASE)
@@ -1621,6 +1709,10 @@ object MarkdownRenderer {
     private const val PROSE_LINE_SPACING = 0.52f
     private const val LIST_ITEM_SPACE_ABOVE = 1.8f
     private const val LIST_ITEM_SPACE_BELOW = 1.8f
+    private const val BLOCKQUOTE_MARKER = "\u258e"
+    private const val BLOCKQUOTE_LEFT_INDENT = 10f
+    private const val BLOCKQUOTE_SPACE_ABOVE = 1.6f
+    private const val BLOCKQUOTE_SPACE_BELOW = 1.6f
     private val ENCLOSED_ORDINAL_MAP = mapOf(
         "①" to "1",
         "②" to "2",
@@ -1642,6 +1734,11 @@ object MarkdownRenderer {
     private data class ChecklistItem(
         val checked: Boolean,
         val content: String,
+    )
+
+    private data class BlockquoteBlock(
+        val lines: List<String>,
+        val nextIndex: Int,
     )
 
     private data class HtmlTableBlock(
