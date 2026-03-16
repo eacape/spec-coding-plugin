@@ -94,6 +94,7 @@ import com.eacape.speccodingplugin.ui.input.SmartInputField
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.ui.spec.EditSpecWorkflowDialog
 import com.eacape.speccodingplugin.ui.spec.SpecIconActionPresentation
+import com.eacape.speccodingplugin.ui.spec.SpecSimpleMessageDialog
 import com.eacape.speccodingplugin.ui.spec.SpecTaskCompletionDialogs
 import com.eacape.speccodingplugin.ui.spec.SpecToolWindowOpenRequest
 import com.eacape.speccodingplugin.ui.spec.SpecToolWindowControlListener
@@ -291,6 +292,7 @@ class ImprovedChatPanel(
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var activeTaskExecutionPanel: ActiveTaskExecutionPanel? = null
     private var latestObservedTaskLiveProgress: TaskExecutionLiveProgress? = null
+    private var lastWorkflowErrorDialogSnapshot: WorkflowErrorDialogSnapshot? = null
     private var statusAutoHideTimer: Timer? = null
     private var dividerPersistTimer: Timer? = null
     private var composerDividerPersistTimer: Timer? = null
@@ -378,6 +380,11 @@ class ImprovedChatPanel(
         val accessibleName: String,
         val enabled: Boolean = true,
         val taskId: String? = null,
+    )
+
+    private data class WorkflowErrorDialogSnapshot(
+        val title: String,
+        val message: String,
     )
 
     private enum class ChatInteractionMode(
@@ -1671,11 +1678,7 @@ class ImprovedChatPanel(
                 )
             },
             onFailure = { error ->
-                val message = error.message ?: SpecCodingBundle.message("common.unknown")
-                showStatus(
-                    SpecCodingBundle.message("spec.workflow.error", message),
-                    autoHideMillis = STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS,
-                )
+                handleWorkflowTaskActionFailure(error)
             },
         )
     }
@@ -1772,11 +1775,7 @@ class ImprovedChatPanel(
                 updateWorkflowBindingUi()
             },
             onFailure = { error ->
-                val message = error.message ?: SpecCodingBundle.message("common.unknown")
-                showStatus(
-                    SpecCodingBundle.message("spec.workflow.error", message),
-                    autoHideMillis = STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS,
-                )
+                handleWorkflowTaskActionFailure(error)
             },
         )
     }
@@ -1821,22 +1820,52 @@ class ImprovedChatPanel(
                         updateWorkflowBindingUi()
                     },
                     onFailure = { error ->
-                        val message = error.message ?: SpecCodingBundle.message("common.unknown")
-                        showStatus(
-                            SpecCodingBundle.message("spec.workflow.error", message),
-                            autoHideMillis = STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS,
-                        )
+                        handleWorkflowTaskActionFailure(error)
                     },
                 )
             },
             onFailure = { error ->
-                val message = error.message ?: SpecCodingBundle.message("common.unknown")
-                showStatus(
-                    SpecCodingBundle.message("spec.workflow.error", message),
-                    autoHideMillis = STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS,
-                )
+                handleWorkflowTaskActionFailure(error)
             },
         )
+    }
+
+    private fun handleWorkflowTaskActionFailure(error: Throwable) {
+        showWorkflowTaskErrorDialog(
+            error.message ?: SpecCodingBundle.message("common.unknown"),
+        )
+    }
+
+    private fun showWorkflowTaskErrorDialog(message: String) {
+        val title = SpecCodingBundle.message("toolwindow.workflow.error.dialog.title")
+        lastWorkflowErrorDialogSnapshot = WorkflowErrorDialogSnapshot(
+            title = title,
+            message = message,
+        )
+        val application = ApplicationManager.getApplication()
+        val showDialog = Runnable {
+            if (project.isDisposed || _isDisposed) {
+                return@Runnable
+            }
+            hideStatus()
+            if (!application.isUnitTestMode) {
+                SpecSimpleMessageDialog(
+                    project = project,
+                    dialogTitle = title,
+                    messageText = message,
+                    closeButtonText = SpecCodingBundle.message("spec.action.gate.close"),
+                ).show()
+            }
+        }
+        if (application.isUnitTestMode) {
+            if (SwingUtilities.isEventDispatchThread()) {
+                showDialog.run()
+            } else {
+                application.invokeAndWait(showDialog)
+            }
+            return
+        }
+        application.invokeLater(showDialog)
     }
 
     private fun resolveWorkflowChatTaskExecutionContext(): TaskExecutionContext? {
@@ -2044,6 +2073,10 @@ class ImprovedChatPanel(
             }
         }
         val sendAction = resolveComposerSendAction(visibleRawInput)
+        if (!sendAction.enabled) {
+            showWorkflowTaskErrorDialog(sendAction.tooltip)
+            return
+        }
         when (sendAction.kind) {
             ComposerSendActionKind.CHAT_SEND -> sendCurrentInput()
             ComposerSendActionKind.CHAT_STOP -> requestStopActiveOperation()
@@ -7481,6 +7514,15 @@ class ImprovedChatPanel(
             "text" to statusLabel.text.orEmpty(),
             "tooltip" to statusLabel.toolTipText.orEmpty(),
             "visible" to statusLabel.isVisible.toString(),
+        )
+    }
+
+    internal fun workflowErrorDialogSnapshotForTest(): Map<String, String> {
+        val snapshot = lastWorkflowErrorDialogSnapshot
+        return mapOf(
+            "title" to snapshot?.title.orEmpty(),
+            "message" to snapshot?.message.orEmpty(),
+            "visible" to (snapshot != null).toString(),
         )
     }
 

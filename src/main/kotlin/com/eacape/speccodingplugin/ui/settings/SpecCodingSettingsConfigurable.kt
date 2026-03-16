@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.settings
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.core.OperationMode
 import com.eacape.speccodingplugin.engine.CliDiscoveryService
 import com.eacape.speccodingplugin.i18n.InterfaceLanguage
 import com.eacape.speccodingplugin.i18n.LocaleManager
@@ -66,7 +67,7 @@ class SpecCodingSettingsConfigurable : Configurable {
     private val codexCliStatusLabel = JBLabel("")
 
     // 操作模式
-    private val defaultModeField = JBTextField()
+    private val defaultModeCombo = ComboBox(OperationMode.entries.toTypedArray())
 
     // 语言设置
     private val interfaceLanguageCombo = ComboBox(InterfaceLanguage.entries.toTypedArray())
@@ -126,6 +127,15 @@ class SpecCodingSettingsConfigurable : Configurable {
             maxWidth = JBUI.scale(220),
             height = interfaceLanguageCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
         )
+        defaultModeCombo.renderer = SimpleListCellRenderer.create<OperationMode> { label, value, _ ->
+            label.text = operationModeDisplayText(value ?: OperationMode.DEFAULT)
+        }
+        ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
+            comboBox = defaultModeCombo,
+            minWidth = JBUI.scale(110),
+            maxWidth = JBUI.scale(180),
+            height = defaultModeCombo.preferredSize.height.takeIf { it > 0 } ?: JBUI.scale(24),
+        )
         detectCliButton.text = SpecCodingBundle.message("settings.cli.detectButton")
         detectCliButton.addActionListener { detectCliTools() }
 
@@ -133,6 +143,7 @@ class SpecCodingSettingsConfigurable : Configurable {
 
         val defaultProviderComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(defaultProviderCombo)
         val defaultModelComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(defaultModelCombo)
+        val defaultModeComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(defaultModeCombo)
         val interfaceLanguageComboHost = ComboBoxAutoWidthSupport.createLeftAlignedHost(interfaceLanguageCombo)
 
         val cliDetectPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0))
@@ -170,7 +181,7 @@ class SpecCodingSettingsConfigurable : Configurable {
             )
             .addVerticalGap(10)
             .addComponent(JBLabel("<html><b>${SpecCodingBundle.message("settings.section.operationMode")}</b></html>"))
-            .addLabeledComponent(SpecCodingBundle.message("settings.operationMode.defaultMode"), defaultModeField)
+            .addLabeledComponent(SpecCodingBundle.message("settings.operationMode.defaultMode"), defaultModeComboHost)
             .addComponentFillVertically(JPanel(), 0)
             .panel.apply {
                 border = JBUI.Borders.empty(10)
@@ -197,7 +208,7 @@ class SpecCodingSettingsConfigurable : Configurable {
         }
         if (codexCliPathField.text != settings.codexCliPath) return true
         if (claudeCodeCliPathField.text != settings.claudeCodeCliPath) return true
-        if (normalizeOperationMode(defaultModeField.text) != settings.defaultOperationMode.uppercase(Locale.ROOT)) return true
+        if ((defaultModeCombo.selectedItem as? OperationMode ?: OperationMode.DEFAULT).name != settings.defaultOperationMode) return true
         return false
     }
 
@@ -222,7 +233,7 @@ class SpecCodingSettingsConfigurable : Configurable {
         settings.codexCliPath = codexCliPathField.text
         settings.claudeCodeCliPath = claudeCodeCliPathField.text
 
-        settings.defaultOperationMode = normalizeOperationMode(defaultModeField.text)
+        settings.defaultOperationMode = (defaultModeCombo.selectedItem as? OperationMode ?: OperationMode.DEFAULT).name
 
         globalConfigSyncService.notifyGlobalConfigChanged(
             sourceProject = null,
@@ -262,7 +273,7 @@ class SpecCodingSettingsConfigurable : Configurable {
         codexCliPathField.text = settings.codexCliPath
         claudeCodeCliPathField.text = settings.claudeCodeCliPath
 
-        defaultModeField.text = settings.defaultOperationMode.lowercase(Locale.ROOT)
+        defaultModeCombo.selectedItem = resolveOperationMode(settings.defaultOperationMode)
     }
 
     override fun disposeUIResources() {
@@ -360,10 +371,14 @@ class SpecCodingSettingsConfigurable : Configurable {
 
     private fun lowerUiText(text: String): String = text.lowercase(Locale.ROOT)
 
-    private fun normalizeOperationMode(input: String): String {
-        return input
-            .trim()
-            .ifBlank { "default" }
-            .uppercase(Locale.ROOT)
+    private fun operationModeDisplayText(mode: OperationMode): String {
+        return lowerUiText(
+            SpecCodingBundle.message("operation.mode.${mode.name.lowercase(Locale.ROOT)}.title"),
+        )
+    }
+
+    private fun resolveOperationMode(raw: String): OperationMode {
+        return runCatching { OperationMode.valueOf(raw.trim().uppercase(Locale.ROOT)) }
+            .getOrDefault(OperationMode.DEFAULT)
     }
 }

@@ -245,6 +245,26 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             snapshot.getValue("sendTooltip"),
         )
 
+        ApplicationManager.getApplication().invokeAndWait {
+            chatPanel.clickSendForTest()
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val errorDialogSnapshot = chatPanel.workflowErrorDialogSnapshotForTest()
+        assertEquals("true", errorDialogSnapshot.getValue("visible"))
+        assertEquals(
+            SpecCodingBundle.message("toolwindow.workflow.error.dialog.title"),
+            errorDialogSnapshot.getValue("title"),
+        )
+        assertEquals(
+            SpecCodingBundle.message(
+                "toolwindow.workflow.binding.execute.dependenciesBlocked",
+                blockedTask.id,
+                dependencyTask.id,
+            ),
+            errorDialogSnapshot.getValue("message"),
+        )
+
         tasksService.transitionStatus(
             workflowId = workflow.id,
             taskId = dependencyTask.id,
