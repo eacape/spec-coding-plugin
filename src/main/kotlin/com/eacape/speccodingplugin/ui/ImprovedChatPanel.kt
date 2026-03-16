@@ -271,10 +271,11 @@ class ImprovedChatPanel(
     )
     private val imageAttachmentPreviewPanel = ImageAttachmentPreviewPanel(
         onRemove = ::removeTransientClipboardImageIfNeeded,
-        onStateChanged = ::refreshComposerAccessoryStripVisibility,
+        onStateChanged = ::refreshComposerPreviewVisibility,
     )
     private val composerHintLabel = JBLabel(SpecCodingBundle.message("toolwindow.composer.hint"))
     private val workflowBindingStrip = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0))
+    private lateinit var composerContainer: JPanel
     private val workflowBindingChip = JButton()
     private val taskBindingChip = JButton()
     private val executeTaskBindingButton = JButton()
@@ -863,7 +864,7 @@ class ImprovedChatPanel(
         controlsRow.add(controlsLeftPanel, BorderLayout.CENTER)
         controlsRow.add(controlsRightPanel, BorderLayout.EAST)
 
-        val composerContainer = JPanel(BorderLayout())
+        composerContainer = JPanel(BorderLayout())
         composerContainer.isOpaque = true
         composerContainer.background = composerSurfaceColor
         composerContainer.border = JBUI.Borders.compound(
@@ -876,6 +877,7 @@ class ImprovedChatPanel(
             ),
             JBUI.Borders.empty(8, 10),
         )
+        composerContainer.add(imageAttachmentPreviewPanel, BorderLayout.NORTH)
         composerContainer.add(inputScroll, BorderLayout.CENTER)
         composerContainer.add(composerMetaRow, BorderLayout.SOUTH)
         composerAccessoryStrip.isOpaque = false
@@ -883,7 +885,6 @@ class ImprovedChatPanel(
         composerAccessoryStrip.isVisible = false
         composerAccessoryStrip.add(workflowBindingStrip)
         composerAccessoryStrip.add(contextPreviewPanel)
-        composerAccessoryStrip.add(imageAttachmentPreviewPanel)
 
         val bottomPanel = JPanel(BorderLayout(0, JBUI.scale(8)))
         bottomPanel.isOpaque = true
@@ -974,9 +975,17 @@ class ImprovedChatPanel(
 
     private fun refreshComposerAccessoryStripVisibility() {
         composerAccessoryStrip.isVisible =
-            workflowBindingStrip.isVisible || contextPreviewPanel.isVisible || imageAttachmentPreviewPanel.isVisible
+            workflowBindingStrip.isVisible || contextPreviewPanel.isVisible
         composerAccessoryStrip.revalidate()
         composerAccessoryStrip.repaint()
+    }
+
+    private fun refreshComposerPreviewVisibility() {
+        refreshComposerAccessoryStripVisibility()
+        if (this::composerContainer.isInitialized) {
+            composerContainer.revalidate()
+            composerContainer.repaint()
+        }
     }
 
     private fun handleTaskExecutionLiveProgress(progress: TaskExecutionLiveProgress) {
@@ -7505,8 +7514,14 @@ class ImprovedChatPanel(
             "composerAccessoryVisible" to composerAccessoryStrip.isVisible.toString(),
             "contextSummaryVisible" to contextPreviewPanel.isVisible.toString(),
             "imageSummaryVisible" to imageAttachmentPreviewPanel.isVisible.toString(),
+            "imagePreviewEmbeddedInComposer" to isImageAttachmentPreviewEmbeddedInComposerForTest().toString(),
             "sessionId" to currentSessionId.orEmpty(),
         )
+    }
+
+    internal fun isImageAttachmentPreviewEmbeddedInComposerForTest(): Boolean {
+        return this::composerContainer.isInitialized &&
+            imageAttachmentPreviewPanel.parent === composerContainer
     }
 
     internal fun statusSnapshotForTest(): Map<String, String> {

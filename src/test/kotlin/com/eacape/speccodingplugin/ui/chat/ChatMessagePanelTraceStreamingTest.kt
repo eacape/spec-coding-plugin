@@ -1000,7 +1000,7 @@ class ChatMessagePanelTraceStreamingTest {
     }
 
     @Test
-    fun `user message should render attached image preview with image aliases`() {
+    fun `user message should render attached images as compact alias chips`() {
         val imageFile1 = tempDir.resolve("message-preview-1.png").toFile()
         val imageFile2 = tempDir.resolve("message-preview-2.png").toFile()
         val image = BufferedImage(48, 30, BufferedImage.TYPE_INT_ARGB)
@@ -1030,24 +1030,25 @@ class ChatMessagePanelTraceStreamingTest {
         assertTrue(textContent.contains("请查看这两张图"))
         assertFalse(textContent.contains("[图片]"))
 
-        val imageLabels = collectDescendants(panel)
-            .filterIsInstance<JLabel>()
-            .filter { it.icon != null }
-            .toList()
-        assertTrue(imageLabels.size >= 2, "Expected image preview labels in user message")
-
-        val maxThumb = JBUI.scale(80)
-        imageLabels.forEach { label ->
-            assertTrue(label.icon.iconWidth <= maxThumb)
-            assertTrue(label.icon.iconHeight <= maxThumb)
-        }
-
         val aliasLabels = collectDescendants(panel)
             .filterIsInstance<JLabel>()
-            .mapNotNull { it.text }
-            .toSet()
-        assertTrue(aliasLabels.contains("image#1"))
-        assertTrue(aliasLabels.contains("image#2"))
+            .filter { it.text == "image#1" || it.text == "image#2" }
+            .toList()
+        assertEquals(2, aliasLabels.size)
+
+        val maxChipIcon = JBUI.scale(20)
+        aliasLabels.forEach { label ->
+            assertNotNull(label.icon)
+            assertTrue(label.icon.iconWidth <= maxChipIcon)
+            assertTrue(label.icon.iconHeight <= maxChipIcon)
+        }
+
+        val oversizedPreviewLabels = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .filter { it.text.isNullOrBlank() && it.icon != null }
+            .filter { it.icon.iconWidth > maxChipIcon || it.icon.iconHeight > maxChipIcon }
+            .toList()
+        assertTrue(oversizedPreviewLabels.isEmpty(), "Expected compact attachment chips instead of image thumbnails")
     }
 
     @Test

@@ -418,63 +418,51 @@ open class ChatMessagePanel(
             renderUserPromptAwareContent(contentPane.styledDocument, textContent, fontSize)
             refreshTextPaneCursor(contentPane)
             container.add(contentPane)
-            container.add(createVerticalSpacer(USER_IMAGE_TEXT_GAP))
+            if (userImageAttachments.isNotEmpty()) {
+                container.add(createVerticalSpacer(USER_IMAGE_TEXT_GAP))
+            }
         }
 
         if (userImageAttachments.isNotEmpty()) {
-            val imagesFlow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(USER_IMAGE_CARD_GAP), JBUI.scale(USER_IMAGE_ROW_VGAP)))
-            imagesFlow.isOpaque = false
-            userImageAttachments.forEach { attachment ->
-                imagesFlow.add(createUserImageCard(attachment))
-            }
-            container.add(imagesFlow)
+            container.add(createUserImageAttachmentStrip())
         }
 
         return container
     }
 
-    private fun createUserImageCard(attachment: UserImageAttachment): JPanel {
-        val card = JPanel()
-        card.layout = BoxLayout(card, BoxLayout.Y_AXIS)
-        card.isOpaque = true
-        card.background = USER_IMAGE_CARD_BG
-        card.border = buildRoundedContainerBorder(
-            lineColor = USER_IMAGE_CARD_BORDER,
-            arc = 10,
-            padding = JBUI.insets(4, 4, 4, 4),
+    private fun createUserImageAttachmentStrip(): JPanel {
+        val strip = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(USER_IMAGE_CHIP_GAP), JBUI.scale(USER_IMAGE_ROW_VGAP)))
+        strip.isOpaque = false
+        userImageAttachments.forEach { attachment ->
+            strip.add(createUserImageChip(attachment))
+        }
+        return strip
+    }
+
+    private fun createUserImageChip(attachment: UserImageAttachment): JPanel {
+        val chip = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(3), 0))
+        chip.isOpaque = true
+        chip.background = USER_IMAGE_CHIP_BG
+        chip.border = buildRoundedContainerBorder(
+            lineColor = USER_IMAGE_CHIP_BORDER,
+            arc = 8,
+            padding = JBUI.insets(2, 6, 2, 6),
         )
-        val cardWidth = JBUI.scale(USER_IMAGE_CARD_WIDTH)
-        val cardHeight = JBUI.scale(USER_IMAGE_CARD_HEIGHT)
-        card.preferredSize = Dimension(cardWidth, cardHeight)
-        card.minimumSize = card.preferredSize
-        card.maximumSize = card.preferredSize
 
-        val thumbnailHolder = JPanel(BorderLayout())
-        thumbnailHolder.isOpaque = false
-        val thumbSize = JBUI.scale(USER_IMAGE_THUMB_SIZE)
-        thumbnailHolder.preferredSize = Dimension(thumbSize, thumbSize)
-        thumbnailHolder.minimumSize = thumbnailHolder.preferredSize
-        thumbnailHolder.maximumSize = thumbnailHolder.preferredSize
-        thumbnailHolder.alignmentX = Component.CENTER_ALIGNMENT
+        val label = JBLabel(attachment.displayName, AllIcons.FileTypes.Image, JBLabel.LEADING)
+        label.font = JBUI.Fonts.smallFont()
+        label.foreground = USER_IMAGE_META_FG
+        label.iconTextGap = JBUI.scale(4)
+        label.toolTipText = buildUserImageTooltip(attachment)
+        chip.add(label)
 
-        val imageLabel = JBLabel(ImageIcon(scaleImageToFit(attachment.image, thumbSize, thumbSize)))
-        imageLabel.isOpaque = false
-        imageLabel.border = JBUI.Borders.empty()
-        imageLabel.horizontalAlignment = SwingConstants.CENTER
-        imageLabel.verticalAlignment = SwingConstants.CENTER
-        imageLabel.toolTipText = "${attachment.displayName} (${attachment.originalFileName}, ${attachment.image.width}×${attachment.image.height})"
-        installImagePreviewOpenAction(imageLabel, attachment)
-        thumbnailHolder.add(imageLabel, BorderLayout.CENTER)
-        card.add(thumbnailHolder)
+        installImagePreviewOpenAction(chip, attachment)
+        installImagePreviewOpenAction(label, attachment)
+        return chip
+    }
 
-        val nameLabel = JBLabel(attachment.displayName)
-        nameLabel.font = JBUI.Fonts.smallFont()
-        nameLabel.foreground = USER_IMAGE_META_FG
-        nameLabel.alignmentX = Component.CENTER_ALIGNMENT
-        nameLabel.horizontalAlignment = SwingConstants.CENTER
-        nameLabel.border = JBUI.Borders.emptyTop(4)
-        card.add(nameLabel)
-        return card
+    private fun buildUserImageTooltip(attachment: UserImageAttachment): String {
+        return "${attachment.displayName} (${attachment.originalFileName}, ${attachment.image.width}×${attachment.image.height})"
     }
 
     private fun createVerticalSpacer(height: Int): JPanel {
@@ -2914,12 +2902,9 @@ open class ChatMessagePanel(
         private const val SPINNER_STEP_DEGREES = 20
         private const val ASSISTANT_ACK_LEAD_MAX_LENGTH = 48
         private const val ASSISTANT_ACK_COMMA_MAX_INDEX = 18
-        private const val USER_IMAGE_THUMB_SIZE = 80
-        private const val USER_IMAGE_CARD_WIDTH = 92
-        private const val USER_IMAGE_CARD_HEIGHT = 112
         private const val USER_IMAGE_TEXT_GAP = 8
-        private const val USER_IMAGE_CARD_GAP = 8
-        private const val USER_IMAGE_ROW_VGAP = 8
+        private const val USER_IMAGE_CHIP_GAP = 6
+        private const val USER_IMAGE_ROW_VGAP = 2
         private const val USER_IMAGE_PREVIEW_MAX_SCREEN_RATIO = 0.75
         private val CODE_CARD_BG = JBColor(java.awt.Color(245, 248, 253), java.awt.Color(47, 53, 63))
         private val CODE_CARD_BORDER = JBColor(java.awt.Color(214, 224, 241), java.awt.Color(78, 88, 104))
@@ -2930,8 +2915,8 @@ open class ChatMessagePanel(
         private val CODE_CARD_FALLBACK_STRING_FG = JBColor(java.awt.Color(6, 125, 23), java.awt.Color(106, 135, 89))
         private val CODE_CARD_FALLBACK_COMMENT_FG = JBColor(java.awt.Color(120, 125, 133), java.awt.Color(128, 128, 128))
         private val CODE_CARD_FALLBACK_NUMBER_FG = JBColor(java.awt.Color(23, 99, 170), java.awt.Color(104, 151, 187))
-        private val USER_IMAGE_CARD_BG = JBColor(java.awt.Color(245, 248, 253), java.awt.Color(47, 53, 63))
-        private val USER_IMAGE_CARD_BORDER = JBColor(java.awt.Color(214, 224, 241), java.awt.Color(78, 88, 104))
+        private val USER_IMAGE_CHIP_BG = JBColor(java.awt.Color(249, 250, 252), java.awt.Color(45, 50, 58))
+        private val USER_IMAGE_CHIP_BORDER = JBColor(java.awt.Color(214, 224, 241), java.awt.Color(78, 88, 104))
         private val USER_IMAGE_META_FG = JBColor(java.awt.Color(101, 118, 146), java.awt.Color(156, 178, 210))
         private val PROMPT_REFERENCE_FG = JBColor(
             java.awt.Color(23, 96, 186),

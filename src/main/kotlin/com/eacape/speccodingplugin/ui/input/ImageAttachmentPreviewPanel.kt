@@ -1,10 +1,11 @@
 package com.eacape.speccodingplugin.ui.input
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
-import java.awt.Color
+import java.awt.Dimension
 import java.awt.FlowLayout
 import javax.swing.JButton
 import javax.swing.JPanel
@@ -12,13 +13,13 @@ import javax.swing.JPanel
 class ImageAttachmentPreviewPanel(
     private val onRemove: (String) -> Unit = {},
     private val onStateChanged: () -> Unit = {},
-) : JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)) {
+) : JPanel(FlowLayout(FlowLayout.LEFT, 3, 1)) {
 
     private val imagePaths = mutableListOf<String>()
 
     init {
         isOpaque = false
-        border = JBUI.Borders.empty()
+        border = JBUI.Borders.empty(1, 0)
         isVisible = false
     }
 
@@ -46,13 +47,13 @@ class ImageAttachmentPreviewPanel(
         rebuildUi()
     }
 
-    private fun removeAllImagePaths() {
-        if (imagePaths.isEmpty()) {
+    private fun removeImagePath(path: String) {
+        val removed = imagePaths.removeIf { it.equals(path, ignoreCase = true) }
+        if (!removed) {
             return
         }
-        val removedPaths = imagePaths.toList()
-        clear()
-        removedPaths.forEach(onRemove)
+        rebuildUi()
+        onRemove(path)
     }
 
     private fun rebuildUi() {
@@ -66,66 +67,43 @@ class ImageAttachmentPreviewPanel(
         }
 
         isVisible = true
-        add(createSummaryChip())
+        imagePaths.forEachIndexed { index, path ->
+            add(createChip(path, index))
+        }
         revalidate()
         repaint()
         onStateChanged()
     }
 
-    private fun createSummaryChip(): JPanel {
-        val chip = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+    private fun createChip(path: String, index: Int): JPanel {
+        val chip = JPanel(FlowLayout(FlowLayout.LEFT, 1, 0))
         chip.isOpaque = true
-        chip.background = JBColor(Color(0xEEF5FF), Color(0x344152))
-        chip.border = JBUI.Borders.empty(3, 8, 3, 6)
+        chip.background = JBColor(0xEAF2FF, 0x3A4350)
+        chip.border = JBUI.Borders.empty(1, 4)
 
-        val tooltip = buildSummaryTooltip()
-        val summaryLabel = JBLabel(SpecCodingBundle.message("toolwindow.composer.images.summary", imagePaths.size))
-        summaryLabel.font = JBUI.Fonts.smallFont()
-        summaryLabel.foreground = JBColor(Color(0x2D507B), Color(0xCFE0FF))
-        summaryLabel.toolTipText = tooltip
-        chip.toolTipText = tooltip
-        chip.add(summaryLabel)
+        val alias = "image#${index + 1}"
+        val label = JBLabel(alias, AllIcons.FileTypes.Image, JBLabel.LEADING)
+        label.font = JBUI.Fonts.miniFont()
+        label.iconTextGap = JBUI.scale(2)
+        label.toolTipText = path
+        chip.add(label)
 
-        val clearButton = JButton(SpecCodingBundle.message("context.chip.remove"))
-        clearButton.font = JBUI.Fonts.smallFont()
-        clearButton.isBorderPainted = false
-        clearButton.isContentAreaFilled = false
-        clearButton.isFocusPainted = false
-        clearButton.margin = JBUI.emptyInsets()
-        clearButton.toolTipText = SpecCodingBundle.message("toolwindow.composer.images.clear.tooltip")
-        clearButton.addActionListener { removeAllImagePaths() }
-        chip.add(clearButton)
+        val removeButton = JButton("x")
+        removeButton.font = removeButton.font.deriveFont(10f)
+        removeButton.foreground = JBColor(0x6D778A, 0xA8B1C4)
+        removeButton.isBorderPainted = false
+        removeButton.isContentAreaFilled = false
+        removeButton.isFocusPainted = false
+        removeButton.margin = JBUI.emptyInsets()
+        val removeSize = JBUI.scale(14)
+        val removeDimension = Dimension(removeSize, removeSize)
+        removeButton.preferredSize = removeDimension
+        removeButton.minimumSize = removeDimension
+        removeButton.maximumSize = removeDimension
+        removeButton.toolTipText = SpecCodingBundle.message("toolwindow.image.attach.remove.tooltip")
+        removeButton.addActionListener { removeImagePath(path) }
+        chip.add(removeButton)
 
         return chip
-    }
-
-    private fun buildSummaryTooltip(): String {
-        val preview = imagePaths
-            .take(MAX_TOOLTIP_ITEMS)
-            .mapIndexed { index, path -> "image#${index + 1}: ${escapeHtml(path)}" }
-            .joinToString("<br/>")
-        val overflowCount = (imagePaths.size - MAX_TOOLTIP_ITEMS).coerceAtLeast(0)
-        val overflowLine = if (overflowCount == 0) "" else "<br/>+${overflowCount}"
-        return buildString {
-            append("<html>")
-            append(escapeHtml(SpecCodingBundle.message("toolwindow.composer.images.summary", imagePaths.size)))
-            if (preview.isNotBlank()) {
-                append("<br/>")
-                append(preview)
-            }
-            append(overflowLine)
-            append("</html>")
-        }
-    }
-
-    private fun escapeHtml(value: String): String {
-        return value
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-    }
-
-    companion object {
-        private const val MAX_TOOLTIP_ITEMS = 5
     }
 }

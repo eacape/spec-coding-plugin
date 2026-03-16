@@ -63,18 +63,46 @@ class ImageAttachmentPreviewPanelTest {
             )
         }
 
-        val labels = collectDescendants(panel)
+        val aliases = collectDescendants(panel)
             .filterIsInstance<JLabel>()
             .mapNotNull { it.text }
+            .filter { it.startsWith("image#") }
             .toList()
 
-        assertTrue(labels.any { it.contains("3") && !it.startsWith("image#") })
+        assertEquals(listOf("image#1", "image#2", "image#3"), aliases)
 
         val removeButtons = collectDescendants(panel)
             .filterIsInstance<JButton>()
             .filter { it.toolTipText?.isNotBlank() == true }
             .toList()
-        assertEquals(1, removeButtons.size)
+        assertEquals(3, removeButtons.size)
+    }
+
+    @Test
+    fun `remove button should delete only the targeted image`() {
+        val removedPaths = mutableListOf<String>()
+        val panel = ImageAttachmentPreviewPanel(onRemove = removedPaths::add)
+
+        runOnEdt {
+            panel.addImagePaths(
+                listOf(
+                    "C:/tmp/first.png",
+                    "D:/tmp/second.jpg",
+                )
+            )
+        }
+
+        val removeButtons = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .filter { it.toolTipText?.isNotBlank() == true }
+            .toList()
+
+        runOnEdt {
+            removeButtons.first().doClick()
+        }
+
+        assertEquals(listOf("D:/tmp/second.jpg"), panel.getImagePaths())
+        assertEquals(listOf("C:/tmp/first.png"), removedPaths)
     }
 
     private fun collectDescendants(component: Component): Sequence<Component> = sequence {

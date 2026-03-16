@@ -85,6 +85,18 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertTrue(toolWindow.contentManager.contents.any(ChatToolWindowFactory::isSpecContent))
     }
 
+    fun `test chat composer should embed image preview inside composer surface`() {
+        val toolWindow = registerSpecCodeToolWindow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val chatPanel = currentChatPanel(toolWindow)
+        assertTrue(chatPanel.isImageAttachmentPreviewEmbeddedInComposerForTest())
+    }
+
     fun `test task panel should open chat with workflow and task binding chips`() {
         val workflow = SpecEngine.getInstance(project).createWorkflow(
             title = "Workflow Chat Binding",
