@@ -4,6 +4,7 @@ import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.context.ContextItem
 import com.eacape.speccodingplugin.i18n.LocaleChangedEvent
 import com.eacape.speccodingplugin.i18n.LocaleChangedListener
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
@@ -11,6 +12,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import java.awt.Color
+import java.awt.Dimension
 import java.awt.FlowLayout
 import javax.swing.JButton
 import javax.swing.JPanel
@@ -19,13 +21,13 @@ class ContextPreviewPanel(
     project: Project,
     private val onRemove: (ContextItem) -> Unit = {},
     private val onStateChanged: () -> Unit = {},
-) : JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)), Disposable {
+) : JPanel(FlowLayout(FlowLayout.LEFT, 3, 1)), Disposable {
 
     private val items = mutableListOf<ContextItem>()
 
     init {
         isOpaque = false
-        border = JBUI.Borders.empty()
+        border = JBUI.Borders.empty(1, 0)
         isVisible = false
 
         ApplicationManager.getApplication()?.messageBus?.connect(this)?.subscribe(
@@ -73,68 +75,75 @@ class ContextPreviewPanel(
         }
 
         isVisible = true
-        add(createSummaryChip())
+        items.forEach { item ->
+            add(createItemChip(item))
+        }
         revalidate()
         repaint()
         onStateChanged()
     }
 
-    private fun createSummaryChip(): JPanel {
-        val totalTokens = items.sumOf { it.tokenEstimate }
-        val chip = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
+    private fun createItemChip(item: ContextItem): JPanel {
+        val chip = JPanel(FlowLayout(FlowLayout.LEFT, 1, 0))
         chip.isOpaque = true
-        chip.background = JBColor(Color(0xEDF3F8), Color(0x39424F))
-        chip.border = JBUI.Borders.empty(3, 8, 3, 6)
+        chip.background = JBColor(Color(0xEDF4FF), Color(0x39424F))
+        chip.border = JBUI.Borders.empty(1, 4)
 
-        val tooltip = buildSummaryTooltip(totalTokens)
-        val summaryLabel = JBLabel(SpecCodingBundle.message("toolwindow.composer.context.summary", items.size))
-        summaryLabel.font = JBUI.Fonts.smallFont()
-        summaryLabel.foreground = JBColor(Color(0x37506B), Color(0xD4E2F5))
-        summaryLabel.toolTipText = tooltip
+        val tooltip = buildItemTooltip(item)
         chip.toolTipText = tooltip
-        chip.add(summaryLabel)
 
-        val tokenLabel = JBLabel(SpecCodingBundle.message("context.tokens", totalTokens))
-        tokenLabel.font = JBUI.Fonts.smallFont()
-        tokenLabel.foreground = JBColor(Color(0x6B7685), Color(0xAEB8C7))
-        tokenLabel.toolTipText = tooltip
-        chip.add(tokenLabel)
+        val label = JBLabel(truncateTail(resolveDisplayName(item), MAX_LABEL_LENGTH), AllIcons.FileTypes.Text, JBLabel.LEADING)
+        label.font = JBUI.Fonts.miniFont()
+        label.foreground = JBColor(Color(0x35506F), Color(0xD5E4F5))
+        label.iconTextGap = JBUI.scale(2)
+        label.toolTipText = tooltip
+        chip.add(label)
 
-        val clearButton = JButton(SpecCodingBundle.message("context.chip.remove"))
-        clearButton.font = JBUI.Fonts.smallFont()
-        clearButton.isBorderPainted = false
-        clearButton.isContentAreaFilled = false
-        clearButton.isFocusPainted = false
-        clearButton.margin = JBUI.emptyInsets()
-        clearButton.toolTipText = SpecCodingBundle.message("toolwindow.composer.context.clear.tooltip")
-        clearButton.addActionListener {
-            val removedItems = items.toList()
-            clear()
-            removedItems.forEach(onRemove)
+        val removeButton = JButton("x")
+        removeButton.font = removeButton.font.deriveFont(10f)
+        removeButton.foreground = JBColor(Color(0x6D778A), Color(0xA8B1C4))
+        removeButton.isBorderPainted = false
+        removeButton.isContentAreaFilled = false
+        removeButton.isFocusPainted = false
+        removeButton.margin = JBUI.emptyInsets()
+        removeButton.toolTipText = SpecCodingBundle.message("context.chip.removeTooltip")
+        val removeSize = JBUI.scale(14)
+        val removeDimension = Dimension(removeSize, removeSize)
+        removeButton.preferredSize = removeDimension
+        removeButton.minimumSize = removeDimension
+        removeButton.maximumSize = removeDimension
+        removeButton.addActionListener {
+            removeItem(item)
+            onRemove(item)
         }
-        chip.add(clearButton)
+        chip.add(removeButton)
 
         return chip
     }
 
-    private fun buildSummaryTooltip(totalTokens: Int): String {
-        val preview = items
-            .take(MAX_TOOLTIP_ITEMS)
-            .joinToString("<br/>") { item -> escapeHtml(item.label) }
-        val overflowCount = (items.size - MAX_TOOLTIP_ITEMS).coerceAtLeast(0)
-        val overflowLine = if (overflowCount == 0) "" else "<br/>+${overflowCount}"
+    private fun buildItemTooltip(item: ContextItem): String {
+        val displayPath = item.filePath?.takeIf { it.isNotBlank() } ?: item.label
         return buildString {
             append("<html>")
-            append(escapeHtml(SpecCodingBundle.message("toolwindow.composer.context.summary", items.size)))
-            append(" / ")
-            append(escapeHtml(SpecCodingBundle.message("context.tokens", totalTokens)))
-            if (preview.isNotBlank()) {
-                append("<br/>")
-                append(preview)
-            }
-            append(overflowLine)
+            append(escapeHtml(displayPath))
             append("</html>")
         }
+    }
+
+    private fun resolveDisplayName(item: ContextItem): String {
+        val candidate = item.filePath
+            ?.replace('\\', '/')
+            ?.trimEnd('/')
+            ?.substringAfterLast('/')
+            ?.takeIf { it.isNotBlank() }
+        return candidate ?: item.label
+    }
+
+    private fun truncateTail(value: String, maxLength: Int): String {
+        if (value.length <= maxLength) {
+            return value
+        }
+        return value.take((maxLength - ELLIPSIS.length).coerceAtLeast(0)) + ELLIPSIS
     }
 
     private fun escapeHtml(value: String): String {
@@ -147,6 +156,7 @@ class ContextPreviewPanel(
     override fun dispose() = Unit
 
     companion object {
-        private const val MAX_TOOLTIP_ITEMS = 5
+        private const val MAX_LABEL_LENGTH = 24
+        private const val ELLIPSIS = "..."
     }
 }

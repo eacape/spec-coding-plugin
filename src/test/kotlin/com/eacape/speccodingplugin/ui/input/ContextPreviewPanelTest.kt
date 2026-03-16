@@ -36,35 +36,64 @@ class ContextPreviewPanelTest {
     }
 
     @Test
-    fun `summary chip should show aggregated count and clear all items`() {
+    fun `context preview should render individual file chips with truncated labels`() {
         val removed = mutableListOf<ContextItem>()
         val panel = ContextPreviewPanel(
             project = mockk<Project>(relaxed = true),
             onRemove = { removed += it },
         )
+        val longPath = "src/features/chat/super-long-file-name-for-context-preview-rendering-example.kt"
 
         runOnEdt {
-            panel.addItem(ContextItem(ContextType.REFERENCED_FILE, "src/App.kt", "fun main() = Unit", "src/App.kt"))
-            panel.addItem(ContextItem(ContextType.REFERENCED_SYMBOL, "AppService", "class AppService"))
-            panel.addItem(ContextItem(ContextType.PROJECT_STRUCTURE, "Project tree", "src/\n test/"))
+            panel.addItem(ContextItem(ContextType.REFERENCED_FILE, "App.kt", "fun main() = Unit", "src/App.kt"))
+            panel.addItem(ContextItem(ContextType.REFERENCED_FILE, "example.kt", "class Example", longPath))
         }
 
         val labels = collectDescendants(panel)
             .filterIsInstance<JLabel>()
             .mapNotNull { it.text }
             .toList()
-        assertTrue(labels.any { it.contains("3") })
+        assertTrue(labels.contains("App.kt"))
+        assertTrue(labels.any { it.endsWith("...") })
 
-        val clearButton = collectDescendants(panel)
+        val longNameLabel = collectDescendants(panel)
+            .filterIsInstance<JLabel>()
+            .first { it.text?.endsWith("...") == true }
+        assertTrue(longNameLabel.toolTipText?.contains(longPath) == true)
+
+        val removeButtons = collectDescendants(panel)
+            .filterIsInstance<JButton>()
+            .filter { it.toolTipText?.isNotBlank() == true }
+            .toList()
+        assertEquals(2, removeButtons.size)
+
+        runOnEdt {
+            removeButtons.first().doClick()
+        }
+
+        assertEquals(1, panel.getItems().size)
+        assertEquals("example.kt", panel.getItems().single().label)
+        assertEquals(1, removed.size)
+        assertTrue(panel.isVisible)
+    }
+
+    @Test
+    fun `removing the last chip should hide the panel`() {
+        val panel = ContextPreviewPanel(project = mockk<Project>(relaxed = true))
+
+        runOnEdt {
+            panel.addItem(ContextItem(ContextType.REFERENCED_FILE, "App.kt", "fun main() = Unit", "src/App.kt"))
+        }
+
+        val removeButton = collectDescendants(panel)
             .filterIsInstance<JButton>()
             .first { it.toolTipText?.isNotBlank() == true }
 
         runOnEdt {
-            clearButton.doClick()
+            removeButton.doClick()
         }
 
         assertTrue(panel.getItems().isEmpty())
-        assertEquals(3, removed.size)
         assertFalse(panel.isVisible)
     }
 
