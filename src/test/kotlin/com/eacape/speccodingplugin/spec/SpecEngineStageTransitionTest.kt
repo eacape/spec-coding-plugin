@@ -406,6 +406,17 @@ class SpecEngineStageTransitionTest {
         val syntaxRule = gateResult.ruleResults.first { it.ruleId == "tasks-syntax" }
         assertEquals(1, syntaxRule.violations.size)
         assertTrue(syntaxRule.violations.single().message.contains("### T-001: Title"))
+        assertEquals(
+            listOf(GateQuickFixKind.REPAIR_TASKS_ARTIFACT),
+            syntaxRule.violations.single().quickFixes.map { quickFix -> quickFix.kind },
+        )
+        val completionRule = gateResult.ruleResults.first { it.ruleId == "stage-completion-checks" }
+        assertTrue(
+            completionRule.violations.any { violation ->
+                violation.message == SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.structured") &&
+                    violation.quickFixes.map { quickFix -> quickFix.kind } == listOf(GateQuickFixKind.REPAIR_TASKS_ARTIFACT)
+            },
+        )
     }
 
     @Test

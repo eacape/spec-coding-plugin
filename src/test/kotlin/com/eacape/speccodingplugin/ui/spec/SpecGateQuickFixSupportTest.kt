@@ -14,6 +14,30 @@ import org.junit.jupiter.api.Test
 class SpecGateQuickFixSupportTest {
 
     @Test
+    fun `presentations should expose repair tasks title`() {
+        val presentations = SpecGateQuickFixSupport.presentations(
+            Violation(
+                ruleId = "tasks-syntax",
+                severity = GateStatus.ERROR,
+                fileName = "tasks.md",
+                line = 3,
+                message = "Task heading must be canonical",
+                quickFixes = listOf(
+                    GateQuickFixDescriptor(
+                        kind = GateQuickFixKind.REPAIR_TASKS_ARTIFACT,
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(1, presentations.size)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.gate.quickFix.repairTasks"),
+            presentations.single().title,
+        )
+    }
+
+    @Test
     fun `summary should expose all quick fix titles for missing requirements sections`() {
         val violation = missingRequirementsViolation()
 

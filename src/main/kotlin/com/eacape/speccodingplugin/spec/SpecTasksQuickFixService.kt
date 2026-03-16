@@ -413,6 +413,7 @@ class SpecTasksQuickFixService(
 
     companion object {
         const val TRIGGER_EDITOR_POPUP: String = "editor-popup"
+        const val TRIGGER_GATE_QUICK_FIX: String = "gate-quick-fix"
 
         private val CANONICAL_TASK_HEADING_REGEX = Regex("""^\s{0,3}###\s+(T-\d{3}):\s+(.+?)\s*$""")
         private val TASK_HEADING_PREFIX_REGEX = Regex("""^\s{0,3}###\s+.*$""")

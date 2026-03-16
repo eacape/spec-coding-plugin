@@ -95,6 +95,7 @@ class SpecWorkflowPanel(
     private val specTaskCompletionService = SpecTaskCompletionService.getInstance(project)
     private val specRelatedFilesService = SpecRelatedFilesService.getInstance(project)
     private val specVerificationService = SpecVerificationService.getInstance(project)
+    private val specTasksQuickFixService = SpecTasksQuickFixService(project)
     private val artifactService = SpecArtifactService(project)
     private val codeGraphService = CodeGraphService.getInstance(project)
     private val worktreeManager = WorktreeManager.getInstance(project)
@@ -145,6 +146,7 @@ class SpecWorkflowPanel(
         project = project,
         showHeader = false,
         onClarifyThenFillRequested = ::startRequirementsClarifyThenFill,
+        onRepairTasksRequested = ::repairTasksArtifactFromGate,
     )
     private val statusLabel = JBLabel("")
     private val statusChipPanel = JPanel(BorderLayout())
@@ -2223,6 +2225,59 @@ class SpecWorkflowPanel(
                 model = selectedModel,
             ),
         )
+    }
+
+    private fun repairTasksArtifactFromGate(workflowId: String): Boolean {
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.action.editor.fixTasks.progress"),
+            task = {
+                specTasksQuickFixService.repairTasksArtifact(
+                    workflowId = workflowId,
+                    trigger = SpecTasksQuickFixService.TRIGGER_GATE_QUICK_FIX,
+                )
+            },
+            onSuccess = { result ->
+                SpecWorkflowActionSupport.rememberWorkflow(project, result.workflowId)
+                when {
+                    !result.changed -> {
+                        SpecWorkflowActionSupport.showInfo(
+                            project = project,
+                            title = SpecCodingBundle.message("spec.action.editor.fixTasks.none.title"),
+                            message = SpecCodingBundle.message("spec.action.editor.fixTasks.none.message"),
+                        )
+                    }
+
+                    result.issuesAfter.isNotEmpty() -> {
+                        val firstIssue = result.issuesAfter.first()
+                        SpecWorkflowActionSupport.showInfo(
+                            project = project,
+                            title = SpecCodingBundle.message("spec.action.editor.fixTasks.partial.title"),
+                            message = SpecCodingBundle.message(
+                                "spec.action.editor.fixTasks.partial.message",
+                                result.issuesAfter.size,
+                                firstIssue.line,
+                                firstIssue.message,
+                            ),
+                        )
+                        SpecWorkflowActionSupport.openFile(project, result.tasksDocumentPath, firstIssue.line)
+                    }
+
+                    else -> {
+                        SpecWorkflowActionSupport.notifySuccess(
+                            project = project,
+                            message = SpecCodingBundle.message(
+                                "spec.action.editor.fixTasks.success.message",
+                                result.issuesBefore.size,
+                            ),
+                        )
+                        SpecWorkflowActionSupport.openFile(project, result.tasksDocumentPath)
+                    }
+                }
+                refreshWorkflows(selectWorkflowId = result.workflowId)
+            },
+        )
+        return true
     }
 
     private fun startRequirementsClarifyThenFill(

@@ -1716,6 +1716,8 @@ class SpecEngine(private val project: Project) {
         val workflow = request.workflow
         val currentStage = request.fromStage
         val tasks = tasksServiceDelegate.parse(workflow.id)
+        val tasksArtifactContent = artifactServiceDelegate.readArtifact(workflow.id, StageId.TASKS)
+        val tasksRepairQuickFixes = tasksArtifactRepairQuickFixes(tasksArtifactContent)
         val tasksDocument = workflow.getDocument(SpecPhase.IMPLEMENT)
         val requirementsDocument = workflow.getDocument(SpecPhase.SPECIFY)
         val designDocument = workflow.getDocument(SpecPhase.DESIGN)
@@ -1773,6 +1775,7 @@ class SpecEngine(private val project: Project) {
                         completionViolation(
                             fileName = StageId.TASKS.artifactFileName.orEmpty(),
                             message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.tasks.structured"),
+                            quickFixes = tasksRepairQuickFixes,
                         ),
                     )
                 }
@@ -1796,6 +1799,7 @@ class SpecEngine(private val project: Project) {
                             completionViolation(
                                 fileName = StageId.TASKS.artifactFileName.orEmpty(),
                                 message = SpecCodingBundle.message("spec.toolwindow.overview.blockers.implement.taskSource"),
+                                quickFixes = tasksRepairQuickFixes,
                             ),
                         )
                     }
@@ -1910,6 +1914,20 @@ class SpecEngine(private val project: Project) {
             GateQuickFixDescriptor(
                 kind = GateQuickFixKind.OPEN_FOR_MANUAL_EDIT,
                 payload = payload,
+            ),
+        )
+    }
+
+    private fun tasksArtifactRepairQuickFixes(tasksMarkdown: String?): List<GateQuickFixDescriptor> {
+        if (tasksMarkdown.isNullOrBlank()) {
+            return emptyList()
+        }
+        if (SpecTaskMarkdownParser.parse(tasksMarkdown).issues.isEmpty()) {
+            return emptyList()
+        }
+        return listOf(
+            GateQuickFixDescriptor(
+                kind = GateQuickFixKind.REPAIR_TASKS_ARTIFACT,
             ),
         )
     }

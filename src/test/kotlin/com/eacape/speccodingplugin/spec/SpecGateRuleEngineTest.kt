@@ -222,6 +222,10 @@ class SpecGateRuleEngineTest {
         assertEquals(1, syntaxResult.violations.size)
         assertEquals(3, syntaxResult.violations.single().line)
         assertTrue(syntaxResult.violations.single().message.contains("### T-001: Title"))
+        assertEquals(
+            listOf(GateQuickFixKind.REPAIR_TASKS_ARTIFACT),
+            syntaxResult.violations.single().quickFixes.map { quickFix -> quickFix.kind },
+        )
     }
 
     @Test

@@ -49,6 +49,7 @@ internal class SpecWorkflowGateDetailsPanel(
     private val onClarifyThenFillRequested: ((String, List<RequirementsSectionId>) -> Boolean)? = null,
     private val onAiFillRequested: ((String, List<RequirementsSectionId>) -> Boolean)? = null,
     private val aiFillUnavailableReasonProvider: (() -> String?)? = null,
+    private val onRepairTasksRequested: ((String) -> Boolean)? = null,
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
     private enum class SeverityFilter {
@@ -478,6 +479,12 @@ internal class SpecWorkflowGateDetailsPanel(
         quickFix: SpecGateQuickFixSupport.Presentation,
     ) {
         when (quickFix.descriptor.kind) {
+            GateQuickFixKind.REPAIR_TASKS_ARTIFACT -> {
+                if (onRepairTasksRequested?.invoke(workflowId) != true) {
+                    showFixPlaceholder(violation)
+                }
+            }
+
             GateQuickFixKind.OPEN_FOR_MANUAL_EDIT -> {
                 if (!SpecWorkflowActionSupport.openGateViolation(project, workflowId, violation)) {
                     SpecWorkflowActionSupport.showInfo(

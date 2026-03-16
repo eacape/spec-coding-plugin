@@ -63,6 +63,43 @@ class SpecWorkflowGateDetailsPanelUnitTest {
     }
 
     @Test
+    fun `triggerQuickFixForTest should route tasks repair with workflow id`() {
+        var capturedWorkflowId: String? = null
+        val panel = SpecWorkflowGateDetailsPanel(
+            project = project,
+            showHeader = true,
+            onRepairTasksRequested = { workflowId ->
+                capturedWorkflowId = workflowId
+                true
+            },
+        )
+
+        panel.updateGateResult(
+            workflowId = "wf-unit-repair-tasks",
+            gateResult = GateResult.fromViolations(
+                listOf(
+                    Violation(
+                        ruleId = "tasks-syntax",
+                        severity = GateStatus.ERROR,
+                        fileName = "tasks.md",
+                        line = 3,
+                        message = "Task heading must be canonical",
+                        quickFixes = listOf(
+                            GateQuickFixDescriptor(
+                                kind = GateQuickFixKind.REPAIR_TASKS_ARTIFACT,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.triggerQuickFixForTest(0, GateQuickFixKind.REPAIR_TASKS_ARTIFACT))
+        assertEquals("wf-unit-repair-tasks", capturedWorkflowId)
+    }
+
+    @Test
     fun `selected quick fixes should keep clarify and manual enabled when ai fill is unavailable`() {
         val payload = MissingRequirementsSectionsQuickFixPayload(
             listOf(RequirementsSectionId.NON_FUNCTIONAL),

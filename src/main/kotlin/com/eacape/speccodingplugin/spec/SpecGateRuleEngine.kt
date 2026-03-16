@@ -501,6 +501,7 @@ class TasksSyntaxRule : Rule {
             return emptyList()
         }
         val tasksDocument = ctx.tasksDocument ?: return emptyList()
+        val quickFixes = tasksArtifactRepairQuickFixes(tasksDocument.parsedDocument.issues)
         return tasksDocument.parsedDocument.issues.map { issue ->
             Violation(
                 ruleId = id,
@@ -509,8 +510,22 @@ class TasksSyntaxRule : Rule {
                 line = issue.line,
                 message = issue.message,
                 fixHint = issue.fixHint,
+                quickFixes = quickFixes,
             )
         }
+    }
+
+    private fun tasksArtifactRepairQuickFixes(
+        issues: List<SpecTaskMarkdownParser.ParseIssue>,
+    ): List<GateQuickFixDescriptor> {
+        if (issues.isEmpty()) {
+            return emptyList()
+        }
+        return listOf(
+            GateQuickFixDescriptor(
+                kind = GateQuickFixKind.REPAIR_TASKS_ARTIFACT,
+            ),
+        )
     }
 }
 
