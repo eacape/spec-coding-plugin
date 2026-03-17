@@ -104,6 +104,7 @@ import com.eacape.speccodingplugin.ui.spec.SpecWorkflowIcons
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.eacape.speccodingplugin.window.WindowSessionIsolationService
+import com.eacape.speccodingplugin.window.WindowRuntimeState
 import com.eacape.speccodingplugin.window.WindowStateStore
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
@@ -306,6 +307,8 @@ class ImprovedChatPanel(
     private var lastComposerTextSnapshot = ""
     private var composerAutoCollapseScheduled = false
     private var suppressComposerAutoCollapse = false
+    private var suppressComposerDividerSync = false
+    private var composerDividerReady = false
 
     // Session state
     private val conversationHistory = mutableListOf<LlmMessage>()
@@ -822,11 +825,17 @@ class ImprovedChatPanel(
         specSidebarDividerLocation = restoredWindowState.chatSpecSidebarDividerLocation
             .takeIf { it > 0 }
             ?: SPEC_SIDEBAR_DEFAULT_DIVIDER
-        chatComposerDividerProportion = restoredWindowState.chatComposerDividerProportion
-            .takeIf { it in CHAT_COMPOSER_MIN_PROPORTION..CHAT_COMPOSER_MAX_PROPORTION }
-            ?: CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION
+        chatComposerDividerProportion = resolveInitialComposerDividerProportion(restoredWindowState)
+        if (chatComposerDividerProportion != restoredWindowState.chatComposerDividerProportion &&
+            restoredWindowState.chatComposerDividerProportion > 0f
+        ) {
+            windowStateStore.updateChatComposerDividerProportion(chatComposerDividerProportion)
+        }
         applySpecSidebarVisibility(restoredWindowState.chatSpecSidebarVisible, persist = false)
         applyInteractionModeUi(currentInteractionMode())
+        if (currentInteractionMode() == ChatInteractionMode.SPEC) {
+            refreshSpecWorkflowComboBox(selectWorkflowId = resolveMostRecentSpecWorkflowIdOrNull())
+        }
 
         // Composer area
         val inputScroll = JScrollPane(inputField)
@@ -5877,6 +5886,9 @@ class ImprovedChatPanel(
         contentSplitPane.border = JBUI.Borders.empty()
         configureSplitPaneDivider(contentSplitPane, CHAT_COMPOSER_DIVIDER_SIZE)
         contentSplitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY) { _ ->
+            if (!composerDividerReady || suppressComposerDividerSync) {
+                return@addPropertyChangeListener
+            }
             val availableHeight = contentSplitPane.height - contentSplitPane.dividerSize
             if (availableHeight <= 0) {
                 return@addPropertyChangeListener
@@ -5890,7 +5902,14 @@ class ImprovedChatPanel(
             if (project.isDisposed || _isDisposed) {
                 return@invokeLater
             }
-            contentSplitPane.setDividerLocation(chatComposerDividerProportion.toDouble())
+            suppressComposerDividerSync = true
+            composerDividerReady = false
+            try {
+                contentSplitPane.setDividerLocation(chatComposerDividerProportion.toDouble())
+            } finally {
+                suppressComposerDividerSync = false
+                composerDividerReady = true
+            }
         }
     }
 
@@ -7679,6 +7698,13 @@ class ImprovedChatPanel(
             return if (changed) normalized else null
         }
 
+        internal fun resolveInitialComposerDividerProportion(snapshot: WindowRuntimeState): Float {
+            val restored = snapshot.chatComposerDividerProportion
+            return restored.takeIf {
+                it in CHAT_COMPOSER_RESTORE_MIN_PROPORTION..CHAT_COMPOSER_MAX_PROPORTION
+            } ?: CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION
+        }
+
         private fun normalizeClipboardTextForCollapse(text: String): String {
             return text.replace("\r\n", "\n").replace('\r', '\n')
         }
@@ -7851,6 +7877,7 @@ class ImprovedChatPanel(
         private const val CHAT_OUTPUT_MIN_HEIGHT = 180
         private const val CHAT_COMPOSER_MIN_HEIGHT = 170
         private const val CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION = 0.78f
+        private const val CHAT_COMPOSER_RESTORE_MIN_PROPORTION = 0.60f
         private const val CHAT_COMPOSER_MIN_PROPORTION = 0.25f
         private const val CHAT_COMPOSER_MAX_PROPORTION = 0.85f
         private const val CHAT_COMPOSER_DIVIDER_SIZE = 8

@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
+import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
 import com.eacape.speccodingplugin.llm.LlmMessage
 import com.eacape.speccodingplugin.llm.LlmRequest
 import com.eacape.speccodingplugin.llm.LlmResponse
@@ -10,6 +12,7 @@ import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
+import java.util.UUID
 
 internal data class SectionDraftPatch(
     val sectionId: RequirementsSectionId,
@@ -62,13 +65,21 @@ internal class RequirementsSectionRepairService(
     draftGenerator: (suspend (RequirementsSectionDraftRequest) -> Result<String>)? = null,
     private val llmRouter: LlmRouter = LlmRouter.getInstance(),
     private val settingsProvider: () -> SpecCodingSettingsState = { SpecCodingSettingsState.getInstance() },
+    requestCanceller: ((String?, String) -> Unit)? = null,
 ) {
-    private val sectionDraftGenerator = draftGenerator ?: ::generateSectionDraft
+    private val requestCanceller: (String?, String) -> Unit = requestCanceller ?: ::cancelRequestAcrossProviders
+    private val sectionDraftGenerator: suspend (RequirementsSectionDraftRequest, String?) -> Result<String> =
+        if (draftGenerator != null) {
+            { request, _ -> draftGenerator(request) }
+        } else {
+            ::generateSectionDraft
+        }
 
     fun previewRepair(
         workflowId: String,
         requestedMissingSections: List<RequirementsSectionId>,
         confirmedContextOverride: String? = null,
+        requestId: String? = null,
     ): RequirementsSectionRepairPreview {
         val normalizedWorkflowId = workflowId.trim()
         require(normalizedWorkflowId.isNotEmpty()) { "workflowId cannot be blank." }
@@ -112,10 +123,11 @@ internal class RequirementsSectionRepairService(
                     ?.replace('\r', '\n')
                     ?.trim()
                     .orEmpty()
-            },
+                },
         )
+        val normalizedRequestId = requestId?.trim()?.takeIf(String::isNotBlank)
         val generatedDraft = runBlocking {
-            sectionDraftGenerator(request).getOrThrow()
+            sectionDraftGenerator(request, normalizedRequestId).getOrThrow()
         }
         val draftedBlocks = parseDraftedSections(
             rawDraft = generatedDraft,
@@ -149,6 +161,14 @@ internal class RequirementsSectionRepairService(
             requirementsDocumentPath = requirementsDocumentPath,
             preview = preview,
         )
+    }
+
+    fun cancelPreviewRequest(requestId: String, providerId: String? = null) {
+        val normalizedRequestId = requestId.trim()
+        if (normalizedRequestId.isBlank()) {
+            return
+        }
+        requestCanceller(providerId, normalizedRequestId)
     }
 
     private fun loadRequirementsDocument(workflow: SpecWorkflow): SpecDocument {
@@ -309,7 +329,10 @@ internal class RequirementsSectionRepairService(
         }
     }
 
-    private suspend fun generateSectionDraft(request: RequirementsSectionDraftRequest): Result<String> {
+    private suspend fun generateSectionDraft(
+        request: RequirementsSectionDraftRequest,
+        requestId: String?,
+    ): Result<String> {
         return runCatching {
             val settings = settingsProvider()
             val providerId = RequirementsSectionAiSupport.resolvePreferredRealProviderId(
@@ -319,6 +342,7 @@ internal class RequirementsSectionRepairService(
                 ?: throw IllegalStateException(
                     SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.error.aiUnavailable"),
                 )
+            val effectiveRequestId = requestId ?: UUID.randomUUID().toString()
             val model = settings.selectedCliModel
                 .trim()
                 .takeIf { configuredModel -> configuredModel.isNotEmpty() }
@@ -330,7 +354,10 @@ internal class RequirementsSectionRepairService(
                 model = model,
                 temperature = 0.2,
                 maxTokens = 1400,
-                metadata = mapOf("specQuickFix" to "requirements-section-repair"),
+                metadata = mapOf(
+                    "specQuickFix" to "requirements-section-repair",
+                    "requestId" to effectiveRequestId,
+                ),
                 workingDirectory = project.basePath,
             )
             val response = requestLlmResponse(providerId, llmRequest)
@@ -374,6 +401,12 @@ internal class RequirementsSectionRepairService(
             ?: IllegalStateException(
                 SpecCodingBundle.message("spec.toolwindow.gate.quickFix.aiFill.error.blankDraft"),
             )
+    }
+
+    private fun cancelRequestAcrossProviders(providerId: String?, requestId: String) {
+        llmRouter.cancel(providerId = providerId, requestId = requestId)
+        llmRouter.cancel(providerId = ClaudeCliLlmProvider.ID, requestId = requestId)
+        llmRouter.cancel(providerId = CodexCliLlmProvider.ID, requestId = requestId)
     }
 
     private fun systemPrompt(): String {
