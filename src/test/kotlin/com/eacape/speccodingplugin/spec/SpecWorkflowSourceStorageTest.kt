@@ -104,6 +104,44 @@ class SpecWorkflowSourceStorageTest {
         assertEquals(listOf(firstAsset, secondAsset), listedAssets)
     }
 
+    @Test
+    fun `readWorkflowSourceText should only return safe textual source content`() {
+        val workflowId = "wf-source-read"
+        seedWorkflow(workflowId)
+        val importedFile = tempDir.resolve("incoming/context.md")
+        Files.createDirectories(importedFile.parent)
+        Files.writeString(
+            importedFile,
+            "# Context\n\n- Persist uploaded workflow sources.\n",
+            StandardCharsets.UTF_8,
+        )
+        val textualAsset = storage.importWorkflowSource(
+            workflowId = workflowId,
+            importedFromStage = StageId.REQUIREMENTS,
+            importedFromEntry = "SPEC_COMPOSER",
+            sourcePath = importedFile,
+        ).getOrThrow()
+        val workflowDir = tempDir.resolve(".spec-coding/specs").resolve(workflowId)
+        val binaryRelativePath = "sources/SRC-999-wireframe.png"
+        Files.write(workflowDir.resolve(binaryRelativePath), ByteArray(32) { 7 })
+        val binaryAsset = textualAsset.copy(
+            sourceId = "SRC-999",
+            storedRelativePath = binaryRelativePath,
+            mediaType = "image/png",
+        )
+        val escapedAsset = textualAsset.copy(
+            sourceId = "SRC-998",
+            storedRelativePath = "../outside.md",
+        )
+
+        assertEquals(
+            Files.readString(importedFile, StandardCharsets.UTF_8),
+            storage.readWorkflowSourceText(workflowId, textualAsset).getOrThrow(),
+        )
+        assertEquals(null, storage.readWorkflowSourceText(workflowId, binaryAsset).getOrThrow())
+        assertEquals(null, storage.readWorkflowSourceText(workflowId, escapedAsset).getOrThrow())
+    }
+
     private fun seedWorkflow(workflowId: String) {
         storage.saveWorkflow(
             SpecWorkflow(

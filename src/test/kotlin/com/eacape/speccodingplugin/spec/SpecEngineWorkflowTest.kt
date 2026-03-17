@@ -883,6 +883,55 @@ class SpecEngineWorkflowTest {
     }
 
     @Test
+    fun `generateCurrentPhase should keep source citations stable across repeated generations`() {
+        val engine = SpecEngine(project, storage) { request ->
+            SpecGenerationResult.Success(validDocument(request.phase))
+        }
+        val workflow = engine.createWorkflow(
+            title = "Stable source citations",
+            description = "avoid duplicate source writeback",
+        ).getOrThrow()
+        val sourcePath = tempDir.resolve("incoming/stable-source.md")
+        Files.createDirectories(sourcePath.parent)
+        Files.writeString(
+            sourcePath,
+            "# Stable Source\n\n- Do not duplicate source citations.\n",
+            StandardCharsets.UTF_8,
+        )
+        val asset = storage.importWorkflowSource(
+            workflowId = workflow.id,
+            importedFromStage = StageId.REQUIREMENTS,
+            importedFromEntry = "SPEC_COMPOSER",
+            sourcePath = sourcePath,
+        ).getOrThrow()
+
+        repeat(2) {
+            runBlocking {
+                engine.generateCurrentPhase(
+                    workflowId = workflow.id,
+                    input = "generate requirements",
+                    options = GenerationOptions(
+                        workflowSourceUsage = WorkflowSourceUsage(selectedSourceIds = listOf(asset.sourceId)),
+                    ),
+                ).collect()
+            }
+        }
+
+        val persistedDocument = engine.reloadWorkflow(workflow.id)
+            .getOrThrow()
+            .getDocument(SpecPhase.SPECIFY)
+            ?: error("requirements document should be persisted")
+
+        assertEquals(1, Regex("""(?m)^## Sources$""").findAll(persistedDocument.content).count())
+        assertEquals(
+            1,
+            Regex("""(?m)^- `${Regex.escape(asset.sourceId)}` `${Regex.escape(asset.storedRelativePath)}`""")
+                .findAll(persistedDocument.content)
+                .count(),
+        )
+    }
+
+    @Test
     fun `draftCurrentPhaseClarification should record unresolved workflow sources as not consumed`() {
         var capturedSourceUsage: WorkflowSourceUsage? = null
         val engine = SpecEngine(

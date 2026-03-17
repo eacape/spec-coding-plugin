@@ -89,6 +89,9 @@ class SpecWorkflowPanel(
     private val project: Project,
     private val sourceFileChooser: (Project, WorkflowSourceImportConstraints) -> List<Path> = ::chooseWorkflowSourceFiles,
     private val sourceImportConstraints: WorkflowSourceImportConstraints = WorkflowSourceImportConstraints(),
+    private val warningDialogPresenter: (Project, String, String) -> Unit = { dialogProject, message, title ->
+        Messages.showWarningDialog(dialogProject, message, title)
+    },
 ) : JBPanel<SpecWorkflowPanel>(BorderLayout()), Disposable {
 
     private val logger = thisLogger()
@@ -2143,7 +2146,7 @@ class SpecWorkflowPanel(
         if (remaining > 0) {
             lines += SpecCodingBundle.message("spec.detail.sources.validation.more", remaining)
         }
-        Messages.showWarningDialog(
+        warningDialogPresenter(
             project,
             lines.joinToString(separator = "\n"),
             SpecCodingBundle.message("spec.detail.sources.validation.title"),
@@ -5274,6 +5277,8 @@ class SpecWorkflowPanel(
     internal fun composerSourceMetaTextForTest(): String = detailPanel.composerSourceMetaTextForTest()
 
     internal fun composerSourceHintTextForTest(): String = detailPanel.composerSourceHintTextForTest()
+
+    internal fun currentStatusTextForTest(): String = statusLabel.text.orEmpty()
 
     internal fun isComposerSourceRestoreVisibleForTest(): Boolean = detailPanel.isComposerSourceRestoreVisibleForTest()
 

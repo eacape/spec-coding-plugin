@@ -158,7 +158,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             "# Client PRD\n\n- Keep workflow artifacts file-first.\n",
             StandardCharsets.UTF_8,
         )
-        val panel = createPanel { _, _ -> listOf(importPath) }
+        val panel = createPanel(sourceFileChooser = { _, _ -> listOf(importPath) })
 
         waitUntil {
             panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
@@ -183,6 +183,13 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
                 panel.isComposerSourceRestoreVisibleForTest()
         }
         assertTrue(panel.composerSourceHintTextForTest().isNotBlank())
+        assertEquals(
+            listOf("SRC-001"),
+            SpecEngine.getInstance(project)
+                .listWorkflowSources(workflow.id)
+                .getOrThrow()
+                .map { it.sourceId },
+        )
 
         ApplicationManager.getApplication().invokeAndWait {
             panel.clickRestoreWorkflowSourcesForTest()
@@ -204,6 +211,47 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             reopenedPanel.composerSourceChipLabelsForTest()
                 .any { label -> label.contains("SRC-001") && label.contains("client-prd.md") }
         }
+    }
+
+    fun `test workflow panel should show validation feedback when composer sources are rejected`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Rejected Sources",
+            description = "composer source validation",
+        ).getOrThrow()
+        val unsupportedPath = Path.of(project.basePath!!).resolve("incoming/archive.zip")
+        val oversizedPath = Path.of(project.basePath!!).resolve("incoming/requirements.pdf")
+        Files.createDirectories(unsupportedPath.parent)
+        Files.write(unsupportedPath, ByteArray(16) { 2 })
+        Files.write(oversizedPath, ByteArray(96) { 3 })
+        val missingPath = Path.of(project.basePath!!).resolve("incoming/missing.txt")
+        val warnings = mutableListOf<Pair<String, String>>()
+        val panel = createPanel(
+            sourceFileChooser = { _, _ -> listOf(unsupportedPath, oversizedPath, missingPath) },
+            sourceImportConstraints = WorkflowSourceImportConstraints(maxFileSizeBytes = 64L),
+            warningDialogPresenter = { _, message, title ->
+                warnings += title to message
+            },
+        )
+
+        waitUntil {
+            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickAddWorkflowSourcesForTest()
+        }
+
+        assertEquals(1, warnings.size)
+        assertEquals(SpecCodingBundle.message("spec.detail.sources.validation.title"), warnings.single().first)
+        assertTrue(warnings.single().second.contains("archive.zip"))
+        assertTrue(warnings.single().second.contains("requirements.pdf"))
+        assertTrue(warnings.single().second.contains("missing.txt"))
+        assertEquals(
+            SpecCodingBundle.message("spec.detail.sources.status.rejected", 3),
+            panel.currentStatusTextForTest(),
+        )
+        assertTrue(panel.composerSourceChipLabelsForTest().isEmpty())
+        assertTrue(SpecEngine.getInstance(project).listWorkflowSources(workflow.id).getOrThrow().isEmpty())
     }
 
     fun `test deleting opened workflow should reopen next recent workflow`() {
@@ -1011,13 +1059,47 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
 
     private fun createPanel(
         sourceFileChooser: ((Project, WorkflowSourceImportConstraints) -> List<Path>)? = null,
+        sourceImportConstraints: WorkflowSourceImportConstraints = WorkflowSourceImportConstraints(),
+        warningDialogPresenter: ((Project, String, String) -> Unit)? = null,
     ): SpecWorkflowPanel {
         var panel: SpecWorkflowPanel? = null
         ApplicationManager.getApplication().invokeAndWait {
-            panel = if (sourceFileChooser == null) {
-                SpecWorkflowPanel(project)
-            } else {
-                SpecWorkflowPanel(project, sourceFileChooser = sourceFileChooser)
+            panel = when {
+                sourceFileChooser != null && warningDialogPresenter != null -> {
+                    SpecWorkflowPanel(
+                        project,
+                        sourceFileChooser = sourceFileChooser,
+                        sourceImportConstraints = sourceImportConstraints,
+                        warningDialogPresenter = warningDialogPresenter,
+                    )
+                }
+
+                sourceFileChooser != null -> {
+                    SpecWorkflowPanel(
+                        project,
+                        sourceFileChooser = sourceFileChooser,
+                        sourceImportConstraints = sourceImportConstraints,
+                    )
+                }
+
+                warningDialogPresenter != null -> {
+                    SpecWorkflowPanel(
+                        project,
+                        sourceImportConstraints = sourceImportConstraints,
+                        warningDialogPresenter = warningDialogPresenter,
+                    )
+                }
+
+                sourceImportConstraints != WorkflowSourceImportConstraints() -> {
+                    SpecWorkflowPanel(
+                        project,
+                        sourceImportConstraints = sourceImportConstraints,
+                    )
+                }
+
+                else -> {
+                    SpecWorkflowPanel(project)
+                }
             }
             Disposer.register(testRootDisposable, panel!!)
         }
