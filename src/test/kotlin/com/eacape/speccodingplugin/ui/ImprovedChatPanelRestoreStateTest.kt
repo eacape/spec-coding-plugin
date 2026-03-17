@@ -20,7 +20,7 @@ class ImprovedChatPanelRestoreStateTest {
         )
 
         assertEquals(
-            0.78f,
+            0.80f,
             ImprovedChatPanel.resolveInitialComposerDividerProportion(snapshot),
         )
     }

@@ -7,9 +7,11 @@ import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageId
+import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.WorkflowSourceAsset
 import com.eacape.speccodingplugin.spec.WorkflowStatus
+import com.eacape.speccodingplugin.spec.toStageId
 import com.eacape.speccodingplugin.ui.chat.MarkdownRenderer
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -155,9 +157,11 @@ class SpecDetailPanel(
     private var generationAnimationTimer: Timer? = null
 
     private var isEditing: Boolean = false
+    private var explicitRevisionPhase: SpecPhase? = null
     private var editingPhase: SpecPhase? = null
     private var preferredWorkbenchPhase: SpecPhase? = null
     private var workbenchArtifactBinding: SpecWorkflowStageArtifactBinding? = null
+    private var composerSourceState = ComposerSourceState()
     private var activePreviewCard: String = CARD_PREVIEW
     private var clarificationState: ClarificationState? = null
     private var activeChecklistDetailIndex: Int? = null
@@ -190,6 +194,13 @@ class SpecDetailPanel(
     private data class PreviewChecklistInteraction(
         val phase: SpecPhase,
         val content: String,
+    )
+
+    private data class ComposerSourceState(
+        val workflowId: String? = null,
+        val assets: List<WorkflowSourceAsset> = emptyList(),
+        val selectedSourceIds: Set<String> = emptySet(),
+        val editable: Boolean = false,
     )
 
     private enum class ClarificationQuestionDecision {
@@ -464,6 +475,11 @@ class SpecDetailPanel(
             selectedPhase?.let { onShowHistoryDiff(it) }
         }
         editButton.addActionListener {
+            val workflow = currentWorkflow ?: return@addActionListener
+            val phase = resolveEditablePhase(workflow) ?: return@addActionListener
+            if (isReadOnlyRevisionLocked(workflow, phase)) {
+                explicitRevisionPhase = phase
+            }
             startEditing()
         }
         saveButton.addActionListener {
@@ -570,8 +586,8 @@ class SpecDetailPanel(
         )
         configureIconActionButton(
             button = editButton,
-            icon = SpecWorkflowIcons.Edit,
-            tooltip = SpecCodingBundle.message("spec.detail.edit"),
+            icon = currentEditActionIcon(),
+            tooltip = currentEditActionTooltip(),
         )
         configureIconActionButton(
             button = saveButton,
@@ -610,6 +626,26 @@ class SpecDetailPanel(
         val workflow = currentWorkflow ?: return ArtifactComposeActionMode.GENERATE
         val resolvedPhase = phase ?: workflow.currentPhase
         return workflow.resolveComposeActionMode(resolvedPhase)
+    }
+
+    private fun currentEditActionIcon(): Icon {
+        val workflow = currentWorkflow
+        val phase = workflow?.let(::resolveDisplayedDocumentPhase)
+        return if (workflow != null && phase != null && isReadOnlyRevisionLocked(workflow, phase)) {
+            SpecWorkflowIcons.Branch
+        } else {
+            SpecWorkflowIcons.Edit
+        }
+    }
+
+    private fun currentEditActionTooltip(): String {
+        val workflow = currentWorkflow
+        val phase = workflow?.let(::resolveDisplayedDocumentPhase)
+        return if (workflow != null && phase != null && isReadOnlyRevisionLocked(workflow, phase)) {
+            SpecCodingBundle.message("spec.detail.revision.start")
+        } else {
+            SpecCodingBundle.message("spec.detail.edit")
+        }
     }
 
     private fun configureIconActionButton(button: JButton, icon: Icon, tooltip: String) {
@@ -1460,6 +1496,7 @@ class SpecDetailPanel(
             return
         }
         if (previousWorkflowId != workflow.id) {
+            explicitRevisionPhase = null
             clarificationState = null
             activeChecklistDetailIndex = null
             isClarificationChecklistReadOnly = false
@@ -1508,9 +1545,11 @@ class SpecDetailPanel(
         isClarificationGenerating = false
         stopGeneratingAnimation()
         isEditing = false
+        explicitRevisionPhase = null
         editingPhase = null
         preferredWorkbenchPhase = null
         workbenchArtifactBinding = null
+        composerSourceState = ComposerSourceState()
         selectedPhase = null
         clarificationState = null
         activeChecklistDetailIndex = null
@@ -1595,21 +1634,27 @@ class SpecDetailPanel(
         selectedSourceIds: Set<String>,
         editable: Boolean,
     ) {
-        composerSourcePanel.updateState(
+        composerSourceState = ComposerSourceState(
             workflowId = workflowId,
             assets = assets,
             selectedSourceIds = selectedSourceIds,
             editable = editable,
         )
+        refreshComposerSourcePanelState()
     }
 
     private fun updateInputPlaceholder(currentPhase: SpecPhase?) {
-        inputArea.emptyText.text = ArtifactComposeActionUiText.inputPlaceholder(
-            mode = currentComposeActionMode(currentPhase),
-            phase = currentPhase,
-            isClarifying = clarificationState != null,
-            checklistMode = clarificationState?.structuredQuestions?.isNotEmpty() == true,
-        )
+        val lockedPhase = currentWorkflow?.let(::currentReadOnlyRevisionLockedPhase)
+        inputArea.emptyText.text = if (lockedPhase != null) {
+            SpecCodingBundle.message("spec.detail.revision.input.locked", phaseStepperTitle(lockedPhase))
+        } else {
+            ArtifactComposeActionUiText.inputPlaceholder(
+                mode = currentComposeActionMode(currentPhase),
+                phase = currentPhase,
+                isClarifying = clarificationState != null,
+                checklistMode = clarificationState?.structuredQuestions?.isNotEmpty() == true,
+            )
+        }
     }
 
     private fun updateTreeSelection(phase: SpecPhase?, forceComposerReset: Boolean = true) {
@@ -1659,6 +1704,45 @@ class SpecDetailPanel(
         )
     }
 
+    private fun resolveDisplayedDocumentPhase(workflow: SpecWorkflow): SpecPhase? {
+        if (isWorkbenchArtifactOnlyView()) {
+            return null
+        }
+        return selectedPhase ?: preferredWorkbenchPhase ?: workflow.currentPhase
+    }
+
+    private fun stageProgressForPhase(workflow: SpecWorkflow, phase: SpecPhase): StageProgress {
+        return workflow.stageStates[phase.toStageId()]?.status ?: when {
+            phase == workflow.currentPhase -> StageProgress.IN_PROGRESS
+            workflow.currentPhase.ordinal > phase.ordinal -> StageProgress.DONE
+            else -> StageProgress.NOT_STARTED
+        }
+    }
+
+    private fun requiresExplicitRevisionEntry(workflow: SpecWorkflow, phase: SpecPhase): Boolean {
+        if (phase != SpecPhase.SPECIFY && phase != SpecPhase.DESIGN) {
+            return false
+        }
+        return stageProgressForPhase(workflow, phase) == StageProgress.DONE
+    }
+
+    private fun isReadOnlyRevisionLocked(workflow: SpecWorkflow, phase: SpecPhase): Boolean {
+        return requiresExplicitRevisionEntry(workflow, phase) && explicitRevisionPhase != phase
+    }
+
+    private fun currentReadOnlyRevisionLockedPhase(workflow: SpecWorkflow): SpecPhase? {
+        val phase = resolveDisplayedDocumentPhase(workflow) ?: return null
+        return phase.takeIf { isReadOnlyRevisionLocked(workflow, it) }
+    }
+
+    private fun revisionLockedHint(phase: SpecPhase): String {
+        return SpecCodingBundle.message("spec.detail.revision.locked.banner", phaseStepperTitle(phase))
+    }
+
+    private fun revisionLockedDisabledReason(phase: SpecPhase): String {
+        return SpecCodingBundle.message("spec.detail.revision.locked.action", phaseStepperTitle(phase))
+    }
+
     private fun resolveEditablePhase(workflow: SpecWorkflow): SpecPhase? {
         if (isWorkbenchArtifactOnlyView()) {
             return null
@@ -1670,6 +1754,9 @@ class SpecDetailPanel(
         if (isEditing || clarificationState != null) return
         val workflow = currentWorkflow ?: return
         val phase = resolveEditablePhase(workflow) ?: return
+        if (isReadOnlyRevisionLocked(workflow, phase)) {
+            return
+        }
         val document = workflow.getDocument(phase)
         isEditing = true
         editingPhase = phase
@@ -1684,11 +1771,15 @@ class SpecDetailPanel(
 
     private fun stopEditing(keepText: Boolean) {
         val workflow = currentWorkflow ?: return
+        val completedRevisionPhase = editingPhase
         if (!keepText) {
             editorArea.text = ""
         }
         isEditing = false
         editingPhase = null
+        if (completedRevisionPhase != null && explicitRevisionPhase == completedRevisionPhase) {
+            explicitRevisionPhase = null
+        }
         switchPreviewCard(CARD_PREVIEW)
         documentTree.isEnabled = true
         setPhaseStepperEnabled(true)
@@ -2680,7 +2771,9 @@ class SpecDetailPanel(
     }
 
     private fun refreshInputAreaMode() {
+        updateInputPlaceholder(currentWorkflow?.currentPhase)
         val checklistMode = clarificationState?.structuredQuestions?.isNotEmpty() == true
+        val lockedPhase = currentWorkflow?.let(::currentReadOnlyRevisionLockedPhase)
         val showInputSection = !checklistMode
         if (::inputSectionContainer.isInitialized && inputSectionContainer.isVisible != showInputSection) {
             inputSectionContainer.isVisible = showInputSection
@@ -2693,6 +2786,19 @@ class SpecDetailPanel(
             inputArea.isEditable = false
             inputArea.toolTipText = null
             syncComposerSectionState()
+            refreshComposerSourcePanelState()
+            refreshActionButtonCursors()
+            return
+        }
+        if (lockedPhase != null) {
+            inputArea.isEnabled = false
+            inputArea.isEditable = false
+            inputArea.toolTipText = SpecCodingBundle.message(
+                "spec.detail.revision.locked.input",
+                phaseStepperTitle(lockedPhase),
+            )
+            syncComposerSectionState()
+            refreshComposerSourcePanelState()
             refreshActionButtonCursors()
             return
         }
@@ -2704,7 +2810,18 @@ class SpecDetailPanel(
             null
         }
         syncComposerSectionState()
+        refreshComposerSourcePanelState()
         refreshActionButtonCursors()
+    }
+
+    private fun refreshComposerSourcePanelState() {
+        val state = composerSourceState
+        composerSourcePanel.updateState(
+            workflowId = state.workflowId,
+            assets = state.assets,
+            selectedSourceIds = state.selectedSourceIds,
+            editable = state.editable && !isEditing && currentWorkflow?.let(::currentReadOnlyRevisionLockedPhase) == null,
+        )
     }
 
     private fun refreshBottomSplitLayout(showInputSection: Boolean) {
@@ -2739,6 +2856,7 @@ class SpecDetailPanel(
             currentWorkflow?.currentPhase?.name.orEmpty(),
             selectedPhase?.name.orEmpty(),
             currentWorkflow?.status?.name.orEmpty(),
+            explicitRevisionPhase?.name.orEmpty(),
             isEditing.toString(),
             (clarificationState != null).toString(),
         ).joinToString("|")
@@ -3294,6 +3412,13 @@ class SpecDetailPanel(
                 setValidationMessage(workbenchBinding?.unavailableMessage, JBColor.GRAY)
             }
         }
+        currentWorkflow
+            ?.takeIf { !isGeneratingActive && !isEditing }
+            ?.let { workflow ->
+                if (currentReadOnlyRevisionLockedPhase(workflow) == phase) {
+                    setValidationMessage(revisionLockedHint(phase), JBColor.GRAY)
+                }
+            }
     }
 
     private fun renderPreviewMarkdown(content: String, interactivePhase: SpecPhase? = null) {
@@ -3304,7 +3429,12 @@ class SpecDetailPanel(
         val sanitized = SpecMarkdownSanitizer.sanitize(normalizedRaw)
         val displayContent = choosePreviewContent(rawContent = normalizedRaw, sanitizedContent = sanitized)
         previewSourceText = displayContent
-        previewChecklistInteraction = if (interactivePhase != null && displayContent == normalizedRaw) {
+        val workflow = currentWorkflow
+        previewChecklistInteraction = if (
+            interactivePhase != null &&
+            displayContent == normalizedRaw &&
+            (workflow == null || !isReadOnlyRevisionLocked(workflow, interactivePhase))
+        ) {
             PreviewChecklistInteraction(
                 phase = interactivePhase,
                 content = normalizedRaw,
@@ -3549,12 +3679,18 @@ class SpecDetailPanel(
     }
 
     private fun updateButtonStates(workflow: SpecWorkflow) {
+        applyActionButtonPresentation()
         val inProgress = workflow.status == WorkflowStatus.IN_PROGRESS
         val allowEditing = !isGeneratingActive
         val clarifying = clarificationState != null
         val clarificationLocked = clarifying && isClarificationChecklistReadOnly
         val composeMode = currentComposeActionMode()
-        val standardModeEnabled = inProgress && !isEditing && !clarifying && !isGeneratingActive
+        val revisionLockedPhase = currentReadOnlyRevisionLockedPhase(workflow)
+        val standardModeEnabled = inProgress &&
+            !isEditing &&
+            !clarifying &&
+            !isGeneratingActive &&
+            revisionLockedPhase == null
         val artifactOnlyView = isWorkbenchArtifactOnlyView()
         val selectedDocumentAvailable = selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
         val artifactOpenAvailable = artifactOnlyView && workbenchArtifactBinding?.available == true
@@ -3578,7 +3714,7 @@ class SpecDetailPanel(
         setActionEnabled(
             button = generateButton,
             enabled = standardModeEnabled,
-            disabledReason = ArtifactComposeActionUiText.primaryActionDisabledReason(
+            disabledReason = revisionLockedPhase?.let(::revisionLockedDisabledReason) ?: ArtifactComposeActionUiText.primaryActionDisabledReason(
                 mode = composeMode,
                 status = workflow.status,
                 isGeneratingActive = isGeneratingActive,
@@ -3627,7 +3763,7 @@ class SpecDetailPanel(
             button = cancelClarificationButton,
             enabled = clarifying && !isGeneratingActive && !clarificationLocked,
         )
-        refreshActionButtonCursors()
+        refreshInputAreaMode()
     }
 
     private fun disableAllButtons() {
@@ -3883,6 +4019,14 @@ class SpecDetailPanel(
         generateButton.doClick()
     }
 
+    internal fun clickEditForTest() {
+        editButton.doClick()
+    }
+
+    internal fun clickCancelEditForTest() {
+        cancelEditButton.doClick()
+    }
+
     internal fun clickConfirmGenerateForTest() {
         confirmGenerateButton.doClick()
     }
@@ -3946,9 +4090,15 @@ class SpecDetailPanel(
             "historyDiffIconId" to SpecWorkflowIcons.debugId(historyDiffButton.icon),
             "historyDiffFocusable" to historyDiffButton.isFocusable,
             "historyDiffVisible" to historyDiffButton.isVisible,
+            "editEnabled" to editButton.isEnabled,
             "editVisible" to editButton.isVisible,
+            "editTooltip" to editButton.toolTipText.orEmpty(),
+            "editAccessibleName" to (editButton.accessibleContext?.accessibleName ?: ""),
             "saveVisible" to saveButton.isVisible,
             "cancelEditVisible" to cancelEditButton.isVisible,
+            "inputEnabled" to inputArea.isEnabled,
+            "inputEditable" to inputArea.isEditable,
+            "inputTooltip" to inputArea.toolTipText.orEmpty(),
             "confirmGenerateEnabled" to confirmGenerateButton.isEnabled,
             "confirmGenerateIconId" to SpecWorkflowIcons.debugId(confirmGenerateButton.icon),
             "confirmGenerateFocusable" to confirmGenerateButton.isFocusable,

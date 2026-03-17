@@ -843,15 +843,28 @@ class ImprovedChatPanel(
         inputScroll.preferredSize = JBDimension(0, CHAT_COMPOSER_INPUT_PREFERRED_HEIGHT)
         inputScroll.minimumSize = JBDimension(0, CHAT_COMPOSER_INPUT_MIN_HEIGHT)
 
-        val composerMetaRow = JPanel(BorderLayout(JBUI.scale(8), 0))
+        val composerMetaRow = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        }
         composerMetaRow.isOpaque = false
         composerMetaRow.border = JBUI.Borders.emptyTop(5)
-        composerMetaRow.add(composerHintLabel, BorderLayout.CENTER)
         val composerMetaActions = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
         composerMetaActions.isOpaque = false
         composerMetaActions.add(specWorkflowComboBox)
         composerMetaActions.add(interactionModeComboBox)
-        composerMetaRow.add(composerMetaActions, BorderLayout.EAST)
+        composerMetaRow.add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                add(composerHintLabel, BorderLayout.WEST)
+            }
+        )
+        composerMetaRow.add(
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyTop(4)
+                add(composerMetaActions, BorderLayout.EAST)
+            }
+        )
 
         val controlsLeftPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
         controlsLeftPanel.isOpaque = false
@@ -7850,7 +7863,7 @@ class ImprovedChatPanel(
         private const val MODEL_COMBO_MIN_WIDTH = 72
         private const val MODEL_COMBO_MAX_WIDTH = 240
         private const val SPEC_WORKFLOW_COMBO_MIN_WIDTH = 120
-        private const val SPEC_WORKFLOW_COMBO_MAX_WIDTH = 220
+        private const val SPEC_WORKFLOW_COMBO_MAX_WIDTH = 180
         private const val SPEC_WORKFLOW_COMBO_TEXT_OVERHEAD_PX = 56
         private const val MAX_CONVERSATION_HISTORY = 240
         private const val MAX_RESTORED_MESSAGES = 240
@@ -7883,7 +7896,7 @@ class ImprovedChatPanel(
         private const val CHAT_COMPOSER_INPUT_MIN_HEIGHT = 68
         private const val CHAT_COMPOSER_INPUT_PREFERRED_HEIGHT = 76
         private const val CHAT_COMPOSER_MIN_HEIGHT = 148
-        private const val CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION = 0.78f
+        private const val CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION = 0.80f
         private const val CHAT_COMPOSER_RESTORE_MIN_PROPORTION = 0.60f
         private const val CHAT_COMPOSER_MIN_PROPORTION = 0.25f
         private const val CHAT_COMPOSER_MAX_PROPORTION = 0.85f

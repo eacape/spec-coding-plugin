@@ -8,6 +8,8 @@ import com.eacape.speccodingplugin.spec.SpecMetadata
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageId
+import com.eacape.speccodingplugin.spec.StageProgress
+import com.eacape.speccodingplugin.spec.StageState
 import com.eacape.speccodingplugin.spec.ValidationResult
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.intellij.util.ui.JBUI
@@ -309,6 +311,86 @@ class SpecDetailPanelTest {
         assertEquals(expectedReason, states["generateTooltip"])
         assertEquals(SpecCodingBundle.message("spec.detail.revise"), states["generateAccessibleName"])
         assertTrue((states["generateAccessibleDescription"] as String).contains(expectedReason))
+    }
+
+    @Test
+    fun `completed requirements should stay read only until revision is explicitly started`() {
+        val panel = createPanel()
+        val workflow = completedRequirementsAndDesignWorkflow()
+
+        panel.updateWorkflow(workflow)
+        panel.selectPhaseForTest(SpecPhase.SPECIFY)
+
+        val lockedStates = panel.buttonStatesForTest()
+        assertFalse(lockedStates["generateEnabled"] as Boolean)
+        assertTrue(lockedStates["editEnabled"] as Boolean)
+        assertEquals(SpecCodingBundle.message("spec.detail.revision.start"), lockedStates["editTooltip"])
+        assertEquals(SpecCodingBundle.message("spec.detail.revision.start"), lockedStates["editAccessibleName"])
+        assertFalse(lockedStates["inputEnabled"] as Boolean)
+        assertFalse(lockedStates["inputEditable"] as Boolean)
+        assertEquals(
+            SpecCodingBundle.message("spec.detail.revision.locked.action", SpecCodingBundle.message("spec.detail.step.requirements")),
+            lockedStates["generateTooltip"],
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.detail.revision.locked.banner", SpecCodingBundle.message("spec.detail.step.requirements")),
+            panel.currentValidationTextForTest(),
+        )
+
+        panel.clickEditForTest()
+
+        val editingStates = panel.buttonStatesForTest()
+        assertTrue(editingStates["saveVisible"] as Boolean)
+        assertTrue(editingStates["cancelEditVisible"] as Boolean)
+
+        panel.clickCancelEditForTest()
+
+        val relockedStates = panel.buttonStatesForTest()
+        assertEquals(SpecCodingBundle.message("spec.detail.revision.start"), relockedStates["editTooltip"])
+        assertFalse(relockedStates["inputEditable"] as Boolean)
+        assertEquals(
+            SpecCodingBundle.message("spec.detail.revision.locked.banner", SpecCodingBundle.message("spec.detail.step.requirements")),
+            panel.currentValidationTextForTest(),
+        )
+    }
+
+    @Test
+    fun `completed requirements preview should block checklist writeback until revision is started`() {
+        var saveCalls = 0
+        val panel = createPanel(
+            onSaveDocument = { _, _, onDone ->
+                saveCalls += 1
+                onDone(Result.failure(IllegalStateException("should stay locked")))
+            },
+        )
+        val workflow = completedRequirementsAndDesignWorkflow(
+            requirementsContent = """
+                # Requirements
+                - [ ] Keep the existing API contract
+            """.trimIndent(),
+        )
+
+        panel.updateWorkflow(workflow)
+        panel.selectPhaseForTest(SpecPhase.SPECIFY)
+        panel.togglePreviewChecklistForTest(1)
+
+        assertEquals(0, saveCalls)
+    }
+
+    @Test
+    fun `tasks should remain writable while completed requirements stay protected`() {
+        val panel = createPanel()
+        val workflow = completedRequirementsAndDesignWorkflow()
+
+        panel.updateWorkflow(workflow)
+        panel.selectPhaseForTest(SpecPhase.IMPLEMENT)
+
+        val states = panel.buttonStatesForTest()
+        assertTrue(states["generateEnabled"] as Boolean)
+        assertTrue(states["editEnabled"] as Boolean)
+        assertEquals(SpecCodingBundle.message("spec.detail.edit"), states["editTooltip"])
+        assertTrue(states["inputEnabled"] as Boolean)
+        assertTrue(states["inputEditable"] as Boolean)
     }
 
     @Test
@@ -1724,6 +1806,61 @@ class SpecDetailPanelTest {
             onShowHistoryDiff = {},
             onSaveDocument = onSaveDocument,
             onClarificationDraftAutosave = onClarificationDraftAutosave,
+        )
+    }
+
+    private fun completedRequirementsAndDesignWorkflow(
+        requirementsContent: String = """
+            # Requirements
+
+            - Keep workflow artifacts file-first.
+        """.trimIndent(),
+        designContent: String = """
+            # Design
+
+            - Preserve layered boundaries.
+        """.trimIndent(),
+        tasksContent: String = """
+            # Tasks
+
+            - [ ] Ship the revision guard.
+        """.trimIndent(),
+    ): SpecWorkflow {
+        return SpecWorkflow(
+            id = "wf-completed-stages",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = requirementsContent,
+                    valid = true,
+                ),
+                SpecPhase.DESIGN to document(
+                    phase = SpecPhase.DESIGN,
+                    content = designContent,
+                    valid = true,
+                ),
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = tasksContent,
+                    valid = true,
+                ),
+            ),
+            stageStates = mapOf(
+                StageId.REQUIREMENTS to StageState(active = true, status = StageProgress.DONE),
+                StageId.DESIGN to StageState(active = true, status = StageProgress.DONE),
+                StageId.TASKS to StageState(active = true, status = StageProgress.IN_PROGRESS),
+            ),
+            artifactDraftStates = mapOf(
+                StageId.REQUIREMENTS to ArtifactDraftState.MATERIALIZED,
+                StageId.DESIGN to ArtifactDraftState.MATERIALIZED,
+                StageId.TASKS to ArtifactDraftState.MATERIALIZED,
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Completed upstream stages",
+            description = "requirements/design should stay protected",
+            createdAt = 1L,
+            updatedAt = 2L,
         )
     }
 
