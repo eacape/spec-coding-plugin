@@ -18,6 +18,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.util.IconLoader
 import com.intellij.util.ui.JBUI
 import java.awt.BasicStroke
 import java.awt.BorderLayout
@@ -591,7 +592,7 @@ class SpecDetailPanel(
         )
         configureIconActionButton(
             button = saveButton,
-            icon = SpecWorkflowIcons.Save,
+            icon = DETAIL_SAVE_ICON,
             tooltip = SpecCodingBundle.message("spec.detail.save"),
         )
         configureIconActionButton(
@@ -632,7 +633,7 @@ class SpecDetailPanel(
         val workflow = currentWorkflow
         val phase = workflow?.let(::resolveDisplayedDocumentPhase)
         return if (workflow != null && phase != null && isReadOnlyRevisionLocked(workflow, phase)) {
-            SpecWorkflowIcons.StartRevision
+            SpecWorkflowIcons.Branch
         } else {
             SpecWorkflowIcons.Edit
         }
@@ -4433,6 +4434,7 @@ class SpecDetailPanel(
         private val DOCUMENT_TAB_TEXT_SELECTED = JBColor(Color(34, 68, 113), Color(236, 242, 251))
         private val SECTION_TITLE_FG = JBColor(Color(36, 60, 101), Color(212, 223, 241))
         private val COLLAPSE_TOGGLE_TEXT_ACTIVE = JBColor(Color(86, 115, 158), Color(187, 205, 230))
+        private val DETAIL_SAVE_ICON = IconLoader.getIcon("/icons/spec-detail-save.svg", SpecDetailPanel::class.java)
         private const val MAX_PROCESS_TIMELINE_ENTRIES = 18
         private const val DOCUMENT_VIEWPORT_HEIGHT = 360
         private const val CARD_PREVIEW = "preview"

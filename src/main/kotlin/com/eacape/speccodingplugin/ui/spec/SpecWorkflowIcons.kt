@@ -28,10 +28,6 @@ internal enum class SpecWorkflowActionIcon(
     HISTORY("history", AllIcons.Vcs.HistoryInline),
     SAVE("save", AllIcons.General.OpenDisk),
     EDIT("edit", AllIcons.Actions.Edit),
-    START_REVISION(
-        "startRevision",
-        IconLoader.getIcon("/icons/spec-workflow-start-revision.svg", SpecWorkflowActionIcon::class.java),
-    ),
     DELETE("delete", AllIcons.Actions.GC),
     RELATED_FILES_EDIT(
         "relatedFilesEdit",
@@ -68,7 +64,6 @@ internal object SpecWorkflowIcons {
     val History: Icon = SpecWorkflowActionIcon.HISTORY.icon
     val Save: Icon = SpecWorkflowActionIcon.SAVE.icon
     val Edit: Icon = SpecWorkflowActionIcon.EDIT.icon
-    val StartRevision: Icon = SpecWorkflowActionIcon.START_REVISION.icon
     val Delete: Icon = SpecWorkflowActionIcon.DELETE.icon
     val RelatedFilesEdit: Icon = SpecWorkflowActionIcon.RELATED_FILES_EDIT.icon
     val VerificationResult: Icon = SpecWorkflowActionIcon.VERIFICATION_RESULT.icon
