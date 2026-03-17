@@ -149,6 +149,9 @@ class SpecGenerator(
     private fun buildClarificationPrompt(request: SpecGenerationRequest): String {
         val budget = request.options.clarificationQuestionBudget
             .coerceIn(1, MAX_CLARIFICATION_QUESTION_BUDGET)
+        if (request.resolveComposeActionMode() == ArtifactComposeActionMode.REVISE) {
+            return buildReviseClarificationPrompt(request, budget)
+        }
 
         return buildString {
             appendLine("你需要在生成 ${request.phase.displayName} 阶段文档前先做澄清。")
@@ -197,6 +200,9 @@ class SpecGenerator(
      * 构建 Specify 阶段 Prompt
      */
     private fun buildSpecifyPrompt(request: SpecGenerationRequest): String {
+        if (request.resolveComposeActionMode() == ArtifactComposeActionMode.REVISE) {
+            return buildReviseSpecifyPrompt(request)
+        }
         return buildString {
             appendLine("请将以下自然语言需求转换为结构化的需求文档（requirements.md）：")
             appendLine()
@@ -226,6 +232,9 @@ class SpecGenerator(
      * 构建 Design 阶段 Prompt
      */
     private fun buildDesignPrompt(request: SpecGenerationRequest): String {
+        if (request.resolveComposeActionMode() == ArtifactComposeActionMode.REVISE) {
+            return buildReviseDesignPrompt(request)
+        }
         return buildString {
             appendLine("请基于以下需求文档设计技术方案（design.md）：")
             appendLine()
@@ -257,6 +266,9 @@ class SpecGenerator(
      * 构建 Implement 阶段 Prompt
      */
     private fun buildImplementPrompt(request: SpecGenerationRequest): String {
+        if (request.resolveComposeActionMode() == ArtifactComposeActionMode.REVISE) {
+            return buildReviseImplementPrompt(request)
+        }
         return buildString {
             appendLine("请基于以下设计文档拆解实现任务（tasks.md）：")
             appendLine()
@@ -284,6 +296,150 @@ class SpecGenerator(
             if (request.options.includeExamples) {
                 appendLine()
                 appendLine("参考格式：")
+                appendLine(getImplementTemplate())
+            }
+        }
+    }
+
+    private fun buildReviseClarificationPrompt(
+        request: SpecGenerationRequest,
+        budget: Int,
+    ): String {
+        return buildString {
+            appendLine("You are preparing to revise the existing ${request.phase.displayName} artifact.")
+            appendLine("Ask only the most important clarification questions needed before supplementing or modifying the current artifact.")
+            appendLine("Question budget: $budget")
+            appendLine()
+            appendLine("## Current Phase")
+            appendLine(request.phase.displayName)
+            appendDocumentBlock(
+                title = "## Revision Instruction",
+                content = request.input,
+                emptyPlaceholder = "(no explicit revision instruction)",
+            )
+            appendDocumentBlock(
+                title = "## Current Artifact Baseline",
+                content = request.currentDocument?.content,
+                emptyPlaceholder = "(current artifact unavailable)",
+            )
+            appendOptionalDocumentBlock(
+                title = "## Upstream Reference Document",
+                content = request.previousDocument?.content,
+            )
+            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendConfirmedContext(request.options.confirmedContext)
+            appendLine()
+            appendLine("Return Markdown using exactly this structure:")
+            appendLine("## Clarification Questions")
+            appendLine("1. ...")
+            appendLine("2. ...")
+            appendLine()
+            appendLine("## Existing Context Summary")
+            appendLine("- ...")
+            appendLine()
+            appendLine("Focus on scope boundaries, acceptance criteria, technical constraints, data contracts, dependencies, and risks.")
+        }
+    }
+
+    private fun buildReviseSpecifyPrompt(request: SpecGenerationRequest): String {
+        return buildString {
+            appendLine("The current workflow already has a requirements.md artifact.")
+            appendLine("Revise the existing artifact by applying the incremental instruction below instead of rewriting it from scratch.")
+            appendDocumentBlock(
+                title = "## Current requirements.md",
+                content = request.currentDocument?.content,
+                emptyPlaceholder = "(requirements.md unavailable)",
+            )
+            appendDocumentBlock(
+                title = "## Revision Instruction",
+                content = request.input,
+                emptyPlaceholder = "(no explicit revision instruction; only apply confirmed context)",
+            )
+            appendConfirmedContext(request.options.confirmedContext)
+            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendLine()
+            appendLine("Requirements:")
+            appendLine("0. Output only the final requirements.md body. Do not output explanations, diff, JSON, or code fences.")
+            appendLine("1. Use the current artifact as the primary baseline. Make only incremental additions or local edits.")
+            appendLine("2. Keep unaffected sections stable while updating the relevant requirements.")
+            appendLine("3. Preserve and refine the structure for Functional Requirements, Non-Functional Requirements, User Stories, Acceptance Criteria, and Constraints.")
+            appendLine("4. Merge new information into the most appropriate section and avoid duplicating or fully regenerating the document.")
+
+            if (request.options.includeExamples) {
+                appendLine()
+                appendLine("Reference format:")
+                appendLine(getSpecifyTemplate())
+            }
+        }
+    }
+
+    private fun buildReviseDesignPrompt(request: SpecGenerationRequest): String {
+        return buildString {
+            appendLine("The current workflow already has a design.md artifact.")
+            appendLine("Revise the existing design artifact using the current document as the primary baseline.")
+            appendDocumentBlock(
+                title = "## Current design.md",
+                content = request.currentDocument?.content,
+                emptyPlaceholder = "(design.md unavailable)",
+            )
+            appendDocumentBlock(
+                title = "## Revision Instruction",
+                content = request.input,
+                emptyPlaceholder = "(no explicit revision instruction; only apply confirmed context)",
+            )
+            appendOptionalDocumentBlock(
+                title = "## Upstream requirements.md Reference",
+                content = request.previousDocument?.content,
+            )
+            appendConfirmedContext(request.options.confirmedContext)
+            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendLine()
+            appendLine("Requirements:")
+            appendLine("0. Output only the final design.md body. Do not output explanations, diff, JSON, or code fences.")
+            appendLine("1. Use the current design.md as the primary baseline. Make incremental additions or local edits instead of a full rewrite.")
+            appendLine("2. Keep unaffected sections stable while updating the relevant architecture, technology, data model, or non-functional decisions.")
+            appendLine("3. Preserve the overall markdown structure and keep Mermaid content, if any, inside fenced code blocks.")
+            appendLine("4. Use the upstream requirements document only as supporting reference, not as the primary rewrite source.")
+
+            if (request.options.includeExamples) {
+                appendLine()
+                appendLine("Reference format:")
+                appendLine(getDesignTemplate())
+            }
+        }
+    }
+
+    private fun buildReviseImplementPrompt(request: SpecGenerationRequest): String {
+        return buildString {
+            appendLine("The current workflow already has a tasks.md artifact.")
+            appendLine("Revise the existing tasks artifact using the current document as the primary baseline.")
+            appendDocumentBlock(
+                title = "## Current tasks.md",
+                content = request.currentDocument?.content,
+                emptyPlaceholder = "(tasks.md unavailable)",
+            )
+            appendDocumentBlock(
+                title = "## Revision Instruction",
+                content = request.input,
+                emptyPlaceholder = "(no explicit revision instruction; only apply confirmed context)",
+            )
+            appendOptionalDocumentBlock(
+                title = "## Upstream design.md Reference",
+                content = request.previousDocument?.content,
+            )
+            appendConfirmedContext(request.options.confirmedContext)
+            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendLine()
+            appendLine("Requirements:")
+            appendLine("0. Output only the final tasks.md body. Do not output explanations, diff, JSON, or code fences.")
+            appendLine("1. Use the current tasks.md as the primary baseline. Make incremental additions or local edits instead of regenerating the whole plan.")
+            appendLine("2. Preserve existing task IDs, task status blocks, and spec-task YAML structure unless the revision explicitly requires a change.")
+            appendLine("3. Any newly added task must use a new `T-xxx` identifier and keep dependsOn, relatedFiles, and verificationResult consistent.")
+            appendLine("4. Keep the task list and implementation steps structure stable while integrating the new work.")
+
+            if (request.options.includeExamples) {
+                appendLine()
+                appendLine("Reference format:")
                 appendLine(getImplementTemplate())
             }
         }
@@ -507,6 +663,44 @@ class SpecGenerator(
 
     private fun containsAnyMarker(content: String, markers: List<String>): Boolean {
         return markers.any { marker -> content.contains(marker, ignoreCase = true) }
+    }
+
+    private fun StringBuilder.appendDocumentBlock(
+        title: String,
+        content: String?,
+        emptyPlaceholder: String,
+    ) {
+        appendLine()
+        appendLine(title)
+        appendLine("```")
+        appendLine(
+            content
+                ?.replace("\r\n", "\n")
+                ?.replace('\r', '\n')
+                ?.trim()
+                ?.ifBlank { emptyPlaceholder }
+                ?: emptyPlaceholder,
+        )
+        appendLine("```")
+    }
+
+    private fun StringBuilder.appendOptionalDocumentBlock(
+        title: String,
+        content: String?,
+    ) {
+        val normalized = content
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            .orEmpty()
+        if (normalized.isBlank()) {
+            return
+        }
+        appendDocumentBlock(
+            title = title,
+            content = normalized,
+            emptyPlaceholder = "",
+        )
     }
 
     private fun StringBuilder.appendConfirmedContext(confirmedContext: String?) {

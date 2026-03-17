@@ -883,6 +883,103 @@ class SpecEngineWorkflowTest {
     }
 
     @Test
+    fun `generateCurrentPhase should use current artifact baseline and revise audit when compose mode resolves to revise`() {
+        var capturedRequest: SpecGenerationRequest? = null
+        val engine = SpecEngine(project, storage) { request ->
+            capturedRequest = request
+            SpecGenerationResult.Success(validDocument(request.phase))
+        }
+        val workflowId = "wf-revise-current-phase"
+        val requirementsDocument = validatedDocument(
+            phase = SpecPhase.SPECIFY,
+            id = "doc-specify-existing",
+            content = """
+                ## Functional Requirements
+                - Preserve file-first workflow state.
+
+                ## Non-Functional Requirements
+                - Keep history auditable.
+
+                ## User Stories
+                As a maintainer, I want traceable workflow changes, so that audits stay reliable.
+
+                ## Acceptance Criteria
+                - [ ] Requirements stay traceable.
+            """.trimIndent(),
+        )
+        val designDocument = validatedDocument(
+            phase = SpecPhase.DESIGN,
+            id = "doc-design-existing",
+            content = """
+                ## Architecture Design
+                - Existing design baseline should be preserved.
+
+                ## Technology Choices
+                - Kotlin and IntelliJ Platform SDK.
+
+                ## Data Model
+                - Track artifact draft states explicitly.
+
+                ## API Design
+                - Keep revise flows distinct from generate flows.
+
+                ## Non-Functional Requirements
+                - Preserve auditability.
+            """.trimIndent(),
+        )
+        storage.saveDocument(workflowId, requirementsDocument).getOrThrow()
+        storage.saveDocument(workflowId, designDocument).getOrThrow()
+        storage.saveWorkflow(
+            SpecWorkflow(
+                id = workflowId,
+                currentPhase = SpecPhase.DESIGN,
+                documents = mapOf(
+                    SpecPhase.SPECIFY to requirementsDocument,
+                    SpecPhase.DESIGN to designDocument,
+                ),
+                status = WorkflowStatus.IN_PROGRESS,
+                title = "Revise current design",
+                description = "use current artifact as baseline",
+                artifactDraftStates = mapOf(StageId.DESIGN to ArtifactDraftState.MATERIALIZED),
+            ),
+        ).getOrThrow()
+        val sourcePath = tempDir.resolve("incoming/revise-source.md")
+        Files.createDirectories(sourcePath.parent)
+        Files.writeString(
+            sourcePath,
+            "# Revise Source\n\n- Add sourceId traceability to the revise flow.\n",
+            StandardCharsets.UTF_8,
+        )
+        val asset = storage.importWorkflowSource(
+            workflowId = workflowId,
+            importedFromStage = StageId.DESIGN,
+            importedFromEntry = "SPEC_COMPOSER",
+            sourcePath = sourcePath,
+        ).getOrThrow()
+        engine.loadWorkflow(workflowId).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(
+                workflowId = workflowId,
+                input = "Add sourceId traceability to the current design artifact.",
+                options = GenerationOptions(
+                    workflowSourceUsage = WorkflowSourceUsage(selectedSourceIds = listOf(asset.sourceId)),
+                ),
+            ).collect()
+        }
+
+        val request = capturedRequest ?: error("generation request should be captured")
+        val auditEvent = storage.listAuditEvents(workflowId).getOrThrow()
+            .last { event -> event.eventType == SpecAuditEventType.SOURCE_USAGE_RECORDED }
+
+        assertEquals(ArtifactComposeActionMode.REVISE, request.options.composeActionMode)
+        assertTrue(request.previousDocument?.content.orEmpty().contains("Preserve file-first workflow state."))
+        assertTrue(request.currentDocument?.content.orEmpty().contains("Existing design baseline should be preserved."))
+        assertEquals("REVISE_CURRENT_PHASE", auditEvent.details["actionType"])
+        assertEquals("SUCCESS", auditEvent.details["status"])
+    }
+
+    @Test
     fun `generateCurrentPhase should keep source citations stable across repeated generations`() {
         val engine = SpecEngine(project, storage) { request ->
             SpecGenerationResult.Success(validDocument(request.phase))
@@ -1119,6 +1216,23 @@ class SpecEngineWorkflowTest {
             metadata = SpecMetadata(
                 title = "${phase.displayName} Document",
                 description = "Generated ${phase.displayName} document",
+            ),
+        )
+        return candidate.copy(validationResult = SpecValidator.validate(candidate))
+    }
+
+    private fun validatedDocument(
+        phase: SpecPhase,
+        id: String,
+        content: String,
+    ): SpecDocument {
+        val candidate = SpecDocument(
+            id = id,
+            phase = phase,
+            content = content,
+            metadata = SpecMetadata(
+                title = "${phase.displayName} Document",
+                description = "Validated ${phase.displayName} document",
             ),
         )
         return candidate.copy(validationResult = SpecValidator.validate(candidate))

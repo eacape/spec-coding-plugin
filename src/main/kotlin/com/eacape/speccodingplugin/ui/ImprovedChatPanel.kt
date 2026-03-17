@@ -840,8 +840,8 @@ class ImprovedChatPanel(
         // Composer area
         val inputScroll = JScrollPane(inputField)
         inputScroll.border = JBUI.Borders.empty()
-        inputScroll.preferredSize = JBDimension(0, 92)
-        inputScroll.minimumSize = JBDimension(0, 92)
+        inputScroll.preferredSize = JBDimension(0, CHAT_COMPOSER_INPUT_PREFERRED_HEIGHT)
+        inputScroll.minimumSize = JBDimension(0, CHAT_COMPOSER_INPUT_MIN_HEIGHT)
 
         val composerMetaRow = JPanel(BorderLayout(JBUI.scale(8), 0))
         composerMetaRow.isOpaque = false
@@ -5884,7 +5884,7 @@ class ImprovedChatPanel(
         contentSplitPane.isContinuousLayout = true
         contentSplitPane.isOpaque = false
         contentSplitPane.border = JBUI.Borders.empty()
-        configureSplitPaneDivider(contentSplitPane, CHAT_COMPOSER_DIVIDER_SIZE)
+        configureSplitPaneDivider(contentSplitPane, CHAT_COMPOSER_DIVIDER_SIZE, showGrip = false)
         contentSplitPane.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY) { _ ->
             if (!composerDividerReady || suppressComposerDividerSync) {
                 return@addPropertyChangeListener
@@ -5913,8 +5913,8 @@ class ImprovedChatPanel(
         }
     }
 
-    private fun configureSplitPaneDivider(splitPane: JSplitPane, dividerSize: Int) {
-        splitPane.ui = SidebarGripSplitPaneUI()
+    private fun configureSplitPaneDivider(splitPane: JSplitPane, dividerSize: Int, showGrip: Boolean = true) {
+        splitPane.ui = SidebarGripSplitPaneUI(showGrip)
         splitPane.dividerSize = JBUI.scale(dividerSize)
         splitPane.isOneTouchExpandable = false
         (splitPane.ui as? BasicSplitPaneUI)?.divider?.let { divider ->
@@ -7410,11 +7410,16 @@ class ImprovedChatPanel(
         scope.cancel()
     }
 
-    private class SidebarGripSplitPaneUI : BasicSplitPaneUI() {
+    private class SidebarGripSplitPaneUI(
+        private val showGrip: Boolean = true,
+    ) : BasicSplitPaneUI() {
         override fun createDefaultDivider(): BasicSplitPaneDivider {
             return object : BasicSplitPaneDivider(this) {
                 override fun paint(g: Graphics) {
                     super.paint(g)
+                    if (!showGrip) {
+                        return
+                    }
                     val g2 = g as? Graphics2D ?: return
                     val horizontal = splitPane?.orientation == JSplitPane.HORIZONTAL_SPLIT
                     val w = width
@@ -7875,12 +7880,14 @@ class ImprovedChatPanel(
         private const val SPEC_SIDEBAR_DIVIDER_SIZE = 8
         private const val SPEC_SIDEBAR_DIVIDER_PERSIST_DEBOUNCE_MILLIS = 140
         private const val CHAT_OUTPUT_MIN_HEIGHT = 180
-        private const val CHAT_COMPOSER_MIN_HEIGHT = 170
+        private const val CHAT_COMPOSER_INPUT_MIN_HEIGHT = 68
+        private const val CHAT_COMPOSER_INPUT_PREFERRED_HEIGHT = 76
+        private const val CHAT_COMPOSER_MIN_HEIGHT = 148
         private const val CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION = 0.78f
         private const val CHAT_COMPOSER_RESTORE_MIN_PROPORTION = 0.60f
         private const val CHAT_COMPOSER_MIN_PROPORTION = 0.25f
         private const val CHAT_COMPOSER_MAX_PROPORTION = 0.85f
-        private const val CHAT_COMPOSER_DIVIDER_SIZE = 8
+        private const val CHAT_COMPOSER_DIVIDER_SIZE = 6
         private const val CHAT_COMPOSER_DIVIDER_PERSIST_DEBOUNCE_MILLIS = 140
         private const val STATUS_SESSION_LOADED_AUTO_HIDE_MILLIS = 2200
         private const val STATUS_SHORT_HINT_AUTO_HIDE_MILLIS = 1800

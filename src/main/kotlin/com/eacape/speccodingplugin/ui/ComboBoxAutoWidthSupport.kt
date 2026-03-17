@@ -68,10 +68,11 @@ object ComboBoxAutoWidthSupport {
         val preferredSize = measureSelectedItemPreferredSize(comboBox)
         val targetWidth = preferredSize.width.coerceIn(state.config.minWidth, state.config.maxWidth)
         val targetHeight = (state.config.height ?: preferredSize.height).coerceAtLeast(1)
-        val size = Dimension(targetWidth, targetHeight)
-        comboBox.preferredSize = size
-        comboBox.minimumSize = size
-        comboBox.maximumSize = size
+        val preferred = Dimension(targetWidth, targetHeight)
+        val minimum = Dimension(state.config.minWidth.coerceAtMost(targetWidth), targetHeight)
+        comboBox.preferredSize = preferred
+        comboBox.minimumSize = minimum
+        comboBox.maximumSize = preferred
         comboBox.revalidate()
         comboBox.repaint()
     }

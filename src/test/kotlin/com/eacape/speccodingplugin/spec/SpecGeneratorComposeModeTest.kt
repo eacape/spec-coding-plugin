@@ -1,0 +1,172 @@
+package com.eacape.speccodingplugin.spec
+
+import com.eacape.speccodingplugin.llm.LlmRequest
+import com.eacape.speccodingplugin.llm.LlmResponse
+import com.eacape.speccodingplugin.llm.LlmRole
+import com.eacape.speccodingplugin.llm.LlmRouter
+import io.mockk.coEvery
+import io.mockk.mockk
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+
+class SpecGeneratorComposeModeTest {
+
+    @Test
+    fun `generate should build revise prompt from current artifact baseline`() = runBlocking {
+        val llmRouter = mockk<LlmRouter>()
+        val generator = SpecGenerator(llmRouter)
+        var capturedLlmRequest: LlmRequest? = null
+        coEvery {
+            llmRouter.generate(providerId = any(), request = any())
+        } coAnswers {
+            capturedLlmRequest = invocation.args[1] as LlmRequest
+            LlmResponse(
+                content = """
+                    ## Architecture Design
+                    - Preserve the current design baseline while adding sourceId traceability.
+
+                    ## Technology Choices
+                    - Kotlin and IntelliJ Platform SDK.
+
+                    ## Data Model
+                    - Track revise operations separately from generate operations.
+                """.trimIndent(),
+                model = "mock-model",
+            )
+        }
+
+        val result = generator.generate(
+            SpecGenerationRequest(
+                phase = SpecPhase.DESIGN,
+                input = "Add sourceId traceability to the existing design artifact.",
+                previousDocument = promptDocument(
+                    phase = SpecPhase.SPECIFY,
+                    id = "requirements-baseline",
+                    content = """
+                        ## Functional Requirements
+                        - Keep source references traceable.
+                    """.trimIndent(),
+                ),
+                currentDocument = promptDocument(
+                    phase = SpecPhase.DESIGN,
+                    id = "design-current",
+                    content = """
+                        ## Architecture Design
+                        - Existing design baseline to preserve.
+
+                        ## Technology Choices
+                        - Existing Kotlin stack.
+
+                        ## Data Model
+                        - Existing workflow state model.
+                    """.trimIndent(),
+                ),
+                options = GenerationOptions(
+                    providerId = "mock",
+                    model = "mock-model",
+                    composeActionMode = ArtifactComposeActionMode.REVISE,
+                ),
+            ),
+        )
+
+        val userPrompt = capturedLlmRequest
+            ?.messages
+            ?.lastOrNull { message -> message.role == LlmRole.USER }
+            ?.content
+        assertTrue(result is SpecGenerationResult.Success)
+        assertNotNull(userPrompt)
+        assertTrue(userPrompt!!.contains("## Current design.md"))
+        assertTrue(userPrompt.contains("Existing design baseline to preserve."))
+        assertTrue(userPrompt.contains("## Revision Instruction"))
+        assertTrue(userPrompt.contains("Add sourceId traceability to the existing design artifact."))
+        assertTrue(userPrompt.contains("## Upstream requirements.md Reference"))
+        assertTrue(userPrompt.contains("Keep source references traceable."))
+        assertTrue(
+            userPrompt.indexOf("## Current design.md") < userPrompt.indexOf("## Upstream requirements.md Reference"),
+        )
+    }
+
+    @Test
+    fun `draftClarification should use current artifact baseline when compose mode is revise`() = runBlocking {
+        val llmRouter = mockk<LlmRouter>()
+        val generator = SpecGenerator(llmRouter)
+        var capturedLlmRequest: LlmRequest? = null
+        coEvery {
+            llmRouter.generate(providerId = any(), request = any())
+        } coAnswers {
+            capturedLlmRequest = invocation.args[1] as LlmRequest
+            LlmResponse(
+                content = """
+                    ## Clarification Questions
+                    1. Should sourceId be written into the existing design sections or a dedicated appendix?
+
+                    ## Existing Context Summary
+                    - The current design artifact already exists and should be revised in place.
+                """.trimIndent(),
+                model = "mock-model",
+            )
+        }
+
+        val draft = generator.draftClarification(
+            SpecGenerationRequest(
+                phase = SpecPhase.DESIGN,
+                input = "Add sourceId traceability to the design artifact.",
+                previousDocument = promptDocument(
+                    phase = SpecPhase.SPECIFY,
+                    id = "requirements-upstream",
+                    content = """
+                        ## Functional Requirements
+                        - Trace sources by sourceId.
+                    """.trimIndent(),
+                ),
+                currentDocument = promptDocument(
+                    phase = SpecPhase.DESIGN,
+                    id = "design-current",
+                    content = """
+                        ## Architecture Design
+                        - Existing design baseline to revise.
+                    """.trimIndent(),
+                ),
+                options = GenerationOptions(
+                    providerId = "mock",
+                    model = "mock-model",
+                    composeActionMode = ArtifactComposeActionMode.REVISE,
+                ),
+            ),
+        ).getOrThrow()
+
+        val userPrompt = capturedLlmRequest
+            ?.messages
+            ?.lastOrNull { message -> message.role == LlmRole.USER }
+            ?.content
+        assertEquals(
+            listOf("Should sourceId be written into the existing design sections or a dedicated appendix?"),
+            draft.questions,
+        )
+        assertNotNull(userPrompt)
+        assertTrue(userPrompt!!.contains("preparing to revise"))
+        assertTrue(userPrompt.contains("## Current Artifact Baseline"))
+        assertTrue(userPrompt.contains("Existing design baseline to revise."))
+        assertTrue(userPrompt.contains("## Upstream Reference Document"))
+        assertTrue(userPrompt.contains("Trace sources by sourceId."))
+    }
+
+    private fun promptDocument(
+        phase: SpecPhase,
+        id: String,
+        content: String,
+    ): SpecDocument {
+        return SpecDocument(
+            id = id,
+            phase = phase,
+            content = content,
+            metadata = SpecMetadata(
+                title = "${phase.displayName} prompt document",
+                description = "prompt baseline",
+            ),
+        )
+    }
+}

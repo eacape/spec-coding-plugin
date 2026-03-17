@@ -326,8 +326,13 @@ data class SpecGenerationRequest(
     val phase: SpecPhase,
     val input: String,
     val previousDocument: SpecDocument? = null,
+    val currentDocument: SpecDocument? = null,
     val options: GenerationOptions = GenerationOptions()
-)
+) {
+    fun resolveComposeActionMode(): ArtifactComposeActionMode {
+        return options.composeActionMode ?: ArtifactComposeActionMode.GENERATE
+    }
+}
 
 /**
  * 生成选项

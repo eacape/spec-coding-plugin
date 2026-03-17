@@ -589,11 +589,13 @@ class SpecEngine(private val project: Project) {
 
         val previousPhase = workflow.currentPhase.previous()
         val previousDocument = previousPhase?.let { workflow.getDocument(it) }
+        val currentDocument = workflow.getCurrentDocument()
         val effectiveOptions = enrichGenerationOptions(workflow, options)
         val request = SpecGenerationRequest(
             phase = workflow.currentPhase,
             input = input,
             previousDocument = previousDocument,
+            currentDocument = currentDocument,
             options = effectiveOptions,
         )
         val result = clarificationHandler(request)
@@ -637,13 +639,18 @@ class SpecEngine(private val project: Project) {
             // 获取前一阶段的文档（如果有）
             val previousPhase = workflow.currentPhase.previous()
             val previousDocument = previousPhase?.let { workflow.getDocument(it) }
+            val currentDocument = workflow.getCurrentDocument()
             effectiveOptions = enrichGenerationOptions(workflow, options)
+            val auditActionType = auditActionTypeForComposeMode(
+                effectiveOptions.composeActionMode ?: ArtifactComposeActionMode.GENERATE,
+            )
 
             // 构建生成请求
             val request = SpecGenerationRequest(
                 phase = workflow.currentPhase,
                 input = input,
                 previousDocument = previousDocument,
+                currentDocument = currentDocument,
                 options = effectiveOptions
             )
 
@@ -678,7 +685,7 @@ class SpecEngine(private val project: Project) {
                     appendWorkflowSourceUsageAudit(
                         workflowId = workflowId,
                         phase = workflow.currentPhase,
-                        actionType = AUDIT_ACTION_GENERATE_CURRENT_PHASE,
+                        actionType = auditActionType,
                         options = effectiveOptions,
                         status = AUDIT_STATUS_SUCCESS,
                     )
@@ -708,7 +715,7 @@ class SpecEngine(private val project: Project) {
                     appendWorkflowSourceUsageAudit(
                         workflowId = workflowId,
                         phase = workflow.currentPhase,
-                        actionType = AUDIT_ACTION_GENERATE_CURRENT_PHASE,
+                        actionType = auditActionType,
                         options = effectiveOptions,
                         status = AUDIT_STATUS_VALIDATION_FAILED,
                         extraDetails = mapOf(
@@ -723,7 +730,7 @@ class SpecEngine(private val project: Project) {
                     appendWorkflowSourceUsageAudit(
                         workflowId = workflowId,
                         phase = workflow.currentPhase,
-                        actionType = AUDIT_ACTION_GENERATE_CURRENT_PHASE,
+                        actionType = auditActionType,
                         options = effectiveOptions,
                         status = AUDIT_STATUS_FAILED,
                         extraDetails = buildMap {
@@ -744,7 +751,9 @@ class SpecEngine(private val project: Project) {
             appendWorkflowSourceUsageAudit(
                 workflowId = workflowId,
                 phase = workflow.currentPhase,
-                actionType = AUDIT_ACTION_GENERATE_CURRENT_PHASE,
+                actionType = auditActionTypeForComposeMode(
+                    effectiveOptions.composeActionMode ?: ArtifactComposeActionMode.GENERATE,
+                ),
                 options = effectiveOptions,
                 status = AUDIT_STATUS_FAILED,
                 extraDetails = mapOf(
@@ -2305,6 +2314,8 @@ class SpecEngine(private val project: Project) {
         workflow: SpecWorkflow,
         options: GenerationOptions,
     ): GenerationOptions {
+        val resolvedComposeActionMode = options.composeActionMode
+            ?: workflow.resolveComposeActionMode(workflow.currentPhase)
         val normalizedWorkingDirectory = options.workingDirectory
             ?.trim()
             ?.ifBlank { null }
@@ -2318,6 +2329,7 @@ class SpecEngine(private val project: Project) {
         val enrichedOptions = options.copy(
             workingDirectory = normalizedWorkingDirectory,
             operationMode = normalizedOperationMode,
+            composeActionMode = resolvedComposeActionMode,
         )
         val workflowSourceUsage = buildWorkflowSourceUsage(
             workflow = workflow,
@@ -2472,6 +2484,13 @@ class SpecEngine(private val project: Project) {
                 }
             },
         ).getOrThrow()
+    }
+
+    private fun auditActionTypeForComposeMode(mode: ArtifactComposeActionMode): String {
+        return when (mode) {
+            ArtifactComposeActionMode.GENERATE -> AUDIT_ACTION_GENERATE_CURRENT_PHASE
+            ArtifactComposeActionMode.REVISE -> AUDIT_ACTION_REVISE_CURRENT_PHASE
+        }
     }
 
     private fun buildIncrementalBaselineContext(workflow: SpecWorkflow): String? {
@@ -2741,6 +2760,7 @@ class SpecEngine(private val project: Project) {
         private const val SOURCE_SNAPSHOT_DEPTH = 4
         private const val MAX_SOURCE_FILES_PER_DIR = 18
         private const val AUDIT_ACTION_GENERATE_CURRENT_PHASE = "GENERATE_CURRENT_PHASE"
+        private const val AUDIT_ACTION_REVISE_CURRENT_PHASE = "REVISE_CURRENT_PHASE"
         private const val AUDIT_ACTION_DRAFT_CLARIFICATION = "DRAFT_CURRENT_PHASE_CLARIFICATION"
         private const val AUDIT_STATUS_SUCCESS = "SUCCESS"
         private const val AUDIT_STATUS_FAILED = "FAILED"

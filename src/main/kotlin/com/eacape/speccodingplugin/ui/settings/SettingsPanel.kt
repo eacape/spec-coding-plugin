@@ -62,6 +62,8 @@ import java.awt.FlowLayout
 import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
+import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import java.awt.Insets
 import java.awt.Point
 import java.awt.RenderingHints
@@ -740,16 +742,40 @@ class SettingsPanel(
         secondCombo: ComboBox<*>,
     ): JPanel {
         val secondLabel = JBLabel(SpecCodingBundle.message(secondLabelKey)).apply {
-            preferredSize = JBUI.size(JBUI.scale(40), JBUI.scale(28))
-            minimumSize = preferredSize
+            border = JBUI.Borders.emptyRight(6)
+            labelFor = secondCombo
         }
-        return JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+        return JPanel(GridBagLayout()).apply {
             isOpaque = false
-            add(firstCombo)
-            add(Box.createHorizontalStrut(JBUI.scale(10)))
-            add(secondLabel)
-            add(Box.createHorizontalStrut(JBUI.scale(6)))
-            add(secondCombo)
+            add(
+                firstCombo,
+                GridBagConstraints().apply {
+                    gridx = 0
+                    gridy = 0
+                    anchor = GridBagConstraints.WEST
+                    fill = GridBagConstraints.HORIZONTAL
+                    insets = JBUI.insets(0, 0, 0, 10)
+                },
+            )
+            add(
+                secondLabel,
+                GridBagConstraints().apply {
+                    gridx = 1
+                    gridy = 0
+                    anchor = GridBagConstraints.WEST
+                    insets = JBUI.emptyInsets()
+                },
+            )
+            add(
+                secondCombo,
+                GridBagConstraints().apply {
+                    gridx = 2
+                    gridy = 0
+                    weightx = 1.0
+                    anchor = GridBagConstraints.WEST
+                    fill = GridBagConstraints.HORIZONTAL
+                },
+            )
         }
     }
 
