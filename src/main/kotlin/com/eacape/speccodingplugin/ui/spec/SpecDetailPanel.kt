@@ -632,7 +632,7 @@ class SpecDetailPanel(
         val workflow = currentWorkflow
         val phase = workflow?.let(::resolveDisplayedDocumentPhase)
         return if (workflow != null && phase != null && isReadOnlyRevisionLocked(workflow, phase)) {
-            SpecWorkflowIcons.Branch
+            SpecWorkflowIcons.StartRevision
         } else {
             SpecWorkflowIcons.Edit
         }
