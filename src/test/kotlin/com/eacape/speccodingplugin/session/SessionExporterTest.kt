@@ -24,7 +24,6 @@ class SessionExporterTest {
             updatedAt = 1_700_000_100_000,
             workflowChatBinding = WorkflowChatBinding(
                 workflowId = "spec-1",
-                taskId = "T-100",
                 focusedStage = StageId.IMPLEMENT,
                 source = WorkflowChatEntrySource.TASK_PANEL,
                 actionIntent = WorkflowChatActionIntent.EXECUTE_TASK,
@@ -63,7 +62,6 @@ class SessionExporterTest {
             assertTrue(content.isNotBlank())
             assertTrue(content.contains(session.title))
             assertTrue(content.contains("spec-1"))
-            assertTrue(content.contains("T-100"))
         }
     }
 }

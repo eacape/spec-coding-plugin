@@ -418,7 +418,6 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             title = "Workflow task restore",
             workflowChatBinding = WorkflowChatBinding(
                 workflowId = workflow.id,
-                taskId = task.id,
                 focusedStage = StageId.IMPLEMENT,
                 source = WorkflowChatEntrySource.SESSION_RESTORE,
                 actionIntent = WorkflowChatActionIntent.DISCUSS,
@@ -683,7 +682,6 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             title = "Workflow attachment boundary",
             workflowChatBinding = WorkflowChatBinding(
                 workflowId = workflow.id,
-                taskId = task.id,
                 focusedStage = StageId.IMPLEMENT,
                 source = WorkflowChatEntrySource.SESSION_RESTORE,
                 actionIntent = WorkflowChatActionIntent.DISCUSS,

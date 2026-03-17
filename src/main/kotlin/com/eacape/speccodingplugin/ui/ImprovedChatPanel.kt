@@ -42,6 +42,8 @@ import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
 import com.eacape.speccodingplugin.session.WorkflowChatBinding
 import com.eacape.speccodingplugin.session.WorkflowChatContextAssembler
 import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
+import com.eacape.speccodingplugin.session.WorkflowChatExecutionContext
+import com.eacape.speccodingplugin.session.WorkflowChatExecutionContextResolver
 import com.eacape.speccodingplugin.session.WorkflowChatTaskIntentFailureReason
 import com.eacape.speccodingplugin.session.WorkflowChatTaskIntentResolution
 import com.eacape.speccodingplugin.session.WorkflowChatTaskIntentResolver
@@ -65,6 +67,7 @@ import com.eacape.speccodingplugin.spec.SpecTaskDependencyRules
 import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
 import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgressListener
+import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageId
@@ -220,6 +223,7 @@ class ImprovedChatPanel(
     private val specTaskExecutionService = SpecTaskExecutionService.getInstance(project)
     private val workflowChatActionRouter = WorkflowChatActionRouter.getInstance(project)
     private val workflowChatContextAssembler = WorkflowChatContextAssembler.getInstance(project)
+    private val workflowChatExecutionContextResolver = WorkflowChatExecutionContextResolver.getInstance(project)
     private val workflowChatTaskIntentResolver = WorkflowChatTaskIntentResolver.getInstance(project)
     private val contextCollector by lazy { ContextCollector.getInstance(project) }
     private val completionProvider by lazy { CompletionProvider.getInstance(project) }
@@ -1049,16 +1053,27 @@ class ImprovedChatPanel(
             return false
         }
         val binding = resolvedActiveWorkflowChatBinding() ?: return false
-        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return false
-        return binding.workflowId == progress.workflowId && taskId == progress.taskId
+        if (binding.workflowId != progress.workflowId) {
+            return false
+        }
+        val currentExecutionContext = resolvedCurrentWorkflowChatExecutionContext(binding)
+        return currentExecutionContext == null ||
+            currentExecutionContext.runId == progress.runId ||
+            currentExecutionContext.taskId == progress.taskId
     }
 
     private fun syncActiveTaskExecutionPanel(progress: TaskExecutionLiveProgress) {
         val sessionId = currentSessionId?.trim()?.ifBlank { null } ?: return
         val state = when (val existing = activeTaskExecutionPanel) {
             null -> {
-                if (resolvedActiveWorkflowChatBinding()?.workflowId != progress.workflowId ||
-                    resolvedActiveWorkflowChatBinding()?.taskId != progress.taskId
+                val binding = resolvedActiveWorkflowChatBinding() ?: return
+                if (binding.workflowId != progress.workflowId) {
+                    return
+                }
+                val currentExecutionContext = resolvedCurrentWorkflowChatExecutionContext(binding)
+                if (currentExecutionContext != null &&
+                    currentExecutionContext.runId != progress.runId &&
+                    currentExecutionContext.taskId != progress.taskId
                 ) {
                     return
                 }
@@ -1069,8 +1084,7 @@ class ImprovedChatPanel(
 
             else -> when {
                 existing.sessionId == sessionId && existing.runId == progress.runId -> existing
-                resolvedActiveWorkflowChatBinding()?.workflowId == progress.workflowId &&
-                    resolvedActiveWorkflowChatBinding()?.taskId == progress.taskId -> {
+                resolvedActiveWorkflowChatBinding()?.workflowId == progress.workflowId -> {
                     createActiveTaskExecutionPanel(sessionId, progress).also { created ->
                         activeTaskExecutionPanel = created
                     }
@@ -1194,6 +1208,39 @@ class ImprovedChatPanel(
         }
     }
 
+    private fun resolvedCurrentWorkflowChatExecutionContext(
+        binding: WorkflowChatBinding? = resolvedActiveWorkflowChatBinding(),
+    ): WorkflowChatExecutionContext? {
+        val normalizedBinding = binding?.normalizedOrNull() ?: return null
+        latestObservedTaskLiveProgress
+            ?.takeIf { progress ->
+                progress.workflowId == normalizedBinding.workflowId &&
+                    progress.phase != ExecutionLivePhase.TERMINAL
+            }
+            ?.let { progress ->
+                val status = when (progress.phase) {
+                    ExecutionLivePhase.QUEUED -> TaskExecutionRunStatus.QUEUED
+                    ExecutionLivePhase.WAITING_CONFIRMATION -> TaskExecutionRunStatus.WAITING_CONFIRMATION
+                    ExecutionLivePhase.PREPARING_CONTEXT,
+                    ExecutionLivePhase.REQUEST_DISPATCHED,
+                    ExecutionLivePhase.STREAMING,
+                    ExecutionLivePhase.CANCELLING,
+                    -> TaskExecutionRunStatus.RUNNING
+                    ExecutionLivePhase.TERMINAL -> null
+                }
+                if (status != null) {
+                    return WorkflowChatExecutionContext(
+                        workflowId = progress.workflowId,
+                        runId = progress.runId,
+                        taskId = progress.taskId,
+                        status = status,
+                        enteredAt = progress.startedAt.toString(),
+                    )
+                }
+            }
+        return workflowChatExecutionContextResolver.resolve(normalizedBinding)
+    }
+
     private fun setExplicitWorkflowChatBinding(
         binding: WorkflowChatBinding?,
         updateActiveWorkflowId: Boolean = true,
@@ -1208,8 +1255,8 @@ class ImprovedChatPanel(
     private fun updateWorkflowBindingUi() {
         val binding = resolvedActiveWorkflowChatBinding()
         val specMode = currentInteractionMode() == ChatInteractionMode.SPEC
-        val taskId = binding?.taskId?.trim()?.ifBlank { null }
-        val visible = specMode && taskId != null
+        val executionContext = resolvedCurrentWorkflowChatExecutionContext(binding)
+        val visible = specMode && executionContext != null
         workflowBindingStrip.isVisible = visible
         workflowBindingChip.isVisible = false
         workflowBindingChip.text = ""
@@ -1220,7 +1267,7 @@ class ImprovedChatPanel(
         taskBindingOverflowButton.isVisible = false
         clearTaskBindingButton.toolTipText = null
         clearTaskBindingButton.isVisible = false
-        if (!specMode || binding == null || taskId == null) {
+        if (!specMode || binding == null || executionContext == null) {
             workflowBindingChip.isVisible = false
             taskBindingChip.isVisible = false
             taskBindingChip.text = ""
@@ -1232,10 +1279,10 @@ class ImprovedChatPanel(
             return
         }
 
-        val state = resolveBoundTaskBindingState(binding, taskId)
+        val state = resolveBoundTaskBindingState(binding, executionContext.taskId)
         taskBindingChip.isVisible = true
-        taskBindingChip.text = buildTaskBindingChipText(taskId, state)
-        taskBindingChip.toolTipText = buildTaskBindingTooltip(taskId, state)
+        taskBindingChip.text = buildTaskBindingChipText(executionContext.taskId, state)
+        taskBindingChip.toolTipText = buildTaskBindingTooltip(executionContext.taskId, state)
         taskBindingChip.accessibleContext.accessibleName = taskBindingChip.text
         taskBindingChip.accessibleContext.accessibleDescription = taskBindingChip.toolTipText
         state.liveProgress
@@ -1290,7 +1337,7 @@ class ImprovedChatPanel(
 
     private fun resolveBoundTaskBindingState(): BoundTaskBindingState? {
         val binding = resolvedActiveWorkflowChatBinding() ?: return null
-        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return null
+        val taskId = resolvedCurrentWorkflowChatExecutionContext(binding)?.taskId ?: return null
         return resolveBoundTaskBindingState(binding, taskId)
     }
 
@@ -1626,7 +1673,7 @@ class ImprovedChatPanel(
 
     private fun handleTaskBindingChipClicked() {
         val binding = resolvedActiveWorkflowChatBinding() ?: return
-        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
+        val taskId = resolvedCurrentWorkflowChatExecutionContext(binding)?.taskId ?: return
         openSpecWorkflowRequest(
             SpecToolWindowOpenRequest(
                 workflowId = binding.workflowId,
@@ -1643,21 +1690,9 @@ class ImprovedChatPanel(
     }
 
     private fun clearActiveTaskBinding() {
-        val binding = resolvedActiveWorkflowChatBinding() ?: return
-        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
-        val clearedBinding = binding.copy(
-            taskId = null,
-            actionIntent = WorkflowChatActionIntent.DISCUSS,
-        )
-        setExplicitWorkflowChatBinding(clearedBinding)
-        currentSessionId?.let { sessionId ->
-            sessionManager.clearWorkflowChatTaskBinding(sessionId)
-                .onFailure { error ->
-                    logger.warn("Failed to clear workflow chat task binding for session $sessionId", error)
-                }
-        }
+        val state = resolveBoundTaskBindingState() ?: return
         showStatus(
-            SpecCodingBundle.message("toolwindow.workflow.binding.status.taskCleared", taskId),
+            SpecCodingBundle.message("toolwindow.workflow.binding.status.taskCleared", state.taskId),
             autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
         )
     }
@@ -1666,20 +1701,32 @@ class ImprovedChatPanel(
         actionKind: TaskBindingActionKind,
         supplementalInstruction: String? = null,
     ) {
+        val state = resolveBoundTaskBindingState()
         when (actionKind) {
             TaskBindingActionKind.EXECUTE -> {
                 clearComposerInput()
-                handleBoundTaskExecutionRequested(retry = false, supplementalInstruction = supplementalInstruction)
+                val taskId = state?.taskId ?: return
+                handleWorkflowTaskExecutionRequested(
+                    taskId = taskId,
+                    retry = false,
+                    supplementalInstruction = supplementalInstruction,
+                )
             }
 
             TaskBindingActionKind.RETRY -> {
                 clearComposerInput()
-                handleBoundTaskExecutionRequested(retry = true, supplementalInstruction = supplementalInstruction)
+                val taskId = state?.taskId ?: return
+                handleWorkflowTaskExecutionRequested(
+                    taskId = taskId,
+                    retry = true,
+                    supplementalInstruction = supplementalInstruction,
+                )
             }
 
             TaskBindingActionKind.COMPLETE -> {
                 clearComposerInput()
-                handleBoundTaskCompletionRequested()
+                val taskId = state?.taskId ?: return
+                handleWorkflowTaskCompletionRequested(taskId)
             }
 
             TaskBindingActionKind.STOP -> {
@@ -1718,9 +1765,17 @@ class ImprovedChatPanel(
         retry: Boolean,
         supplementalInstruction: String? = null,
     ) {
+        val taskId = resolveBoundTaskBindingState()?.taskId ?: return
+        handleWorkflowTaskExecutionRequested(taskId, retry, supplementalInstruction)
+    }
+
+    private fun handleWorkflowTaskExecutionRequested(
+        taskId: String,
+        retry: Boolean,
+        supplementalInstruction: String? = null,
+    ) {
         val sessionId = currentSessionId?.trim()?.ifBlank { null } ?: return
         val binding = resolvedActiveWorkflowChatBinding() ?: return
-        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
         showWorkflowAttachmentBoundaryIfNeeded()
         val executionContext = resolveWorkflowChatTaskExecutionContext() ?: return
         val progressKey = if (retry) {
@@ -1745,8 +1800,9 @@ class ImprovedChatPanel(
                     }
                 }
                 if (retry) {
-                    workflowChatActionRouter.retryBoundTask(
+                    workflowChatActionRouter.retryTask(
                         sessionId = sessionId,
+                        taskId = taskId,
                         providerId = executionContext.providerId,
                         modelId = executionContext.modelId,
                         operationMode = executionContext.operationMode,
@@ -1754,8 +1810,9 @@ class ImprovedChatPanel(
                         onRequestRegistered = onRequestRegistered,
                     )
                 } else {
-                    workflowChatActionRouter.executeBoundTask(
+                    workflowChatActionRouter.executeTask(
                         sessionId = sessionId,
+                        taskId = taskId,
                         providerId = executionContext.providerId,
                         modelId = executionContext.modelId,
                         operationMode = executionContext.operationMode,
@@ -1812,15 +1869,19 @@ class ImprovedChatPanel(
     }
 
     private fun handleBoundTaskCompletionRequested() {
+        val taskId = resolveBoundTaskBindingState()?.taskId ?: return
+        handleWorkflowTaskCompletionRequested(taskId)
+    }
+
+    private fun handleWorkflowTaskCompletionRequested(taskId: String) {
         val sessionId = currentSessionId?.trim()?.ifBlank { null } ?: return
         val binding = resolvedActiveWorkflowChatBinding() ?: return
-        val taskId = binding.taskId?.trim()?.ifBlank { null } ?: return
         showWorkflowAttachmentBoundaryIfNeeded()
         SpecWorkflowActionSupport.runBackground(
             project = project,
             title = SpecCodingBundle.message("spec.toolwindow.tasks.complete.progress"),
             task = {
-                workflowChatActionRouter.previewCompleteBoundTask(sessionId)
+                workflowChatActionRouter.previewCompleteTask(sessionId, taskId)
             },
             onSuccess = { plan ->
                 val dialogResult = SpecTaskCompletionDialogs.showCompletionConfirmation(
@@ -1832,8 +1893,9 @@ class ImprovedChatPanel(
                     project = project,
                     title = SpecCodingBundle.message("spec.toolwindow.tasks.complete.progress"),
                     task = {
-                        workflowChatActionRouter.completeBoundTask(
+                        workflowChatActionRouter.completeTask(
                             sessionId = sessionId,
+                            taskId = taskId,
                             planId = plan.planId,
                             relatedFiles = dialogResult.relatedFiles,
                             verificationResult = dialogResult.verificationResult,
@@ -1969,27 +2031,14 @@ class ImprovedChatPanel(
         if (specSidebarVisible) {
             specSidebarPanel.focusWorkflow(binding.workflowId)
         }
-        val statusKey = if (binding.taskId.isNullOrBlank()) {
-            "toolwindow.workflow.binding.status.workflowBound"
-        } else {
-            "toolwindow.workflow.binding.status.taskBound"
-        }
-        val statusText = if (binding.taskId.isNullOrBlank()) {
-            SpecCodingBundle.message(statusKey, binding.workflowId)
-        } else {
-            SpecCodingBundle.message(statusKey, binding.workflowId, binding.taskId)
-        }
-        showStatus(statusText, autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS)
+        showStatus(
+            SpecCodingBundle.message("toolwindow.workflow.binding.status.workflowBound", binding.workflowId),
+            autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
+        )
     }
 
     private fun buildWorkflowChatSessionTitle(binding: WorkflowChatBinding): String {
-        val workflowLabel = resolveWorkflowBindingLabel(binding.workflowId)
-        val taskId = binding.taskId?.trim()?.ifBlank { null }
-        return if (taskId == null) {
-            workflowLabel
-        } else {
-            "$workflowLabel · $taskId"
-        }
+        return resolveWorkflowBindingLabel(binding.workflowId)
     }
 
     private fun switchActiveSpecWorkflowFromUser(workflowId: String) {
@@ -4146,7 +4195,6 @@ class ImprovedChatPanel(
         val binding = buildWorkflowChatBinding(
             workflowId = resolution.workflowId,
             source = source,
-            taskId = resolution.task.id,
             actionIntent = resolution.actionIntent,
             focusedStage = StageId.IMPLEMENT,
         )
@@ -4173,7 +4221,18 @@ class ImprovedChatPanel(
             )
             return
         }
-        performTaskBindingAction(actionKind)
+        when (actionKind) {
+            TaskBindingActionKind.EXECUTE -> handleWorkflowTaskExecutionRequested(
+                taskId = resolution.task.id,
+                retry = false,
+            )
+            TaskBindingActionKind.RETRY -> handleWorkflowTaskExecutionRequested(
+                taskId = resolution.task.id,
+                retry = true,
+            )
+            TaskBindingActionKind.COMPLETE -> handleWorkflowTaskCompletionRequested(resolution.task.id)
+            TaskBindingActionKind.STOP -> requestBoundTaskExecutionStop()
+        }
     }
 
     private fun reportWorkflowTaskIntentUnresolved(
@@ -4841,7 +4900,6 @@ class ImprovedChatPanel(
     private fun buildWorkflowChatBinding(
         workflowId: String,
         source: WorkflowChatEntrySource,
-        taskId: String? = null,
         actionIntent: WorkflowChatActionIntent = WorkflowChatActionIntent.DISCUSS,
         focusedStage: StageId? = null,
     ): WorkflowChatBinding {
@@ -4850,7 +4908,6 @@ class ImprovedChatPanel(
             ?.currentStage
         return WorkflowChatBinding(
             workflowId = workflowId,
-            taskId = taskId,
             focusedStage = resolvedFocusedStage,
             source = source,
             actionIntent = actionIntent,
@@ -4867,7 +4924,6 @@ class ImprovedChatPanel(
             ?: buildWorkflowChatBinding(
                 workflowId = normalizedWorkflowId,
                 source = existingBinding?.source ?: WorkflowChatEntrySource.MODE_SWITCH,
-                taskId = existingBinding?.taskId,
                 actionIntent = existingBinding?.actionIntent ?: WorkflowChatActionIntent.DISCUSS,
                 focusedStage = existingBinding?.focusedStage,
             )
@@ -7518,7 +7574,7 @@ class ImprovedChatPanel(
         return mapOf(
             "mode" to currentInteractionMode().name,
             "workflowId" to resolvedActiveWorkflowChatBinding()?.workflowId.orEmpty(),
-            "taskId" to resolvedActiveWorkflowChatBinding()?.taskId.orEmpty(),
+            "taskId" to resolvedCurrentWorkflowChatExecutionContext()?.taskId.orEmpty(),
             "workflowChipVisible" to (workflowBindingChip.parent != null && workflowBindingChip.isVisible).toString(),
             "workflowChipText" to workflowBindingChip.text.orEmpty(),
             "workflowChipTooltip" to workflowBindingChip.toolTipText.orEmpty(),

@@ -56,7 +56,7 @@ class WorkflowChatActionRouterTest {
     }
 
     @Test
-    fun `executeBoundTask should reuse current workflow chat session`() {
+    fun `executeTask should reuse current workflow chat session`() {
         val workflowId = "wf-chat-execute"
         seedWorkflow(workflowId)
         val session = createBoundSession(
@@ -77,8 +77,9 @@ class WorkflowChatActionRouterTest {
             },
         )
 
-        val result = router.executeBoundTask(
+        val result = router.executeTask(
             sessionId = session.id,
+            taskId = "T-001",
             providerId = "mock",
             modelId = "mock-model-v1",
             operationMode = OperationMode.AUTO,
@@ -93,7 +94,6 @@ class WorkflowChatActionRouterTest {
         assertEquals(1, sessionManager.listSessions().size)
         assertEquals(WorkflowChatActionIntent.EXECUTE_TASK, loadedSession?.workflowChatBinding?.actionIntent)
         assertEquals(WorkflowChatEntrySource.SIDEBAR, loadedSession?.workflowChatBinding?.source)
-        assertEquals("T-001", loadedSession?.workflowChatBinding?.taskId)
         assertEquals(
             listOf(ConversationRole.USER, ConversationRole.ASSISTANT),
             messages.map { message -> message.role },
@@ -105,7 +105,7 @@ class WorkflowChatActionRouterTest {
     }
 
     @Test
-    fun `retryBoundTask should reuse current workflow chat session and previous run context`() {
+    fun `retryTask should reuse current workflow chat session and previous run context`() {
         val workflowId = "wf-chat-retry"
         seedWorkflow(
             workflowId = workflowId,
@@ -153,8 +153,9 @@ class WorkflowChatActionRouterTest {
             },
         )
 
-        val result = router.retryBoundTask(
+        val result = router.retryTask(
             sessionId = session.id,
+            taskId = "T-001",
             providerId = "mock",
             modelId = "mock-model-v1",
             operationMode = OperationMode.AUTO,
@@ -305,7 +306,6 @@ class WorkflowChatActionRouterTest {
             title = "Workflow Chat $taskId",
             workflowChatBinding = WorkflowChatBinding(
                 workflowId = workflowId,
-                taskId = taskId,
                 focusedStage = StageId.IMPLEMENT,
                 source = source,
                 actionIntent = WorkflowChatActionIntent.DISCUSS,

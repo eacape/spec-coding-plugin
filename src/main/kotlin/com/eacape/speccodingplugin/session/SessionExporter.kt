@@ -108,7 +108,6 @@ object SessionExporter {
             appendLine("- Updated At: ${formatTimestamp(session.updatedAt)}")
             appendLine("- Spec Task: ${session.specTaskId ?: "-"}")
             appendLine("- Workflow Binding: ${session.workflowChatBinding?.workflowId ?: "-"}")
-            appendLine("- Bound Task: ${session.workflowChatBinding?.taskId ?: "-"}")
             appendLine("- Focused Stage: ${session.workflowChatBinding?.focusedStage?.name ?: "-"}")
             appendLine("- Action Intent: ${session.workflowChatBinding?.actionIntent?.name ?: "-"}")
             appendLine("- Worktree: ${session.worktreeId ?: "-"}")
@@ -143,7 +142,6 @@ object SessionExporter {
             workflowChatBinding = session.workflowChatBinding?.let { binding ->
                 SessionExportWorkflowChatBinding(
                     workflowId = binding.workflowId,
-                    taskId = binding.taskId,
                     focusedStage = binding.focusedStage?.name,
                     source = binding.source.name,
                     actionIntent = binding.actionIntent.name,
@@ -178,7 +176,6 @@ object SessionExporter {
             "Updated At" to escapeHtml(formatTimestamp(session.updatedAt)),
             "Spec Task" to escapeHtml(session.specTaskId ?: "-"),
             "Workflow Binding" to escapeHtml(session.workflowChatBinding?.workflowId ?: "-"),
-            "Bound Task" to escapeHtml(session.workflowChatBinding?.taskId ?: "-"),
             "Focused Stage" to escapeHtml(session.workflowChatBinding?.focusedStage?.name ?: "-"),
             "Action Intent" to escapeHtml(session.workflowChatBinding?.actionIntent?.name ?: "-"),
             "Worktree" to escapeHtml(session.worktreeId ?: "-"),
@@ -280,7 +277,6 @@ private data class SessionExportPayload(
 @Serializable
 private data class SessionExportWorkflowChatBinding(
     val workflowId: String,
-    val taskId: String? = null,
     val focusedStage: String? = null,
     val source: String,
     val actionIntent: String,

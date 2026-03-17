@@ -17,9 +17,13 @@ import com.intellij.openapi.project.Project
 class WorkflowChatContextAssembler(private val project: Project) {
     private var _storageOverride: SpecStorage? = null
     private var _tasksServiceOverride: SpecTasksService? = null
+    private var _executionContextResolverOverride: WorkflowChatExecutionContextResolver? = null
 
     private val storage: SpecStorage by lazy { _storageOverride ?: SpecStorage.getInstance(project) }
     private val tasksService: SpecTasksService by lazy { _tasksServiceOverride ?: SpecTasksService.getInstance(project) }
+    private val executionContextResolver: WorkflowChatExecutionContextResolver by lazy {
+        _executionContextResolverOverride ?: WorkflowChatExecutionContextResolver.getInstance(project)
+    }
 
     internal constructor(
         project: Project,
@@ -28,6 +32,7 @@ class WorkflowChatContextAssembler(private val project: Project) {
     ) : this(project) {
         _storageOverride = storage
         _tasksServiceOverride = tasksService
+        _executionContextResolverOverride = WorkflowChatExecutionContextResolver(project, storage)
     }
 
     fun buildPrompt(
@@ -63,7 +68,7 @@ class WorkflowChatContextAssembler(private val project: Project) {
             appendLine("Focused stage: ${context.focusedStage.name}")
             appendLine("Action intent: ${context.actionIntent.name}")
             appendLine()
-            appendLine("## Bound Task")
+            appendLine("## Current Task Context")
             appendTaskSection(context)
             appendLine()
             appendListSection(
@@ -98,8 +103,12 @@ class WorkflowChatContextAssembler(private val project: Project) {
                 .attachActiveExecutionRuns(workflow.taskExecutionRuns)
                 .sortedBy(StructuredTask::id)
         }.getOrDefault(emptyList())
-        val boundTaskId = normalizedBinding.taskId?.trim()?.ifBlank { null }
-        val boundTask = boundTaskId?.let { taskId -> tasks.firstOrNull { task -> task.id == taskId } }
+        val executionContext = executionContextResolver.resolve(
+            workflowId = workflow.id,
+            runs = workflow.taskExecutionRuns,
+        )
+        val currentTaskId = executionContext?.taskId
+        val currentTask = currentTaskId?.let { taskId -> tasks.firstOrNull { task -> task.id == taskId } }
 
         return WorkflowChatPromptContext(
             workflowId = workflow.id,
@@ -108,31 +117,32 @@ class WorkflowChatContextAssembler(private val project: Project) {
             currentStage = workflow.currentStage,
             focusedStage = normalizedBinding.focusedStage ?: workflow.currentStage,
             actionIntent = normalizedBinding.actionIntent,
-            boundTaskId = boundTaskId,
-            boundTask = boundTask,
-            dependencySummary = boundTask?.let { buildDependencySummary(tasks, it) }.orEmpty(),
+            executionContext = executionContext,
+            currentTaskId = currentTaskId,
+            currentTask = currentTask,
+            dependencySummary = currentTask?.let { buildDependencySummary(tasks, it) }.orEmpty(),
             artifactSummaries = buildDocumentSummaries(workflow),
             clarificationConclusions = extractClarificationConclusions(workflow),
-            recentRuns = buildRecentRuns(workflow.taskExecutionRuns, boundTaskId),
+            recentRuns = buildRecentRuns(workflow.taskExecutionRuns, currentTaskId),
         )
     }
 
     private fun StringBuilder.appendTaskSection(context: WorkflowChatPromptContext) {
-        val boundTaskId = context.boundTaskId
-        val boundTask = context.boundTask
+        val currentTaskId = context.currentTaskId
+        val currentTask = context.currentTask
         when {
-            boundTaskId == null -> appendLine("- No task binding.")
-            boundTask == null -> {
-                appendLine("- Task ID: $boundTaskId")
+            currentTaskId == null -> appendLine("- No active task execution context.")
+            currentTask == null -> {
+                appendLine("- Task ID: $currentTaskId")
                 appendLine("- Task context unavailable because the task is missing from tasks.md.")
             }
 
             else -> {
-                appendLine("Task ID: ${boundTask.id}")
-                appendLine("Task Title: ${boundTask.title}")
-                appendLine("Task Status: ${boundTask.status.name}")
-                appendLine("Task Display Status: ${boundTask.displayStatus.name}")
-                appendLine("Priority: ${boundTask.priority.name}")
+                appendLine("Task ID: ${currentTask.id}")
+                appendLine("Task Title: ${currentTask.title}")
+                appendLine("Task Status: ${currentTask.status.name}")
+                appendLine("Task Display Status: ${currentTask.displayStatus.name}")
+                appendLine("Priority: ${currentTask.priority.name}")
                 appendLine("Dependencies:")
                 if (context.dependencySummary.isEmpty()) {
                     appendLine("- None")
@@ -140,13 +150,13 @@ class WorkflowChatContextAssembler(private val project: Project) {
                     context.dependencySummary.forEach { dependency -> appendLine("- $dependency") }
                 }
                 appendLine("Related files:")
-                if (boundTask.relatedFiles.isEmpty()) {
+                if (currentTask.relatedFiles.isEmpty()) {
                     appendLine("- None")
                 } else {
-                    boundTask.relatedFiles.forEach { relatedFile -> appendLine("- $relatedFile") }
+                    currentTask.relatedFiles.forEach { relatedFile -> appendLine("- $relatedFile") }
                 }
-                boundTask.activeExecutionRun?.let { run ->
-                    appendLine("Active run: ${run.runId} | ${run.status.name}")
+                context.executionContext?.let { execution ->
+                    appendLine("Execution run: ${execution.runId} | ${execution.status.name}")
                 }
             }
         }
@@ -319,8 +329,9 @@ class WorkflowChatContextAssembler(private val project: Project) {
         val currentStage: StageId,
         val focusedStage: StageId,
         val actionIntent: WorkflowChatActionIntent,
-        val boundTaskId: String?,
-        val boundTask: StructuredTask?,
+        val executionContext: WorkflowChatExecutionContext?,
+        val currentTaskId: String?,
+        val currentTask: StructuredTask?,
         val dependencySummary: List<String>,
         val artifactSummaries: List<String>,
         val clarificationConclusions: List<String>,

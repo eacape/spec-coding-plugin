@@ -633,7 +633,7 @@ class SpecDetailPanel(
         val workflow = currentWorkflow
         val phase = workflow?.let(::resolveDisplayedDocumentPhase)
         return if (workflow != null && phase != null && isReadOnlyRevisionLocked(workflow, phase)) {
-            SpecWorkflowIcons.Branch
+            DETAIL_START_REVISION_ICON
         } else {
             SpecWorkflowIcons.Edit
         }
@@ -4434,6 +4434,7 @@ class SpecDetailPanel(
         private val DOCUMENT_TAB_TEXT_SELECTED = JBColor(Color(34, 68, 113), Color(236, 242, 251))
         private val SECTION_TITLE_FG = JBColor(Color(36, 60, 101), Color(212, 223, 241))
         private val COLLAPSE_TOGGLE_TEXT_ACTIVE = JBColor(Color(86, 115, 158), Color(187, 205, 230))
+        private val DETAIL_START_REVISION_ICON = IconLoader.getIcon("/icons/spec-workflow-start-revision.svg", SpecDetailPanel::class.java)
         private val DETAIL_SAVE_ICON = IconLoader.getIcon("/icons/spec-detail-save.svg", SpecDetailPanel::class.java)
         private const val MAX_PROCESS_TIMELINE_ENTRIES = 18
         private const val DOCUMENT_VIEWPORT_HEIGHT = 360

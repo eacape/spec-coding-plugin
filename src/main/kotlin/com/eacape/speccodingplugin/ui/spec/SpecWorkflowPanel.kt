@@ -3897,7 +3897,6 @@ class SpecWorkflowPanel(
         val request = WorkflowChatOpenRequest(
             binding = WorkflowChatBinding(
                 workflowId = workflowId,
-                taskId = taskId,
                 focusedStage = StageId.IMPLEMENT,
                 source = WorkflowChatEntrySource.TASK_PANEL,
                 actionIntent = WorkflowChatActionIntent.DISCUSS,

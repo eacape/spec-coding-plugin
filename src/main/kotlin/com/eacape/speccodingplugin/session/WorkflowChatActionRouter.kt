@@ -20,6 +20,7 @@ class WorkflowChatActionRouter(private val project: Project) {
     private var _tasksServiceOverride: SpecTasksService? = null
     private var _executionServiceOverride: SpecTaskExecutionService? = null
     private var _completionServiceOverride: SpecTaskCompletionService? = null
+    private var _executionContextResolverOverride: WorkflowChatExecutionContextResolver? = null
 
     private val sessionManager: SessionManager by lazy {
         _sessionManagerOverride ?: SessionManager.getInstance(project)
@@ -33,6 +34,9 @@ class WorkflowChatActionRouter(private val project: Project) {
     }
     private val completionService: SpecTaskCompletionService by lazy {
         _completionServiceOverride ?: SpecTaskCompletionService.getInstance(project)
+    }
+    private val executionContextResolver: WorkflowChatExecutionContextResolver by lazy {
+        _executionContextResolverOverride ?: WorkflowChatExecutionContextResolver.getInstance(project)
     }
 
     internal constructor(
@@ -48,6 +52,7 @@ class WorkflowChatActionRouter(private val project: Project) {
         _tasksServiceOverride = tasksService
         _executionServiceOverride = executionService
         _completionServiceOverride = completionService
+        _executionContextResolverOverride = WorkflowChatExecutionContextResolver(project, storage)
     }
 
     fun executeBoundTask(
@@ -58,20 +63,37 @@ class WorkflowChatActionRouter(private val project: Project) {
         supplementalInstruction: String? = null,
         onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = {},
     ): SpecTaskExecutionService.TaskAiExecutionResult {
-        val context = resolveBoundTaskContext(sessionId)
-        return executionService.startAiExecution(
-            workflowId = context.binding.workflowId,
-            taskId = context.task.id,
+        return executeTaskAction(
+            sessionId = sessionId,
+            explicitTaskId = null,
             providerId = providerId,
             modelId = modelId,
             operationMode = operationMode,
+            actionIntent = WorkflowChatActionIntent.EXECUTE_TASK,
             supplementalInstruction = supplementalInstruction,
-            sessionId = context.session.id,
-            sessionSource = context.binding.source,
-            auditContext = buildAuditContext(
-                context = context,
-                action = WorkflowChatActionIntent.EXECUTE_TASK,
-            ),
+            previousRunId = null,
+            onRequestRegistered = onRequestRegistered,
+        )
+    }
+
+    fun executeTask(
+        sessionId: String,
+        taskId: String,
+        providerId: String?,
+        modelId: String?,
+        operationMode: OperationMode,
+        supplementalInstruction: String? = null,
+        onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = {},
+    ): SpecTaskExecutionService.TaskAiExecutionResult {
+        return executeTaskAction(
+            sessionId = sessionId,
+            explicitTaskId = taskId,
+            providerId = providerId,
+            modelId = modelId,
+            operationMode = operationMode,
+            actionIntent = WorkflowChatActionIntent.EXECUTE_TASK,
+            supplementalInstruction = supplementalInstruction,
+            previousRunId = null,
             onRequestRegistered = onRequestRegistered,
         )
     }
@@ -85,27 +107,52 @@ class WorkflowChatActionRouter(private val project: Project) {
         previousRunId: String? = null,
         onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = {},
     ): SpecTaskExecutionService.TaskAiExecutionResult {
-        val context = resolveBoundTaskContext(sessionId)
-        return executionService.retryAiExecution(
-            workflowId = context.binding.workflowId,
-            taskId = context.task.id,
+        return executeTaskAction(
+            sessionId = sessionId,
+            explicitTaskId = null,
             providerId = providerId,
             modelId = modelId,
             operationMode = operationMode,
+            actionIntent = WorkflowChatActionIntent.RETRY_TASK,
             supplementalInstruction = supplementalInstruction,
             previousRunId = previousRunId,
-            sessionId = context.session.id,
-            sessionSource = context.binding.source,
-            auditContext = buildAuditContext(
-                context = context,
-                action = WorkflowChatActionIntent.RETRY_TASK,
-            ),
+            onRequestRegistered = onRequestRegistered,
+        )
+    }
+
+    fun retryTask(
+        sessionId: String,
+        taskId: String,
+        providerId: String?,
+        modelId: String?,
+        operationMode: OperationMode,
+        supplementalInstruction: String? = null,
+        previousRunId: String? = null,
+        onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = {},
+    ): SpecTaskExecutionService.TaskAiExecutionResult {
+        return executeTaskAction(
+            sessionId = sessionId,
+            explicitTaskId = taskId,
+            providerId = providerId,
+            modelId = modelId,
+            operationMode = operationMode,
+            actionIntent = WorkflowChatActionIntent.RETRY_TASK,
+            supplementalInstruction = supplementalInstruction,
+            previousRunId = previousRunId,
             onRequestRegistered = onRequestRegistered,
         )
     }
 
     fun previewCompleteBoundTask(sessionId: String): SpecTaskCompletionService.TaskCompletionPlan {
-        val context = resolveBoundTaskContext(sessionId)
+        val context = resolveTaskContext(sessionId)
+        return completionService.previewCompletion(
+            workflowId = context.binding.workflowId,
+            taskId = context.task.id,
+        )
+    }
+
+    fun previewCompleteTask(sessionId: String, taskId: String): SpecTaskCompletionService.TaskCompletionPlan {
+        val context = resolveTaskContext(sessionId, taskId)
         return completionService.previewCompletion(
             workflowId = context.binding.workflowId,
             taskId = context.task.id,
@@ -118,7 +165,23 @@ class WorkflowChatActionRouter(private val project: Project) {
         relatedFiles: List<String>,
         verificationResult: TaskVerificationResult?,
     ): StructuredTask {
-        val context = resolveBoundTaskContext(sessionId)
+        return completeTask(
+            sessionId = sessionId,
+            taskId = null,
+            planId = planId,
+            relatedFiles = relatedFiles,
+            verificationResult = verificationResult,
+        )
+    }
+
+    fun completeTask(
+        sessionId: String,
+        taskId: String?,
+        planId: String,
+        relatedFiles: List<String>,
+        verificationResult: TaskVerificationResult?,
+    ): StructuredTask {
+        val context = resolveTaskContext(sessionId, taskId)
         val completedTask = completionService.completeTask(
             planId = planId,
             relatedFiles = relatedFiles,
@@ -136,15 +199,67 @@ class WorkflowChatActionRouter(private val project: Project) {
         return completedTask
     }
 
-    private fun resolveBoundTaskContext(sessionId: String): BoundTaskContext {
+    private fun executeTaskAction(
+        sessionId: String,
+        explicitTaskId: String?,
+        providerId: String?,
+        modelId: String?,
+        operationMode: OperationMode,
+        actionIntent: WorkflowChatActionIntent,
+        supplementalInstruction: String?,
+        previousRunId: String?,
+        onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit,
+    ): SpecTaskExecutionService.TaskAiExecutionResult {
+        val context = resolveTaskContext(sessionId, explicitTaskId)
+        return when (actionIntent) {
+            WorkflowChatActionIntent.EXECUTE_TASK -> executionService.startAiExecution(
+                workflowId = context.binding.workflowId,
+                taskId = context.task.id,
+                providerId = providerId,
+                modelId = modelId,
+                operationMode = operationMode,
+                supplementalInstruction = supplementalInstruction,
+                sessionId = context.session.id,
+                sessionSource = context.binding.source,
+                auditContext = buildAuditContext(context, actionIntent),
+                onRequestRegistered = onRequestRegistered,
+            )
+
+            WorkflowChatActionIntent.RETRY_TASK -> executionService.retryAiExecution(
+                workflowId = context.binding.workflowId,
+                taskId = context.task.id,
+                providerId = providerId,
+                modelId = modelId,
+                operationMode = operationMode,
+                supplementalInstruction = supplementalInstruction,
+                previousRunId = previousRunId,
+                sessionId = context.session.id,
+                sessionSource = context.binding.source,
+                auditContext = buildAuditContext(context, actionIntent),
+                onRequestRegistered = onRequestRegistered,
+            )
+
+            WorkflowChatActionIntent.COMPLETE_TASK,
+            WorkflowChatActionIntent.DISCUSS,
+            -> error("Unsupported workflow chat task action: $actionIntent")
+        }
+    }
+
+    private fun resolveTaskContext(
+        sessionId: String,
+        explicitTaskId: String? = null,
+    ): BoundTaskContext {
         val normalizedSessionId = sessionId.trim()
         require(normalizedSessionId.isNotBlank()) { "sessionId cannot be blank" }
         val session = sessionManager.getSession(normalizedSessionId)
             ?: throw IllegalArgumentException("Session not found: $normalizedSessionId")
         val binding = session.resolvedWorkflowChatBinding()
             ?: throw IllegalStateException("Workflow chat binding is not available for session $normalizedSessionId")
-        val taskId = binding.taskId?.trim()?.ifBlank { null }
-            ?: throw IllegalStateException("Workflow chat session $normalizedSessionId is not bound to a task")
+        val taskId = explicitTaskId?.trim()?.ifBlank { null }
+            ?: executionContextResolver.resolve(binding)?.taskId
+            ?: throw IllegalStateException(
+                "Workflow chat session $normalizedSessionId has no active task execution context",
+            )
         val workflow = storage.loadWorkflow(binding.workflowId).getOrThrow()
         val task = tasksService.parse(binding.workflowId)
             .attachActiveExecutionRuns(workflow.taskExecutionRuns)

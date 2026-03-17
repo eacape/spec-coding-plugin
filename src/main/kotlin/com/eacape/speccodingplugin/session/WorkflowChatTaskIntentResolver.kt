@@ -49,9 +49,13 @@ enum class WorkflowChatTaskIntentFailureReason {
 class WorkflowChatTaskIntentResolver(private val project: Project) {
     private var _storageOverride: SpecStorage? = null
     private var _tasksServiceOverride: SpecTasksService? = null
+    private var _executionContextResolverOverride: WorkflowChatExecutionContextResolver? = null
 
     private val storage: SpecStorage by lazy { _storageOverride ?: SpecStorage.getInstance(project) }
     private val tasksService: SpecTasksService by lazy { _tasksServiceOverride ?: SpecTasksService.getInstance(project) }
+    private val executionContextResolver: WorkflowChatExecutionContextResolver by lazy {
+        _executionContextResolverOverride ?: WorkflowChatExecutionContextResolver.getInstance(project)
+    }
 
     internal constructor(
         project: Project,
@@ -60,6 +64,7 @@ class WorkflowChatTaskIntentResolver(private val project: Project) {
     ) : this(project) {
         _storageOverride = storage
         _tasksServiceOverride = tasksService
+        _executionContextResolverOverride = WorkflowChatExecutionContextResolver(project, storage)
     }
 
     fun resolve(
@@ -133,7 +138,7 @@ class WorkflowChatTaskIntentResolver(private val project: Project) {
         }
 
         if (currentTaskCue) {
-            val boundTaskId = binding?.taskId?.trim()?.ifBlank { null }
+            val boundTaskId = executionContextResolver.resolve(binding)?.taskId
                 ?: return WorkflowChatTaskIntentResolution.Unresolved(
                     actionIntent = actionIntent,
                     reason = WorkflowChatTaskIntentFailureReason.NO_CURRENT_TASK,

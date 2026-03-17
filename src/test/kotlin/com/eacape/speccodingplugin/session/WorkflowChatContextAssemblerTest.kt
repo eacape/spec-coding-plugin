@@ -130,7 +130,6 @@ class WorkflowChatContextAssemblerTest {
         val prompt = assembler.buildPrompt(
             binding = WorkflowChatBinding(
                 workflowId = workflowId,
-                taskId = "T-002",
                 focusedStage = StageId.DESIGN,
                 source = WorkflowChatEntrySource.SPEC_PAGE,
             ),

@@ -67,7 +67,6 @@ class SessionManagerTest {
     fun `createSession should persist workflow chat binding`() {
         val binding = WorkflowChatBinding(
             workflowId = "wf-binding",
-            taskId = "T-007",
             focusedStage = StageId.IMPLEMENT,
             source = WorkflowChatEntrySource.TASK_PANEL,
             actionIntent = WorkflowChatActionIntent.EXECUTE_TASK,
@@ -85,7 +84,7 @@ class SessionManagerTest {
         val loaded = manager.getSession(created.id)
         assertEquals(binding, loaded?.workflowChatBinding)
 
-        val searched = manager.searchSessions(query = "T-007", filter = SessionFilter.SPEC, limit = 20)
+        val searched = manager.searchSessions(query = "wf-binding", filter = SessionFilter.SPEC, limit = 20)
         assertEquals(1, searched.size)
         assertEquals(binding, searched.first().workflowChatBinding)
     }

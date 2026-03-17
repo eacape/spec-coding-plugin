@@ -92,7 +92,7 @@ class SessionManager internal constructor(
                     statement.setString(4, session.worktreeId)
                     statement.setString(5, session.modelProvider)
                     statement.setString(6, session.workflowChatBinding?.workflowId)
-                    statement.setString(7, session.workflowChatBinding?.taskId)
+                    statement.setNull(7, java.sql.Types.VARCHAR)
                     statement.setString(8, session.workflowChatBinding?.focusedStage?.name)
                     statement.setString(9, session.workflowChatBinding?.source?.name)
                     statement.setString(10, session.workflowChatBinding?.actionIntent?.name)
@@ -156,7 +156,7 @@ class SessionManager internal constructor(
                 ).use { statement ->
                     statement.setString(1, normalizedSpecTaskId)
                     statement.setString(2, normalizedBinding?.workflowId)
-                    statement.setString(3, normalizedBinding?.taskId)
+                    statement.setNull(3, java.sql.Types.VARCHAR)
                     statement.setString(4, normalizedBinding?.focusedStage?.name)
                     statement.setString(5, normalizedBinding?.source?.name)
                     statement.setString(6, normalizedBinding?.actionIntent?.name)
@@ -191,7 +191,7 @@ class SessionManager internal constructor(
                 ).use { statement ->
                     statement.setString(1, normalizedBinding.workflowId)
                     statement.setString(2, normalizedBinding.workflowId)
-                    statement.setString(3, normalizedBinding.taskId)
+                    statement.setNull(3, java.sql.Types.VARCHAR)
                     statement.setString(4, normalizedBinding.focusedStage?.name)
                     statement.setString(5, normalizedBinding.source.name)
                     statement.setString(6, normalizedBinding.actionIntent.name)
@@ -217,10 +217,7 @@ class SessionManager internal constructor(
                 ?: throw IllegalStateException("Workflow chat binding not found for session: $normalizedSessionId")
             updateWorkflowChatBinding(
                 normalizedSessionId,
-                existingBinding.copy(
-                    taskId = null,
-                    actionIntent = WorkflowChatActionIntent.DISCUSS,
-                ),
+                existingBinding.copy(actionIntent = WorkflowChatActionIntent.DISCUSS),
             ).getOrThrow()
         }
     }
@@ -820,6 +817,8 @@ class SessionManager internal constructor(
                     runSessionBranchMigration(connection)
                 } else if (migration.version == 5) {
                     runWorkflowChatBindingMigration(connection)
+                } else if (migration.version == 6) {
+                    runWorkflowChatWorkflowOnlyMigration(connection)
                 } else {
                     migration.statements.forEach { sql ->
                         connection.createStatement().use { statement ->
@@ -916,7 +915,6 @@ class SessionManager internal constructor(
         val legacySpecTaskId = getString("spec_task_id")
         val workflowChatBinding = workflowChatBindingFromStorage(
             workflowId = getString("workflow_id"),
-            taskId = getString("task_id"),
             focusedStageName = getString("focused_stage"),
             sourceName = getString("workflow_source"),
             actionIntentName = getString("workflow_action_intent"),
@@ -968,7 +966,6 @@ class SessionManager internal constructor(
         val legacySpecTaskId = getString("spec_task_id")
         val workflowChatBinding = workflowChatBindingFromStorage(
             workflowId = getString("workflow_id"),
-            taskId = getString("task_id"),
             focusedStageName = getString("focused_stage"),
             sourceName = getString("workflow_source"),
             actionIntentName = getString("workflow_action_intent"),
@@ -1080,6 +1077,22 @@ class SessionManager internal constructor(
                 WHERE workflow_id IS NOT NULL
                   AND TRIM(workflow_id) <> ''
                   AND (workflow_action_intent IS NULL OR TRIM(workflow_action_intent) = '')
+                """.trimIndent(),
+            )
+        }
+    }
+
+    private fun runWorkflowChatWorkflowOnlyMigration(connection: Connection) {
+        if (!hasColumn(connection, "sessions", "task_id")) {
+            return
+        }
+        connection.createStatement().use { statement ->
+            statement.execute(
+                """
+                UPDATE sessions
+                SET task_id = NULL
+                WHERE task_id IS NOT NULL
+                  AND TRIM(task_id) <> ''
                 """.trimIndent(),
             )
         }
@@ -1243,6 +1256,10 @@ class SessionManager internal constructor(
             ),
             SessionMigration(
                 version = 5,
+                statements = emptyList(),
+            ),
+            SessionMigration(
+                version = 6,
                 statements = emptyList(),
             ),
         )

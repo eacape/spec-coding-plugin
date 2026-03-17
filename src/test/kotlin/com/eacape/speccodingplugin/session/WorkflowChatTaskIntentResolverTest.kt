@@ -5,6 +5,9 @@ import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecStorage
 import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.SpecWorkflow
+import com.eacape.speccodingplugin.spec.TaskExecutionRun
+import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
+import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageState
@@ -137,13 +140,22 @@ class WorkflowChatTaskIntentResolverTest {
                     status = "PENDING",
                 ),
             ),
+            taskExecutionRuns = listOf(
+                TaskExecutionRun(
+                    runId = "run-current-task",
+                    taskId = "T-002",
+                    status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                    trigger = ExecutionTrigger.USER_EXECUTE,
+                    startedAt = "2026-03-17T10:00:00Z",
+                    summary = "Waiting for confirmation.",
+                ),
+            ),
         )
 
         val resolution = resolver.resolve(
             workflowId = "wf-current-task",
             binding = WorkflowChatBinding(
                 workflowId = "wf-current-task",
-                taskId = "T-002",
                 focusedStage = StageId.IMPLEMENT,
                 source = WorkflowChatEntrySource.SESSION_RESTORE,
             ),
@@ -223,6 +235,7 @@ class WorkflowChatTaskIntentResolverTest {
     private fun seedWorkflow(
         workflowId: String,
         tasksMarkdown: String,
+        taskExecutionRuns: List<TaskExecutionRun> = emptyList(),
     ) {
         storage.saveWorkflow(
             SpecWorkflow(
@@ -233,6 +246,7 @@ class WorkflowChatTaskIntentResolverTest {
                 description = "workflow chat intent resolver test",
                 documents = emptyMap(),
                 status = WorkflowStatus.IN_PROGRESS,
+                taskExecutionRuns = taskExecutionRuns,
                 stageStates = linkedMapOf(
                     StageId.REQUIREMENTS to StageState(active = true, status = StageProgress.DONE),
                     StageId.DESIGN to StageState(active = true, status = StageProgress.DONE),

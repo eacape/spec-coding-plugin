@@ -1041,7 +1041,6 @@ class SpecTaskExecutionService(private val project: Project) {
                 sessionId = existingSessionId,
                 binding = WorkflowChatBinding(
                     workflowId = workflow.id,
-                    taskId = task.id,
                     focusedStage = StageId.IMPLEMENT,
                     source = sessionSource,
                     actionIntent = when (trigger) {
@@ -1058,7 +1057,6 @@ class SpecTaskExecutionService(private val project: Project) {
             modelProvider = providerId,
             workflowChatBinding = WorkflowChatBinding(
                 workflowId = workflow.id,
-                taskId = task.id,
                 focusedStage = StageId.IMPLEMENT,
                 source = sessionSource,
                 actionIntent = when (trigger) {
