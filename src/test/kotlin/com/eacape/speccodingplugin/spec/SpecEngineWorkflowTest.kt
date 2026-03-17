@@ -1029,6 +1029,118 @@ class SpecEngineWorkflowTest {
     }
 
     @Test
+    fun `generateCurrentPhase should retain prior source citations across revise and distinguish audit action types`() {
+        val capturedRequests = mutableListOf<SpecGenerationRequest>()
+        val engine = SpecEngine(project, storage) { request ->
+            capturedRequests += request
+            SpecGenerationResult.Success(validDocument(request.phase))
+        }
+        val workflowId = "wf-revise-source-retention"
+        val requirementsDocument = validatedDocument(
+            phase = SpecPhase.SPECIFY,
+            id = "doc-specify-source-retention",
+            content = """
+                ## Functional Requirements
+                - Preserve source citations across revise.
+
+                ## Non-Functional Requirements
+                - Keep audits file-first.
+
+                ## User Stories
+                As a maintainer, I want source references to survive revisions, so that traceability remains intact.
+
+                ## Acceptance Criteria
+                - [ ] Previous source references stay visible after revise.
+            """.trimIndent(),
+        )
+        storage.saveDocument(workflowId, requirementsDocument).getOrThrow()
+        storage.saveWorkflow(
+            SpecWorkflow(
+                id = workflowId,
+                currentPhase = SpecPhase.DESIGN,
+                documents = mapOf(SpecPhase.SPECIFY to requirementsDocument),
+                status = WorkflowStatus.IN_PROGRESS,
+                title = "Revise source retention",
+                description = "preserve citations across revise",
+                artifactDraftStates = mapOf(StageId.DESIGN to ArtifactDraftState.UNMATERIALIZED),
+            ),
+        ).getOrThrow()
+
+        val firstSourcePath = tempDir.resolve("incoming/revise-retention-1.md")
+        Files.createDirectories(firstSourcePath.parent)
+        Files.writeString(
+            firstSourcePath,
+            "# Source One\n\n- Original design source.\n",
+            StandardCharsets.UTF_8,
+        )
+        val firstAsset = storage.importWorkflowSource(
+            workflowId = workflowId,
+            importedFromStage = StageId.DESIGN,
+            importedFromEntry = "SPEC_COMPOSER",
+            sourcePath = firstSourcePath,
+        ).getOrThrow()
+
+        val secondSourcePath = tempDir.resolve("incoming/revise-retention-2.md")
+        Files.writeString(
+            secondSourcePath,
+            "# Source Two\n\n- Follow-up revise source.\n",
+            StandardCharsets.UTF_8,
+        )
+        val secondAsset = storage.importWorkflowSource(
+            workflowId = workflowId,
+            importedFromStage = StageId.DESIGN,
+            importedFromEntry = "SPEC_COMPOSER",
+            sourcePath = secondSourcePath,
+        ).getOrThrow()
+
+        engine.loadWorkflow(workflowId).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(
+                workflowId = workflowId,
+                input = "Generate the initial design artifact from the first source.",
+                options = GenerationOptions(
+                    workflowSourceUsage = WorkflowSourceUsage(selectedSourceIds = listOf(firstAsset.sourceId)),
+                ),
+            ).collect()
+        }
+
+        runBlocking {
+            engine.generateCurrentPhase(
+                workflowId = workflowId,
+                input = "Revise the design artifact with the second source.",
+                options = GenerationOptions(
+                    workflowSourceUsage = WorkflowSourceUsage(selectedSourceIds = listOf(secondAsset.sourceId)),
+                ),
+            ).collect()
+        }
+
+        val persistedDocument = engine.reloadWorkflow(workflowId)
+            .getOrThrow()
+            .getDocument(SpecPhase.DESIGN)
+            ?: error("design document should be persisted")
+        val sourceAudits = storage.listAuditEvents(workflowId).getOrThrow()
+            .filter { event -> event.eventType == SpecAuditEventType.SOURCE_USAGE_RECORDED }
+
+        assertEquals(2, capturedRequests.size)
+        assertEquals(ArtifactComposeActionMode.GENERATE, capturedRequests[0].options.composeActionMode)
+        assertEquals(ArtifactComposeActionMode.REVISE, capturedRequests[1].options.composeActionMode)
+        assertTrue(capturedRequests[1].currentDocument?.content.orEmpty().contains(firstAsset.sourceId))
+        assertEquals(
+            listOf("GENERATE_CURRENT_PHASE", "REVISE_CURRENT_PHASE"),
+            sourceAudits.takeLast(2).map { event -> event.details["actionType"] },
+        )
+        assertEquals(firstAsset.sourceId, sourceAudits[sourceAudits.lastIndex - 1].details["selectedSourceIds"])
+        assertEquals(secondAsset.sourceId, sourceAudits.last().details["selectedSourceIds"])
+        assertEquals(secondAsset.sourceId, sourceAudits.last().details["consumedSourceIds"])
+        assertEquals(1, Regex("""(?m)^## References$""").findAll(persistedDocument.content).count())
+        assertTrue(persistedDocument.content.contains(firstAsset.sourceId))
+        assertTrue(persistedDocument.content.contains(firstAsset.storedRelativePath))
+        assertTrue(persistedDocument.content.contains(secondAsset.sourceId))
+        assertTrue(persistedDocument.content.contains(secondAsset.storedRelativePath))
+    }
+
+    @Test
     fun `draftCurrentPhaseClarification should record unresolved workflow sources as not consumed`() {
         var capturedSourceUsage: WorkflowSourceUsage? = null
         val engine = SpecEngine(

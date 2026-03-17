@@ -668,6 +668,7 @@ class SpecEngine(private val project: Project) {
                         workflowId = workflowId,
                         phase = workflow.currentPhase,
                         document = result.document,
+                        currentDocument = currentDocument,
                         options = effectiveOptions,
                     )
 
@@ -699,6 +700,7 @@ class SpecEngine(private val project: Project) {
                         workflowId = workflowId,
                         phase = workflow.currentPhase,
                         document = result.document,
+                        currentDocument = currentDocument,
                         options = effectiveOptions,
                     )
                     val validation = savedDocument.validationResult ?: result.validation
@@ -945,6 +947,7 @@ class SpecEngine(private val project: Project) {
         workflowId: String,
         phase: SpecPhase,
         document: SpecDocument,
+        currentDocument: SpecDocument?,
         options: GenerationOptions,
     ): SpecDocument {
         var updatedDocument = document
@@ -970,7 +973,10 @@ class SpecEngine(private val project: Project) {
         val citationWriteback = SpecArtifactSourceCitationWriteback.apply(
             phase = phase,
             existingContent = updatedDocument.content,
-            citations = buildArtifactSourceCitations(workflowId, options),
+            citations = mergeArtifactSourceCitations(
+                currentDocument = currentDocument,
+                generatedCitations = buildArtifactSourceCitations(workflowId, options),
+            ),
         )
         if (citationWriteback != null && citationWriteback.content != updatedDocument.content) {
             updatedDocument = revalidateDocumentContent(
@@ -989,6 +995,24 @@ class SpecEngine(private val project: Project) {
             )
         }
         return updatedDocument
+    }
+
+    private fun mergeArtifactSourceCitations(
+        currentDocument: SpecDocument?,
+        generatedCitations: List<ArtifactSourceCitation>,
+    ): List<ArtifactSourceCitation> {
+        val existingCitations = currentDocument
+            ?.content
+            ?.let(SpecArtifactSourceCitationWriteback::extract)
+            .orEmpty()
+        if (existingCitations.isEmpty()) {
+            return generatedCitations
+        }
+        if (generatedCitations.isEmpty()) {
+            return existingCitations
+        }
+        return (generatedCitations + existingCitations)
+            .distinctBy(ArtifactSourceCitation::sourceId)
     }
 
     private fun appendClarificationWritebackAudit(

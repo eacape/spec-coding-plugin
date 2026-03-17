@@ -75,4 +75,28 @@ class SpecArtifactSourceCitationWritebackTest {
         assertEquals(1, Regex("""(?m)^- `SRC-001` """).findAll(content).count())
         assertTrue(content.contains("- `SRC-002` `sources/SRC-002-architecture-notes.txt` - section 3.2 | Architecture Notes.txt"))
     }
+
+    @Test
+    fun `extract should read citations from sources and references sections`() {
+        val citations = SpecArtifactSourceCitationWriteback.extract(
+            """
+                ## Functional Requirements
+                - Keep source traceability.
+
+                ## Sources
+                - `SRC-001` `sources/SRC-001-client-prd.md` - Client PRD.md
+
+                ## References
+                - `SRC-002` `sources/SRC-002-architecture-notes.txt` - section 3.2 | Architecture Notes.txt
+            """.trimIndent(),
+        )
+
+        assertEquals(2, citations.size)
+        assertEquals("SRC-001", citations[0].sourceId)
+        assertEquals("sources/SRC-001-client-prd.md", citations[0].storedRelativePath)
+        assertEquals("Client PRD.md", citations[0].note)
+        assertEquals("SRC-002", citations[1].sourceId)
+        assertEquals("sources/SRC-002-architecture-notes.txt", citations[1].storedRelativePath)
+        assertEquals("section 3.2 | Architecture Notes.txt", citations[1].note)
+    }
 }

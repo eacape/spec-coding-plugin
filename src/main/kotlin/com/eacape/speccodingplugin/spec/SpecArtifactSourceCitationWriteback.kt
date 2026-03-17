@@ -7,6 +7,39 @@ internal data class ArtifactSourceCitationWritebackResult(
 )
 
 internal object SpecArtifactSourceCitationWriteback {
+    fun extract(content: String): List<ArtifactSourceCitation> {
+        val normalizedContent = normalizeContent(content)
+        if (normalizedContent.isBlank()) {
+            return emptyList()
+        }
+
+        val headingMatches = HEADING_REGEX.findAll(normalizedContent).toList()
+        if (headingMatches.isEmpty()) {
+            return emptyList()
+        }
+
+        return buildList {
+            headingMatches.forEachIndexed { index, heading ->
+                val headingTitle = heading.groupValues[1].trim()
+                if (!isCitationSectionTitle(headingTitle)) {
+                    return@forEachIndexed
+                }
+
+                val nextHeadingStart = headingMatches
+                    .getOrNull(index + 1)
+                    ?.range
+                    ?.first
+                    ?: normalizedContent.length
+                val sectionBlock = normalizedContent.substring(heading.range.first, nextHeadingStart)
+                sectionBlock
+                    .lineSequence()
+                    .drop(1)
+                    .mapNotNull(::parseCitationLine)
+                    .forEach(::add)
+            }
+        }.distinctBy(ArtifactSourceCitation::sourceId)
+    }
+
     fun apply(
         phase: SpecPhase,
         existingContent: String,
@@ -176,6 +209,23 @@ internal object SpecArtifactSourceCitationWriteback {
             .filterNot { title -> title.equals(preferredTitle, ignoreCase = true) }
     }
 
+    private fun isCitationSectionTitle(title: String): Boolean {
+        return listOf("Sources", "References").any { candidate ->
+            candidate.equals(title, ignoreCase = true)
+        }
+    }
+
+    private fun parseCitationLine(line: String): ArtifactSourceCitation? {
+        val match = CITATION_LINE_REGEX.matchEntire(line.trim()) ?: return null
+        return normalizeCitation(
+            ArtifactSourceCitation(
+                sourceId = match.groupValues[1],
+                storedRelativePath = match.groupValues[2],
+                note = match.groupValues.getOrNull(3)?.trim()?.ifBlank { null },
+            ),
+        )
+    }
+
     private fun normalizeContent(content: String): String {
         return content
             .replace("\r\n", "\n")
@@ -183,4 +233,5 @@ internal object SpecArtifactSourceCitationWriteback {
     }
 
     private val HEADING_REGEX = Regex("""(?m)^##\s+(.+?)\s*$""")
+    private val CITATION_LINE_REGEX = Regex("""^-\s+`([^`]+)`\s+`([^`]+)`(?:\s+-\s+(.+))?$""")
 }
