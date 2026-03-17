@@ -70,6 +70,11 @@ class SpecWorkspaceInitializerTest {
             .resolve("specs")
             .resolve(workflow.id)
             .resolve(".history")
+        val sourcesDir = root
+            .resolve("specs")
+            .resolve(workflow.id)
+            .resolve("sources")
+        assertTrue(Files.isDirectory(sourcesDir))
         assertTrue(Files.isDirectory(historyDir))
         assertTrue(Files.isDirectory(historyDir.resolve("snapshots")))
         assertTrue(Files.isDirectory(historyDir.resolve("baselines")))

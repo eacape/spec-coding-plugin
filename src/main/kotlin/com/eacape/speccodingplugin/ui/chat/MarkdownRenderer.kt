@@ -74,7 +74,8 @@ object MarkdownRenderer {
                 normalizeEscapedTableMarkdown(markdown),
             ),
         )
-        if (containsMarkdownTable(normalizedMarkdown)) {
+        val htmlTableRenderingAllowed = shouldUseHtmlTableRendering(markdown, normalizedMarkdown)
+        if (htmlTableRenderingAllowed && containsMarkdownTable(normalizedMarkdown)) {
             if (renderWithMarkdownEngine(textPane, normalizedMarkdown, proseFontFamily, baseFontSize)) {
                 return
             }
@@ -83,19 +84,19 @@ object MarkdownRenderer {
                 return
             }
         }
-        if (containsFramedPipeTableBlock(normalizedMarkdown)) {
+        if (htmlTableRenderingAllowed && containsFramedPipeTableBlock(normalizedMarkdown)) {
             val markdownForHtml = convertLooseFramedPipeTablesToHtmlBlocks(normalizedMarkdown)
             if (renderWithHtmlFallback(textPane, markdownForHtml, proseFontFamily, baseFontSize)) {
                 return
             }
         }
-        if (containsAnyLoosePipeTableBlock(normalizedMarkdown)) {
+        if (htmlTableRenderingAllowed && containsAnyLoosePipeTableBlock(normalizedMarkdown)) {
             val markdownForHtml = convertAnyLoosePipeTablesToHtmlBlocks(normalizedMarkdown)
             if (renderWithHtmlFallback(textPane, markdownForHtml, proseFontFamily, baseFontSize)) {
                 return
             }
         }
-        if (containsRawHtmlTableBlock(markdown)) {
+        if (htmlTableRenderingAllowed && containsRawHtmlTableBlock(markdown)) {
             if (renderWithMarkdownEngine(textPane, markdown, proseFontFamily, baseFontSize)) {
                 return
             }
@@ -826,6 +827,151 @@ object MarkdownRenderer {
             index += 1
         }
         return false
+    }
+
+    internal fun shouldUseHtmlTableRendering(markdown: String): Boolean {
+        val normalizedMarkdown = normalizeLooseBlockMarkdownOutsideCodeFences(
+            normalizeInlineMarkdownOutsideCodeFences(
+                normalizeEscapedTableMarkdown(markdown),
+            ),
+        )
+        return shouldUseHtmlTableRendering(markdown, normalizedMarkdown)
+    }
+
+    // Swing HTML layout can freeze the EDT on large tables, so degrade to the plain
+    // StyledDocument renderer once table content exceeds a conservative complexity budget.
+    private fun shouldUseHtmlTableRendering(
+        markdown: String,
+        normalizedMarkdown: String,
+    ): Boolean {
+        if (normalizedMarkdown.length > MAX_HTML_TABLE_SOURCE_CHARS) {
+            return false
+        }
+
+        val pipeMetrics = collectPipeTableMetrics(normalizedMarkdown)
+        if (pipeMetrics.likelyTableLineCount > MAX_HTML_TABLE_LINES) {
+            return false
+        }
+        if (pipeMetrics.maxLineLength > MAX_HTML_TABLE_LINE_CHARS) {
+            return false
+        }
+        if (pipeMetrics.maxRows > MAX_HTML_TABLE_ROWS) {
+            return false
+        }
+        if (pipeMetrics.maxColumns > MAX_HTML_TABLE_COLUMNS) {
+            return false
+        }
+        if (pipeMetrics.maxCellChars > MAX_HTML_TABLE_CELL_CHARS) {
+            return false
+        }
+        if (pipeMetrics.totalCellChars > MAX_HTML_TABLE_TOTAL_CELL_CHARS) {
+            return false
+        }
+
+        val rawHtmlMetrics = collectRawHtmlTableMetrics(markdown)
+        if (rawHtmlMetrics.maxBlockChars > MAX_HTML_TABLE_SOURCE_CHARS) {
+            return false
+        }
+        if (rawHtmlMetrics.maxRows > MAX_HTML_TABLE_ROWS) {
+            return false
+        }
+
+        return true
+    }
+
+    private fun collectPipeTableMetrics(markdown: String): PipeTableMetrics {
+        val lines = markdown.lines()
+        var index = 0
+        var inCodeFence = false
+        var likelyTableLineCount = 0
+        var maxLineLength = 0
+        var maxRows = 0
+        var maxColumns = 0
+        var totalCellChars = 0
+        var maxCellChars = 0
+
+        while (index < lines.size) {
+            val line = lines[index]
+            val trimmed = line.trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                index += 1
+                continue
+            }
+            if (inCodeFence) {
+                index += 1
+                continue
+            }
+
+            if (splitTableCells(line).size >= MIN_TABLE_COLUMNS) {
+                likelyTableLineCount += 1
+                maxLineLength = maxOf(maxLineLength, line.length)
+            }
+
+            val tableBlock = parseTableBlock(lines, index)
+            if (tableBlock != null) {
+                maxRows = maxOf(maxRows, tableBlock.rows.size)
+                val columnCount = tableBlock.rows.maxOfOrNull { row -> row.size } ?: 0
+                maxColumns = maxOf(maxColumns, columnCount)
+                tableBlock.rows.forEach { row ->
+                    row.forEach { cell ->
+                        val length = cell.length
+                        totalCellChars += length
+                        maxCellChars = maxOf(maxCellChars, length)
+                    }
+                }
+                index = tableBlock.nextIndex
+                continue
+            }
+
+            index += 1
+        }
+
+        return PipeTableMetrics(
+            likelyTableLineCount = likelyTableLineCount,
+            maxLineLength = maxLineLength,
+            maxRows = maxRows,
+            maxColumns = maxColumns,
+            totalCellChars = totalCellChars,
+            maxCellChars = maxCellChars,
+        )
+    }
+
+    private fun collectRawHtmlTableMetrics(markdown: String): RawHtmlTableMetrics {
+        val lines = normalizedLines(markdown)
+        var index = 0
+        var inCodeFence = false
+        var maxBlockChars = 0
+        var maxRows = 0
+
+        while (index < lines.size) {
+            val trimmed = lines[index].trimStart()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                index += 1
+                continue
+            }
+            if (inCodeFence) {
+                index += 1
+                continue
+            }
+
+            val tableBlock = collectRawHtmlTableBlock(lines, index)
+            if (tableBlock != null) {
+                maxBlockChars = maxOf(maxBlockChars, tableBlock.html.length)
+                val rowCount = TABLE_ROW_OPEN_TAG_REGEX.findAll(tableBlock.html).count()
+                maxRows = maxOf(maxRows, rowCount)
+                index = tableBlock.nextIndex
+                continue
+            }
+
+            index += 1
+        }
+
+        return RawHtmlTableMetrics(
+            maxBlockChars = maxBlockChars,
+            maxRows = maxRows,
+        )
     }
 
     private fun renderWithHtmlFallback(
@@ -1672,6 +1818,7 @@ object MarkdownRenderer {
     private val BLOCKQUOTE_LINE_REGEX = Regex("""^\s{0,3}>\s?(.*)$""")
     private val TABLE_OPEN_TAG_REGEX = Regex("""<table\b([^>]*)>""", RegexOption.IGNORE_CASE)
     private val TABLE_CLOSE_TAG_REGEX = Regex("""</table\s*>""", RegexOption.IGNORE_CASE)
+    private val TABLE_ROW_OPEN_TAG_REGEX = Regex("""<tr\b""", RegexOption.IGNORE_CASE)
     private val TABLE_BORDER_ATTR_REGEX = Regex("""\bborder\s*=""", RegexOption.IGNORE_CASE)
     private val TABLE_CELL_SPACING_ATTR_REGEX = Regex("""\bcellspacing\s*=""", RegexOption.IGNORE_CASE)
     private val TABLE_CELL_PADDING_ATTR_REGEX = Regex("""\bcellpadding\s*=""", RegexOption.IGNORE_CASE)
@@ -1706,6 +1853,13 @@ object MarkdownRenderer {
     private const val DEFAULT_BASE_FONT_SIZE = 11
     private const val MIN_BASE_FONT_SIZE = 9
     private const val MAX_BASE_FONT_SIZE = 36
+    private const val MAX_HTML_TABLE_SOURCE_CHARS = 5000
+    private const val MAX_HTML_TABLE_LINES = 18
+    private const val MAX_HTML_TABLE_ROWS = 18
+    private const val MAX_HTML_TABLE_COLUMNS = 8
+    private const val MAX_HTML_TABLE_LINE_CHARS = 760
+    private const val MAX_HTML_TABLE_TOTAL_CELL_CHARS = 5000
+    private const val MAX_HTML_TABLE_CELL_CHARS = 900
     private const val PROSE_LINE_SPACING = 0.52f
     private const val LIST_ITEM_SPACE_ABOVE = 1.8f
     private const val LIST_ITEM_SPACE_BELOW = 1.8f
@@ -1744,6 +1898,20 @@ object MarkdownRenderer {
     private data class HtmlTableBlock(
         val html: String,
         val nextIndex: Int,
+    )
+
+    private data class PipeTableMetrics(
+        val likelyTableLineCount: Int,
+        val maxLineLength: Int,
+        val maxRows: Int,
+        val maxColumns: Int,
+        val totalCellChars: Int,
+        val maxCellChars: Int,
+    )
+
+    private data class RawHtmlTableMetrics(
+        val maxBlockChars: Int,
+        val maxRows: Int,
     )
 
     private sealed class InlineToken {

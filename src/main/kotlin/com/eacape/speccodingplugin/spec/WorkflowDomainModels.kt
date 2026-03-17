@@ -92,6 +92,18 @@ data class WorkflowMeta(
     val updatedAt: Long,
 )
 
+data class WorkflowSourceAsset(
+    val sourceId: String,
+    val originalFileName: String,
+    val storedRelativePath: String,
+    val mediaType: String,
+    val fileSize: Long,
+    val contentHash: String,
+    val importedAt: String,
+    val importedFromStage: StageId,
+    val importedFromEntry: String,
+)
+
 data class WorkflowSnapshot(
     val meta: WorkflowMeta,
     val workflow: SpecWorkflow,

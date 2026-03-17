@@ -7,6 +7,7 @@ import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecWorkflow
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.ValidationResult
+import com.eacape.speccodingplugin.spec.WorkflowSourceAsset
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.ui.chat.MarkdownRenderer
 import com.intellij.ui.JBColor
@@ -62,6 +63,9 @@ import javax.swing.tree.TreeCellRenderer
 class SpecDetailPanel(
     private val onGenerate: (String) -> Unit,
     private val canGenerateWithEmptyInput: () -> Boolean = { false },
+    private val onAddWorkflowSourcesRequested: () -> Unit,
+    private val onRemoveWorkflowSourceRequested: (String) -> Unit,
+    private val onRestoreWorkflowSourcesRequested: () -> Unit,
     private val onClarificationConfirm: (String, String) -> Unit,
     private val onClarificationRegenerate: (String, String) -> Unit,
     private val onClarificationSkip: (String) -> Unit,
@@ -99,6 +103,11 @@ class SpecDetailPanel(
     private val clarificationChecklistPanel = JPanel()
     private val editorArea = JBTextArea(14, 40)
     private val validationLabel = JBLabel("")
+    private val composerSourcePanel = SpecComposerSourcePanel(
+        onAddRequested = { onAddWorkflowSourcesRequested() },
+        onRemoveRequested = { sourceId -> onRemoveWorkflowSourceRequested(sourceId) },
+        onRestoreRequested = { onRestoreWorkflowSourcesRequested() },
+    )
     private lateinit var validationBannerPanel: JPanel
     private val inputArea = JBTextArea(3, 40)
     private lateinit var clarificationSplitPane: JSplitPane
@@ -292,6 +301,8 @@ class SpecDetailPanel(
             isOpaque = false
             border = JBUI.Borders.empty(4, 4, 2, 4)
         }
+        composerSourcePanel.isOpaque = false
+        composerContent.add(composerSourcePanel, BorderLayout.NORTH)
 
         inputArea.lineWrap = true
         inputArea.wrapStyleWord = true
@@ -1436,6 +1447,7 @@ class SpecDetailPanel(
             activeChecklistDetailIndex = null
             isClarificationChecklistReadOnly = false
             clearProcessTimeline()
+            composerSourcePanel.clear()
         }
         if (clarificationState?.phase != null && clarificationState?.phase != workflow.currentPhase) {
             clarificationState = null
@@ -1506,6 +1518,7 @@ class SpecDetailPanel(
         inputArea.isEnabled = true
         inputArea.isEditable = true
         inputArea.toolTipText = null
+        composerSourcePanel.clear()
         updateInputPlaceholder(null)
         generateButton.isVisible = true
         nextPhaseButton.isVisible = true
@@ -1555,6 +1568,20 @@ class SpecDetailPanel(
         if (clarificationState == null && (syncSelection || isWorkbenchArtifactOnlyView())) {
             showActivePreview(keepGeneratingIndicator = false)
         }
+    }
+
+    fun updateWorkflowSources(
+        workflowId: String?,
+        assets: List<WorkflowSourceAsset>,
+        selectedSourceIds: Set<String>,
+        editable: Boolean,
+    ) {
+        composerSourcePanel.updateState(
+            workflowId = workflowId,
+            assets = assets,
+            selectedSourceIds = selectedSourceIds,
+            editable = editable,
+        )
     }
 
     private fun updateInputPlaceholder(currentPhase: SpecPhase?) {
@@ -3698,6 +3725,34 @@ class SpecDetailPanel(
 
     internal fun isComposerExpandedForTest(): Boolean {
         return isComposerExpanded
+    }
+
+    internal fun composerSourceChipLabelsForTest(): List<String> {
+        return composerSourcePanel.selectedSourceLabelsForTest()
+    }
+
+    internal fun composerSourceMetaTextForTest(): String {
+        return composerSourcePanel.metaTextForTest()
+    }
+
+    internal fun composerSourceHintTextForTest(): String {
+        return composerSourcePanel.hintTextForTest()
+    }
+
+    internal fun isComposerSourceRestoreVisibleForTest(): Boolean {
+        return composerSourcePanel.isRestoreVisibleForTest()
+    }
+
+    internal fun clickAddWorkflowSourcesForTest() {
+        composerSourcePanel.clickAddForTest()
+    }
+
+    internal fun clickRestoreWorkflowSourcesForTest() {
+        composerSourcePanel.clickRestoreForTest()
+    }
+
+    internal fun clickRemoveWorkflowSourceForTest(sourceId: String): Boolean {
+        return composerSourcePanel.clickRemoveForTest(sourceId)
     }
 
     internal fun toggleProcessTimelineExpandedForTest() {

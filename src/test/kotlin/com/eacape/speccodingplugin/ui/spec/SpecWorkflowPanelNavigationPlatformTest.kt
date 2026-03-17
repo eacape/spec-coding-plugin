@@ -18,8 +18,10 @@ import com.eacape.speccodingplugin.spec.StageState
 import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.TaskStatus
+import com.eacape.speccodingplugin.spec.WorkflowSourceImportConstraints
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.util.ui.UIUtil
@@ -28,6 +30,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
 
 class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
 
@@ -138,6 +143,66 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
 
         waitUntil {
             panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
+        }
+    }
+
+    fun `test workflow panel should import remove restore and reopen persisted composer sources`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Source Import",
+            description = "composer source persistence",
+        ).getOrThrow()
+        val importPath = Path.of(project.basePath!!).resolve("incoming/client-prd.md")
+        Files.createDirectories(importPath.parent)
+        Files.writeString(
+            importPath,
+            "# Client PRD\n\n- Keep workflow artifacts file-first.\n",
+            StandardCharsets.UTF_8,
+        )
+        val panel = createPanel { _, _ -> listOf(importPath) }
+
+        waitUntil {
+            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickAddWorkflowSourcesForTest()
+        }
+
+        waitUntil {
+            panel.composerSourceChipLabelsForTest()
+                .any { label -> label.contains("SRC-001") && label.contains("client-prd.md") }
+        }
+        assertTrue(panel.composerSourceMetaTextForTest().contains("1"))
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(panel.clickRemoveWorkflowSourceForTest("SRC-001"))
+        }
+
+        waitUntil {
+            panel.composerSourceChipLabelsForTest().isEmpty() &&
+                panel.isComposerSourceRestoreVisibleForTest()
+        }
+        assertTrue(panel.composerSourceHintTextForTest().isNotBlank())
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickRestoreWorkflowSourcesForTest()
+        }
+
+        waitUntil {
+            panel.composerSourceChipLabelsForTest().any { it.contains("SRC-001") }
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            Disposer.dispose(panel)
+        }
+
+        val reopenedPanel = createPanel()
+        waitUntil {
+            reopenedPanel.isDetailModeForTest() && reopenedPanel.selectedWorkflowIdForTest() == workflow.id
+        }
+        waitUntil {
+            reopenedPanel.composerSourceChipLabelsForTest()
+                .any { label -> label.contains("SRC-001") && label.contains("client-prd.md") }
         }
     }
 
@@ -944,10 +1009,16 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         )
     }
 
-    private fun createPanel(): SpecWorkflowPanel {
+    private fun createPanel(
+        sourceFileChooser: ((Project, WorkflowSourceImportConstraints) -> List<Path>)? = null,
+    ): SpecWorkflowPanel {
         var panel: SpecWorkflowPanel? = null
         ApplicationManager.getApplication().invokeAndWait {
-            panel = SpecWorkflowPanel(project)
+            panel = if (sourceFileChooser == null) {
+                SpecWorkflowPanel(project)
+            } else {
+                SpecWorkflowPanel(project, sourceFileChooser = sourceFileChooser)
+            }
             Disposer.register(testRootDisposable, panel!!)
         }
         return panel ?: error("Failed to create SpecWorkflowPanel")

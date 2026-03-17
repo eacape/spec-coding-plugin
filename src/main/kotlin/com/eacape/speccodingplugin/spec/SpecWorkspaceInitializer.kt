@@ -17,6 +17,8 @@ data class SpecWorkspacePaths(
 
 data class WorkflowWorkspacePaths(
     val workflowDir: Path,
+    val sourcesDir: Path,
+    val sourcesMetadataPath: Path,
     val historyDir: Path,
     val snapshotsDir: Path,
     val baselinesDir: Path,
@@ -55,6 +57,8 @@ class SpecWorkspaceInitializer(
 
         val projectWorkspace = initializeProjectWorkspace()
         val workflowDir = projectWorkspace.specsDir.resolve(workflowId)
+        val sourcesDir = workflowDir.resolve(WORKFLOW_SOURCES_DIR_NAME)
+        val sourcesMetadataPath = workflowDir.resolve(WORKFLOW_SOURCES_METADATA_FILE_NAME)
         val historyDir = workflowDir.resolve(WORKFLOW_HISTORY_DIR_NAME)
         val snapshotsDir = historyDir.resolve(HISTORY_SNAPSHOTS_DIR_NAME)
         val baselinesDir = historyDir.resolve(HISTORY_BASELINES_DIR_NAME)
@@ -63,6 +67,7 @@ class SpecWorkspaceInitializer(
 
         listOf(
             workflowDir,
+            sourcesDir,
             historyDir,
             snapshotsDir,
             baselinesDir,
@@ -86,6 +91,8 @@ class SpecWorkspaceInitializer(
 
         return WorkflowWorkspacePaths(
             workflowDir = workflowDir,
+            sourcesDir = sourcesDir,
+            sourcesMetadataPath = sourcesMetadataPath,
             historyDir = historyDir,
             snapshotsDir = snapshotsDir,
             baselinesDir = baselinesDir,
@@ -122,6 +129,8 @@ class SpecWorkspaceInitializer(
         private const val SPECS_DIR_NAME = "specs"
         private const val LOCKS_DIR_NAME = ".locks"
         private const val BACKUP_DIR_NAME = ".backup"
+        private const val WORKFLOW_SOURCES_DIR_NAME = "sources"
+        private const val WORKFLOW_SOURCES_METADATA_FILE_NAME = "sources.yaml"
         private const val WORKFLOW_HISTORY_DIR_NAME = ".history"
         private const val HISTORY_SNAPSHOTS_DIR_NAME = "snapshots"
         private const val HISTORY_BASELINES_DIR_NAME = "baselines"
@@ -140,6 +149,8 @@ class SpecWorkspaceInitializer(
 
             Each workflow directory is initialized with:
 
+            - `sources/`: workflow-scoped imported reference files.
+            - `sources.yaml`: metadata for persisted workflow sources.
             - `.history/snapshots/`: artifact snapshots.
             - `.history/baselines/`: delta baselines.
             - `.history/config/`: pinned config snapshots.

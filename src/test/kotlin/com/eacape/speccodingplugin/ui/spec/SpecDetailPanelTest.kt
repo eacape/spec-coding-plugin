@@ -1464,6 +1464,9 @@ class SpecDetailPanelTest {
         return SpecDetailPanel(
             onGenerate = onGenerate,
             canGenerateWithEmptyInput = canGenerateWithEmptyInput,
+            onAddWorkflowSourcesRequested = {},
+            onRemoveWorkflowSourceRequested = {},
+            onRestoreWorkflowSourcesRequested = {},
             onClarificationConfirm = onClarificationConfirm,
             onClarificationRegenerate = onClarificationRegenerate,
             onClarificationSkip = {},

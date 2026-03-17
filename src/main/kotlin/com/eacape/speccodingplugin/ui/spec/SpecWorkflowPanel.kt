@@ -37,6 +37,8 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.project.Project
@@ -84,7 +86,9 @@ import javax.swing.SwingConstants
 import javax.swing.Timer
 
 class SpecWorkflowPanel(
-    private val project: Project
+    private val project: Project,
+    private val sourceFileChooser: (Project, WorkflowSourceImportConstraints) -> List<Path> = ::chooseWorkflowSourceFiles,
+    private val sourceImportConstraints: WorkflowSourceImportConstraints = WorkflowSourceImportConstraints(),
 ) : JBPanel<SpecWorkflowPanel>(BorderLayout()), Disposable {
 
     private val logger = thisLogger()
@@ -192,6 +196,8 @@ class SpecWorkflowPanel(
     private var currentGateResult: GateResult? = null
     private var currentStructuredTasks: List<StructuredTask> = emptyList()
     private var currentTaskLiveProgressByTaskId: Map<String, TaskExecutionLiveProgress> = emptyMap()
+    private var currentWorkflowSources: List<WorkflowSourceAsset> = emptyList()
+    private val composerSelectedSourceIdsByWorkflowId = mutableMapOf<String, LinkedHashSet<String>>()
     private val pendingClarificationRetryByWorkflowId = mutableMapOf<String, ClarificationRetryPayload>()
     private var activeGenerationJob: Job? = null
     private var activeGenerationRequest: ActiveGenerationRequest? = null
@@ -233,6 +239,9 @@ class SpecWorkflowPanel(
         detailPanel = SpecDetailPanel(
             onGenerate = ::onGenerate,
             canGenerateWithEmptyInput = ::canGenerateWithEmptyInput,
+            onAddWorkflowSourcesRequested = ::onAddWorkflowSourcesRequested,
+            onRemoveWorkflowSourceRequested = ::onRemoveWorkflowSourceRequested,
+            onRestoreWorkflowSourcesRequested = ::onRestoreWorkflowSourcesRequested,
             onClarificationConfirm = ::onClarificationConfirm,
             onClarificationRegenerate = ::onClarificationRegenerate,
             onClarificationSkip = ::onClarificationSkip,
@@ -1508,6 +1517,7 @@ class SpecWorkflowPanel(
     private fun clearOpenedWorkflowUi(resetHighlight: Boolean = false) {
         selectedWorkflowId = null
         currentWorkflow = null
+        currentWorkflowSources = emptyList()
         focusedStage = null
         currentWorkbenchState = null
         phaseIndicator.reset()
@@ -1650,6 +1660,7 @@ class SpecWorkflowPanel(
             val wf = specEngine.reloadWorkflow(workflowId).getOrNull()
             val uiSnapshot = wf?.let(::buildWorkflowUiSnapshot)
             val tasksResult = runCatching { specTasksService.parse(workflowId) }
+            val sourcesResult = runCatching { specEngine.listWorkflowSources(workflowId).getOrThrow() }
             val liveProgressByTaskId = wf?.let { buildTaskLiveProgressByTaskId(it.id) }.orEmpty()
             currentWorkflow = wf
             invokeLaterSafe {
@@ -1668,6 +1679,23 @@ class SpecWorkflowPanel(
                         refreshedAtMillis = snapshot.refreshedAtMillis,
                     )
                     detailPanel.updateWorkflow(wf)
+                    sourcesResult
+                        .onSuccess { sources ->
+                            applyWorkflowSourcesToDetailPanel(
+                                workflow = wf,
+                                assets = sources,
+                                preserveSelection = previousSelectedWorkflowId == workflowId,
+                            )
+                        }
+                        .onFailure { error ->
+                            applyWorkflowSourcesToDetailPanel(
+                                workflow = wf,
+                                assets = emptyList(),
+                                preserveSelection = false,
+                            )
+                            val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                            setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                        }
                     tasksResult.onSuccess { tasks ->
                         val decoratedTasks = decorateTasksWithExecutionState(
                             workflow = wf,
@@ -1930,6 +1958,196 @@ class SpecWorkflowPanel(
         return pendingClarificationRetryByWorkflowId[workflowId]
             ?.input
             ?.isNotBlank() == true
+    }
+
+    private fun applyWorkflowSourcesToDetailPanel(
+        workflow: SpecWorkflow?,
+        assets: List<WorkflowSourceAsset>,
+        preserveSelection: Boolean,
+        preferredSourceIds: Set<String> = emptySet(),
+    ) {
+        val workflowId = workflow?.id
+        currentWorkflowSources = assets.sortedBy(WorkflowSourceAsset::sourceId)
+        if (workflowId == null) {
+            detailPanel.updateWorkflowSources(
+                workflowId = null,
+                assets = emptyList(),
+                selectedSourceIds = emptySet(),
+                editable = false,
+            )
+            return
+        }
+
+        val existingSelection = composerSelectedSourceIdsByWorkflowId[workflowId]
+        val resolvedSelection = when {
+            !preserveSelection || existingSelection == null -> {
+                currentWorkflowSources.mapTo(linkedSetOf<String>(), WorkflowSourceAsset::sourceId)
+            }
+
+            else -> existingSelection.filterTo(linkedSetOf<String>()) { candidate ->
+                currentWorkflowSources.any { asset -> asset.sourceId == candidate }
+            }
+        }
+        preferredSourceIds.forEach { preferredSourceId ->
+            if (currentWorkflowSources.any { asset -> asset.sourceId == preferredSourceId }) {
+                resolvedSelection += preferredSourceId
+            }
+        }
+        composerSelectedSourceIdsByWorkflowId[workflowId] = resolvedSelection
+        detailPanel.updateWorkflowSources(
+            workflowId = workflowId,
+            assets = currentWorkflowSources,
+            selectedSourceIds = resolvedSelection,
+            editable = workflow.currentStage in COMPOSER_SOURCE_EDITABLE_STAGES,
+        )
+    }
+
+    private fun onAddWorkflowSourcesRequested() {
+        val workflow = currentWorkflow ?: return
+        if (workflow.currentStage !in COMPOSER_SOURCE_EDITABLE_STAGES) {
+            return
+        }
+
+        val selectedPaths = sourceFileChooser(project, sourceImportConstraints)
+        if (selectedPaths.isEmpty()) {
+            return
+        }
+
+        val validation = WorkflowSourceImportSupport.validate(selectedPaths, sourceImportConstraints)
+        if (validation.acceptedPaths.isEmpty()) {
+            showWorkflowSourceValidation(validation.rejectedFiles)
+            setStatusText(
+                SpecCodingBundle.message(
+                    "spec.detail.sources.status.rejected",
+                    validation.rejectedFiles.size,
+                ),
+            )
+            return
+        }
+
+        SpecWorkflowActionSupport.runBackground(
+            project = project,
+            title = SpecCodingBundle.message("spec.detail.sources.importing"),
+            task = {
+                validation.acceptedPaths.map { sourcePath ->
+                    specEngine.importWorkflowSource(
+                        workflowId = workflow.id,
+                        importedFromStage = workflow.currentStage,
+                        importedFromEntry = WORKFLOW_SOURCE_ENTRY_SPEC_COMPOSER,
+                        sourcePath = sourcePath,
+                    ).getOrThrow()
+                }
+            },
+            onSuccess = { importedAssets ->
+                if (selectedWorkflowId != workflow.id) {
+                    return@runBackground
+                }
+                val mergedAssets = (currentWorkflowSources + importedAssets)
+                    .associateBy(WorkflowSourceAsset::sourceId)
+                    .values
+                    .sortedBy(WorkflowSourceAsset::sourceId)
+                applyWorkflowSourcesToDetailPanel(
+                    workflow = workflow,
+                    assets = mergedAssets,
+                    preserveSelection = true,
+                    preferredSourceIds = importedAssets.mapTo(linkedSetOf<String>(), WorkflowSourceAsset::sourceId),
+                )
+                if (validation.rejectedFiles.isNotEmpty()) {
+                    showWorkflowSourceValidation(validation.rejectedFiles)
+                }
+                val statusKey = if (validation.rejectedFiles.isEmpty()) {
+                    "spec.detail.sources.status.imported"
+                } else {
+                    "spec.detail.sources.status.importedPartial"
+                }
+                setStatusText(
+                    SpecCodingBundle.message(
+                        statusKey,
+                        importedAssets.size,
+                        validation.rejectedFiles.size,
+                    ),
+                )
+            },
+            onFailure = { error ->
+                val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+            },
+        )
+    }
+
+    private fun onRemoveWorkflowSourceRequested(sourceId: String) {
+        val workflow = currentWorkflow ?: return
+        val selection = composerSelectedSourceIdsByWorkflowId.getOrPut(workflow.id) {
+            currentWorkflowSources.mapTo(linkedSetOf<String>(), WorkflowSourceAsset::sourceId)
+        }
+        if (!selection.remove(sourceId)) {
+            return
+        }
+        detailPanel.updateWorkflowSources(
+            workflowId = workflow.id,
+            assets = currentWorkflowSources,
+            selectedSourceIds = selection,
+            editable = workflow.currentStage in COMPOSER_SOURCE_EDITABLE_STAGES,
+        )
+        setStatusText(
+            SpecCodingBundle.message(
+                "spec.detail.sources.status.removed",
+                sourceId,
+            ),
+        )
+    }
+
+    private fun onRestoreWorkflowSourcesRequested() {
+        val workflow = currentWorkflow ?: return
+        applyWorkflowSourcesToDetailPanel(
+            workflow = workflow,
+            assets = currentWorkflowSources,
+            preserveSelection = false,
+        )
+        setStatusText(
+            SpecCodingBundle.message(
+                "spec.detail.sources.status.restored",
+                currentWorkflowSources.size,
+            ),
+        )
+    }
+
+    private fun showWorkflowSourceValidation(rejectedFiles: List<RejectedWorkflowSourceFile>) {
+        if (rejectedFiles.isEmpty()) {
+            return
+        }
+        val lines = rejectedFiles
+            .take(MAX_SOURCE_IMPORT_VALIDATION_LINES)
+            .map { rejectedFile ->
+                val fileName = rejectedFile.path.fileName?.toString().orEmpty().ifBlank { rejectedFile.path.toString() }
+                val reason = when (rejectedFile.reason) {
+                    RejectedWorkflowSourceFile.Reason.NOT_A_FILE ->
+                        SpecCodingBundle.message("spec.detail.sources.validation.notFile")
+
+                    RejectedWorkflowSourceFile.Reason.UNSUPPORTED_EXTENSION ->
+                        SpecCodingBundle.message(
+                            "spec.detail.sources.validation.unsupported",
+                            WorkflowSourceImportSupport.formatAllowedExtensions(sourceImportConstraints),
+                        )
+
+                    RejectedWorkflowSourceFile.Reason.FILE_TOO_LARGE ->
+                        SpecCodingBundle.message(
+                            "spec.detail.sources.validation.tooLarge",
+                            WorkflowSourceImportSupport.formatFileSize(sourceImportConstraints.maxFileSizeBytes),
+                        )
+                }
+                "- $fileName: $reason"
+            }
+            .toMutableList()
+        val remaining = rejectedFiles.size - MAX_SOURCE_IMPORT_VALIDATION_LINES
+        if (remaining > 0) {
+            lines += SpecCodingBundle.message("spec.detail.sources.validation.more", remaining)
+        }
+        Messages.showWarningDialog(
+            project,
+            lines.joinToString(separator = "\n"),
+            SpecCodingBundle.message("spec.detail.sources.validation.title"),
+        )
     }
 
     private fun onGenerate(input: String) {
@@ -4695,7 +4913,7 @@ class SpecWorkflowPanel(
         if (compact.length <= maxLength) {
             return compact
         }
-        return compact.take(maxLength - 1).trimEnd() + "бн"
+        return compact.take((maxLength - 3).coerceAtLeast(0)).trimEnd() + "..."
     }
 
     private fun isMeaningfulErrorMessage(message: String): Boolean {
@@ -5036,6 +5254,26 @@ class SpecWorkflowPanel(
 
     internal fun currentDocumentMetaTextForTest(): String = detailPanel.currentDocumentMetaTextForTest()
 
+    internal fun composerSourceChipLabelsForTest(): List<String> = detailPanel.composerSourceChipLabelsForTest()
+
+    internal fun composerSourceMetaTextForTest(): String = detailPanel.composerSourceMetaTextForTest()
+
+    internal fun composerSourceHintTextForTest(): String = detailPanel.composerSourceHintTextForTest()
+
+    internal fun isComposerSourceRestoreVisibleForTest(): Boolean = detailPanel.isComposerSourceRestoreVisibleForTest()
+
+    internal fun clickAddWorkflowSourcesForTest() {
+        detailPanel.clickAddWorkflowSourcesForTest()
+    }
+
+    internal fun clickRestoreWorkflowSourcesForTest() {
+        detailPanel.clickRestoreWorkflowSourcesForTest()
+    }
+
+    internal fun clickRemoveWorkflowSourceForTest(sourceId: String): Boolean {
+        return detailPanel.clickRemoveWorkflowSourceForTest(sourceId)
+    }
+
     internal fun isClarifyingForTest(): Boolean = detailPanel.isClarifyingForTest()
 
     internal fun pendingOpenWorkflowRequestForTest(): SpecToolWindowOpenRequest? = pendingOpenWorkflowRequest
@@ -5111,7 +5349,14 @@ class SpecWorkflowPanel(
         private val SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT = JBUI.scale(320)
         private const val WORKSPACE_SCROLL_UNIT_INCREMENT = 24
         private const val WORKSPACE_SCROLL_BLOCK_INCREMENT = 96
-        private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "бн", "...", "null", "none", "unknown")
+        private val COMPOSER_SOURCE_EDITABLE_STAGES = setOf(
+            StageId.REQUIREMENTS,
+            StageId.DESIGN,
+            StageId.TASKS,
+        )
+        private const val WORKFLOW_SOURCE_ENTRY_SPEC_COMPOSER = "SPEC_COMPOSER"
+        private const val MAX_SOURCE_IMPORT_VALIDATION_LINES = 6
+        private val PLACEHOLDER_ERROR_MESSAGES = setOf("-", "--", "...", "null", "none", "unknown")
         private val PLACEHOLDER_SYMBOLS_REGEX = Regex("""^[\p{Punct}\s]+$""")
         private val ERROR_TEXT_CONTENT_REGEX = Regex("""[A-Za-z0-9\p{IsHan}]""")
         private const val DOCUMENT_RELOAD_DEBOUNCE_MILLIS = 300L
@@ -5120,5 +5365,21 @@ class SpecWorkflowPanel(
         private val SPEC_DOCUMENT_FILE_NAMES = (SpecPhase.entries
             .map { it.outputFileName } + listOfNotNull(StageId.VERIFY.artifactFileName))
             .toSet()
+
+        private fun chooseWorkflowSourceFiles(
+            project: Project,
+            constraints: WorkflowSourceImportConstraints,
+        ): List<Path> {
+            val descriptor = FileChooserDescriptorFactory.createMultipleFilesNoJarsDescriptor().apply {
+                title = SpecCodingBundle.message("spec.detail.sources.chooser.title")
+                description = SpecCodingBundle.message(
+                    "spec.detail.sources.chooser.description",
+                    WorkflowSourceImportSupport.formatAllowedExtensions(constraints),
+                    WorkflowSourceImportSupport.formatFileSize(constraints.maxFileSizeBytes),
+                )
+            }
+            return FileChooser.chooseFiles(descriptor, project, null)
+                .map { virtualFile -> Path.of(virtualFile.path) }
+        }
     }
 }

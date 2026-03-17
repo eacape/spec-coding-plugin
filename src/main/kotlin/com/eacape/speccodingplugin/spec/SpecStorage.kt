@@ -13,6 +13,7 @@ import java.nio.file.attribute.PosixFilePermission
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.security.MessageDigest
 import java.util.Base64
 import java.util.Comparator
 import java.util.UUID
@@ -536,6 +537,87 @@ class SpecStorage(
         }
     }
 
+    fun listWorkflowSources(workflowId: String): Result<List<WorkflowSourceAsset>> {
+        return runCatching {
+            lockManager.withWorkflowLock(workflowId) {
+                ensureWorkflowMetadataExists(workflowId)
+                loadWorkflowSources(workflowId)
+            }
+        }
+    }
+
+    fun importWorkflowSource(
+        workflowId: String,
+        importedFromStage: StageId,
+        importedFromEntry: String,
+        sourcePath: Path,
+    ): Result<WorkflowSourceAsset> {
+        return runCatching {
+            lockManager.withWorkflowLock(workflowId) {
+                ensureWorkflowMetadataExists(workflowId)
+                val normalizedEntry = normalizeAuditValue(importedFromEntry)
+                require(normalizedEntry.isNotBlank()) { "importedFromEntry cannot be blank" }
+
+                val normalizedSourcePath = sourcePath.toAbsolutePath().normalize()
+                require(Files.isRegularFile(normalizedSourcePath)) {
+                    "Source file does not exist: $normalizedSourcePath"
+                }
+
+                val workspace = workspaceInitializer.initializeWorkflowWorkspace(workflowId)
+                val existingAssets = loadWorkflowSources(workflowId)
+                val originalFileName = normalizedSourcePath.fileName?.toString()
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: DEFAULT_WORKFLOW_SOURCE_STEM
+                val sourceId = nextWorkflowSourceId(existingAssets)
+                val storedFileName = buildStoredSourceFileName(sourceId, originalFileName)
+                val storedRelativePath = normalizeStoredRelativePath(
+                    workspace.workflowDir.relativize(workspace.sourcesDir.resolve(storedFileName)).toString(),
+                )
+                val sourceBytes = Files.readAllBytes(normalizedSourcePath)
+                val asset = WorkflowSourceAsset(
+                    sourceId = sourceId,
+                    originalFileName = originalFileName,
+                    storedRelativePath = storedRelativePath,
+                    mediaType = detectSourceMediaType(normalizedSourcePath, originalFileName),
+                    fileSize = sourceBytes.size.toLong(),
+                    contentHash = sha256Hex(sourceBytes),
+                    importedAt = Instant.now().toString(),
+                    importedFromStage = importedFromStage,
+                    importedFromEntry = normalizedEntry,
+                )
+                val targetPath = workspace.sourcesDir.resolve(storedFileName)
+
+                try {
+                    atomicFileIO.writeBytes(targetPath, sourceBytes)
+                    persistWorkflowSources(
+                        metadataPath = workspace.sourcesMetadataPath,
+                        assets = existingAssets + asset,
+                    )
+                } catch (error: Exception) {
+                    runCatching { Files.deleteIfExists(targetPath) }
+                    throw error
+                }
+
+                appendAuditEntry(
+                    eventType = SpecAuditEventType.SOURCE_IMPORTED,
+                    workflowId = workflowId,
+                    details = linkedMapOf(
+                        "sourceId" to asset.sourceId,
+                        "originalFileName" to asset.originalFileName,
+                        "storedRelativePath" to asset.storedRelativePath,
+                        "mediaType" to asset.mediaType,
+                        "fileSize" to asset.fileSize.toString(),
+                        "contentHash" to asset.contentHash,
+                        "importedFromStage" to asset.importedFromStage.name,
+                        "importedFromEntry" to asset.importedFromEntry,
+                    ),
+                )
+                asset
+            }
+        }
+    }
+
     fun listAuditEvents(workflowId: String): Result<List<SpecAuditEvent>> {
         return runCatching {
             lockManager.withAuditLogLock(workflowId) {
@@ -718,6 +800,12 @@ class SpecStorage(
         return workspaceInitializer
             .initializeWorkflowWorkspace(workflowId)
             .snapshotsDir
+    }
+
+    private fun getWorkflowSourcesMetadataPath(workflowId: String): Path {
+        return workspaceInitializer
+            .initializeWorkflowWorkspace(workflowId)
+            .sourcesMetadataPath
     }
 
     private fun getDeltaBaselinesDirectory(workflowId: String): Path {
@@ -1324,6 +1412,115 @@ class SpecStorage(
             .sorted()
     }
 
+    private fun persistWorkflowSources(
+        metadataPath: Path,
+        assets: List<WorkflowSourceAsset>,
+    ) {
+        atomicFileIO.writeString(
+            metadataPath,
+            formatWorkflowSourcesMetadata(assets),
+            StandardCharsets.UTF_8,
+        )
+    }
+
+    private fun formatWorkflowSourcesMetadata(assets: List<WorkflowSourceAsset>): String {
+        val metadata = linkedMapOf<String, Any?>(
+            "schemaVersion" to WORKFLOW_SOURCE_SCHEMA_VERSION,
+            "sources" to encodeWorkflowSources(assets),
+        )
+        return yamlCodec.encodeMap(metadata)
+    }
+
+    private fun loadWorkflowSources(workflowId: String): List<WorkflowSourceAsset> {
+        val metadataPath = getWorkflowSourcesMetadataPath(workflowId)
+        if (!Files.isRegularFile(metadataPath)) {
+            return emptyList()
+        }
+        val metadata = yamlCodec.decodeMap(Files.readString(metadataPath, StandardCharsets.UTF_8))
+        return parseWorkflowSources(metadata["sources"])
+    }
+
+    private fun encodeWorkflowSources(assets: List<WorkflowSourceAsset>): List<Map<String, Any?>> {
+        return assets
+            .sortedBy(WorkflowSourceAsset::sourceId)
+            .map { asset ->
+                linkedMapOf<String, Any?>(
+                    "sourceId" to asset.sourceId,
+                    "originalFileName" to asset.originalFileName,
+                    "storedRelativePath" to asset.storedRelativePath,
+                    "mediaType" to asset.mediaType,
+                    "fileSize" to asset.fileSize,
+                    "contentHash" to asset.contentHash,
+                    "importedAt" to asset.importedAt,
+                    "importedFromStage" to asset.importedFromStage.name,
+                    "importedFromEntry" to asset.importedFromEntry,
+                )
+            }
+    }
+
+    private fun parseWorkflowSources(raw: Any?): List<WorkflowSourceAsset> {
+        val items = raw as? List<*> ?: return emptyList()
+        return items.mapNotNull { entry ->
+            val map = entry as? Map<*, *> ?: return@mapNotNull null
+            val sourceId = map["sourceId"]
+                ?.toString()
+                ?.trim()
+                ?.uppercase()
+                ?.takeIf { WORKFLOW_SOURCE_ID_PATTERN.matches(it) }
+                ?: return@mapNotNull null
+            val originalFileName = map["originalFileName"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val storedRelativePath = map["storedRelativePath"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::normalizeStoredRelativePath)
+                ?.takeIf(::isSupportedStoredRelativePath)
+                ?: return@mapNotNull null
+            val mediaType = map["mediaType"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: DEFAULT_SOURCE_MEDIA_TYPE
+            val fileSize = parseLong(map["fileSize"], -1L)
+            if (fileSize < 0L) {
+                return@mapNotNull null
+            }
+            val contentHash = map["contentHash"]
+                ?.toString()
+                ?.trim()
+                ?.lowercase()
+                ?.takeIf { SOURCE_CONTENT_HASH_PATTERN.matches(it) }
+                ?: return@mapNotNull null
+            val importedAt = map["importedAt"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            val importedFromStage = parseOptionalEnum(map["importedFromStage"], StageId.entries)
+                ?: return@mapNotNull null
+            val importedFromEntry = map["importedFromEntry"]
+                ?.toString()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: UNKNOWN_SOURCE_ENTRY
+            WorkflowSourceAsset(
+                sourceId = sourceId,
+                originalFileName = originalFileName,
+                storedRelativePath = storedRelativePath,
+                mediaType = mediaType,
+                fileSize = fileSize,
+                contentHash = contentHash,
+                importedAt = importedAt,
+                importedFromStage = importedFromStage,
+                importedFromEntry = importedFromEntry,
+            )
+        }.sortedBy(WorkflowSourceAsset::sourceId)
+    }
+
     private fun <E : Enum<E>> parseOptionalEnum(
         raw: Any?,
         candidates: Iterable<E>,
@@ -1333,6 +1530,83 @@ class SpecStorage(
             return null
         }
         return candidates.firstOrNull { candidate -> candidate.name == normalized }
+    }
+
+    private fun ensureWorkflowMetadataExists(workflowId: String) {
+        val metadataPath = getWorkflowDirectory(workflowId).resolve(WORKFLOW_METADATA_FILE_NAME)
+        if (!Files.isRegularFile(metadataPath)) {
+            throw IllegalStateException("Workflow not found: $workflowId")
+        }
+    }
+
+    private fun nextWorkflowSourceId(existingAssets: List<WorkflowSourceAsset>): String {
+        val nextSequence = existingAssets
+            .mapNotNull { asset ->
+                WORKFLOW_SOURCE_ID_PATTERN.matchEntire(asset.sourceId)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.toIntOrNull()
+            }
+            .maxOrNull()
+            ?.plus(1)
+            ?: 1
+        return "%s%03d".format(WORKFLOW_SOURCE_ID_PREFIX, nextSequence)
+    }
+
+    private fun buildStoredSourceFileName(sourceId: String, originalFileName: String): String {
+        val extension = sourceExtension(originalFileName)
+        val baseName = originalFileName.substringBeforeLast('.', originalFileName)
+        val slug = baseName
+            .lowercase()
+            .replace(NON_ALPHANUMERIC_SOURCE_CHAR_PATTERN, "-")
+            .trim('-')
+            .take(MAX_WORKFLOW_SOURCE_STEM_LENGTH)
+            .ifBlank { DEFAULT_WORKFLOW_SOURCE_STEM }
+        return buildString {
+            append(sourceId)
+            append('-')
+            append(slug)
+            extension?.let {
+                append('.')
+                append(it)
+            }
+        }
+    }
+
+    private fun sourceExtension(originalFileName: String): String? {
+        val raw = originalFileName.substringAfterLast('.', "").lowercase()
+        return raw.takeIf { it.isNotBlank() && SOURCE_EXTENSION_PATTERN.matches(it) }
+    }
+
+    private fun detectSourceMediaType(sourcePath: Path, originalFileName: String): String {
+        return when (sourceExtension(originalFileName)) {
+            "md", "markdown" -> "text/markdown"
+            "txt" -> "text/plain"
+            "pdf" -> "application/pdf"
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            else -> Files.probeContentType(sourcePath)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: DEFAULT_SOURCE_MEDIA_TYPE
+        }
+    }
+
+    private fun normalizeStoredRelativePath(raw: String): String {
+        return raw.replace('\\', '/')
+    }
+
+    private fun isSupportedStoredRelativePath(relativePath: String): Boolean {
+        val normalized = normalizeStoredRelativePath(relativePath).trim()
+        if (normalized.isBlank() || normalized.startsWith("/") || normalized.contains("..")) {
+            return false
+        }
+        return normalized.startsWith("$WORKFLOW_SOURCES_DIR_NAME/")
+    }
+
+    private fun sha256Hex(content: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(content)
+        return digest.joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
     }
 
     private fun encodeStageStates(stageStates: Map<StageId, StageState>): Map<String, Any?> {
@@ -1777,17 +2051,30 @@ class SpecStorage(
         private const val RETRY_FIELD_DELIMITER = ':'
         private const val STRUCTURED_QUESTION_DELIMITER = '\u001F'
         private const val WORKFLOW_METADATA_FILE_NAME = "workflow.yaml"
+        private const val WORKFLOW_SOURCES_DIR_NAME = "sources"
+        private const val WORKFLOW_SOURCES_METADATA_FILE_NAME = "sources.yaml"
+        private const val WORKFLOW_SOURCE_SCHEMA_VERSION = 1
         private const val SNAPSHOT_METADATA_FILE_NAME = "snapshot.yaml"
         private const val SNAPSHOT_ID_DELIMITER = '-'
         private const val SNAPSHOT_RANDOM_SUFFIX_LENGTH = 10
         private const val BASELINE_RANDOM_SUFFIX_LENGTH = 8
         private val SNAPSHOT_CAPTURE_FILE_NAMES = buildSet {
             add(WORKFLOW_METADATA_FILE_NAME)
+            add(WORKFLOW_SOURCES_METADATA_FILE_NAME)
             StageId.entries
                 .mapNotNull(StageId::artifactFileName)
                 .forEach(::add)
         }.toList()
         private val CONFIG_PIN_HASH_PATTERN = Regex("^[a-f0-9]{64}$")
+        private val WORKFLOW_SOURCE_ID_PATTERN = Regex("""^SRC-(\d{3,})$""")
+        private const val WORKFLOW_SOURCE_ID_PREFIX = "SRC-"
+        private const val DEFAULT_WORKFLOW_SOURCE_STEM = "source"
+        private const val MAX_WORKFLOW_SOURCE_STEM_LENGTH = 48
+        private const val DEFAULT_SOURCE_MEDIA_TYPE = "application/octet-stream"
+        private const val UNKNOWN_SOURCE_ENTRY = "UNKNOWN"
+        private val SOURCE_EXTENSION_PATTERN = Regex("""^[a-z0-9]{1,10}$""")
+        private val NON_ALPHANUMERIC_SOURCE_CHAR_PATTERN = Regex("""[^a-z0-9]+""")
+        private val SOURCE_CONTENT_HASH_PATTERN = Regex("^[a-f0-9]{64}$")
 
         fun getInstance(project: Project): SpecStorage {
             return SpecStorage(project)

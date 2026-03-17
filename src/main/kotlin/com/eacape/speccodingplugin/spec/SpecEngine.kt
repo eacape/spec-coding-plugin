@@ -253,6 +253,24 @@ class SpecEngine(private val project: Project) {
         return storageDelegate.listWorkflowMetadata()
     }
 
+    fun listWorkflowSources(workflowId: String): Result<List<WorkflowSourceAsset>> {
+        return storageDelegate.listWorkflowSources(workflowId)
+    }
+
+    fun importWorkflowSource(
+        workflowId: String,
+        importedFromStage: StageId,
+        importedFromEntry: String,
+        sourcePath: Path,
+    ): Result<WorkflowSourceAsset> {
+        return storageDelegate.importWorkflowSource(
+            workflowId = workflowId,
+            importedFromStage = importedFromStage,
+            importedFromEntry = importedFromEntry,
+            sourcePath = sourcePath,
+        )
+    }
+
     fun openWorkflow(workflowId: String): Result<WorkflowSnapshot> {
         return runCatching {
             val snapshot = storageDelegate.openWorkflow(workflowId).getOrThrow()
