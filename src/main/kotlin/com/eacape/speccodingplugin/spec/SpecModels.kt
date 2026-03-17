@@ -300,6 +300,12 @@ data class SpecGenerationRequest(
 /**
  * 生成选项
  */
+data class WorkflowSourceUsage(
+    val selectedSourceIds: List<String> = emptyList(),
+    val consumedSourceIds: List<String> = emptyList(),
+    val renderedContext: String? = null,
+)
+
 data class GenerationOptions(
     val providerId: String? = null,
     val model: String? = null,
@@ -313,6 +319,7 @@ data class GenerationOptions(
     val clarificationQuestionBudget: Int = 5,
     val workingDirectory: String? = null,
     val operationMode: String? = null,
+    val workflowSourceUsage: WorkflowSourceUsage = WorkflowSourceUsage(),
 )
 
 data class ConfirmedClarificationPayload(

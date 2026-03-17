@@ -2453,6 +2453,7 @@ class SpecWorkflowPanel(
             options = GenerationOptions(
                 providerId = selectedProvider,
                 model = selectedModel,
+                workflowSourceUsage = resolveComposerSourceUsage(workflow.id),
             ),
         )
     }
@@ -3209,8 +3210,22 @@ class SpecWorkflowPanel(
             options = GenerationOptions(
                 providerId = providerId,
                 model = modelId,
+                workflowSourceUsage = resolveComposerSourceUsage(wfId),
             ),
         )
+    }
+
+    private fun resolveComposerSourceUsage(workflowId: String): WorkflowSourceUsage {
+        val knownSourceIds = currentWorkflowSources
+            .mapTo(linkedSetOf<String>(), WorkflowSourceAsset::sourceId)
+        if (knownSourceIds.isEmpty()) {
+            return WorkflowSourceUsage()
+        }
+        val selectedSourceIds = composerSelectedSourceIdsByWorkflowId[workflowId]
+            ?.filterTo(linkedSetOf()) { candidate -> candidate in knownSourceIds }
+            ?.takeIf { it.isNotEmpty() }
+            ?: knownSourceIds
+        return WorkflowSourceUsage(selectedSourceIds = selectedSourceIds.toList())
     }
 
     private fun buildClarificationMarkdown(

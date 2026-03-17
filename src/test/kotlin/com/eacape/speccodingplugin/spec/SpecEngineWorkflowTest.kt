@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -825,6 +826,107 @@ class SpecEngineWorkflowTest {
     }
 
     @Test
+    fun `generateCurrentPhase should inject selected workflow sources and record source usage audit`() {
+        var capturedSourceUsage: WorkflowSourceUsage? = null
+        val engine = SpecEngine(project, storage) { request ->
+            capturedSourceUsage = request.options.workflowSourceUsage
+            SpecGenerationResult.Success(validDocument(request.phase))
+        }
+        val workflow = engine.createWorkflow(
+            title = "Source-aware generation",
+            description = "consume persisted workflow sources",
+        ).getOrThrow()
+        val sourcePath = tempDir.resolve("incoming/client-prd.md")
+        Files.createDirectories(sourcePath.parent)
+        Files.writeString(
+            sourcePath,
+            "# Client PRD\n\n- Keep workflow artifacts file-first.\n- Cite the uploaded source.\n",
+            StandardCharsets.UTF_8,
+        )
+        val asset = storage.importWorkflowSource(
+            workflowId = workflow.id,
+            importedFromStage = StageId.REQUIREMENTS,
+            importedFromEntry = "SPEC_COMPOSER",
+            sourcePath = sourcePath,
+        ).getOrThrow()
+
+        runBlocking {
+            engine.generateCurrentPhase(
+                workflowId = workflow.id,
+                input = "generate requirements",
+                options = GenerationOptions(
+                    workflowSourceUsage = WorkflowSourceUsage(selectedSourceIds = listOf(asset.sourceId)),
+                ),
+            ).collect()
+        }
+
+        val sourceUsage = capturedSourceUsage ?: error("workflow source usage should be captured")
+        val auditEvent = storage.listAuditEvents(workflow.id).getOrThrow()
+            .last { event -> event.eventType == SpecAuditEventType.SOURCE_USAGE_RECORDED }
+
+        assertEquals(listOf(asset.sourceId), sourceUsage.selectedSourceIds)
+        assertEquals(listOf(asset.sourceId), sourceUsage.consumedSourceIds)
+        assertTrue(sourceUsage.renderedContext.orEmpty().contains(asset.storedRelativePath))
+        assertTrue(sourceUsage.renderedContext.orEmpty().contains("Keep workflow artifacts file-first"))
+        assertEquals("GENERATE_CURRENT_PHASE", auditEvent.details["actionType"])
+        assertEquals("SUCCESS", auditEvent.details["status"])
+        assertEquals("true", auditEvent.details["sourceConsumed"])
+        assertEquals(asset.sourceId, auditEvent.details["selectedSourceIds"])
+        assertEquals(asset.sourceId, auditEvent.details["consumedSourceIds"])
+    }
+
+    @Test
+    fun `draftCurrentPhaseClarification should record unresolved workflow sources as not consumed`() {
+        var capturedSourceUsage: WorkflowSourceUsage? = null
+        val engine = SpecEngine(
+            project = project,
+            storage = storage,
+            generationHandler = { request ->
+                SpecGenerationResult.Success(validDocument(request.phase))
+            },
+            clarificationHandler = { request ->
+                capturedSourceUsage = request.options.workflowSourceUsage
+                Result.success(
+                    SpecClarificationDraft(
+                        phase = request.phase,
+                        questions = listOf("Should we keep offline mode?"),
+                        rawContent = "1. Should we keep offline mode?",
+                    ),
+                )
+            },
+        )
+        val workflow = engine.createWorkflow(
+            title = "Source-aware clarification",
+            description = "record source usage audit",
+        ).getOrThrow()
+
+        val result = runBlocking {
+            engine.draftCurrentPhaseClarification(
+                workflowId = workflow.id,
+                input = "clarify requirements",
+                options = GenerationOptions(
+                    workflowSourceUsage = WorkflowSourceUsage(selectedSourceIds = listOf("SRC-404")),
+                ),
+            )
+        }
+
+        val sourceUsage = capturedSourceUsage ?: error("workflow source usage should be captured")
+        val auditEvent = storage.listAuditEvents(workflow.id).getOrThrow()
+            .last { event -> event.eventType == SpecAuditEventType.SOURCE_USAGE_RECORDED }
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("SRC-404"), sourceUsage.selectedSourceIds)
+        assertTrue(sourceUsage.consumedSourceIds.isEmpty())
+        assertEquals(null, sourceUsage.renderedContext)
+        assertEquals("DRAFT_CURRENT_PHASE_CLARIFICATION", auditEvent.details["actionType"])
+        assertEquals("SUCCESS", auditEvent.details["status"])
+        assertEquals("false", auditEvent.details["sourceConsumed"])
+        assertEquals("SRC-404", auditEvent.details["selectedSourceIds"])
+        assertEquals("", auditEvent.details["consumedSourceIds"])
+        assertEquals("1", auditEvent.details["questionCount"])
+    }
+
+    @Test
     fun `openWorkflow should recover legacy in progress tasks into execution runs`() {
         val workflowId = "wf-legacy-recovery"
         val artifactService = SpecArtifactService(project)
@@ -899,5 +1001,70 @@ class SpecEngineWorkflowTest {
                     event.details["migratedFromStatus"] == TaskStatus.IN_PROGRESS.name
             },
         )
+    }
+
+    private fun validDocument(phase: SpecPhase): SpecDocument {
+        val content = when (phase) {
+            SpecPhase.SPECIFY -> """
+                ## Functional Requirements
+                - Users can create tasks.
+
+                ## Non-Functional Requirements
+                - Response time should stay under 1 second.
+
+                ## User Stories
+                As a user, I want to create tasks, so that I can track work.
+
+                ## Acceptance Criteria
+                - [ ] Task creation succeeds.
+            """.trimIndent()
+
+            SpecPhase.DESIGN -> """
+                ## Architecture Design
+                - Keep workflow state deterministic.
+
+                ## Technology Choices
+                - Kotlin and IntelliJ Platform.
+
+                ## Data Model
+                - Model workflow source metadata explicitly.
+
+                ## API Design
+                - expose generation and clarification entry points.
+
+                ## Non-Functional Requirements
+                - Preserve auditability.
+            """.trimIndent()
+
+            SpecPhase.IMPLEMENT -> """
+                ## Task List
+
+                ### T-001: Bootstrap workflow source handling
+                ```spec-task
+                status: PENDING
+                priority: P1
+                dependsOn: []
+                relatedFiles: []
+                verificationResult: null
+                ```
+                - [ ] Connect source selection to generation.
+
+                ## Implementation Steps
+                1. Thread source ids through the request chain.
+
+                ## Test Plan
+                - Verify audit records selected and consumed sources.
+            """.trimIndent()
+        }
+        val candidate = SpecDocument(
+            id = "doc-${phase.name.lowercase()}",
+            phase = phase,
+            content = content,
+            metadata = SpecMetadata(
+                title = "${phase.displayName} Document",
+                description = "Generated ${phase.displayName} document",
+            ),
+        )
+        return candidate.copy(validationResult = SpecValidator.validate(candidate))
     }
 }

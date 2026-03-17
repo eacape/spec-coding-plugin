@@ -588,7 +588,30 @@ class SpecEngine(private val project: Project) {
             previousDocument = previousDocument,
             options = effectiveOptions,
         )
-        return clarificationHandler(request)
+        val result = clarificationHandler(request)
+        appendWorkflowSourceUsageAudit(
+            workflowId = workflowId,
+            phase = workflow.currentPhase,
+            actionType = AUDIT_ACTION_DRAFT_CLARIFICATION,
+            options = effectiveOptions,
+            status = if (result.isSuccess) {
+                AUDIT_STATUS_SUCCESS
+            } else {
+                AUDIT_STATUS_FAILED
+            },
+            extraDetails = buildMap {
+                result.getOrNull()?.let { draft ->
+                    put("questionCount", draft.questions.size.toString())
+                }
+                result.exceptionOrNull()?.message
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { errorMessage ->
+                        put("error", errorMessage)
+                    }
+            },
+        )
+        return result
     }
 
     suspend fun generateCurrentPhase(
@@ -601,11 +624,12 @@ class SpecEngine(private val project: Project) {
 
         emit(SpecGenerationProgress.Started(workflow.currentPhase))
 
+        var effectiveOptions = options
         try {
             // 获取前一阶段的文档（如果有）
             val previousPhase = workflow.currentPhase.previous()
             val previousDocument = previousPhase?.let { workflow.getDocument(it) }
-            val effectiveOptions = enrichGenerationOptions(workflow, options)
+            effectiveOptions = enrichGenerationOptions(workflow, options)
 
             // 构建生成请求
             val request = SpecGenerationRequest(
@@ -640,6 +664,13 @@ class SpecEngine(private val project: Project) {
                     )
                     activeWorkflows[workflowId] = updatedWorkflow
                     storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
+                    appendWorkflowSourceUsageAudit(
+                        workflowId = workflowId,
+                        phase = workflow.currentPhase,
+                        actionType = AUDIT_ACTION_GENERATE_CURRENT_PHASE,
+                        options = effectiveOptions,
+                        status = AUDIT_STATUS_SUCCESS,
+                    )
 
                     emit(SpecGenerationProgress.Completed(savedDocument))
                 }
@@ -660,16 +691,52 @@ class SpecEngine(private val project: Project) {
                     )
                     activeWorkflows[workflowId] = updatedWorkflow
                     storageDelegate.saveWorkflow(updatedWorkflow).getOrThrow()
+                    appendWorkflowSourceUsageAudit(
+                        workflowId = workflowId,
+                        phase = workflow.currentPhase,
+                        actionType = AUDIT_ACTION_GENERATE_CURRENT_PHASE,
+                        options = effectiveOptions,
+                        status = AUDIT_STATUS_VALIDATION_FAILED,
+                        extraDetails = mapOf(
+                            "validationErrorCount" to validation.errors.size.toString(),
+                        ),
+                    )
 
                     emit(SpecGenerationProgress.ValidationFailed(savedDocument, validation))
                 }
 
                 is SpecGenerationResult.Failure -> {
+                    appendWorkflowSourceUsageAudit(
+                        workflowId = workflowId,
+                        phase = workflow.currentPhase,
+                        actionType = AUDIT_ACTION_GENERATE_CURRENT_PHASE,
+                        options = effectiveOptions,
+                        status = AUDIT_STATUS_FAILED,
+                        extraDetails = buildMap {
+                            put("error", result.error)
+                            result.details
+                                ?.trim()
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { details ->
+                                    put("details", details)
+                                }
+                        },
+                    )
                     emit(SpecGenerationProgress.Failed(result.error, result.details))
                 }
             }
         } catch (e: Exception) {
             logger.warn("Failed to generate ${workflow.currentPhase} document", e)
+            appendWorkflowSourceUsageAudit(
+                workflowId = workflowId,
+                phase = workflow.currentPhase,
+                actionType = AUDIT_ACTION_GENERATE_CURRENT_PHASE,
+                options = effectiveOptions,
+                status = AUDIT_STATUS_FAILED,
+                extraDetails = mapOf(
+                    "error" to (e.message ?: "Unknown error"),
+                ),
+            )
             emit(SpecGenerationProgress.Failed(e.message ?: "Unknown error", e.stackTraceToString()))
         }
     }
@@ -2184,6 +2251,10 @@ class SpecEngine(private val project: Project) {
             workingDirectory = normalizedWorkingDirectory,
             operationMode = normalizedOperationMode,
         )
+        val workflowSourceUsage = buildWorkflowSourceUsage(
+            workflow = workflow,
+            requestedUsage = enrichedOptions.workflowSourceUsage,
+        )
 
         val baselineContext = buildIncrementalBaselineContext(workflow)
         val projectContext = buildIncrementalProjectContext(workflow)
@@ -2198,10 +2269,141 @@ class SpecEngine(private val project: Project) {
             projectContext?.takeIf { it.isNotBlank() },
         )
         if (mergedContextSections.isEmpty()) {
-            return enrichedOptions
+            return enrichedOptions.copy(workflowSourceUsage = workflowSourceUsage)
         }
         val mergedContext = mergedContextSections.joinToString(separator = "\n\n---\n\n")
-        return enrichedOptions.copy(confirmedContext = mergedContext)
+        return enrichedOptions.copy(
+            confirmedContext = mergedContext,
+            workflowSourceUsage = workflowSourceUsage,
+        )
+    }
+
+    private fun buildWorkflowSourceUsage(
+        workflow: SpecWorkflow,
+        requestedUsage: WorkflowSourceUsage,
+    ): WorkflowSourceUsage {
+        val selectedSourceIds = requestedUsage.selectedSourceIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        if (selectedSourceIds.isEmpty()) {
+            return WorkflowSourceUsage()
+        }
+
+        val assetsById = storageDelegate.listWorkflowSources(workflow.id)
+            .getOrElse { error ->
+                logger.warn("Failed to list workflow sources for workflow=${workflow.id}", error)
+                return WorkflowSourceUsage(selectedSourceIds = selectedSourceIds)
+            }
+            .associateBy(WorkflowSourceAsset::sourceId)
+        val consumedAssets = selectedSourceIds.mapNotNull(assetsById::get)
+        if (consumedAssets.isEmpty()) {
+            return WorkflowSourceUsage(selectedSourceIds = selectedSourceIds)
+        }
+
+        return WorkflowSourceUsage(
+            selectedSourceIds = selectedSourceIds,
+            consumedSourceIds = consumedAssets.map(WorkflowSourceAsset::sourceId),
+            renderedContext = buildWorkflowSourceContext(workflow.id, consumedAssets),
+        )
+    }
+
+    private fun buildWorkflowSourceContext(
+        workflowId: String,
+        assets: List<WorkflowSourceAsset>,
+    ): String {
+        return buildString {
+            appendLine("## Workflow reference sources")
+            appendLine("Use these persisted workflow sources as additional context for the current request.")
+            assets.forEach { asset ->
+                appendLine()
+                appendLine("### ${asset.sourceId} | ${asset.originalFileName}")
+                appendLine("- Path: `${asset.storedRelativePath}`")
+                appendLine("- Media type: ${asset.mediaType}")
+                appendLine("- Imported from: ${asset.importedFromStage.name} / ${asset.importedFromEntry}")
+                val excerpt = loadWorkflowSourceExcerpt(workflowId, asset)
+                if (excerpt == null) {
+                    appendLine("- Extracted text excerpt: (not available; rely on metadata only)")
+                } else {
+                    appendLine("- Extracted text excerpt:")
+                    appendLine("```text")
+                    appendLine(excerpt)
+                    appendLine("```")
+                }
+            }
+        }.trimEnd()
+    }
+
+    private fun loadWorkflowSourceExcerpt(
+        workflowId: String,
+        asset: WorkflowSourceAsset,
+    ): String? {
+        val rawContent = storageDelegate.readWorkflowSourceText(workflowId, asset)
+            .getOrElse { error ->
+                logger.debug("Skip workflow source text extraction for ${asset.sourceId}", error)
+                return null
+            }
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            .orEmpty()
+        if (rawContent.isBlank()) {
+            return null
+        }
+        return clipContextText(
+            content = rawContent,
+            maxLines = MAX_WORKFLOW_SOURCE_EXCERPT_LINES,
+            maxChars = MAX_WORKFLOW_SOURCE_EXCERPT_CHARS,
+        )
+    }
+
+    private fun appendWorkflowSourceUsageAudit(
+        workflowId: String,
+        phase: SpecPhase,
+        actionType: String,
+        options: GenerationOptions,
+        status: String,
+        extraDetails: Map<String, String> = emptyMap(),
+    ) {
+        val selectedSourceIds = options.workflowSourceUsage.selectedSourceIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        if (selectedSourceIds.isEmpty()) {
+            return
+        }
+
+        val consumedSourceIds = options.workflowSourceUsage.consumedSourceIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        storageDelegate.appendAuditEvent(
+            workflowId = workflowId,
+            eventType = SpecAuditEventType.SOURCE_USAGE_RECORDED,
+            details = buildMap {
+                put("phase", phase.name)
+                put("file", phase.outputFileName)
+                put("actionType", actionType)
+                put("status", status)
+                put("selectedSourceCount", selectedSourceIds.size.toString())
+                put("selectedSourceIds", selectedSourceIds.joinToString(","))
+                put("consumedSourceCount", consumedSourceIds.size.toString())
+                put("consumedSourceIds", consumedSourceIds.joinToString(","))
+                put("sourceConsumed", consumedSourceIds.isNotEmpty().toString())
+                options.requestId
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { requestId ->
+                        put("requestId", requestId)
+                    }
+                extraDetails.forEach { (key, value) ->
+                    val normalizedValue = value.trim()
+                    if (normalizedValue.isNotBlank()) {
+                        put(key, normalizedValue)
+                    }
+                }
+            },
+        ).getOrThrow()
     }
 
     private fun buildIncrementalBaselineContext(workflow: SpecWorkflow): String? {
@@ -2466,8 +2668,15 @@ class SpecEngine(private val project: Project) {
             ),
         )
         private const val MAX_KEY_FILE_SNIPPET_CHARS = 4000
+        private const val MAX_WORKFLOW_SOURCE_EXCERPT_LINES = 60
+        private const val MAX_WORKFLOW_SOURCE_EXCERPT_CHARS = 2000
         private const val SOURCE_SNAPSHOT_DEPTH = 4
         private const val MAX_SOURCE_FILES_PER_DIR = 18
+        private const val AUDIT_ACTION_GENERATE_CURRENT_PHASE = "GENERATE_CURRENT_PHASE"
+        private const val AUDIT_ACTION_DRAFT_CLARIFICATION = "DRAFT_CURRENT_PHASE_CLARIFICATION"
+        private const val AUDIT_STATUS_SUCCESS = "SUCCESS"
+        private const val AUDIT_STATUS_FAILED = "FAILED"
+        private const val AUDIT_STATUS_VALIDATION_FAILED = "VALIDATION_FAILED"
 
         fun getInstance(project: Project): SpecEngine = project.service()
     }

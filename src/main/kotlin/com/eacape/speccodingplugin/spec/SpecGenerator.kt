@@ -167,6 +167,7 @@ class SpecGenerator(
             appendLine("```")
             appendLine(request.previousDocument?.content?.ifBlank { "(空)" } ?: "(无)")
             appendLine("```")
+            appendWorkflowSourceContext(request.options.workflowSourceUsage)
             val confirmedContext = request.options.confirmedContext
                 ?.replace("\r\n", "\n")
                 ?.replace('\r', '\n')
@@ -203,6 +204,7 @@ class SpecGenerator(
             appendLine(request.input)
             appendLine("```")
             appendConfirmedContext(request.options.confirmedContext)
+            appendWorkflowSourceContext(request.options.workflowSourceUsage)
             appendLine()
             appendLine("要求：")
             appendLine("1. 提取功能需求（Functional Requirements）")
@@ -232,6 +234,7 @@ class SpecGenerator(
             appendLine(request.previousDocument?.content ?: request.input)
             appendLine("```")
             appendConfirmedContext(request.options.confirmedContext)
+            appendWorkflowSourceContext(request.options.workflowSourceUsage)
             appendLine()
             appendLine("要求：")
             appendLine("0. 只输出最终 design.md 正文，不要输出思考过程、工具日志、路径信息或 JSON。")
@@ -262,6 +265,7 @@ class SpecGenerator(
             appendLine(request.previousDocument?.content ?: request.input)
             appendLine("```")
             appendConfirmedContext(request.options.confirmedContext)
+            appendWorkflowSourceContext(request.options.workflowSourceUsage)
             appendLine()
             appendLine("要求：")
             appendLine("0. 只输出最终 tasks.md 正文，不要输出思考过程、工具日志、文件路径、JSON 字符串或转义字符。")
@@ -522,6 +526,20 @@ class SpecGenerator(
         appendLine("```")
     }
 
+    private fun StringBuilder.appendWorkflowSourceContext(workflowSourceUsage: WorkflowSourceUsage) {
+        val normalized = workflowSourceUsage.renderedContext
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            .orEmpty()
+        if (normalized.isBlank()) {
+            return
+        }
+
+        appendLine()
+        appendLine(normalized)
+    }
+
     private fun buildRequestMetadata(options: GenerationOptions): Map<String, String> {
         return linkedMapOf<String, String>().apply {
             val requestId = options.requestId?.trim().orEmpty()
@@ -529,6 +547,20 @@ class SpecGenerator(
                 put("requestId", requestId)
             }
             put(METADATA_SPEC_WORKFLOW_KEY, "true")
+            val selectedSourceIds = options.workflowSourceUsage.selectedSourceIds
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .distinct()
+            if (selectedSourceIds.isNotEmpty()) {
+                put("workflowSourceIds", selectedSourceIds.joinToString(","))
+            }
+            val consumedSourceIds = options.workflowSourceUsage.consumedSourceIds
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .distinct()
+            if (consumedSourceIds.isNotEmpty()) {
+                put("workflowConsumedSourceIds", consumedSourceIds.joinToString(","))
+            }
             val workingDirectory = options.workingDirectory
                 ?.trim()
                 ?.ifBlank { null }

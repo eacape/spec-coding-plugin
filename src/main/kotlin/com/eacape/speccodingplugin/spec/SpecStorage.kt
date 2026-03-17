@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.spec
 
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
+import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileSystems
@@ -542,6 +543,32 @@ class SpecStorage(
             lockManager.withWorkflowLock(workflowId) {
                 ensureWorkflowMetadataExists(workflowId)
                 loadWorkflowSources(workflowId)
+            }
+        }
+    }
+
+    fun readWorkflowSourceText(
+        workflowId: String,
+        asset: WorkflowSourceAsset,
+        charset: Charset = StandardCharsets.UTF_8,
+    ): Result<String?> {
+        return runCatching {
+            lockManager.withWorkflowLock(workflowId) {
+                val normalizedRelativePath = normalizeStoredRelativePath(asset.storedRelativePath)
+                if (!isSupportedStoredRelativePath(normalizedRelativePath)) {
+                    return@withWorkflowLock null
+                }
+                if (!isTextualWorkflowSource(asset.mediaType)) {
+                    return@withWorkflowLock null
+                }
+
+                val workflowDir = getWorkflowDirectory(workflowId).toAbsolutePath().normalize()
+                val sourcePath = workflowDir.resolve(normalizedRelativePath).normalize()
+                if (!sourcePath.startsWith(workflowDir) || !Files.isRegularFile(sourcePath)) {
+                    return@withWorkflowLock null
+                }
+
+                Files.readString(sourcePath, charset)
             }
         }
     }
@@ -1602,6 +1629,17 @@ class SpecStorage(
             return false
         }
         return normalized.startsWith("$WORKFLOW_SOURCES_DIR_NAME/")
+    }
+
+    private fun isTextualWorkflowSource(mediaType: String): Boolean {
+        val normalizedMediaType = mediaType.trim().lowercase()
+        return normalizedMediaType.startsWith("text/") ||
+            normalizedMediaType == "application/json" ||
+            normalizedMediaType.endsWith("+json") ||
+            normalizedMediaType == "application/xml" ||
+            normalizedMediaType.endsWith("+xml") ||
+            normalizedMediaType == "application/yaml" ||
+            normalizedMediaType == "application/x-yaml"
     }
 
     private fun sha256Hex(content: ByteArray): String {
