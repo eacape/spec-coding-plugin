@@ -146,6 +146,23 @@ data class ValidationResult(
     }
 }
 
+enum class ArtifactDraftState {
+    UNMATERIALIZED,
+    MATERIALIZED,
+    ;
+
+    val composeActionMode: ArtifactComposeActionMode
+        get() = when (this) {
+            UNMATERIALIZED -> ArtifactComposeActionMode.GENERATE
+            MATERIALIZED -> ArtifactComposeActionMode.REVISE
+        }
+}
+
+enum class ArtifactComposeActionMode {
+    GENERATE,
+    REVISE,
+}
+
 /**
  * Spec 工作流需求意图
  */
@@ -178,6 +195,7 @@ data class SpecWorkflow(
     val verifyEnabled: Boolean = false,
     val baselineWorkflowId: String? = null,
     val configPinHash: String? = null,
+    val artifactDraftStates: Map<StageId, ArtifactDraftState> = emptyMap(),
     val taskExecutionRuns: List<TaskExecutionRun> = emptyList(),
     val clarificationRetryState: ClarificationRetryState? = null,
     val createdAt: Long = System.currentTimeMillis(),
@@ -195,6 +213,19 @@ data class SpecWorkflow(
      */
     fun getDocument(phase: SpecPhase): SpecDocument? {
         return documents[phase]
+    }
+
+    fun resolveArtifactDraftState(phase: SpecPhase): ArtifactDraftState {
+        return artifactDraftStates[phase.toStageId()]
+            ?: ArtifactDraftStateSupport.deriveState(
+                stageId = phase.toStageId(),
+                content = documents[phase]?.content,
+                hasMaterializationAudit = false,
+            )
+    }
+
+    fun resolveComposeActionMode(phase: SpecPhase): ArtifactComposeActionMode {
+        return resolveArtifactDraftState(phase).composeActionMode
     }
 
     /**
@@ -238,6 +269,7 @@ data class SpecWorkflow(
             verifyEnabled = verifyEnabled,
             configPinHash = configPinHash,
             baselineWorkflowId = baselineWorkflowId,
+            artifactDraftStates = artifactDraftStates,
             status = status,
             createdAt = createdAt,
             updatedAt = updatedAt,
@@ -320,6 +352,7 @@ data class GenerationOptions(
     val workingDirectory: String? = null,
     val operationMode: String? = null,
     val workflowSourceUsage: WorkflowSourceUsage = WorkflowSourceUsage(),
+    val composeActionMode: ArtifactComposeActionMode? = null,
 )
 
 data class ConfirmedClarificationPayload(

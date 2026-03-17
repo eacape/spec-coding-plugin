@@ -1,6 +1,8 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ArtifactDraftState
+import com.eacape.speccodingplugin.spec.ArtifactDraftStateSupport
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecMetadata
 import com.eacape.speccodingplugin.spec.SpecPhase
@@ -147,6 +149,77 @@ class SpecDetailPanelTest {
         assertTrue(preview.contains("## 架构设计"))
         assertTrue(preview.contains("## 技术选型"))
         assertTrue(preview.contains("erDiagram"))
+    }
+
+    @Test
+    fun `updateWorkflow should keep generate tooltip for skeleton artifact`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-generate-mode",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = ArtifactDraftStateSupport.defaultSkeletonFor(StageId.TASKS).trim(),
+                    valid = false,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Generate mode",
+            description = "skeleton should stay generate",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(workflow)
+
+        val states = panel.buttonStatesForTest()
+        assertEquals(SpecCodingBundle.message("spec.detail.generate"), states["generateTooltip"])
+        assertEquals(SpecCodingBundle.message("spec.detail.generate"), states["generateAccessibleName"])
+    }
+
+    @Test
+    fun `updateWorkflow should switch generate and clarify actions to revise for materialized artifact`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-revise-mode",
+            currentPhase = SpecPhase.DESIGN,
+            documents = mapOf(
+                SpecPhase.DESIGN to document(
+                    phase = SpecPhase.DESIGN,
+                    content = """
+                        # Design Document
+
+                        ## Architecture Design
+                        - Split the workflow UI from storage services.
+                    """.trimIndent(),
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Revise mode",
+            description = "materialized document should switch action copy",
+            artifactDraftStates = mapOf(StageId.DESIGN to ArtifactDraftState.MATERIALIZED),
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(workflow)
+
+        val readyStates = panel.buttonStatesForTest()
+        assertEquals(SpecCodingBundle.message("spec.detail.revise"), readyStates["generateTooltip"])
+        assertEquals(SpecCodingBundle.message("spec.detail.revise"), readyStates["generateAccessibleName"])
+
+        panel.showClarificationDraft(
+            phase = SpecPhase.DESIGN,
+            input = "expand integration details",
+            questionsMarkdown = "1. Which persistence boundary changes?",
+            suggestedDetails = "- keep YAML storage",
+        )
+
+        val clarifyingStates = panel.buttonStatesForTest()
+        assertEquals(SpecCodingBundle.message("spec.detail.clarify.confirmRevise"), clarifyingStates["confirmGenerateTooltip"])
+        assertEquals(SpecCodingBundle.message("spec.detail.clarify.confirmRevise"), clarifyingStates["confirmGenerateAccessibleName"])
     }
 
     @Test

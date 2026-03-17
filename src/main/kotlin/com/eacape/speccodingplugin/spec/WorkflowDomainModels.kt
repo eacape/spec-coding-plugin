@@ -87,6 +87,7 @@ data class WorkflowMeta(
     val verifyEnabled: Boolean,
     val configPinHash: String?,
     val baselineWorkflowId: String?,
+    val artifactDraftStates: Map<StageId, ArtifactDraftState>,
     val status: WorkflowStatus,
     val createdAt: Long,
     val updatedAt: Long,

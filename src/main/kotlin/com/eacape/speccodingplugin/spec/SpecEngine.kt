@@ -188,6 +188,7 @@ class SpecEngine(private val project: Project) {
                     null
                 },
                 configPinHash = configPin.hash,
+                artifactDraftStates = ArtifactDraftStateSupport.initializeForStageStates(stageMetadata.stageStates),
                 createdAt = createdAt,
                 updatedAt = createdAt,
             )
@@ -391,6 +392,13 @@ class SpecEngine(private val project: Project) {
                 currentStage = stageMetadata.currentStage,
                 verifyEnabled = stageMetadata.verifyEnabled,
                 configPinHash = configPin.hash,
+                artifactDraftStates = buildMap {
+                    ArtifactDraftStateSupport.initializeForStageStates(stageMetadata.stageStates)
+                        .forEach { (stageId, state) -> put(stageId, state) }
+                    SpecPhase.entries.forEach { phase ->
+                        put(phase.toStageId(), sourceWorkflow.resolveArtifactDraftState(phase))
+                    }
+                },
                 clarificationRetryState = sourceWorkflow.clarificationRetryState,
                 createdAt = createdAt,
                 updatedAt = createdAt,
@@ -659,6 +667,9 @@ class SpecEngine(private val project: Project) {
                     // 更新工作流
                     val updatedWorkflow = workflow.copy(
                         documents = workflow.documents + (workflow.currentPhase to savedDocument),
+                        artifactDraftStates = workflow.artifactDraftStates + (
+                            workflow.currentPhase.toStageId() to ArtifactDraftState.MATERIALIZED
+                        ),
                         clarificationRetryState = null,
                         updatedAt = System.currentTimeMillis()
                     )
@@ -687,6 +698,9 @@ class SpecEngine(private val project: Project) {
 
                     val updatedWorkflow = workflow.copy(
                         documents = workflow.documents + (workflow.currentPhase to savedDocument),
+                        artifactDraftStates = workflow.artifactDraftStates + (
+                            workflow.currentPhase.toStageId() to ArtifactDraftState.MATERIALIZED
+                        ),
                         updatedAt = System.currentTimeMillis()
                     )
                     activeWorkflows[workflowId] = updatedWorkflow
@@ -797,6 +811,7 @@ class SpecEngine(private val project: Project) {
 
             val updatedWorkflow = workflow.copy(
                 documents = workflow.documents + (phase to updatedDocument),
+                artifactDraftStates = workflow.artifactDraftStates + (phase.toStageId() to ArtifactDraftState.MATERIALIZED),
                 updatedAt = now,
             )
             activeWorkflows[workflowId] = updatedWorkflow

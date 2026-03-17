@@ -1,6 +1,7 @@
 package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
+import com.eacape.speccodingplugin.spec.ArtifactComposeActionMode
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
@@ -540,7 +541,7 @@ class SpecDetailPanel(
         configureIconActionButton(
             button = generateButton,
             icon = SpecWorkflowIcons.Execute,
-            tooltipKey = "spec.detail.generate",
+            tooltipKey = currentGenerateTooltipKey(),
         )
         configureIconActionButton(
             button = nextPhaseButton,
@@ -585,7 +586,7 @@ class SpecDetailPanel(
         configureIconActionButton(
             button = confirmGenerateButton,
             icon = SpecWorkflowIcons.Execute,
-            tooltipKey = "spec.detail.clarify.confirmGenerate",
+            tooltipKey = currentClarificationConfirmTooltipKey(),
         )
         configureIconActionButton(
             button = regenerateClarificationButton,
@@ -603,6 +604,25 @@ class SpecDetailPanel(
             tooltipKey = "spec.detail.clarify.cancel",
         )
         updatePauseResumeButtonPresentation(currentWorkflow?.status)
+    }
+
+    private fun currentComposeActionMode(): ArtifactComposeActionMode {
+        val workflow = currentWorkflow ?: return ArtifactComposeActionMode.GENERATE
+        return workflow.resolveComposeActionMode(workflow.currentPhase)
+    }
+
+    private fun currentGenerateTooltipKey(): String {
+        return when (currentComposeActionMode()) {
+            ArtifactComposeActionMode.GENERATE -> "spec.detail.generate"
+            ArtifactComposeActionMode.REVISE -> "spec.detail.revise"
+        }
+    }
+
+    private fun currentClarificationConfirmTooltipKey(): String {
+        return when (currentComposeActionMode()) {
+            ArtifactComposeActionMode.GENERATE -> "spec.detail.clarify.confirmGenerate"
+            ArtifactComposeActionMode.REVISE -> "spec.detail.clarify.confirmRevise"
+        }
     }
 
     private fun configureIconActionButton(button: JButton, icon: Icon, tooltipKey: String) {
@@ -1469,6 +1489,7 @@ class SpecDetailPanel(
             preferredWorkbenchPhase != null -> preferredWorkbenchPhase
             else -> preservedPhase ?: workflow.currentPhase
         }
+        applyActionButtonPresentation()
         setPhaseStepperEnabled(!isEditing)
         updateTreeSelection(selectedPhase, forceComposerReset = false)
         updateButtonStates(workflow)
@@ -1520,6 +1541,7 @@ class SpecDetailPanel(
         inputArea.toolTipText = null
         composerSourcePanel.clear()
         updateInputPlaceholder(null)
+        applyActionButtonPresentation()
         generateButton.isVisible = true
         nextPhaseButton.isVisible = true
         goBackButton.isVisible = true
@@ -3853,6 +3875,8 @@ class SpecDetailPanel(
             "generateEnabled" to generateButton.isEnabled,
             "generateIconId" to SpecWorkflowIcons.debugId(generateButton.icon),
             "generateFocusable" to generateButton.isFocusable,
+            "generateTooltip" to generateButton.toolTipText.orEmpty(),
+            "generateAccessibleName" to (generateButton.accessibleContext?.accessibleName ?: ""),
             "nextEnabled" to nextPhaseButton.isEnabled,
             "nextIconId" to SpecWorkflowIcons.debugId(nextPhaseButton.icon),
             "nextFocusable" to nextPhaseButton.isFocusable,
@@ -3882,6 +3906,8 @@ class SpecDetailPanel(
             "confirmGenerateEnabled" to confirmGenerateButton.isEnabled,
             "confirmGenerateIconId" to SpecWorkflowIcons.debugId(confirmGenerateButton.icon),
             "confirmGenerateFocusable" to confirmGenerateButton.isFocusable,
+            "confirmGenerateTooltip" to confirmGenerateButton.toolTipText.orEmpty(),
+            "confirmGenerateAccessibleName" to (confirmGenerateButton.accessibleContext?.accessibleName ?: ""),
             "regenerateClarificationEnabled" to regenerateClarificationButton.isEnabled,
             "regenerateClarificationIconId" to SpecWorkflowIcons.debugId(regenerateClarificationButton.icon),
             "regenerateClarificationFocusable" to regenerateClarificationButton.isFocusable,

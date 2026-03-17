@@ -2457,6 +2457,7 @@ class SpecWorkflowPanel(
                 providerId = selectedProvider,
                 model = selectedModel,
                 workflowSourceUsage = resolveComposerSourceUsage(workflow.id),
+                composeActionMode = workflow.resolveComposeActionMode(workflow.currentPhase),
             ),
         )
     }
@@ -3214,6 +3215,7 @@ class SpecWorkflowPanel(
                 providerId = providerId,
                 model = modelId,
                 workflowSourceUsage = resolveComposerSourceUsage(wfId),
+                composeActionMode = workflow.resolveComposeActionMode(workflow.currentPhase),
             ),
         )
     }

@@ -205,6 +205,38 @@ class SpecStorageWorkflowMetadataTest {
     }
 
     @Test
+    fun `loadWorkflow should preserve persisted artifact draft states`() {
+        val workflowId = "wf-artifact-draft-states"
+        val workflow = SpecWorkflow(
+            id = workflowId,
+            currentPhase = SpecPhase.DESIGN,
+            documents = emptyMap(),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Draft states",
+            description = "persist compose mode state",
+            artifactDraftStates = linkedMapOf(
+                StageId.REQUIREMENTS to ArtifactDraftState.MATERIALIZED,
+                StageId.DESIGN to ArtifactDraftState.UNMATERIALIZED,
+                StageId.TASKS to ArtifactDraftState.UNMATERIALIZED,
+            ),
+        )
+
+        storage.saveWorkflow(workflow).getOrThrow()
+
+        val yamlPath = tempDir
+            .resolve(".spec-coding")
+            .resolve("specs")
+            .resolve(workflowId)
+            .resolve("workflow.yaml")
+        val yamlContent = Files.readString(yamlPath)
+        assertTrue(yamlContent.contains("artifactDraftStates:"))
+        assertTrue(yamlContent.contains("REQUIREMENTS: MATERIALIZED"))
+
+        val loaded = storage.loadWorkflow(workflowId).getOrThrow()
+        assertEquals(workflow.artifactDraftStates, loaded.artifactDraftStates)
+    }
+
+    @Test
     fun `loadWorkflow should preserve template stage metadata and current stage`() {
         val workflowId = "wf-stage-metadata"
         val workflow = SpecWorkflow(
@@ -253,6 +285,56 @@ class SpecStorageWorkflowMetadataTest {
         assertEquals(StageProgress.DONE, loaded.stageStates.getValue(StageId.REQUIREMENTS).status)
         assertEquals(StageProgress.IN_PROGRESS, loaded.stageStates.getValue(StageId.DESIGN).status)
         assertFalse(loaded.stageStates.getValue(StageId.VERIFY).active)
+    }
+
+    @Test
+    fun `loadWorkflow should derive artifact draft states when metadata is missing`() {
+        val workflowId = "wf-legacy-draft-state"
+        val workflowDir = tempDir
+            .resolve(".spec-coding")
+            .resolve("specs")
+            .resolve(workflowId)
+        Files.createDirectories(workflowDir)
+        Files.writeString(
+            workflowDir.resolve("workflow.yaml"),
+            """
+            schemaVersion: 1
+            id: $workflowId
+            title: Legacy draft state
+            description: derive from artifacts
+            template: FULL_SPEC
+            currentPhase: IMPLEMENT
+            currentStage: TASKS
+            status: IN_PROGRESS
+            verifyEnabled: false
+            createdAt: 1700000000000
+            updatedAt: 1700000005000
+            documents: []
+            """.trimIndent() + "\n",
+        )
+        Files.writeString(
+            workflowDir.resolve("requirements.md"),
+            ArtifactDraftStateSupport.defaultSkeletonFor(StageId.REQUIREMENTS),
+        )
+        Files.writeString(
+            workflowDir.resolve("design.md"),
+            """
+            # Design Document
+
+            ## Architecture Design
+            - Keep UI, service, and storage layers separate.
+            """.trimIndent() + "\n",
+        )
+        Files.writeString(
+            workflowDir.resolve("tasks.md"),
+            ArtifactDraftStateSupport.defaultSkeletonFor(StageId.TASKS),
+        )
+
+        val loaded = storage.loadWorkflow(workflowId).getOrThrow()
+
+        assertEquals(ArtifactDraftState.UNMATERIALIZED, loaded.artifactDraftStates[StageId.REQUIREMENTS])
+        assertEquals(ArtifactDraftState.MATERIALIZED, loaded.artifactDraftStates[StageId.DESIGN])
+        assertEquals(ArtifactDraftState.UNMATERIALIZED, loaded.artifactDraftStates[StageId.TASKS])
     }
 
     @Test

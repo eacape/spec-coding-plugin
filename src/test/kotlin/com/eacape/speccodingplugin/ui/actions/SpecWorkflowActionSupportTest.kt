@@ -237,6 +237,7 @@ class SpecWorkflowActionSupportTest {
             verifyEnabled = false,
             configPinHash = null,
             baselineWorkflowId = null,
+            artifactDraftStates = emptyMap(),
             status = WorkflowStatus.IN_PROGRESS,
             createdAt = 1L,
             updatedAt = 2L,

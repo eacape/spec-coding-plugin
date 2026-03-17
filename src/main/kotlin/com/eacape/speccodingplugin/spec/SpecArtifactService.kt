@@ -237,15 +237,7 @@ class SpecArtifactService(
     }
 
     private fun defaultSkeletonFor(stageId: StageId): String {
-        val raw = when (stageId) {
-            StageId.REQUIREMENTS -> REQUIREMENTS_SKELETON
-            StageId.DESIGN -> DESIGN_SKELETON
-            StageId.TASKS -> TASKS_SKELETON
-            StageId.VERIFY -> VERIFICATION_SKELETON
-            StageId.IMPLEMENT, StageId.ARCHIVE ->
-                throw IllegalArgumentException("Stage $stageId has no artifact skeleton.")
-        }
-        return normalizeContent(raw.trimIndent())
+        return ArtifactDraftStateSupport.defaultSkeletonFor(stageId)
     }
 
     private fun canScaffold(stageId: StageId): Boolean {
@@ -294,82 +286,5 @@ class SpecArtifactService(
 
     companion object {
         private const val SPECS_DIR_NAME = "specs"
-
-        private const val REQUIREMENTS_SKELETON = """
-            # Requirements Document
-
-            ## Functional Requirements
-            - [ ] TODO: Describe required behavior.
-
-            ## Non-Functional Requirements
-            - [ ] TODO: Describe performance, security, and reliability constraints.
-
-            ## User Stories
-            As a <role>, I want <capability>, so that <benefit>.
-
-            ## Acceptance Criteria
-            - [ ] TODO: Add measurable acceptance criteria.
-        """
-
-        private const val DESIGN_SKELETON = """
-            # Design Document
-
-            ## Architecture Design
-            - TODO: Describe the architecture and module boundaries.
-
-            ## Technology Stack
-            - TODO: List selected technologies and rationale.
-
-            ## Data Model
-            - TODO: Describe key entities and relationships.
-
-            ## API Design
-            - TODO: Describe interfaces and contract changes.
-
-            ## Non-Functional Design
-            - TODO: Capture performance, security, and operability choices.
-        """
-
-        private const val TASKS_SKELETON = """
-            # Implement Document
-
-            ## Task List
-
-            ### T-001: Bootstrap implementation
-            ```spec-task
-            status: PENDING
-            priority: P0
-            dependsOn: []
-            relatedFiles: []
-            verificationResult: null
-            ```
-            - [ ] TODO: Add implementation details.
-
-            ## Implementation Steps
-            1. TODO: Break work into executable steps.
-            2. TODO: Update related files and validation steps.
-
-            ## Test Plan
-            - [ ] TODO: Add unit and integration checks.
-        """
-
-        private const val VERIFICATION_SKELETON = """
-            # Verification Document
-
-            ## Verification Scope
-            - TODO: Describe affected tasks and files.
-
-            ## Verification Method
-            - TODO: Describe automated and manual verification approach.
-
-            ## Commands
-            ```bash
-            # TODO: add verification commands
-            ```
-
-            ## Result
-            conclusion: WARN
-            summary: TODO
-        """
     }
 }

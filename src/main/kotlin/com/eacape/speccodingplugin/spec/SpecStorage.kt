@@ -947,6 +947,7 @@ class SpecStorage(
             "createdAt" to workflow.createdAt,
             "updatedAt" to workflow.updatedAt,
             "stageStates" to encodeStageStates(workflow.stageStates),
+            "artifactDraftStates" to encodeArtifactDraftStates(workflow.artifactDraftStates),
             "documents" to workflow.documents.entries
                 .sortedBy { (phase, _) -> phase.name }
                 .map { (phase, doc) ->
@@ -988,6 +989,11 @@ class SpecStorage(
                 documents[phase] = it
             }
         }
+        val artifactDraftStates = ArtifactDraftStateSupport.resolvePersistedStates(
+            persistedStates = parsed.artifactDraftStates,
+            documents = documents,
+            auditEvents = listAuditEvents(workflowId).getOrDefault(emptyList()),
+        )
 
         return SpecWorkflow(
             id = workflowId,
@@ -1003,6 +1009,7 @@ class SpecStorage(
             verifyEnabled = parsed.verifyEnabled,
             baselineWorkflowId = parsed.baselineWorkflowId,
             configPinHash = parsed.configPinHash,
+            artifactDraftStates = artifactDraftStates,
             taskExecutionRuns = parsed.taskExecutionRuns,
             clarificationRetryState = parsed.clarificationRetryState,
             createdAt = parsed.createdAt,
@@ -1032,6 +1039,7 @@ class SpecStorage(
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?.let(::decodeClarificationRetryState)
+        val artifactDraftStates = parseArtifactDraftStates(migrated["artifactDraftStates"])
         val taskExecutionRuns = parseTaskExecutionRuns(migrated["executionRuns"])
         val createdAt = parseLong(migrated["createdAt"], now)
         val updatedAt = parseLong(migrated["updatedAt"], now)
@@ -1074,6 +1082,7 @@ class SpecStorage(
             description = description,
             baselineWorkflowId = baselineWorkflowId,
             configPinHash = configPinHash,
+            artifactDraftStates = artifactDraftStates,
             taskExecutionRuns = taskExecutionRuns,
             clarificationRetryState = clarificationRetryState,
             createdAt = createdAt,
@@ -1097,6 +1106,7 @@ class SpecStorage(
         val description: String,
         val baselineWorkflowId: String?,
         val configPinHash: String?,
+        val artifactDraftStates: Map<StageId, ArtifactDraftState>,
         val taskExecutionRuns: List<TaskExecutionRun>,
         val clarificationRetryState: ClarificationRetryState?,
         val createdAt: Long,
@@ -1664,6 +1674,22 @@ class SpecStorage(
         return ordered
     }
 
+    private fun encodeArtifactDraftStates(
+        artifactDraftStates: Map<StageId, ArtifactDraftState>,
+    ): Map<String, Any?> {
+        if (artifactDraftStates.isEmpty()) {
+            return emptyMap()
+        }
+        val ordered = linkedMapOf<String, Any?>()
+        SpecPhase.entries
+            .map(SpecPhase::toStageId)
+            .forEach { stageId ->
+                val state = artifactDraftStates[stageId] ?: return@forEach
+                ordered[stageId.name] = state.name
+            }
+        return ordered
+    }
+
     private fun parseStageStates(raw: Any?): Map<StageId, StageState> {
         val map = raw as? Map<*, *> ?: return emptyMap()
         val parsed = linkedMapOf<StageId, StageState>()
@@ -1692,6 +1718,21 @@ class SpecStorage(
                 enteredAt = enteredAt,
                 completedAt = completedAt,
             )
+        }
+        return parsed
+    }
+
+    private fun parseArtifactDraftStates(raw: Any?): Map<StageId, ArtifactDraftState> {
+        val map = raw as? Map<*, *> ?: return emptyMap()
+        val parsed = linkedMapOf<StageId, ArtifactDraftState>()
+        map.forEach { (rawStageId, rawState) ->
+            val stageId = StageId.entries.firstOrNull {
+                it.name.equals(rawStageId?.toString()?.trim(), ignoreCase = true)
+            } ?: return@forEach
+            val state = ArtifactDraftState.entries.firstOrNull {
+                it.name.equals(rawState?.toString()?.trim(), ignoreCase = true)
+            } ?: return@forEach
+            parsed[stageId] = state
         }
         return parsed
     }
