@@ -923,37 +923,48 @@ class SpecEngine(private val project: Project) {
         document: SpecDocument,
         options: GenerationOptions,
     ): SpecDocument {
+        var updatedDocument = document
         val payload = options.clarificationWriteback
-        if (payload == null) {
-            storageDelegate.saveDocument(workflowId, document).getOrThrow()
-            return document
+        var clarificationResult: SpecClarificationWritebackResult? = null
+
+        if (payload != null) {
+            val writeback = SpecClarificationWriteback.apply(
+                phase = phase,
+                existingContent = updatedDocument.content,
+                payload = payload,
+                atMillis = System.currentTimeMillis(),
+            )
+            if (writeback != null && writeback.content != updatedDocument.content) {
+                updatedDocument = revalidateDocumentContent(
+                    document = updatedDocument,
+                    content = writeback.content,
+                )
+                clarificationResult = writeback
+            }
         }
 
-        val now = System.currentTimeMillis()
-        val writeback = SpecClarificationWriteback.apply(
+        val citationWriteback = SpecArtifactSourceCitationWriteback.apply(
             phase = phase,
-            existingContent = document.content,
-            payload = payload,
-            atMillis = now,
+            existingContent = updatedDocument.content,
+            citations = buildArtifactSourceCitations(workflowId, options),
         )
-        if (writeback == null) {
-            storageDelegate.saveDocument(workflowId, document).getOrThrow()
-            return document
+        if (citationWriteback != null && citationWriteback.content != updatedDocument.content) {
+            updatedDocument = revalidateDocumentContent(
+                document = updatedDocument,
+                content = citationWriteback.content,
+            )
         }
 
-        val candidate = document.copy(
-            content = writeback.content,
-            metadata = document.metadata.copy(updatedAt = now),
-        )
-        val validated = candidate.copy(validationResult = SpecValidator.validate(candidate))
-        storageDelegate.saveDocument(workflowId, validated).getOrThrow()
-        appendClarificationWritebackAudit(
-            workflowId = workflowId,
-            phase = phase,
-            payload = payload,
-            result = writeback,
-        )
-        return validated
+        storageDelegate.saveDocument(workflowId, updatedDocument).getOrThrow()
+        if (payload != null && clarificationResult != null) {
+            appendClarificationWritebackAudit(
+                workflowId = workflowId,
+                phase = phase,
+                payload = payload,
+                result = clarificationResult,
+            )
+        }
+        return updatedDocument
     }
 
     private fun appendClarificationWritebackAudit(
@@ -980,6 +991,48 @@ class SpecEngine(private val project: Project) {
                 put("summary", result.summary)
             },
         ).getOrThrow()
+    }
+
+    private fun buildArtifactSourceCitations(
+        workflowId: String,
+        options: GenerationOptions,
+    ): List<ArtifactSourceCitation> {
+        val consumedSourceIds = options.workflowSourceUsage.consumedSourceIds
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        if (consumedSourceIds.isEmpty()) {
+            return emptyList()
+        }
+
+        val assets = storageDelegate.listWorkflowSources(workflowId)
+            .getOrElse { error ->
+                logger.warn("Failed to list workflow sources for artifact citation writeback: $workflowId", error)
+                return emptyList()
+            }
+        val assetsById = assets.associateBy(WorkflowSourceAsset::sourceId)
+        return consumedSourceIds.mapNotNull { sourceId ->
+            assetsById[sourceId]?.toArtifactSourceCitation()
+        }
+    }
+
+    private fun WorkflowSourceAsset.toArtifactSourceCitation(): ArtifactSourceCitation {
+        return ArtifactSourceCitation(
+            sourceId = sourceId,
+            storedRelativePath = storedRelativePath,
+            note = originalFileName,
+        )
+    }
+
+    private fun revalidateDocumentContent(
+        document: SpecDocument,
+        content: String,
+    ): SpecDocument {
+        val candidate = document.copy(
+            content = content,
+            metadata = document.metadata.copy(updatedAt = System.currentTimeMillis()),
+        )
+        return candidate.copy(validationResult = SpecValidator.validate(candidate))
     }
 
     fun advanceWorkflow(

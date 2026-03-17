@@ -863,11 +863,18 @@ class SpecEngineWorkflowTest {
         val sourceUsage = capturedSourceUsage ?: error("workflow source usage should be captured")
         val auditEvent = storage.listAuditEvents(workflow.id).getOrThrow()
             .last { event -> event.eventType == SpecAuditEventType.SOURCE_USAGE_RECORDED }
+        val persistedDocument = engine.reloadWorkflow(workflow.id)
+            .getOrThrow()
+            .getDocument(SpecPhase.SPECIFY)
+            ?: error("requirements document should be persisted")
 
         assertEquals(listOf(asset.sourceId), sourceUsage.selectedSourceIds)
         assertEquals(listOf(asset.sourceId), sourceUsage.consumedSourceIds)
         assertTrue(sourceUsage.renderedContext.orEmpty().contains(asset.storedRelativePath))
         assertTrue(sourceUsage.renderedContext.orEmpty().contains("Keep workflow artifacts file-first"))
+        assertTrue(persistedDocument.content.contains("## Sources"))
+        assertTrue(persistedDocument.content.contains(asset.sourceId))
+        assertTrue(persistedDocument.content.contains(asset.storedRelativePath))
         assertEquals("GENERATE_CURRENT_PHASE", auditEvent.details["actionType"])
         assertEquals("SUCCESS", auditEvent.details["status"])
         assertEquals("true", auditEvent.details["sourceConsumed"])

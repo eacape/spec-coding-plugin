@@ -104,6 +104,13 @@ data class WorkflowSourceAsset(
     val importedFromEntry: String,
 )
 
+data class ArtifactSourceCitation(
+    val sourceId: String,
+    val storedRelativePath: String,
+    val locator: String? = null,
+    val note: String? = null,
+)
+
 data class WorkflowSnapshot(
     val meta: WorkflowMeta,
     val workflow: SpecWorkflow,
