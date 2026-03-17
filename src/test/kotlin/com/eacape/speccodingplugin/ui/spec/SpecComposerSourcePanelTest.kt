@@ -72,6 +72,25 @@ class SpecComposerSourcePanelTest {
         assertTrue(panel.hintTextForTest().isNotBlank())
     }
 
+    @Test
+    fun `panel should expose add action as icon button`() {
+        var addRequested = false
+        val panel = SpecComposerSourcePanel(onAddRequested = { addRequested = true })
+
+        runOnEdt {
+            panel.updateState(
+                workflowId = "wf-1",
+                assets = emptyList(),
+                selectedSourceIds = emptySet(),
+                editable = true,
+            )
+            panel.clickAddForTest()
+        }
+
+        assertTrue(panel.isAddIconOnlyForTest())
+        assertTrue(addRequested)
+    }
+
     private fun sourceAsset(
         sourceId: String,
         originalFileName: String,

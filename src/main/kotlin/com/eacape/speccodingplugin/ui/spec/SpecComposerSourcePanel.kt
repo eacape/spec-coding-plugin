@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.ui.spec
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.WorkflowSourceAsset
 import com.intellij.icons.AllIcons
+import com.intellij.openapi.util.IconLoader
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
@@ -31,7 +32,7 @@ internal class SpecComposerSourcePanel(
     private val metaLabel = JBLabel()
     private val hintLabel = JBLabel()
     private val chipRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
-    private val addButton = JButton(SpecCodingBundle.message("spec.detail.sources.add"))
+    private val addButton = JButton()
     private val restoreButton = JButton(SpecCodingBundle.message("spec.detail.sources.restore"))
     private val removeButtonsBySourceId = linkedMapOf<String, JButton>()
 
@@ -53,7 +54,14 @@ internal class SpecComposerSourcePanel(
         chipRow.isOpaque = false
 
         styleUtilityButton(addButton)
+        addButton.icon = ADD_FILE_ICON
+        addButton.text = null
+        addButton.margin = JBUI.emptyInsets()
+        addButton.preferredSize = Dimension(JBUI.scale(30), JBUI.scale(28))
+        addButton.minimumSize = addButton.preferredSize
+        addButton.maximumSize = addButton.preferredSize
         addButton.toolTipText = SpecCodingBundle.message("spec.detail.sources.add.tooltip")
+        addButton.accessibleContext.accessibleName = SpecCodingBundle.message("spec.detail.sources.add")
         addButton.addActionListener { onAddRequested() }
 
         styleUtilityButton(restoreButton)
@@ -252,6 +260,8 @@ internal class SpecComposerSourcePanel(
         addButton.doClick()
     }
 
+    internal fun isAddIconOnlyForTest(): Boolean = addButton.icon != null && addButton.text.isNullOrBlank()
+
     internal fun clickRestoreForTest() {
         restoreButton.doClick()
     }
@@ -265,6 +275,7 @@ internal class SpecComposerSourcePanel(
     companion object {
         private const val MAX_LABEL_LENGTH = 34
         private const val ELLIPSIS = "..."
+        private val ADD_FILE_ICON = IconLoader.getIcon("/icons/spec-detail-add-file.svg", SpecComposerSourcePanel::class.java)
 
         private val STRIP_BG = JBColor(Color(0xF7FAFF), Color(0x4A5564))
         private val STRIP_BORDER = JBColor(Color(0xD2DEEF), Color(0x6D7B8E))
