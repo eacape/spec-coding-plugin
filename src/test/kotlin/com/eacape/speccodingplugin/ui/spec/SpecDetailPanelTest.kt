@@ -223,6 +223,95 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `updateWorkflow should switch revise placeholder and clarify hint for materialized artifact`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-revise-placeholder",
+            currentPhase = SpecPhase.DESIGN,
+            documents = mapOf(
+                SpecPhase.DESIGN to document(
+                    phase = SpecPhase.DESIGN,
+                    content = """
+                        # Design Document
+
+                        ## Architecture Design
+                        - Keep workflow state file-first.
+                    """.trimIndent(),
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Revise placeholder",
+            description = "materialized document should switch placeholder copy",
+            artifactDraftStates = mapOf(StageId.DESIGN to ArtifactDraftState.MATERIALIZED),
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(workflow)
+
+        assertEquals(
+            SpecCodingBundle.message("spec.detail.input.placeholder.design.revise"),
+            panel.currentInputPlaceholderForTest(),
+        )
+
+        panel.showClarificationDraft(
+            phase = SpecPhase.DESIGN,
+            input = "add writeback constraints",
+            questionsMarkdown = "1. Which design sections need revision?",
+            suggestedDetails = "- preserve storage boundaries",
+        )
+
+        assertEquals(
+            SpecCodingBundle.message("spec.detail.clarify.input.placeholder.revise"),
+            panel.currentInputPlaceholderForTest(),
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.workflow.clarify.hint.revise"),
+            panel.currentValidationTextForTest(),
+        )
+    }
+
+    @Test
+    fun `paused revise workflow should expose revise disabled reason on primary action`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-revise-paused",
+            currentPhase = SpecPhase.DESIGN,
+            documents = mapOf(
+                SpecPhase.DESIGN to document(
+                    phase = SpecPhase.DESIGN,
+                    content = """
+                        # Design Document
+
+                        ## Architecture Design
+                        - Preserve current sections.
+                    """.trimIndent(),
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.PAUSED,
+            title = "Paused revise",
+            description = "paused materialized document",
+            artifactDraftStates = mapOf(StageId.DESIGN to ArtifactDraftState.MATERIALIZED),
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(workflow)
+
+        val states = panel.buttonStatesForTest()
+        val expectedReason = SpecCodingBundle.message(
+            "spec.detail.action.disabled.status.revise",
+            SpecCodingBundle.message("spec.workflow.status.paused"),
+        )
+        assertFalse(states["generateEnabled"] as Boolean)
+        assertEquals(expectedReason, states["generateTooltip"])
+        assertEquals(SpecCodingBundle.message("spec.detail.revise"), states["generateAccessibleName"])
+        assertTrue((states["generateAccessibleDescription"] as String).contains(expectedReason))
+    }
+
+    @Test
     fun `updateWorkflow should follow current phase when requested`() {
         val panel = createPanel()
         val specifyContent = "requirements content"
@@ -773,6 +862,7 @@ class SpecDetailPanelTest {
             status = WorkflowStatus.IN_PROGRESS,
             title = "Clarify",
             description = "Clarification workflow",
+            artifactDraftStates = mapOf(StageId.REQUIREMENTS to ArtifactDraftState.UNMATERIALIZED),
             createdAt = 1L,
             updatedAt = 2L,
         )
@@ -1343,6 +1433,7 @@ class SpecDetailPanelTest {
             status = WorkflowStatus.IN_PROGRESS,
             title = "Generate Empty",
             description = "Generate empty workflow",
+            artifactDraftStates = mapOf(StageId.REQUIREMENTS to ArtifactDraftState.UNMATERIALIZED),
             createdAt = 1L,
             updatedAt = 2L,
         )
@@ -1353,6 +1444,44 @@ class SpecDetailPanelTest {
 
         assertEquals(0, generateCallCount)
         assertEquals(SpecCodingBundle.message("spec.detail.input.required"), panel.currentValidationTextForTest())
+        assertEquals("", panel.currentInputTextForTest())
+    }
+
+    @Test
+    fun `clicking revise with empty requirements should prompt revise input and not trigger generation`() {
+        var generateCallCount = 0
+        val panel = createPanel(
+            onGenerate = { generateCallCount += 1 },
+        )
+        val workflow = SpecWorkflow(
+            id = "wf-revise-empty",
+            currentPhase = SpecPhase.SPECIFY,
+            documents = mapOf(
+                SpecPhase.SPECIFY to document(
+                    phase = SpecPhase.SPECIFY,
+                    content = """
+                        # Requirements Document
+
+                        ## Functional Requirements
+                        - Existing requirement.
+                    """.trimIndent(),
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Revise Empty",
+            description = "Revise empty workflow",
+            artifactDraftStates = mapOf(StageId.REQUIREMENTS to ArtifactDraftState.MATERIALIZED),
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+        panel.setInputTextForTest("")
+
+        panel.clickGenerateForTest()
+
+        assertEquals(0, generateCallCount)
+        assertEquals(SpecCodingBundle.message("spec.detail.input.required.revise"), panel.currentValidationTextForTest())
         assertEquals("", panel.currentInputTextForTest())
     }
 
@@ -1428,6 +1557,48 @@ class SpecDetailPanelTest {
 
         val states = panel.buttonStatesForTest()
         assertTrue(states["generateEnabled"] as Boolean)
+    }
+
+    @Test
+    fun `showGenerating should switch revise progress copy and disable primary action`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-revise-progress",
+            currentPhase = SpecPhase.DESIGN,
+            documents = mapOf(
+                SpecPhase.DESIGN to document(
+                    phase = SpecPhase.DESIGN,
+                    content = """
+                        # Design Document
+
+                        ## Architecture Design
+                        - Existing design content.
+                    """.trimIndent(),
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Revise progress",
+            description = "show revise progress copy",
+            artifactDraftStates = mapOf(StageId.DESIGN to ArtifactDraftState.MATERIALIZED),
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+        panel.updateWorkflow(workflow)
+
+        panel.showGenerating(0.35)
+
+        assertTrue(
+            panel.currentValidationTextForTest().contains(
+                SpecCodingBundle.message("spec.detail.revising.percent", 35),
+            ),
+        )
+        val states = panel.buttonStatesForTest()
+        assertFalse(states["generateEnabled"] as Boolean)
+        assertEquals(
+            SpecCodingBundle.message("spec.detail.action.disabled.running.revise"),
+            states["generateTooltip"],
+        )
     }
 
     @Test

@@ -541,92 +541,78 @@ class SpecDetailPanel(
         configureIconActionButton(
             button = generateButton,
             icon = SpecWorkflowIcons.Execute,
-            tooltipKey = currentGenerateTooltipKey(),
+            tooltip = ArtifactComposeActionUiText.actionLabel(currentComposeActionMode()),
         )
         configureIconActionButton(
             button = nextPhaseButton,
             icon = SpecWorkflowIcons.Advance,
-            tooltipKey = "spec.detail.nextPhase",
+            tooltip = SpecCodingBundle.message("spec.detail.nextPhase"),
         )
         configureIconActionButton(
             button = goBackButton,
             icon = SpecWorkflowIcons.Back,
-            tooltipKey = "spec.detail.goBack",
+            tooltip = SpecCodingBundle.message("spec.detail.goBack"),
         )
         configureIconActionButton(
             button = completeButton,
             icon = SpecWorkflowIcons.Complete,
-            tooltipKey = "spec.detail.complete",
+            tooltip = SpecCodingBundle.message("spec.detail.complete"),
         )
         configureIconActionButton(
             button = openEditorButton,
             icon = SpecWorkflowIcons.OpenToolWindow,
-            tooltipKey = "spec.detail.openInEditor",
+            tooltip = SpecCodingBundle.message("spec.detail.openInEditor"),
         )
         configureIconActionButton(
             button = historyDiffButton,
             icon = SpecWorkflowIcons.History,
-            tooltipKey = "spec.detail.historyDiff",
+            tooltip = SpecCodingBundle.message("spec.detail.historyDiff"),
         )
         configureIconActionButton(
             button = editButton,
             icon = SpecWorkflowIcons.Edit,
-            tooltipKey = "spec.detail.edit",
+            tooltip = SpecCodingBundle.message("spec.detail.edit"),
         )
         configureIconActionButton(
             button = saveButton,
             icon = SpecWorkflowIcons.Save,
-            tooltipKey = "spec.detail.save",
+            tooltip = SpecCodingBundle.message("spec.detail.save"),
         )
         configureIconActionButton(
             button = cancelEditButton,
             icon = SpecWorkflowIcons.Close,
-            tooltipKey = "spec.detail.cancel",
+            tooltip = SpecCodingBundle.message("spec.detail.cancel"),
         )
         configureIconActionButton(
             button = confirmGenerateButton,
             icon = SpecWorkflowIcons.Execute,
-            tooltipKey = currentClarificationConfirmTooltipKey(),
+            tooltip = ArtifactComposeActionUiText.clarificationConfirmLabel(currentComposeActionMode()),
         )
         configureIconActionButton(
             button = regenerateClarificationButton,
             icon = SpecWorkflowIcons.Refresh,
-            tooltipKey = "spec.detail.clarify.regenerate",
+            tooltip = SpecCodingBundle.message("spec.detail.clarify.regenerate"),
         )
         configureIconActionButton(
             button = skipClarificationButton,
             icon = SpecWorkflowIcons.Forward,
-            tooltipKey = "spec.detail.clarify.skip",
+            tooltip = SpecCodingBundle.message("spec.detail.clarify.skip"),
         )
         configureIconActionButton(
             button = cancelClarificationButton,
             icon = SpecWorkflowIcons.Close,
-            tooltipKey = "spec.detail.clarify.cancel",
+            tooltip = SpecCodingBundle.message("spec.detail.clarify.cancel"),
         )
         updatePauseResumeButtonPresentation(currentWorkflow?.status)
     }
 
-    private fun currentComposeActionMode(): ArtifactComposeActionMode {
+    private fun currentComposeActionMode(phase: SpecPhase? = currentWorkflow?.currentPhase): ArtifactComposeActionMode {
         val workflow = currentWorkflow ?: return ArtifactComposeActionMode.GENERATE
-        return workflow.resolveComposeActionMode(workflow.currentPhase)
+        val resolvedPhase = phase ?: workflow.currentPhase
+        return workflow.resolveComposeActionMode(resolvedPhase)
     }
 
-    private fun currentGenerateTooltipKey(): String {
-        return when (currentComposeActionMode()) {
-            ArtifactComposeActionMode.GENERATE -> "spec.detail.generate"
-            ArtifactComposeActionMode.REVISE -> "spec.detail.revise"
-        }
-    }
-
-    private fun currentClarificationConfirmTooltipKey(): String {
-        return when (currentComposeActionMode()) {
-            ArtifactComposeActionMode.GENERATE -> "spec.detail.clarify.confirmGenerate"
-            ArtifactComposeActionMode.REVISE -> "spec.detail.clarify.confirmRevise"
-        }
-    }
-
-    private fun configureIconActionButton(button: JButton, icon: Icon, tooltipKey: String) {
-        val tooltip = SpecCodingBundle.message(tooltipKey)
+    private fun configureIconActionButton(button: JButton, icon: Icon, tooltip: String) {
         SpecUiStyle.configureIconActionButton(
             button = button,
             icon = icon,
@@ -635,14 +621,25 @@ class SpecDetailPanel(
         )
     }
 
+    private fun setActionEnabled(
+        button: JButton,
+        enabled: Boolean,
+        disabledReason: String? = null,
+    ) {
+        SpecUiStyle.setIconActionEnabled(
+            button = button,
+            enabled = enabled,
+            disabledReason = disabledReason,
+        )
+    }
+
     private fun updatePauseResumeButtonPresentation(status: WorkflowStatus?) {
         val isPaused = status == WorkflowStatus.PAUSED
-        val tooltipKey = if (isPaused) "spec.detail.resume" else "spec.detail.pause"
         val icon = if (isPaused) SpecWorkflowIcons.Resume else SpecWorkflowIcons.Pause
         configureIconActionButton(
             button = pauseResumeButton,
             icon = icon,
-            tooltipKey = tooltipKey,
+            tooltip = SpecCodingBundle.message(if (isPaused) "spec.detail.resume" else "spec.detail.pause"),
         )
     }
 
@@ -1294,7 +1291,7 @@ class SpecDetailPanel(
     private fun showInputRequiredHint(phase: SpecPhase?) {
         if (phase != SpecPhase.SPECIFY) return
         setValidationMessage(
-            SpecCodingBundle.message("spec.detail.input.required"),
+            ArtifactComposeActionUiText.inputRequired(currentComposeActionMode(phase)),
             JBColor(Color(213, 52, 52), Color(255, 140, 140)),
         )
     }
@@ -1429,7 +1426,7 @@ class SpecDetailPanel(
         renderProcessTimeline()
         if (isClarificationGenerating) {
             renderClarificationQuestions(
-                markdown = SpecCodingBundle.message("spec.workflow.clarify.generating"),
+                markdown = ArtifactComposeActionUiText.clarificationGenerating(currentComposeActionMode()),
                 structuredQuestions = emptyList(),
                 questionDecisions = emptyMap(),
                 questionDetails = emptyMap(),
@@ -1607,14 +1604,12 @@ class SpecDetailPanel(
     }
 
     private fun updateInputPlaceholder(currentPhase: SpecPhase?) {
-        val key = when {
-            clarificationState?.structuredQuestions?.isNotEmpty() == true -> "spec.detail.clarify.input.placeholder.checklist"
-            clarificationState != null -> "spec.detail.clarify.input.placeholder"
-            currentPhase == SpecPhase.DESIGN -> "spec.detail.input.placeholder.design"
-            currentPhase == SpecPhase.IMPLEMENT -> "spec.detail.input.placeholder.implement"
-            else -> "spec.detail.input.placeholder"
-        }
-        inputArea.emptyText.setText(SpecCodingBundle.message(key))
+        inputArea.emptyText.text = ArtifactComposeActionUiText.inputPlaceholder(
+            mode = currentComposeActionMode(currentPhase),
+            phase = currentPhase,
+            isClarifying = clarificationState != null,
+            checklistMode = clarificationState?.structuredQuestions?.isNotEmpty() == true,
+        )
     }
 
     private fun updateTreeSelection(phase: SpecPhase?, forceComposerReset: Boolean = true) {
@@ -1740,7 +1735,7 @@ class SpecDetailPanel(
         input: String,
         suggestedDetails: String = input,
     ) {
-        val generatingText = SpecCodingBundle.message("spec.workflow.clarify.generating")
+        val generatingText = ArtifactComposeActionUiText.clarificationGenerating(currentComposeActionMode(phase))
         clarificationState = ClarificationState(
             phase = phase,
             input = input,
@@ -1828,7 +1823,10 @@ class SpecDetailPanel(
         switchPreviewCard(CARD_CLARIFY)
         updateClarificationPreview()
         persistClarificationDraftSnapshot()
-        setValidationMessage(SpecCodingBundle.message("spec.workflow.clarify.hint"), TREE_TEXT)
+        setValidationMessage(
+            ArtifactComposeActionUiText.clarificationHint(currentComposeActionMode(phase)),
+            TREE_TEXT,
+        )
         currentWorkflow?.let { updateButtonStates(it) } ?: disableAllButtons()
     }
 
@@ -2381,7 +2379,10 @@ class SpecDetailPanel(
         syncClarificationInputFromSelection(nextState)
         updateClarificationPreview()
         persistClarificationDraftSnapshot(nextState)
-        setValidationMessage(SpecCodingBundle.message("spec.workflow.clarify.hint"), TREE_TEXT)
+        setValidationMessage(
+            ArtifactComposeActionUiText.clarificationHint(currentComposeActionMode(state.phase)),
+            TREE_TEXT,
+        )
         currentWorkflow?.let { updateButtonStates(it) }
     }
 
@@ -2456,7 +2457,10 @@ class SpecDetailPanel(
         syncClarificationInputFromSelection(nextState)
         updateClarificationPreview()
         persistClarificationDraftSnapshot(nextState)
-        setValidationMessage(SpecCodingBundle.message("spec.workflow.clarify.hint"), TREE_TEXT)
+        setValidationMessage(
+            ArtifactComposeActionUiText.clarificationHint(currentComposeActionMode(state.phase)),
+            TREE_TEXT,
+        )
         currentWorkflow?.let { updateButtonStates(it) }
     }
 
@@ -3537,9 +3541,9 @@ class SpecDetailPanel(
     private fun updateGeneratingLabel() {
         val frame = GENERATING_FRAMES[generatingFrameIndex]
         val text = if (isClarificationGenerating) {
-            SpecCodingBundle.message("spec.workflow.clarify.generating")
+            ArtifactComposeActionUiText.clarificationGenerating(currentComposeActionMode())
         } else {
-            SpecCodingBundle.message("spec.detail.generating.percent", generatingPercent)
+            ArtifactComposeActionUiText.activeProgress(currentComposeActionMode(), generatingPercent)
         }
         setValidationMessage("$text $frame", GENERATING_FG)
     }
@@ -3549,7 +3553,8 @@ class SpecDetailPanel(
         val allowEditing = !isGeneratingActive
         val clarifying = clarificationState != null
         val clarificationLocked = clarifying && isClarificationChecklistReadOnly
-        val standardModeEnabled = inProgress && !isEditing && !clarifying
+        val composeMode = currentComposeActionMode()
+        val standardModeEnabled = inProgress && !isEditing && !clarifying && !isGeneratingActive
         val artifactOnlyView = isWorkbenchArtifactOnlyView()
         val selectedDocumentAvailable = selectedPhase?.let { currentWorkflow?.documents?.containsKey(it) } == true
         val artifactOpenAvailable = artifactOnlyView && workbenchArtifactBinding?.available == true
@@ -3570,40 +3575,76 @@ class SpecDetailPanel(
         skipClarificationButton.isVisible = clarifying
         cancelClarificationButton.isVisible = clarifying
 
-        generateButton.isEnabled = standardModeEnabled
-        nextPhaseButton.isEnabled = workflow.canProceedToNext() && standardModeEnabled
-        goBackButton.isEnabled = false
-        completeButton.isEnabled = false
-        pauseResumeButton.isEnabled = false
+        setActionEnabled(
+            button = generateButton,
+            enabled = standardModeEnabled,
+            disabledReason = ArtifactComposeActionUiText.primaryActionDisabledReason(
+                mode = composeMode,
+                status = workflow.status,
+                isGeneratingActive = isGeneratingActive,
+                isEditing = isEditing,
+            ),
+        )
+        setActionEnabled(button = nextPhaseButton, enabled = workflow.canProceedToNext() && standardModeEnabled)
+        setActionEnabled(button = goBackButton, enabled = false)
+        setActionEnabled(button = completeButton, enabled = false)
+        setActionEnabled(button = pauseResumeButton, enabled = false)
         updatePauseResumeButtonPresentation(workflow.status)
         styleActionButton(pauseResumeButton)
-        openEditorButton.isEnabled = !isEditing && !clarifying && (selectedDocumentAvailable || artifactOpenAvailable)
-        historyDiffButton.isEnabled = !artifactOnlyView && !isEditing && !clarifying && selectedDocumentAvailable
-        editButton.isEnabled = !artifactOnlyView && !isEditing && allowEditing && !clarifying && resolveEditablePhase(workflow) != null
-        saveButton.isEnabled = isEditing
-        cancelEditButton.isEnabled = isEditing
-        confirmGenerateButton.isEnabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked
-        regenerateClarificationButton.isEnabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked
-        skipClarificationButton.isEnabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked
-        cancelClarificationButton.isEnabled = clarifying && !isGeneratingActive && !clarificationLocked
+        setActionEnabled(
+            button = openEditorButton,
+            enabled = !isEditing && !clarifying && (selectedDocumentAvailable || artifactOpenAvailable),
+        )
+        setActionEnabled(
+            button = historyDiffButton,
+            enabled = !artifactOnlyView && !isEditing && !clarifying && selectedDocumentAvailable,
+        )
+        setActionEnabled(
+            button = editButton,
+            enabled = !artifactOnlyView && !isEditing && allowEditing && !clarifying && resolveEditablePhase(workflow) != null,
+        )
+        setActionEnabled(button = saveButton, enabled = isEditing)
+        setActionEnabled(button = cancelEditButton, enabled = isEditing)
+        setActionEnabled(
+            button = confirmGenerateButton,
+            enabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked,
+            disabledReason = ArtifactComposeActionUiText.clarificationConfirmDisabledReason(
+                mode = composeMode,
+                status = workflow.status,
+                isGeneratingActive = isGeneratingActive,
+                clarificationLocked = clarificationLocked,
+            ),
+        )
+        setActionEnabled(
+            button = regenerateClarificationButton,
+            enabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked,
+        )
+        setActionEnabled(
+            button = skipClarificationButton,
+            enabled = clarifying && inProgress && !isGeneratingActive && !clarificationLocked,
+        )
+        setActionEnabled(
+            button = cancelClarificationButton,
+            enabled = clarifying && !isGeneratingActive && !clarificationLocked,
+        )
         refreshActionButtonCursors()
     }
 
     private fun disableAllButtons() {
-        generateButton.isEnabled = false
-        nextPhaseButton.isEnabled = false
-        goBackButton.isEnabled = false
-        completeButton.isEnabled = false
-        pauseResumeButton.isEnabled = false
-        openEditorButton.isEnabled = false
-        historyDiffButton.isEnabled = false
-        editButton.isEnabled = false
-        saveButton.isEnabled = false
-        cancelEditButton.isEnabled = false
-        confirmGenerateButton.isEnabled = false
-        regenerateClarificationButton.isEnabled = false
-        skipClarificationButton.isEnabled = false
-        cancelClarificationButton.isEnabled = false
+        setActionEnabled(button = generateButton, enabled = false)
+        setActionEnabled(button = nextPhaseButton, enabled = false)
+        setActionEnabled(button = goBackButton, enabled = false)
+        setActionEnabled(button = completeButton, enabled = false)
+        setActionEnabled(button = pauseResumeButton, enabled = false)
+        setActionEnabled(button = openEditorButton, enabled = false)
+        setActionEnabled(button = historyDiffButton, enabled = false)
+        setActionEnabled(button = editButton, enabled = false)
+        setActionEnabled(button = saveButton, enabled = false)
+        setActionEnabled(button = cancelEditButton, enabled = false)
+        setActionEnabled(button = confirmGenerateButton, enabled = false)
+        setActionEnabled(button = regenerateClarificationButton, enabled = false)
+        setActionEnabled(button = skipClarificationButton, enabled = false)
+        setActionEnabled(button = cancelClarificationButton, enabled = false)
         refreshActionButtonCursors()
     }
 
@@ -3638,6 +3679,10 @@ class SpecDetailPanel(
 
     internal fun currentInputTextForTest(): String {
         return inputArea.text
+    }
+
+    internal fun currentInputPlaceholderForTest(): String {
+        return inputArea.emptyText.text.orEmpty()
     }
 
     internal fun documentViewportPreferredHeightForTest(): Int {
@@ -3877,6 +3922,7 @@ class SpecDetailPanel(
             "generateFocusable" to generateButton.isFocusable,
             "generateTooltip" to generateButton.toolTipText.orEmpty(),
             "generateAccessibleName" to (generateButton.accessibleContext?.accessibleName ?: ""),
+            "generateAccessibleDescription" to (generateButton.accessibleContext?.accessibleDescription ?: ""),
             "nextEnabled" to nextPhaseButton.isEnabled,
             "nextIconId" to SpecWorkflowIcons.debugId(nextPhaseButton.icon),
             "nextFocusable" to nextPhaseButton.isFocusable,
@@ -3908,6 +3954,7 @@ class SpecDetailPanel(
             "confirmGenerateFocusable" to confirmGenerateButton.isFocusable,
             "confirmGenerateTooltip" to confirmGenerateButton.toolTipText.orEmpty(),
             "confirmGenerateAccessibleName" to (confirmGenerateButton.accessibleContext?.accessibleName ?: ""),
+            "confirmGenerateAccessibleDescription" to (confirmGenerateButton.accessibleContext?.accessibleDescription ?: ""),
             "regenerateClarificationEnabled" to regenerateClarificationButton.isEnabled,
             "regenerateClarificationIconId" to SpecWorkflowIcons.debugId(regenerateClarificationButton.icon),
             "regenerateClarificationFocusable" to regenerateClarificationButton.isFocusable,

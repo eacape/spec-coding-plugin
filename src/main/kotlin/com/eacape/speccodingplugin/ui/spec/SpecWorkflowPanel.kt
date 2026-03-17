@@ -2372,7 +2372,11 @@ class SpecWorkflowPanel(
                 text = SpecCodingBundle.message("spec.workflow.process.clarify.skipped"),
                 state = SpecDetailPanel.ProcessTimelineState.INFO,
             )
-            setStatusText(SpecCodingBundle.message("spec.workflow.clarify.skippedProceed"))
+            setStatusText(
+                ArtifactComposeActionUiText.clarificationSkippedProceed(
+                    workflow.resolveComposeActionMode(workflow.currentPhase),
+                ),
+            )
             runRequirementsRepairAfterClarification(
                 workflowId = workflow.id,
                 pendingRetry = pendingClarificationRetryByWorkflowId[workflow.id] ?: pendingRetry,
@@ -2387,7 +2391,11 @@ class SpecWorkflowPanel(
             text = SpecCodingBundle.message("spec.workflow.process.clarify.skipped"),
             state = SpecDetailPanel.ProcessTimelineState.INFO,
         )
-        setStatusText(SpecCodingBundle.message("spec.workflow.clarify.skippedProceed"))
+        setStatusText(
+            ArtifactComposeActionUiText.clarificationSkippedProceed(
+                context.options.composeActionMode ?: ArtifactComposeActionMode.GENERATE,
+            ),
+        )
         runGeneration(
             workflowId = context.workflowId,
             input = input,
@@ -2404,7 +2412,12 @@ class SpecWorkflowPanel(
             text = SpecCodingBundle.message("spec.workflow.process.clarify.cancelled"),
             state = SpecDetailPanel.ProcessTimelineState.INFO,
         )
-        setStatusText(SpecCodingBundle.message("spec.workflow.clarify.cancelled"))
+        setStatusText(
+            ArtifactComposeActionUiText.clarificationCancelled(
+                currentWorkflow?.resolveComposeActionMode(currentWorkflow?.currentPhase ?: SpecPhase.SPECIFY)
+                    ?: ArtifactComposeActionMode.GENERATE,
+            ),
+        )
     }
 
     private fun onClarificationDraftAutosave(
@@ -2877,6 +2890,7 @@ class SpecWorkflowPanel(
             try {
                 val safeSuggestedDetails = suggestedDetails.ifBlank { input }
                 val fallbackPhase = context.phase
+                val composeMode = requestOptions.composeActionMode ?: ArtifactComposeActionMode.GENERATE
                 invokeLaterSafe {
                     if (selectedWorkflowId != context.workflowId) {
                         return@invokeLaterSafe
@@ -2902,7 +2916,7 @@ class SpecWorkflowPanel(
                         text = SpecCodingBundle.message("spec.workflow.process.clarify.request", clarificationRound),
                         state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
                     )
-                    setStatusText(SpecCodingBundle.message("spec.workflow.clarify.generating"))
+                    setStatusText(ArtifactComposeActionUiText.clarificationGenerating(composeMode))
                 }
                 val draftResult = try {
                     Result.success(
@@ -2991,6 +3005,7 @@ class SpecWorkflowPanel(
             phase = currentWorkflow?.currentPhase ?: SpecPhase.SPECIFY,
             options = options,
         )
+        val composeMode = requestOptions.composeActionMode ?: ArtifactComposeActionMode.GENERATE
         val activeRequest = ActiveGenerationRequest(
             workflowId = workflowId,
             providerId = requestOptions.providerId,
@@ -3006,7 +3021,7 @@ class SpecWorkflowPanel(
                         when (progress) {
                             is SpecGenerationProgress.Started -> {
                                 detailPanel.appendProcessTimelineEntry(
-                                    text = SpecCodingBundle.message("spec.workflow.process.generate.prepare"),
+                                    text = ArtifactComposeActionUiText.processPrepare(composeMode),
                                     state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
                                 )
                                 detailPanel.showGenerating(0.0)
@@ -3014,8 +3029,8 @@ class SpecWorkflowPanel(
                             is SpecGenerationProgress.Generating -> {
                                 if (!modelCallRecorded) {
                                     detailPanel.appendProcessTimelineEntry(
-                                        text = SpecCodingBundle.message(
-                                            "spec.workflow.process.generate.call",
+                                        text = ArtifactComposeActionUiText.processCall(
+                                            composeMode,
                                             (progress.progress * 100).toInt().coerceIn(0, 100),
                                         ),
                                         state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
@@ -3024,7 +3039,7 @@ class SpecWorkflowPanel(
                                 }
                                 if (progress.progress >= 0.5 && !normalizeRecorded) {
                                     detailPanel.appendProcessTimelineEntry(
-                                        text = SpecCodingBundle.message("spec.workflow.process.generate.normalize"),
+                                        text = ArtifactComposeActionUiText.processNormalize(composeMode),
                                         state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
                                     )
                                     normalizeRecorded = true
@@ -3033,15 +3048,15 @@ class SpecWorkflowPanel(
                             }
                             is SpecGenerationProgress.Completed -> {
                                 detailPanel.appendProcessTimelineEntry(
-                                    text = SpecCodingBundle.message("spec.workflow.process.generate.validate"),
+                                    text = ArtifactComposeActionUiText.processValidate(composeMode),
                                     state = SpecDetailPanel.ProcessTimelineState.DONE,
                                 )
                                 detailPanel.appendProcessTimelineEntry(
-                                    text = SpecCodingBundle.message("spec.workflow.process.generate.save"),
+                                    text = ArtifactComposeActionUiText.processSave(composeMode),
                                     state = SpecDetailPanel.ProcessTimelineState.DONE,
                                 )
                                 detailPanel.appendProcessTimelineEntry(
-                                    text = SpecCodingBundle.message("spec.workflow.process.generate.completed"),
+                                    text = ArtifactComposeActionUiText.processCompleted(composeMode),
                                     state = SpecDetailPanel.ProcessTimelineState.DONE,
                                 )
                                 clearClarificationRetry(workflowId)
@@ -3052,12 +3067,12 @@ class SpecWorkflowPanel(
                                 val firstValidationError = progress.validation.errors.firstOrNull()
                                     ?: SpecCodingBundle.message("common.unknown")
                                 detailPanel.appendProcessTimelineEntry(
-                                    text = SpecCodingBundle.message("spec.workflow.process.generate.validate"),
+                                    text = ArtifactComposeActionUiText.processValidate(composeMode),
                                     state = SpecDetailPanel.ProcessTimelineState.ACTIVE,
                                 )
                                 detailPanel.appendProcessTimelineEntry(
-                                    text = SpecCodingBundle.message(
-                                        "spec.workflow.process.generate.validationFailed",
+                                    text = ArtifactComposeActionUiText.processValidationFailed(
+                                        composeMode,
                                         firstValidationError,
                                     ),
                                     state = SpecDetailPanel.ProcessTimelineState.FAILED,
@@ -3079,10 +3094,7 @@ class SpecWorkflowPanel(
                             }
                             is SpecGenerationProgress.Failed -> {
                                 detailPanel.appendProcessTimelineEntry(
-                                    text = SpecCodingBundle.message(
-                                        "spec.workflow.process.generate.failed",
-                                        progress.error,
-                                    ),
+                                    text = ArtifactComposeActionUiText.processFailed(composeMode, progress.error),
                                     state = SpecDetailPanel.ProcessTimelineState.FAILED,
                                 )
                                 rememberClarificationRetry(
@@ -3104,7 +3116,10 @@ class SpecWorkflowPanel(
                         workflowId = workflowId,
                         input = input,
                         options = requestOptions,
-                        processMessageKey = "spec.workflow.process.generate.failed",
+                        processMessageKey = when (composeMode) {
+                            ArtifactComposeActionMode.GENERATE -> "spec.workflow.process.generate.failed"
+                            ArtifactComposeActionMode.REVISE -> "spec.workflow.process.revise.failed"
+                        },
                     )
                 }
                 throw cancel
