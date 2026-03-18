@@ -44,9 +44,6 @@ import com.eacape.speccodingplugin.session.WorkflowChatContextAssembler
 import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
 import com.eacape.speccodingplugin.session.WorkflowChatExecutionContext
 import com.eacape.speccodingplugin.session.WorkflowChatExecutionContextResolver
-import com.eacape.speccodingplugin.session.WorkflowChatTaskIntentFailureReason
-import com.eacape.speccodingplugin.session.WorkflowChatTaskIntentResolution
-import com.eacape.speccodingplugin.session.WorkflowChatTaskIntentResolver
 import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_COMMAND_PREFIX
 import com.eacape.speccodingplugin.session.WORKFLOW_CHAT_MODE_KEY
 import com.eacape.speccodingplugin.session.canonicalizeWorkflowChatCommand
@@ -224,7 +221,6 @@ class ImprovedChatPanel(
     private val workflowChatActionRouter = WorkflowChatActionRouter.getInstance(project)
     private val workflowChatContextAssembler = WorkflowChatContextAssembler.getInstance(project)
     private val workflowChatExecutionContextResolver = WorkflowChatExecutionContextResolver.getInstance(project)
-    private val workflowChatTaskIntentResolver = WorkflowChatTaskIntentResolver.getInstance(project)
     private val contextCollector by lazy { ContextCollector.getInstance(project) }
     private val completionProvider by lazy { CompletionProvider.getInstance(project) }
     private val operationModeSelector = OperationModeSelector(project)
@@ -2135,23 +2131,6 @@ class ImprovedChatPanel(
         val visibleRawInput = inputField.text.trim()
         prunePendingPastedTextBlocks(visibleRawInput)
         val rawInput = expandPendingPastedTextBlocks(visibleRawInput)
-        if (!visibleRawInput.startsWith("/")) {
-            when (val resolution = resolveWorkflowTaskIntentResolution(rawInput)) {
-                null,
-                WorkflowChatTaskIntentResolution.NoMatch,
-                -> Unit
-
-                is WorkflowChatTaskIntentResolution.Resolved -> {
-                    dispatchWorkflowTaskIntent(resolution)
-                    return
-                }
-
-                is WorkflowChatTaskIntentResolution.Unresolved -> {
-                    reportWorkflowTaskIntentUnresolved(resolution)
-                    return
-                }
-            }
-        }
         val sendAction = resolveComposerSendAction(visibleRawInput)
         if (!sendAction.enabled) {
             showWorkflowTaskErrorDialog(sendAction.tooltip)
@@ -2173,22 +2152,6 @@ class ImprovedChatPanel(
             ComposerSendActionKind.TASK_COMPLETE -> performTaskBindingAction(TaskBindingActionKind.COMPLETE)
             ComposerSendActionKind.TASK_STOP -> performTaskBindingAction(TaskBindingActionKind.STOP)
         }
-    }
-
-    private fun resolveWorkflowTaskIntentResolution(rawInput: String): WorkflowChatTaskIntentResolution? {
-        if (currentInteractionMode() != ChatInteractionMode.SPEC) {
-            return null
-        }
-        val normalizedInput = rawInput.trim()
-        if (normalizedInput.isBlank()) {
-            return null
-        }
-        val workflowId = resolveMostRecentSpecWorkflowIdOrNull()?.also { activeSpecWorkflowId = it }
-        return workflowChatTaskIntentResolver.resolve(
-            workflowId = workflowId,
-            binding = resolvedActiveWorkflowChatBinding(),
-            userInput = rawInput,
-        )
     }
 
     private fun resolveComposerSendAction(visibleRawInput: String = inputField.text.trim()): ComposerSendAction {
@@ -2452,26 +2415,7 @@ class ImprovedChatPanel(
         if (interactionMode == ChatInteractionMode.SPEC) {
             val normalizedInput = rawInput.trim()
             val workflowId = resolveMostRecentSpecWorkflowIdOrNull()?.also { activeSpecWorkflowId = it }
-            when (
-                val taskIntentResolution = workflowChatTaskIntentResolver.resolve(
-                    workflowId = workflowId,
-                    binding = resolvedActiveWorkflowChatBinding(),
-                    userInput = rawInput,
-                )
-            ) {
-                WorkflowChatTaskIntentResolution.NoMatch -> Unit
-                is WorkflowChatTaskIntentResolution.Resolved -> {
-                    dispatchWorkflowTaskIntent(taskIntentResolution)
-                    return
-                }
-                is WorkflowChatTaskIntentResolution.Unresolved -> {
-                    reportWorkflowTaskIntentUnresolved(taskIntentResolution)
-                    return
-                }
-            }
-            val token = normalizedInput.substringBefore(" ").trim().lowercase(Locale.ROOT)
-            val isBareSpecCommand = token in setOf("status", "open", "next", "back", "generate", "complete", "help")
-            if (isBareSpecCommand || workflowId == null) {
+            if (shouldRouteToWorkflowCommand(normalizedInput, hasActiveWorkflow = workflowId != null)) {
                 if (selectedImagePaths.isNotEmpty()) {
                     clearImageAttachments()
                     showStatus(
@@ -4188,83 +4132,6 @@ class ImprovedChatPanel(
             ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
             ChatToolWindowFactory.selectSpecContent(toolWindow, project)
         }
-    }
-
-    private fun dispatchWorkflowTaskIntent(resolution: WorkflowChatTaskIntentResolution.Resolved) {
-        val source = resolvedActiveWorkflowChatBinding()?.source ?: WorkflowChatEntrySource.MODE_SWITCH
-        val binding = buildWorkflowChatBinding(
-            workflowId = resolution.workflowId,
-            source = source,
-            actionIntent = resolution.actionIntent,
-            focusedStage = StageId.IMPLEMENT,
-        )
-        openWorkflowChatBinding(
-            WorkflowChatOpenRequest(
-                binding = binding,
-                preferNewSession = false,
-            ),
-        )
-        val actionKind = when (resolution.actionIntent) {
-            WorkflowChatActionIntent.EXECUTE_TASK -> TaskBindingActionKind.EXECUTE
-            WorkflowChatActionIntent.RETRY_TASK -> TaskBindingActionKind.RETRY
-            WorkflowChatActionIntent.COMPLETE_TASK -> TaskBindingActionKind.COMPLETE
-            WorkflowChatActionIntent.DISCUSS -> return
-        }
-        val state = resolveBoundTaskBindingState(binding, resolution.task.id)
-        val presentation = buildTaskBindingActionPresentation(state, actionKind)
-        if (!presentation.enabled) {
-            showStatus(
-                presentation.disabledReason
-                    ?: presentation.tooltip
-                    ?: SpecCodingBundle.message("toolwindow.error.unknown"),
-                autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
-            )
-            return
-        }
-        when (actionKind) {
-            TaskBindingActionKind.EXECUTE -> handleWorkflowTaskExecutionRequested(
-                taskId = resolution.task.id,
-                retry = false,
-            )
-            TaskBindingActionKind.RETRY -> handleWorkflowTaskExecutionRequested(
-                taskId = resolution.task.id,
-                retry = true,
-            )
-            TaskBindingActionKind.COMPLETE -> handleWorkflowTaskCompletionRequested(resolution.task.id)
-            TaskBindingActionKind.STOP -> requestBoundTaskExecutionStop()
-        }
-    }
-
-    private fun reportWorkflowTaskIntentUnresolved(
-        resolution: WorkflowChatTaskIntentResolution.Unresolved,
-    ) {
-        val message = when (resolution.reason) {
-            WorkflowChatTaskIntentFailureReason.NO_ACTIVE_WORKFLOW ->
-                SpecCodingBundle.message("toolwindow.workflow.intent.unresolved.noWorkflow")
-
-            WorkflowChatTaskIntentFailureReason.NO_TASKS ->
-                SpecCodingBundle.message("toolwindow.workflow.intent.unresolved.noTasks")
-
-            WorkflowChatTaskIntentFailureReason.NO_CURRENT_TASK ->
-                SpecCodingBundle.message("toolwindow.workflow.intent.unresolved.noCurrentTask")
-
-            WorkflowChatTaskIntentFailureReason.NO_NEXT_TASK ->
-                SpecCodingBundle.message("toolwindow.workflow.intent.unresolved.noNextTask")
-
-            WorkflowChatTaskIntentFailureReason.TASK_NOT_FOUND ->
-                SpecCodingBundle.message(
-                    "toolwindow.workflow.intent.unresolved.taskNotFound",
-                    resolution.referenceText ?: SpecCodingBundle.message("common.unknown"),
-                )
-
-            WorkflowChatTaskIntentFailureReason.AMBIGUOUS_TASK ->
-                SpecCodingBundle.message(
-                    "toolwindow.workflow.intent.unresolved.ambiguousTask",
-                    resolution.referenceText ?: SpecCodingBundle.message("common.unknown"),
-                    resolution.candidateTaskIds.joinToString(", "),
-                )
-        }
-        addErrorMessage(message)
     }
 
     private fun openHistoryPanel() {
@@ -7779,6 +7646,23 @@ class ImprovedChatPanel(
             } ?: CHAT_COMPOSER_DEFAULT_DIVIDER_PROPORTION
         }
 
+        internal fun shouldRouteToWorkflowCommand(
+            normalizedInput: String,
+            hasActiveWorkflow: Boolean,
+        ): Boolean {
+            if (!hasActiveWorkflow) {
+                return true
+            }
+            val trimmed = normalizedInput.trim()
+            val token = trimmed.substringBefore(" ").trim().lowercase(Locale.ROOT)
+            val args = trimmed.substringAfter(" ", "").trim()
+            return when (token) {
+                "open", "generate" -> true
+                in BARE_WORKFLOW_CHAT_COMMAND_TOKENS -> args.isBlank()
+                else -> false
+            }
+        }
+
         private fun normalizeClipboardTextForCollapse(text: String): String {
             return text.replace("\r\n", "\n").replace('\r', '\n')
         }
@@ -7898,6 +7782,13 @@ class ImprovedChatPanel(
             "mcp-",
             "model context protocol",
             "modelcontextprotocol",
+        )
+        private val BARE_WORKFLOW_CHAT_COMMAND_TOKENS = setOf(
+            "status",
+            "next",
+            "back",
+            "complete",
+            "help",
         )
 
         private const val HISTORY_CONTENT_KEY = "SpecCoding.HistoryContent"
