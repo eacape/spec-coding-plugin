@@ -90,6 +90,33 @@ class SessionManagerTest {
     }
 
     @Test
+    fun `createSession should not persist workflow chat task id`() {
+        val binding = WorkflowChatBinding(
+            workflowId = "wf-workflow-only",
+            focusedStage = StageId.TASKS,
+            source = WorkflowChatEntrySource.SPEC_PAGE,
+            actionIntent = WorkflowChatActionIntent.DISCUSS,
+        )
+
+        val created = manager.createSession(
+            title = "Workflow-only chat",
+            workflowChatBinding = binding,
+        ).getOrThrow()
+
+        val persisted = loadPersistedSessionRow(
+            databasePath = manager.databasePathForTest()!!,
+            sessionId = created.id,
+        )
+
+        assertNotNull(persisted)
+        assertEquals(binding.workflowId, persisted?.workflowId)
+        assertNull(persisted?.taskId)
+        assertEquals(binding.focusedStage?.name, persisted?.focusedStage)
+        assertEquals(binding.source.name, persisted?.workflowSource)
+        assertEquals(binding.actionIntent.name, persisted?.workflowActionIntent)
+    }
+
+    @Test
     fun `renameSession should update title and updatedAt`() {
         val created = manager.createSession(title = "Old title").getOrThrow()
 
@@ -351,6 +378,123 @@ class SessionManagerTest {
     }
 
     @Test
+    fun `legacy workflow chat sessions should clear persisted task id during workflow-only migration`() {
+        val repoPath = tempDir.resolve("repo")
+        val databasePath = repoPath.resolve(".spec-coding").resolve("data").resolve("conversations.db")
+        Files.createDirectories(databasePath.parent)
+
+        DriverManager.getConnection("jdbc:sqlite:${databasePath.toAbsolutePath()}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    """
+                    CREATE TABLE schema_migrations(
+                        version INTEGER PRIMARY KEY,
+                        applied_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                (1..5).forEach { version ->
+                    statement.execute("INSERT INTO schema_migrations(version, applied_at) VALUES($version, $version)")
+                }
+                statement.execute(
+                    """
+                    CREATE TABLE sessions(
+                        id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        spec_task_id TEXT,
+                        worktree_id TEXT,
+                        model_provider TEXT,
+                        workflow_id TEXT,
+                        task_id TEXT,
+                        focused_stage TEXT,
+                        workflow_source TEXT,
+                        workflow_action_intent TEXT,
+                        parent_session_id TEXT,
+                        branch_from_message_id TEXT,
+                        branch_name TEXT,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                statement.execute(
+                    """
+                    CREATE TABLE messages(
+                        id TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        token_count INTEGER,
+                        metadata_json TEXT,
+                        created_at INTEGER NOT NULL,
+                        FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                statement.execute(
+                    """
+                    INSERT INTO sessions(
+                        id, title, spec_task_id, worktree_id, model_provider,
+                        workflow_id, task_id, focused_stage, workflow_source, workflow_action_intent,
+                        parent_session_id, branch_from_message_id, branch_name,
+                        created_at, updated_at
+                    )
+                    VALUES (
+                        'legacy-workflow-chat',
+                        'Workflow task restore',
+                        'wf-restore',
+                        NULL,
+                        'openai',
+                        'wf-restore',
+                        'T-007',
+                        'IMPLEMENT',
+                        'TASK_PANEL',
+                        'EXECUTE_TASK',
+                        NULL,
+                        NULL,
+                        NULL,
+                        10,
+                        20
+                    )
+                    """.trimIndent(),
+                )
+                statement.execute(
+                    """
+                    INSERT INTO messages(
+                        id, session_id, role, content, token_count, metadata_json, created_at
+                    )
+                    VALUES ('msg-1', 'legacy-workflow-chat', 'USER', 'resume this workflow', NULL, NULL, 21)
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        val migratedManager = SessionManager(
+            project = project,
+            connectionProvider = { jdbcUrl -> DriverManager.getConnection(jdbcUrl) },
+            idGenerator = { java.util.UUID.randomUUID().toString() },
+            clock = { System.currentTimeMillis() },
+        )
+
+        val loaded = migratedManager.getSession("legacy-workflow-chat")
+        val messages = migratedManager.listMessages("legacy-workflow-chat")
+        val persisted = loadPersistedSessionRow(databasePath, "legacy-workflow-chat")
+
+        assertNotNull(loaded)
+        assertEquals("wf-restore", loaded?.workflowChatBinding?.workflowId)
+        assertEquals(StageId.IMPLEMENT, loaded?.workflowChatBinding?.focusedStage)
+        assertEquals(WorkflowChatEntrySource.TASK_PANEL, loaded?.workflowChatBinding?.source)
+        assertEquals(WorkflowChatActionIntent.EXECUTE_TASK, loaded?.workflowChatBinding?.actionIntent)
+        assertEquals("wf-restore", loaded?.specTaskId)
+        assertEquals(listOf("resume this workflow"), messages.map { it.content })
+        assertNotNull(persisted)
+        assertEquals("wf-restore", persisted?.workflowId)
+        assertNull(persisted?.taskId)
+        assertEquals("TASK_PANEL", persisted?.workflowSource)
+        assertEquals("EXECUTE_TASK", persisted?.workflowActionIntent)
+    }
+
+    @Test
     fun `forkSession should create branch with copied prefix messages`() {
         val source = manager.createSession(title = "Root session").getOrThrow()
         val first = manager.addMessage(source.id, ConversationRole.USER, "msg-1").getOrThrow()
@@ -456,4 +600,38 @@ class SessionManagerTest {
         assertEquals(1, results.size)
         assertEquals("proposal-a", results.first().branchName)
     }
+
+    private fun loadPersistedSessionRow(databasePath: Path, sessionId: String): PersistedSessionRow? {
+        DriverManager.getConnection("jdbc:sqlite:${databasePath.toAbsolutePath()}").use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT workflow_id, task_id, focused_stage, workflow_source, workflow_action_intent
+                FROM sessions
+                WHERE id = ?
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, sessionId)
+                statement.executeQuery().use { resultSet ->
+                    if (!resultSet.next()) {
+                        return null
+                    }
+                    return PersistedSessionRow(
+                        workflowId = resultSet.getString("workflow_id"),
+                        taskId = resultSet.getString("task_id"),
+                        focusedStage = resultSet.getString("focused_stage"),
+                        workflowSource = resultSet.getString("workflow_source"),
+                        workflowActionIntent = resultSet.getString("workflow_action_intent"),
+                    )
+                }
+            }
+        }
+    }
+
+    private data class PersistedSessionRow(
+        val workflowId: String?,
+        val taskId: String?,
+        val focusedStage: String?,
+        val workflowSource: String?,
+        val workflowActionIntent: String?,
+    )
 }
