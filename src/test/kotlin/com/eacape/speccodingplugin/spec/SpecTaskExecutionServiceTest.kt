@@ -263,6 +263,7 @@ class SpecTaskExecutionServiceTest {
         )
 
         var capturedRequest: SpecTaskExecutionService.TaskExecutionChatRequest? = null
+        var registeredHandle: SpecTaskExecutionService.TaskExecutionCancellationHandle? = null
         val executionService = newExecutionService(
             relatedFilesResolver = { _, _ -> listOf("src/main/kotlin/demo/FeatureService.kt") },
             chatExecutor = { request ->
@@ -284,6 +285,7 @@ class SpecTaskExecutionServiceTest {
             operationMode = OperationMode.AUTO,
             supplementalInstruction = "Prefer the existing file-first workflow behavior.",
             auditContext = mapOf("triggerSource" to "TEST"),
+            onRequestRegistered = { handle -> registeredHandle = handle },
         )
 
         val loadedWorkflow = storage.loadWorkflow(workflowId).getOrThrow()
@@ -303,6 +305,7 @@ class SpecTaskExecutionServiceTest {
         assertTrue(persistedTasks.contains("status: PENDING"))
         assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
         assertEquals(workflowId, session.specTaskId)
+        assertEquals(session.id, result.sessionId)
         assertEquals(workflowId, session.workflowChatBinding?.workflowId)
         assertEquals(StageId.IMPLEMENT, session.workflowChatBinding?.focusedStage)
         assertEquals(WorkflowChatEntrySource.TASK_PANEL, session.workflowChatBinding?.source)
@@ -322,6 +325,10 @@ class SpecTaskExecutionServiceTest {
         assertEquals(workflowId, userMetadata.workflowId)
         assertEquals(ExecutionTrigger.USER_EXECUTE, userMetadata.trigger)
         assertEquals(result.requestId, userMetadata.requestId)
+        assertNotNull(registeredHandle)
+        assertEquals(result.run.runId, registeredHandle!!.runId)
+        assertEquals(result.sessionId, registeredHandle!!.sessionId)
+        assertEquals("T-002", registeredHandle!!.taskId)
         assertNotNull(capturedRequest)
         assertEquals(result.requestId, capturedRequest!!.requestId)
         assertEquals("mock-model-v1", capturedRequest!!.modelId)

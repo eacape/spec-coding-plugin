@@ -24,6 +24,7 @@ import com.eacape.speccodingplugin.ui.ComboBoxAutoWidthSupport
 import com.eacape.speccodingplugin.ui.RefreshFeedback
 import com.eacape.speccodingplugin.ui.WorkflowChatRefreshEvent
 import com.eacape.speccodingplugin.ui.WorkflowChatRefreshListener
+import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
 import com.eacape.speccodingplugin.ui.WorkflowChatOpenRequest
 import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
@@ -3788,12 +3789,19 @@ class SpecWorkflowPanel(
         val cancellationHandleRef =
             AtomicReference<SpecTaskExecutionService.TaskExecutionCancellationHandle?>()
         val cancelRequested = AtomicBoolean(false)
+        val chatSessionOpened = AtomicBoolean(false)
         SpecWorkflowActionSupport.runBackground(
             project = project,
             title = SpecCodingBundle.message(progressKey, taskId),
             task = {
                 val onRequestRegistered: (SpecTaskExecutionService.TaskExecutionCancellationHandle) -> Unit = { handle ->
                     cancellationHandleRef.set(handle)
+                    if (chatSessionOpened.compareAndSet(false, true)) {
+                        openWorkflowChatExecutionSession(
+                            sessionId = handle.sessionId,
+                            workflowId = handle.workflowId,
+                        )
+                    }
                     if (cancelRequested.get()) {
                         specTaskExecutionService.cancelExecutionRun(
                             workflowId = handle.workflowId,
@@ -3871,6 +3879,27 @@ class SpecWorkflowPanel(
                 )
             },
         )
+    }
+
+    private fun openWorkflowChatExecutionSession(sessionId: String, workflowId: String) {
+        val normalizedSessionId = sessionId.trim().ifBlank { return }
+        val normalizedWorkflowId = workflowId.trim().ifBlank { return }
+        invokeLaterSafe {
+            val toolWindow = ToolWindowManager.getInstance(project)
+                .getToolWindow(ChatToolWindowFactory.TOOL_WINDOW_ID)
+                ?: return@invokeLaterSafe
+            ChatToolWindowFactory.ensurePrimaryContents(project, toolWindow)
+            if (!ChatToolWindowFactory.selectChatContent(toolWindow, project)) {
+                return@invokeLaterSafe
+            }
+            toolWindow.activate(null)
+            project.messageBus.syncPublisher(HistorySessionOpenListener.TOPIC)
+                .onSessionOpenRequested(normalizedSessionId)
+            publishWorkflowChatRefresh(
+                workflowId = normalizedWorkflowId,
+                reason = "spec_task_execution_session_opened",
+            )
+        }
     }
 
     private fun onTaskExecutionCancelRequested(taskId: String) {
@@ -5240,6 +5269,8 @@ class SpecWorkflowPanel(
     internal fun tasksSnapshotForTest(): Map<String, String> = tasksPanel.snapshotForTest()
 
     internal fun selectTaskForTest(taskId: String): Boolean = tasksPanel.selectTask(taskId)
+
+    internal fun requestExecutionForTaskForTest(taskId: String): Boolean = tasksPanel.requestExecutionForTask(taskId)
 
     internal fun clickOpenWorkflowChatForSelectedTaskForTest() {
         tasksPanel.clickOpenWorkflowChatForTest()

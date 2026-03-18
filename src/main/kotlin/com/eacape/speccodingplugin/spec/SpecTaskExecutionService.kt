@@ -52,6 +52,7 @@ class SpecTaskExecutionService(private val project: Project) {
         val workflowId: String,
         val taskId: String,
         val runId: String,
+        val sessionId: String,
         val providerId: String?,
         val requestId: String,
     )
@@ -536,6 +537,7 @@ class SpecTaskExecutionService(private val project: Project) {
             workflowId = workflowId,
             taskId = task.id,
             runId = queuedRun.runId,
+            sessionId = session.id,
             providerId = providerId,
             requestId = requestId,
         )
