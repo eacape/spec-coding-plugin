@@ -565,10 +565,15 @@ internal class GitStatusCodeChangeSummaryProvider(private val projectRoot: Path)
         val relativePath = projectRoot.relativize(absolutePath)
             .joinToString(separator = "/") { segment -> segment.toString() }
             .trim()
-        if (relativePath.isEmpty() || relativePath == ".") {
+        if (relativePath.isEmpty() || relativePath == "." || isExcludedPath(relativePath)) {
             return null
         }
         return relativePath
+    }
+
+    private fun isExcludedPath(path: String): Boolean {
+        val normalized = path.trim().replace('\\', '/')
+        return EXCLUDED_PREFIXES.any { prefix -> normalized.startsWith(prefix) }
     }
 
     private fun pickStrongerStatus(
@@ -656,5 +661,13 @@ internal class GitStatusCodeChangeSummaryProvider(private val projectRoot: Path)
             Regex("""^fun\s+[A-Za-z_][A-Za-z0-9_]*\s*\("""),
         )
         private const val MAX_SIGNATURE_HINTS = 6
+        private val EXCLUDED_PREFIXES = listOf(
+            ".spec-coding/",
+            ".idea/",
+            ".git/",
+            ".gradle/",
+            "build/",
+            "out/",
+        )
     }
 }

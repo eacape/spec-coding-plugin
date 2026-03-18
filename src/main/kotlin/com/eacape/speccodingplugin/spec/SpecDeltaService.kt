@@ -208,7 +208,10 @@ class SpecDeltaService(private val project: Project) {
         val normalized = rawPath.trim()
             .replace('\\', '/')
             .trim('/')
-        return normalized.takeIf { it.isNotEmpty() }
+        return normalized.takeIf { path ->
+            path.isNotEmpty() &&
+                EXCLUDED_DIFF_PATH_PREFIXES.none { prefix -> path.startsWith(prefix) }
+        }
     }
 
     fun exportMarkdown(report: SpecWorkflowDelta): String {
@@ -1470,6 +1473,18 @@ object SpecDeltaCalculator {
         val normalized = rawPath.trim()
             .replace('\\', '/')
             .trim('/')
-        return normalized.takeIf { it.isNotEmpty() }
+        return normalized.takeIf { path ->
+            path.isNotEmpty() &&
+                EXCLUDED_DIFF_PATH_PREFIXES.none { prefix -> path.startsWith(prefix) }
+        }
     }
 }
+
+private val EXCLUDED_DIFF_PATH_PREFIXES = listOf(
+    ".spec-coding/",
+    ".idea/",
+    ".git/",
+    ".gradle/",
+    "build/",
+    "out/",
+)
