@@ -383,6 +383,7 @@ class SpecTaskExecutionService(private val project: Project) {
             event = milestoneEvent(
                 detail = LIVE_PROGRESS_CANCELLING_DETAIL,
                 status = ChatTraceStatus.RUNNING,
+                id = TASK_EXECUTION_LIFECYCLE_EVENT_ID,
             ),
         )
         val cancelledRun = updateRunStatus(
@@ -517,6 +518,7 @@ class SpecTaskExecutionService(private val project: Project) {
             event = milestoneEvent(
                 detail = queuedRun.summary ?: LIVE_PROGRESS_QUEUED_DETAIL,
                 status = ChatTraceStatus.INFO,
+                id = TASK_EXECUTION_LIFECYCLE_EVENT_ID,
             ),
         )
         updateLiveProgress(
@@ -531,6 +533,7 @@ class SpecTaskExecutionService(private val project: Project) {
             event = milestoneEvent(
                 detail = LIVE_PROGRESS_PREPARING_DETAIL,
                 status = ChatTraceStatus.RUNNING,
+                id = TASK_EXECUTION_LIFECYCLE_EVENT_ID,
             ),
         )
         val suggestedRelatedFiles = relatedFilesResolver(task.id, task.relatedFiles)
@@ -669,6 +672,7 @@ class SpecTaskExecutionService(private val project: Project) {
                 event = milestoneEvent(
                     detail = LIVE_PROGRESS_REQUEST_DISPATCHED_DETAIL,
                     status = ChatTraceStatus.INFO,
+                    id = TASK_EXECUTION_LIFECYCLE_EVENT_ID,
                 ),
             )
             ensureRunNotCancelled(workflowId, queuedRun.runId)
@@ -705,6 +709,7 @@ class SpecTaskExecutionService(private val project: Project) {
                 event = milestoneEvent(
                     detail = LIVE_PROGRESS_WAITING_CONFIRMATION_DETAIL,
                     status = ChatTraceStatus.INFO,
+                    id = TASK_EXECUTION_LIFECYCLE_EVENT_ID,
                 ),
             )
             persistExecutionMessage(
@@ -906,9 +911,11 @@ class SpecTaskExecutionService(private val project: Project) {
                     detail = detail,
                     status = when (run.status) {
                         TaskExecutionRunStatus.FAILED -> ChatTraceStatus.ERROR
+                        TaskExecutionRunStatus.CANCELLED -> ChatTraceStatus.DONE
                         TaskExecutionRunStatus.SUCCEEDED -> ChatTraceStatus.DONE
                         else -> ChatTraceStatus.INFO
                     },
+                    id = TASK_EXECUTION_LIFECYCLE_EVENT_ID,
                 ),
             ),
         )
@@ -972,9 +979,11 @@ class SpecTaskExecutionService(private val project: Project) {
                 detail = resolvedDetail,
                 status = when (run.status) {
                     TaskExecutionRunStatus.FAILED -> ChatTraceStatus.ERROR
+                    TaskExecutionRunStatus.CANCELLED -> ChatTraceStatus.DONE
                     TaskExecutionRunStatus.SUCCEEDED -> ChatTraceStatus.DONE
                     else -> ChatTraceStatus.INFO
                 },
+                id = TASK_EXECUTION_LIFECYCLE_EVENT_ID,
             ),
         )
     }
@@ -1013,11 +1022,13 @@ class SpecTaskExecutionService(private val project: Project) {
         detail: String,
         kind: ChatTraceKind = ChatTraceKind.TASK,
         status: ChatTraceStatus = ChatTraceStatus.INFO,
+        id: String? = null,
     ): ChatStreamEvent {
         return ChatStreamEvent(
             kind = kind,
             detail = detail,
             status = status,
+            id = id,
         )
     }
 
@@ -1784,6 +1795,7 @@ class SpecTaskExecutionService(private val project: Project) {
         private const val LIVE_PROGRESS_CANCELLING_DETAIL = "Cancelling execution."
         private const val LIVE_PROGRESS_COMPLETED_DETAIL = "AI execution completed."
         private const val LIVE_PROGRESS_FAILED_DETAIL = "AI execution failed."
+        private const val TASK_EXECUTION_LIFECYCLE_EVENT_ID = "task_execution_lifecycle"
 
         fun getInstance(project: Project): SpecTaskExecutionService = project.service()
     }

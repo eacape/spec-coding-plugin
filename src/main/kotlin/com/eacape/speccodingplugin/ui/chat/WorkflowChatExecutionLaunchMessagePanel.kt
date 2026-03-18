@@ -11,7 +11,6 @@ import com.eacape.speccodingplugin.spec.WorkflowChatExecutionPresentationSection
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
@@ -26,6 +25,7 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
     private val payload: WorkflowChatExecutionLaunchRestorePayload,
     visibleContent: String,
     private val rawPromptContent: String? = null,
+    private val inspectRawPrompt: ((String) -> Unit)? = null,
     private val onDeleteMessage: ((ChatMessagePanel) -> Unit)? = null,
 ) : ChatMessagePanel(
     role = MessageRole.USER,
@@ -42,13 +42,13 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
     private val systemContextDetailsPanel = JPanel()
     private val systemContextToggleButton = JButton()
     private val debugPanel = JPanel()
-    private val rawPromptContainer = JPanel(BorderLayout())
     private val rawPromptToggleButton = JButton()
     private val notesPanel = JPanel()
     private val titleLabel = JBLabel(SpecCodingBundle.message("chat.execution.launch.title"))
     private val summaryLabel = JBLabel(SpecCodingBundle.message("chat.execution.launch.summary"))
     private var systemContextExpanded = false
     private var rawPromptVisible = false
+    private var rawPromptInspectInvocations = 0
 
     init {
         removeAll()
@@ -87,9 +87,6 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
         debugPanel.isOpaque = false
         debugPanel.alignmentX = LEFT_ALIGNMENT
 
-        rawPromptContainer.isOpaque = false
-        rawPromptContainer.alignmentX = LEFT_ALIGNMENT
-
         notesPanel.layout = BoxLayout(notesPanel, BoxLayout.Y_AXIS)
         notesPanel.isOpaque = false
         notesPanel.alignmentX = LEFT_ALIGNMENT
@@ -125,6 +122,7 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
                 "systemContextExpanded" to systemContextExpanded.toString(),
                 "debugEntryVisible" to rawPromptToggleButton.isVisible.toString(),
                 "rawPromptVisible" to rawPromptVisible.toString(),
+                "rawPromptInspectInvocations" to rawPromptInspectInvocations.toString(),
                 "content" to getContent(),
             )
 
@@ -145,6 +143,7 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
                 "systemContextExpanded" to systemContextExpanded.toString(),
                 "debugEntryVisible" to rawPromptToggleButton.isVisible.toString(),
                 "rawPromptVisible" to rawPromptVisible.toString(),
+                "rawPromptInspectInvocations" to rawPromptInspectInvocations.toString(),
                 "content" to getContent(),
             )
         }
@@ -197,7 +196,6 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
         systemContextSummaryPanel.removeAll()
         systemContextDetailsPanel.removeAll()
         debugPanel.removeAll()
-        rawPromptContainer.removeAll()
         notesPanel.removeAll()
 
         when (val current = payload) {
@@ -376,6 +374,20 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
         }
         val normalizedRawPrompt = rawPromptContent?.trim()?.takeIf(String::isNotBlank)
         debugPanel.add(createNoteLabel(SpecCodingBundle.message("chat.execution.launch.note.rawPromptHidden")))
+        normalizedRawPrompt?.let { rawPrompt ->
+            debugPanel.add(
+                createWrappedLabel(
+                    SpecCodingBundle.message(
+                        "chat.execution.launch.note.rawPromptStats",
+                        rawPrompt.lineSequence().count(),
+                        rawPrompt.length,
+                    ),
+                ).apply {
+                    foreground = SUMMARY_FG
+                    border = JBUI.Borders.emptyTop(4)
+                },
+            )
+        }
 
         rawPromptToggleButton.apply {
             isVisible = normalizedRawPrompt != null
@@ -385,9 +397,9 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
             foreground = ACTION_FG
             font = JBUI.Fonts.smallFont()
             cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            text = SpecCodingBundle.message("chat.execution.launch.action.inspectPrompt")
             addActionListener {
-                rawPromptVisible = !rawPromptVisible
-                refreshRawPromptVisibility(normalizedRawPrompt)
+                normalizedRawPrompt?.let(::openRawPromptInspector)
             }
         }
         if (normalizedRawPrompt != null) {
@@ -398,46 +410,12 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
                     add(rawPromptToggleButton)
                 },
             )
-            debugPanel.add(rawPromptContainer)
-            refreshRawPromptVisibility(normalizedRawPrompt)
         }
     }
 
-    private fun refreshRawPromptVisibility(rawPrompt: String?) {
-        rawPromptContainer.removeAll()
-        rawPromptToggleButton.text = if (rawPromptVisible) {
-            SpecCodingBundle.message("chat.execution.launch.action.hidePrompt")
-        } else {
-            SpecCodingBundle.message("chat.execution.launch.action.inspectPrompt")
-        }
-        if (rawPromptVisible && !rawPrompt.isNullOrBlank()) {
-            val area = JTextArea(rawPrompt).apply {
-                isEditable = false
-                isOpaque = false
-                lineWrap = false
-                wrapStyleWord = false
-                isFocusable = false
-                foreground = BODY_FG
-                font = JBUI.Fonts.label().deriveFont(Font.PLAIN, 11f)
-                border = JBUI.Borders.empty(0, 0, 0, 0)
-            }
-            rawPromptContainer.add(
-                JBScrollPane(area).apply {
-                    isOpaque = false
-                    viewport.isOpaque = false
-                    border = JBUI.Borders.compound(
-                        JBUI.Borders.customLine(CARD_BORDER, 1),
-                        JBUI.Borders.empty(6, 6, 6, 6),
-                    )
-                    preferredSize = JBUI.size(420, 180)
-                    alignmentX = LEFT_ALIGNMENT
-                },
-                BorderLayout.CENTER,
-            )
-        }
-        rawPromptContainer.isVisible = rawPromptVisible && !rawPrompt.isNullOrBlank()
-        debugPanel.revalidate()
-        debugPanel.repaint()
+    private fun openRawPromptInspector(rawPrompt: String) {
+        rawPromptInspectInvocations += 1
+        inspectRawPrompt?.invoke(rawPrompt) ?: WorkflowChatExecutionPromptDialog(rawPrompt).show()
     }
 
     private fun buildContextSummaryLines(

@@ -133,6 +133,9 @@ internal class StreamingTraceAssembler {
     }
 
     private fun logicalKey(item: ExecutionTimelineParser.TimelineItem): String {
+        item.logicalKeyHint?.takeIf(String::isNotBlank)?.let { keyHint ->
+            return "${item.kind.name}:$keyHint"
+        }
         val normalized = item.detail
             .lowercase()
             .replace(TASK_PROGRESS_PREFIX_REGEX, "")

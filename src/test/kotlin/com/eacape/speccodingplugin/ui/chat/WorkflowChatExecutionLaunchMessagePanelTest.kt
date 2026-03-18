@@ -25,6 +25,7 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
 
     @Test
     fun `presentation payload should render execution launch summary card`() {
+        val inspectedPrompts = mutableListOf<String>()
         val panel = runOnEdtResult {
             WorkflowChatExecutionLaunchMessagePanel(
                 payload = WorkflowChatExecutionLaunchRestorePayload.Presentation(
@@ -59,6 +60,7 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
                 ),
                 visibleContent = "## Execution Request",
                 rawPromptContent = "Interaction mode: workflow\n## Execution Request\nExecute task T-149",
+                inspectRawPrompt = { inspectedPrompts += it },
             )
         }
 
@@ -73,6 +75,7 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
         assertEquals("false", snapshot.getValue("systemContextExpanded"))
         assertEquals("true", snapshot.getValue("debugEntryVisible"))
         assertEquals("false", snapshot.getValue("rawPromptVisible"))
+        assertEquals("0", snapshot.getValue("rawPromptInspectInvocations"))
 
         val renderedText = collectDescendants(panel)
             .filterIsInstance<JTextArea>()
@@ -89,16 +92,22 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
 
         val expandedSnapshot = panel.snapshotForTest()
         assertEquals("true", expandedSnapshot.getValue("systemContextExpanded"))
-        assertEquals("true", expandedSnapshot.getValue("rawPromptVisible"))
+        assertEquals("false", expandedSnapshot.getValue("rawPromptVisible"))
+        assertEquals("1", expandedSnapshot.getValue("rawPromptInspectInvocations"))
+        assertEquals(
+            "Interaction mode: workflow\n## Execution Request\nExecute task T-149",
+            inspectedPrompts.single(),
+        )
 
         val expandedText = collectDescendants(panel)
             .filterIsInstance<JTextArea>()
             .joinToString("\n") { it.text.orEmpty() }
-        assertTrue(expandedText.contains("Interaction mode: workflow"))
+        assertFalse(expandedText.contains("Interaction mode: workflow"))
     }
 
     @Test
     fun `legacy payload should render compact fallback notice instead of raw prompt`() {
+        val inspectedPrompts = mutableListOf<String>()
         val panel = runOnEdtResult {
             WorkflowChatExecutionLaunchMessagePanel(
                 payload = WorkflowChatExecutionLaunchRestorePayload.LegacyCompact(
@@ -121,6 +130,7 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
                 ),
                 visibleContent = "## Execution Request",
                 rawPromptContent = "Interaction mode: workflow\n## Execution Request\nLegacy task execution",
+                inspectRawPrompt = { inspectedPrompts += it },
             )
         }
 
@@ -135,6 +145,7 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
         assertEquals("false", snapshot.getValue("systemContextExpanded"))
         assertEquals("true", snapshot.getValue("debugEntryVisible"))
         assertEquals("false", snapshot.getValue("rawPromptVisible"))
+        assertEquals("0", snapshot.getValue("rawPromptInspectInvocations"))
 
         val renderedText = collectDescendants(panel)
             .filterIsInstance<JTextArea>()
@@ -148,7 +159,9 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
         runOnEdtResult {
             panel.toggleRawPromptForTest()
         }
-        assertEquals("true", panel.snapshotForTest().getValue("rawPromptVisible"))
+        assertEquals("false", panel.snapshotForTest().getValue("rawPromptVisible"))
+        assertEquals("1", panel.snapshotForTest().getValue("rawPromptInspectInvocations"))
+        assertEquals("Interaction mode: workflow\n## Execution Request\nLegacy task execution", inspectedPrompts.single())
     }
 
     private fun <T> runOnEdtResult(action: () -> T): T {

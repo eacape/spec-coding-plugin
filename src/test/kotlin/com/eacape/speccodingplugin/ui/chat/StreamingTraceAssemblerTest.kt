@@ -45,4 +45,40 @@ class StreamingTraceAssemblerTest {
         val snapshot = assembler.snapshot(content = "")
         assertTrue(snapshot.items.isEmpty())
     }
+
+    @Test
+    fun `structured lifecycle events should collapse by stable key hint`() {
+        val assembler = StreamingTraceAssembler()
+
+        assembler.onStructuredEvent(
+            ChatStreamEvent(
+                kind = ChatTraceKind.TASK,
+                detail = "Queued spec page AI execution.",
+                status = ChatTraceStatus.INFO,
+                id = "task_execution_lifecycle",
+            ),
+        )
+        assembler.onStructuredEvent(
+            ChatStreamEvent(
+                kind = ChatTraceKind.TASK,
+                detail = "Cancelling execution.",
+                status = ChatTraceStatus.RUNNING,
+                id = "task_execution_lifecycle",
+            ),
+        )
+        assembler.onStructuredEvent(
+            ChatStreamEvent(
+                kind = ChatTraceKind.TASK,
+                detail = "AI execution cancelled by user.",
+                status = ChatTraceStatus.DONE,
+                id = "task_execution_lifecycle",
+            ),
+        )
+
+        val snapshot = assembler.snapshot(content = "")
+
+        assertEquals(1, snapshot.items.size)
+        assertEquals("AI execution cancelled by user.", snapshot.items.single().detail)
+        assertEquals(ExecutionTimelineParser.Status.DONE, snapshot.items.single().status)
+    }
 }

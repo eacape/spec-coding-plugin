@@ -192,6 +192,12 @@ open class ChatMessagePanel(
      */
     fun getContent(): String = contentBuilder.toString()
 
+    internal fun isFinishedForTest(): Boolean = messageFinished
+
+    internal fun hasTraceForTest(): Boolean {
+        return role == MessageRole.ASSISTANT && resolveTraceSnapshot(contentBuilder.toString()).hasTrace
+    }
+
     open fun updateContinueAction(onContinue: ((ChatMessagePanel) -> Unit)?) {
         if (this.onContinue === onContinue) {
             return

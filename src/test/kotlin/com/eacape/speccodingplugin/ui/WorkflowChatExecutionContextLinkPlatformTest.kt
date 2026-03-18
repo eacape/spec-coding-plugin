@@ -8,6 +8,7 @@ import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
 import com.eacape.speccodingplugin.session.WorkflowChatBinding
 import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
+import com.eacape.speccodingplugin.spec.ExecutionLivePhase
 import com.eacape.speccodingplugin.spec.SpecArtifactService
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecEngine
@@ -22,10 +23,17 @@ import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
 import com.eacape.speccodingplugin.spec.StageState
+import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
+import com.eacape.speccodingplugin.spec.TaskStatus
+import com.eacape.speccodingplugin.spec.WorkflowChatExecutionLaunchPresentation
+import com.eacape.speccodingplugin.spec.WorkflowChatExecutionLaunchSurface
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.session.SessionManager
+import com.eacape.speccodingplugin.stream.ChatStreamEvent
+import com.eacape.speccodingplugin.stream.ChatTraceKind
+import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowPanel
 import com.intellij.openapi.application.ApplicationManager
@@ -35,6 +43,7 @@ import com.intellij.openapi.wm.ToolWindowAnchor
 import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.util.ui.UIUtil
+import java.time.Instant
 
 class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
 
@@ -422,6 +431,284 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
         assertEquals("false", snapshot.getValue("rawPromptVisible"))
         assertTrue(snapshot.getValue("labels").contains("Execution Request"))
         assertFalse(snapshot.getValue("content").contains("Interaction mode: workflow"))
+    }
+
+    fun `test cancelling task execution should keep one finished trace panel in workflow chat`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Chat Cancel Dedupe",
+            description = "task 154 cancel execution panel dedupe",
+        ).getOrThrow()
+        val task = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Collapse cancelled execution lifecycle",
+            priority = TaskPriority.P1,
+        )
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+
+        val modelId = "task-154-${System.nanoTime()}"
+        ModelRegistry.getInstance().register(
+            ModelInfo(
+                id = modelId,
+                name = "Task 154 Mock Model",
+                provider = MockLlmProvider.ID,
+                contextWindow = 32_000,
+                capabilities = setOf(ModelCapability.CHAT),
+            ),
+        )
+
+        val toolWindow = registerSpecCodeToolWindow()
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val specPanel = currentSpecPanel(toolWindow)
+        val chatPanel = currentChatPanel(toolWindow)
+        val executionService = SpecTaskExecutionService.getInstance(project)
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.openWorkflowForTest(workflow.id)
+        }
+        waitUntil {
+            specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(task.id)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.selectToolbarModelForTest(MockLlmProvider.ID, modelId)
+            assertTrue(specPanel.requestExecutionForTaskForTest(task.id))
+        }
+
+        waitUntil(timeoutMs = 10_000) {
+            chatPanel.workflowBindingSnapshotForTest().getValue("workflowId") == workflow.id &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == task.id &&
+                chatPanel.liveTaskExecutionSnapshotForTest().getValue("visible") == "true"
+        }
+        waitUntil(timeoutMs = 10_000) {
+            executionService.listRuns(workflow.id, task.id).firstOrNull()?.status in
+                setOf(TaskExecutionRunStatus.QUEUED, TaskExecutionRunStatus.RUNNING)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(specPanel.requestExecutionForTaskForTest(task.id))
+        }
+
+        waitUntil(timeoutMs = 15_000) {
+            executionService.listRuns(workflow.id, task.id).firstOrNull()?.status ==
+                TaskExecutionRunStatus.CANCELLED
+        }
+        waitUntil(timeoutMs = 15_000) {
+            chatPanel.liveTaskExecutionSnapshotForTest().getValue("visible") == "false" &&
+                chatPanel.executionTracePanelsSnapshotForTest().getValue("count") == "1" &&
+                chatPanel.executionTracePanelsSnapshotForTest().getValue("unfinishedCount") == "0"
+        }
+
+        val traceSnapshot = chatPanel.executionTracePanelsSnapshotForTest()
+        assertEquals("1", traceSnapshot.getValue("count"))
+        assertEquals("0", traceSnapshot.getValue("unfinishedCount"))
+        assertEquals("false", chatPanel.liveTaskExecutionSnapshotForTest().getValue("visible"))
+    }
+
+    fun `test task execution session sync should append only current cancelled run messages`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Chat Cancel Sync",
+            description = "avoid loading historical execution traces on cancel",
+        ).getOrThrow()
+        val task = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Cancel current run without flooding chat history",
+            priority = TaskPriority.P1,
+        )
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+
+        val sessionManager = SessionManager.getInstance(project)
+        val session = sessionManager.createSession(
+            title = "Workflow Chat Cancel Sync",
+            specTaskId = workflow.id,
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = workflow.id,
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.SESSION_RESTORE,
+                actionIntent = WorkflowChatActionIntent.DISCUSS,
+            ),
+        ).getOrThrow()
+
+        val toolWindow = registerSpecCodeToolWindow()
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val chatPanel = currentChatPanel(toolWindow)
+        openSessionFromHistory(session.id)
+        waitUntil(timeoutMs = 10_000) {
+            chatPanel.workflowBindingSnapshotForTest().getValue("sessionId") == session.id
+        }
+
+        val historicalRunA = TaskExecutionRun(
+            runId = "run-history-a",
+            taskId = task.id,
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            trigger = ExecutionTrigger.USER_EXECUTE,
+            startedAt = "2026-03-18T10:00:00Z",
+        )
+        val historicalRunB = TaskExecutionRun(
+            runId = "run-history-b",
+            taskId = task.id,
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            trigger = ExecutionTrigger.USER_RETRY,
+            startedAt = "2026-03-18T10:05:00Z",
+        )
+        sessionManager.addMessage(
+            sessionId = session.id,
+            role = ConversationRole.ASSISTANT,
+            content = "Historical execution A",
+            metadataJson = TaskExecutionSessionMetadataCodec.encode(
+                run = historicalRunA,
+                workflowId = workflow.id,
+                requestId = "request-history-a",
+                providerId = MockLlmProvider.ID,
+                modelId = "mock-cancel-sync",
+                previousRunId = null,
+                traceEvents = listOf(
+                    ChatStreamEvent(
+                        kind = ChatTraceKind.TASK,
+                        detail = "Historical execution A",
+                        status = ChatTraceStatus.INFO,
+                    ),
+                ),
+                startedAtMillis = Instant.parse("2026-03-18T10:00:00Z").toEpochMilli(),
+                finishedAtMillis = Instant.parse("2026-03-18T10:01:00Z").toEpochMilli(),
+            ),
+        ).getOrThrow()
+        sessionManager.addMessage(
+            sessionId = session.id,
+            role = ConversationRole.ASSISTANT,
+            content = "Historical execution B",
+            metadataJson = TaskExecutionSessionMetadataCodec.encode(
+                run = historicalRunB,
+                workflowId = workflow.id,
+                requestId = "request-history-b",
+                providerId = MockLlmProvider.ID,
+                modelId = "mock-cancel-sync",
+                previousRunId = historicalRunA.runId,
+                traceEvents = listOf(
+                    ChatStreamEvent(
+                        kind = ChatTraceKind.TASK,
+                        detail = "Historical execution B",
+                        status = ChatTraceStatus.INFO,
+                    ),
+                ),
+                startedAtMillis = Instant.parse("2026-03-18T10:05:00Z").toEpochMilli(),
+                finishedAtMillis = Instant.parse("2026-03-18T10:06:00Z").toEpochMilli(),
+            ),
+        ).getOrThrow()
+
+        val currentRun = TaskExecutionRun(
+            runId = "run-cancel-current",
+            taskId = task.id,
+            status = TaskExecutionRunStatus.RUNNING,
+            trigger = ExecutionTrigger.USER_EXECUTE,
+            startedAt = "2026-03-18T10:10:00Z",
+        )
+        val currentRequestId = "request-cancel-current"
+        val launchMetadata = TaskExecutionSessionMetadataCodec.encode(
+            run = currentRun,
+            workflowId = workflow.id,
+            requestId = currentRequestId,
+            providerId = MockLlmProvider.ID,
+            modelId = "mock-cancel-sync",
+            previousRunId = historicalRunB.runId,
+            launchPresentation = WorkflowChatExecutionLaunchPresentation(
+                workflowId = workflow.id,
+                taskId = task.id,
+                taskTitle = task.title,
+                runId = currentRun.runId,
+                focusedStage = StageId.TASKS,
+                trigger = ExecutionTrigger.USER_EXECUTE,
+                launchSurface = WorkflowChatExecutionLaunchSurface.TASK_ROW,
+                taskStatusBeforeExecution = TaskStatus.PENDING,
+                taskPriority = task.priority,
+            ),
+        )
+        sessionManager.addMessage(
+            sessionId = session.id,
+            role = ConversationRole.USER,
+            content = "## Execution Request\n- Task: ${task.id}",
+            metadataJson = launchMetadata,
+        ).getOrThrow()
+        sessionManager.addMessage(
+            sessionId = session.id,
+            role = ConversationRole.SYSTEM,
+            content = "AI execution cancelled by user.",
+            metadataJson = TaskExecutionSessionMetadataCodec.encode(
+                run = currentRun,
+                workflowId = workflow.id,
+                requestId = currentRequestId,
+                providerId = MockLlmProvider.ID,
+                modelId = "mock-cancel-sync",
+                previousRunId = historicalRunB.runId,
+            ),
+        ).getOrThrow()
+
+        ApplicationManager.getApplication().invokeAndWait {
+            chatPanel.applyTaskLiveProgressForTest(
+                TaskExecutionLiveProgress(
+                    workflowId = workflow.id,
+                    runId = currentRun.runId,
+                    taskId = task.id,
+                    phase = ExecutionLivePhase.STREAMING,
+                    startedAt = Instant.parse("2026-03-18T10:10:00Z"),
+                    lastUpdatedAt = Instant.parse("2026-03-18T10:10:30Z"),
+                    lastDetail = "Running current execution",
+                    recentEvents = listOf(
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.TASK,
+                            detail = "Running current execution",
+                            status = ChatTraceStatus.RUNNING,
+                        ),
+                    ),
+                    providerId = MockLlmProvider.ID,
+                    modelId = "mock-cancel-sync",
+                ),
+            )
+        }
+        waitUntil(timeoutMs = 10_000) {
+            chatPanel.liveTaskExecutionSnapshotForTest().getValue("visible") == "true"
+        }
+
+        val initialMessageCount = chatPanel.messageCountForTest()
+        assertEquals(2, initialMessageCount)
+        assertEquals("false", chatPanel.liveTaskExecutionSnapshotForTest().getValue("finished"))
+
+        ApplicationManager.getApplication().invokeAndWait {
+            chatPanel.syncTaskExecutionSessionMessagesForTest(session.id, currentRun.runId, currentRequestId)
+        }
+
+        waitUntil(timeoutMs = 10_000) {
+            chatPanel.executionLaunchSnapshotForTest().getValue("runId") == currentRun.runId &&
+                chatPanel.liveTaskExecutionSnapshotForTest().getValue("visible") == "false" &&
+                chatPanel.executionTracePanelsSnapshotForTest().getValue("unfinishedCount") == "0"
+        }
+
+        val launchSnapshot = chatPanel.executionLaunchSnapshotForTest()
+        val liveSnapshot = chatPanel.liveTaskExecutionSnapshotForTest()
+        val traceSnapshot = chatPanel.executionTracePanelsSnapshotForTest()
+        assertEquals(currentRun.runId, launchSnapshot.getValue("runId"))
+        assertEquals(task.id, launchSnapshot.getValue("taskId"))
+        assertEquals("false", liveSnapshot.getValue("visible"))
+        assertEquals("0", traceSnapshot.getValue("unfinishedCount"))
+        assertEquals(4, chatPanel.messageCountForTest())
     }
 
     private fun registerSpecCodeToolWindow(): ToolWindow {

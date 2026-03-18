@@ -177,7 +177,6 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.imageio.ImageIO
 import javax.swing.AbstractAction
 import javax.swing.Box
-import javax.swing.BoxLayout
 import javax.swing.DefaultListCellRenderer
 import javax.swing.JButton
 import javax.swing.Icon
@@ -297,6 +296,7 @@ class ImprovedChatPanel(
     private val sendButton = JButton()
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var activeTaskExecutionPanel: ActiveTaskExecutionPanel? = null
+    private val taskExecutionPanelsByRunId = mutableMapOf<String, ActiveTaskExecutionPanel>()
     private var latestObservedTaskLiveProgress: TaskExecutionLiveProgress? = null
     private var lastWorkflowErrorDialogSnapshot: WorkflowErrorDialogSnapshot? = null
     private var statusAutoHideTimer: Timer? = null
@@ -307,6 +307,7 @@ class ImprovedChatPanel(
     private val transientClipboardImagePaths = mutableSetOf<String>()
     private val pendingPastedTextBlocks = linkedMapOf<String, String>()
     private val userMessageRawContent = mutableMapOf<ChatMessagePanel, String>()
+    private val renderedTaskExecutionSessionMessageIds = linkedSetOf<String>()
     private var pastedTextSequence = 0
     private var lastComposerTextSnapshot = ""
     private var composerAutoCollapseScheduled = false
@@ -847,9 +848,7 @@ class ImprovedChatPanel(
         inputScroll.preferredSize = JBDimension(0, CHAT_COMPOSER_INPUT_PREFERRED_HEIGHT)
         inputScroll.minimumSize = JBDimension(0, CHAT_COMPOSER_INPUT_MIN_HEIGHT)
 
-        val composerMetaRow = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
-        }
+        val composerMetaRow = JPanel(BorderLayout(JBUI.scale(8), 0))
         composerMetaRow.isOpaque = false
         composerMetaRow.border = JBUI.Borders.emptyTop(5)
         val composerMetaActions = JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0))
@@ -860,15 +859,10 @@ class ImprovedChatPanel(
             JPanel(BorderLayout()).apply {
                 isOpaque = false
                 add(composerHintLabel, BorderLayout.WEST)
-            }
+            },
+            BorderLayout.CENTER,
         )
-        composerMetaRow.add(
-            JPanel(BorderLayout()).apply {
-                isOpaque = false
-                border = JBUI.Borders.emptyTop(4)
-                add(composerMetaActions, BorderLayout.EAST)
-            }
-        )
+        composerMetaRow.add(composerMetaActions, BorderLayout.EAST)
 
         val controlsLeftPanel = JPanel(FlowLayout(FlowLayout.LEFT, 6, 2))
         controlsLeftPanel.isOpaque = false
@@ -1064,8 +1058,15 @@ class ImprovedChatPanel(
 
     private fun syncActiveTaskExecutionPanel(progress: TaskExecutionLiveProgress) {
         val sessionId = currentSessionId?.trim()?.ifBlank { null } ?: return
-        val state = when (val existing = activeTaskExecutionPanel) {
-            null -> {
+        val tracked = taskExecutionPanelsByRunId[progress.runId]
+            ?.takeIf { state -> state.sessionId == sessionId }
+        val state = when {
+            tracked != null -> {
+                activeTaskExecutionPanel = tracked
+                tracked
+            }
+
+            activeTaskExecutionPanel == null -> {
                 val binding = resolvedActiveWorkflowChatBinding() ?: return
                 if (binding.workflowId != progress.workflowId) {
                     return
@@ -1077,20 +1078,20 @@ class ImprovedChatPanel(
                 ) {
                     return
                 }
-                createActiveTaskExecutionPanel(sessionId, progress).also { created ->
-                    activeTaskExecutionPanel = created
-                }
+                createActiveTaskExecutionPanel(sessionId, progress)
             }
 
-            else -> when {
-                existing.sessionId == sessionId && existing.runId == progress.runId -> existing
-                resolvedActiveWorkflowChatBinding()?.workflowId == progress.workflowId -> {
-                    createActiveTaskExecutionPanel(sessionId, progress).also { created ->
-                        activeTaskExecutionPanel = created
+            else -> {
+                val existing = activeTaskExecutionPanel ?: return
+                when {
+                    existing.sessionId == sessionId && existing.runId == progress.runId -> existing
+                    resolvedActiveWorkflowChatBinding()?.workflowId == progress.workflowId -> {
+                        retireSupersededTaskExecutionPanel(existing, progress.runId)
+                        createActiveTaskExecutionPanel(sessionId, progress)
                     }
-                }
 
-                else -> return
+                    else -> return
+                }
             }
         }
         val wasNearBottom = messagesPanel.isNearBottom()
@@ -1103,6 +1104,9 @@ class ImprovedChatPanel(
         ) {
             state.panel.finishMessage()
             state.finished = true
+            if (activeTaskExecutionPanel?.runId == state.runId) {
+                activeTaskExecutionPanel = null
+            }
         }
         if (newEvents.isNotEmpty() && wasNearBottom) {
             messagesPanel.scrollToBottom()
@@ -1130,7 +1134,32 @@ class ImprovedChatPanel(
             taskId = progress.taskId,
             runId = progress.runId,
             panel = panel,
-        )
+        ).also { state ->
+            activeTaskExecutionPanel = state
+            taskExecutionPanelsByRunId[progress.runId] = state
+        }
+    }
+
+    private fun retireSupersededTaskExecutionPanel(
+        existing: ActiveTaskExecutionPanel,
+        nextRunId: String,
+    ) {
+        if (existing.runId == nextRunId || existing.finished) {
+            return
+        }
+        existing.panel.finishMessage()
+        existing.finished = true
+    }
+
+    private fun removeTaskExecutionPanelReference(panel: ChatMessagePanel) {
+        val matchedRunId = taskExecutionPanelsByRunId.entries
+            .firstOrNull { (_, state) -> state.panel === panel }
+            ?.key
+            ?: return
+        taskExecutionPanelsByRunId.remove(matchedRunId)
+        if (activeTaskExecutionPanel?.runId == matchedRunId) {
+            activeTaskExecutionPanel = null
+        }
     }
 
     private fun collectNewTaskExecutionTraceEvents(
@@ -1802,7 +1831,11 @@ class ImprovedChatPanel(
                 } else {
                     "spec.toolwindow.tasks.execute.updated"
                 }
-                loadSession(sessionId)
+                syncTaskExecutionSessionMessages(
+                    sessionId = sessionId,
+                    runId = result.run.runId,
+                    requestId = result.requestId,
+                )
                 showStatus(
                     SpecCodingBundle.message(statusKey, taskId, result.sessionTitle),
                     autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
@@ -1829,7 +1862,14 @@ class ImprovedChatPanel(
                 }
             },
             onCancelled = {
-                loadSession(sessionId)
+                cancellationHandleRef.get()?.let { handle ->
+                    finishActiveTaskExecutionPanel(handle.runId)
+                    syncTaskExecutionSessionMessages(
+                        sessionId = sessionId,
+                        runId = handle.runId,
+                        requestId = handle.requestId,
+                    )
+                }
                 showStatus(
                     SpecCodingBundle.message("spec.toolwindow.tasks.execution.cancelled", taskId),
                     autoHideMillis = STATUS_SHORT_HINT_AUTO_HIDE_MILLIS,
@@ -4451,6 +4491,7 @@ class ImprovedChatPanel(
         conversationHistory.clear()
         clearCompactedConversationState()
         userMessageRawContent.clear()
+        renderedTaskExecutionSessionMessageIds.clear()
         currentSessionId = null
         activeSpecWorkflowId = null
         activeWorkflowChatBinding = null
@@ -4462,6 +4503,7 @@ class ImprovedChatPanel(
         clearComposerInput()
         currentAssistantPanel = null
         activeTaskExecutionPanel = null
+        taskExecutionPanelsByRunId.clear()
         latestObservedTaskLiveProgress = null
         updateWorkflowBindingUi()
     }
@@ -4536,95 +4578,25 @@ class ImprovedChatPanel(
         conversationHistory.clear()
         clearCompactedConversationState()
         userMessageRawContent.clear()
+        renderedTaskExecutionSessionMessageIds.clear()
         messagesPanel.clearAll()
         contextPreviewPanel.clear()
         clearImageAttachments()
         currentAssistantPanel = null
         activeTaskExecutionPanel = null
+        taskExecutionPanelsByRunId.clear()
         latestObservedTaskLiveProgress = null
         val interactionMode = currentInteractionMode()
         val continueHandler = continueHandlerFor(interactionMode)
         val workflowSectionsEnabled = workflowSectionRenderingEnabledFor(interactionMode)
 
-        for (message in messages) {
-            when (message.role) {
-                ConversationRole.USER -> {
-                    val executionMetadata = TaskExecutionSessionMetadataCodec.decode(message.metadataJson)
-                    val executionLaunchPayload = executionMetadata.resolveExecutionLaunchRestorePayload(message.content)
-                    val rawUserContent = executionMetadata.resolveExecutionLaunchRawPrompt() ?: message.content
-                    if (executionLaunchPayload != null) {
-                        addExecutionLaunchMessage(
-                            visibleContent = message.content,
-                            payload = executionLaunchPayload,
-                            rawContent = rawUserContent,
-                        )
-                        appendToConversationHistory(LlmMessage(LlmRole.USER, rawUserContent))
-                    } else {
-                        appendUserMessage(content = message.content, rawContent = message.content)
-                        appendToConversationHistory(LlmMessage(LlmRole.USER, message.content))
-                    }
-                }
-
-                ConversationRole.ASSISTANT -> {
-                    val restoredSpecMetadata = SpecCardMetadataCodec.decode(message.metadataJson)
-                    val restoredContent = if (restoredSpecMetadata != null) {
-                        message.content.ifBlank {
-                            buildSpecCardMarkdown(
-                                metadata = restoredSpecMetadata,
-                                previewContent = "",
-                                summary = null,
-                            )
-                        }
-                    } else {
-                        message.content
-                    }
-                    val restoredTraceMetadata = TraceEventMetadataCodec.decodePayload(message.metadataJson)
-                    val restoredTraceEvents = restoredTraceMetadata.events
-                        .mapNotNull(::sanitizeStreamEvent)
-                    if (restoredSpecMetadata != null && restoredTraceEvents.isEmpty()) {
-                        addSpecCardMessage(
-                            cardMarkdown = restoredContent,
-                            metadata = restoredSpecMetadata,
-                        )
-                    } else {
-                        val timelineExpandButtonsVisible = timelineExpandButtonsVisibleFor(interactionMode)
-                         val panel = ChatMessagePanel(
-                             ChatMessagePanel.MessageRole.ASSISTANT,
-                             restoredContent,
-                             onDelete = ::handleDeleteMessage,
-                             onRegenerate = ::handleRegenerateMessage,
-                             onContinue = continueHandler,
-                             onWorkflowFileOpen = ::handleWorkflowFileOpen,
-                             onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
-                             workflowSectionsEnabled = workflowSectionsEnabled,
-                             timelineExpandButtonsVisible = timelineExpandButtonsVisible,
-                             startedAtMillis = restoredTraceMetadata.startedAtMillis,
-                             finishedAtMillis = restoredTraceMetadata.finishedAtMillis,
-                             captureElapsedAutomatically = false,
-                          )
-                        if (restoredTraceEvents.isNotEmpty()) {
-                            panel.appendStreamContent(text = "", events = restoredTraceEvents)
-                        }
-                        panel.finishMessage()
-                        messagesPanel.addMessage(panel)
-                    }
-                    appendToConversationHistory(LlmMessage(LlmRole.ASSISTANT, restoredContent))
-                }
-
-                ConversationRole.SYSTEM -> {
-                    addSystemMessage(message.content)
-                    appendToConversationHistory(LlmMessage(LlmRole.SYSTEM, message.content))
-                }
-
-                ConversationRole.TOOL -> {
-                    val panel = ChatMessagePanel(
-                        ChatMessagePanel.MessageRole.SYSTEM,
-                        SpecCodingBundle.message("toolwindow.message.tool.entry", message.content),
-                    )
-                    panel.finishMessage()
-                    messagesPanel.addMessage(panel)
-                }
-            }
+        messages.forEach { message ->
+            appendRestoredConversationMessage(
+                message = message,
+                interactionMode = interactionMode,
+                continueHandler = continueHandler,
+                workflowSectionsEnabled = workflowSectionsEnabled,
+            )
         }
 
         if (messages.isEmpty()) {
@@ -4879,6 +4851,171 @@ class ImprovedChatPanel(
             userMessageRawContent.remove(panel)
         }
         return panel
+    }
+
+    private fun appendRestoredConversationMessage(
+        message: ConversationMessage,
+        interactionMode: ChatInteractionMode = currentInteractionMode(),
+        continueHandler: ((ChatMessagePanel) -> Unit)? = continueHandlerFor(interactionMode),
+        workflowSectionsEnabled: Boolean = workflowSectionRenderingEnabledFor(interactionMode),
+        executionMetadata: TaskExecutionSessionMetadataCodec.DecodedMetadata =
+            TaskExecutionSessionMetadataCodec.decode(message.metadataJson),
+    ) {
+        when (message.role) {
+            ConversationRole.USER -> {
+                val executionLaunchPayload = executionMetadata.resolveExecutionLaunchRestorePayload(message.content)
+                val rawUserContent = executionMetadata.resolveExecutionLaunchRawPrompt() ?: message.content
+                if (executionLaunchPayload != null) {
+                    addExecutionLaunchMessage(
+                        visibleContent = message.content,
+                        payload = executionLaunchPayload,
+                        rawContent = rawUserContent,
+                    )
+                    appendToConversationHistory(LlmMessage(LlmRole.USER, rawUserContent))
+                } else {
+                    appendUserMessage(content = message.content, rawContent = message.content)
+                    appendToConversationHistory(LlmMessage(LlmRole.USER, message.content))
+                }
+            }
+
+            ConversationRole.ASSISTANT -> {
+                val restoredSpecMetadata = SpecCardMetadataCodec.decode(message.metadataJson)
+                val restoredContent = if (restoredSpecMetadata != null) {
+                    message.content.ifBlank {
+                        buildSpecCardMarkdown(
+                            metadata = restoredSpecMetadata,
+                            previewContent = "",
+                            summary = null,
+                        )
+                    }
+                } else {
+                    message.content
+                }
+                val restoredTraceMetadata = TraceEventMetadataCodec.decodePayload(message.metadataJson)
+                val restoredTraceEvents = restoredTraceMetadata.events
+                    .mapNotNull(::sanitizeStreamEvent)
+                if (restoredSpecMetadata != null && restoredTraceEvents.isEmpty()) {
+                    addSpecCardMessage(
+                        cardMarkdown = restoredContent,
+                        metadata = restoredSpecMetadata,
+                    )
+                } else {
+                    val timelineExpandButtonsVisible = timelineExpandButtonsVisibleFor(interactionMode)
+                    val panel = ChatMessagePanel(
+                        ChatMessagePanel.MessageRole.ASSISTANT,
+                        restoredContent,
+                        onDelete = ::handleDeleteMessage,
+                        onRegenerate = ::handleRegenerateMessage,
+                        onContinue = continueHandler,
+                        onWorkflowFileOpen = ::handleWorkflowFileOpen,
+                        onWorkflowCommandExecute = ::handleWorkflowCommandExecute,
+                        workflowSectionsEnabled = workflowSectionsEnabled,
+                        timelineExpandButtonsVisible = timelineExpandButtonsVisible,
+                        startedAtMillis = restoredTraceMetadata.startedAtMillis,
+                        finishedAtMillis = restoredTraceMetadata.finishedAtMillis,
+                        captureElapsedAutomatically = false,
+                    )
+                    if (restoredTraceEvents.isNotEmpty()) {
+                        panel.appendStreamContent(text = "", events = restoredTraceEvents)
+                    }
+                    panel.finishMessage()
+                    messagesPanel.addMessage(panel)
+                }
+                appendToConversationHistory(LlmMessage(LlmRole.ASSISTANT, restoredContent))
+            }
+
+            ConversationRole.SYSTEM -> {
+                addSystemMessage(message.content)
+                appendToConversationHistory(LlmMessage(LlmRole.SYSTEM, message.content))
+            }
+
+            ConversationRole.TOOL -> {
+                val panel = ChatMessagePanel(
+                    ChatMessagePanel.MessageRole.SYSTEM,
+                    SpecCodingBundle.message("toolwindow.message.tool.entry", message.content),
+                )
+                panel.finishMessage()
+                messagesPanel.addMessage(panel)
+            }
+        }
+        if (executionMetadata.isTaskExecutionMessage()) {
+            renderedTaskExecutionSessionMessageIds += message.id
+        }
+    }
+
+    private fun syncTaskExecutionSessionMessages(
+        sessionId: String,
+        runId: String?,
+        requestId: String?,
+    ) {
+        val normalizedSessionId = sessionId.trim()
+        if (normalizedSessionId.isBlank()) {
+            return
+        }
+        if (currentSessionId != normalizedSessionId) {
+            return
+        }
+        val normalizedRunId = runId?.trim()?.ifBlank { null }
+        val normalizedRequestId = requestId?.trim()?.ifBlank { null }
+        if (normalizedRunId == null && normalizedRequestId == null) {
+            return
+        }
+        val messages = sessionManager.listMessages(normalizedSessionId, limit = SESSION_LOAD_FETCH_LIMIT)
+            .takeLast(MAX_RESTORED_MESSAGES)
+        val candidates = messages.mapNotNull { message ->
+            val executionMetadata = TaskExecutionSessionMetadataCodec.decode(message.metadataJson)
+            if (!executionMetadata.matchesTaskExecutionMessage(normalizedRunId, normalizedRequestId)) {
+                return@mapNotNull null
+            }
+            if (message.id in renderedTaskExecutionSessionMessageIds) {
+                return@mapNotNull null
+            }
+            message to executionMetadata
+        }
+        if (candidates.isEmpty()) {
+            return
+        }
+        val interactionMode = currentInteractionMode()
+        val continueHandler = continueHandlerFor(interactionMode)
+        val workflowSectionsEnabled = workflowSectionRenderingEnabledFor(interactionMode)
+        val wasNearBottom = messagesPanel.isNearBottom()
+        candidates.forEach { (message, executionMetadata) ->
+            if (message.role == ConversationRole.ASSISTANT && normalizedRunId != null && executionMetadata.runId == normalizedRunId) {
+                removeActiveTaskExecutionPanel(normalizedRunId)
+            } else if (message.role == ConversationRole.SYSTEM && normalizedRunId != null && executionMetadata.runId == normalizedRunId) {
+                finishActiveTaskExecutionPanel(normalizedRunId)
+            }
+            appendRestoredConversationMessage(
+                message = message,
+                interactionMode = interactionMode,
+                continueHandler = continueHandler,
+                workflowSectionsEnabled = workflowSectionsEnabled,
+                executionMetadata = executionMetadata,
+            )
+        }
+        if (wasNearBottom) {
+            messagesPanel.scrollToBottom()
+        }
+    }
+
+    private fun removeActiveTaskExecutionPanel(runId: String) {
+        val state = activeTaskExecutionPanel ?: return
+        if (state.runId != runId) {
+            return
+        }
+        messagesPanel.removeMessage(state.panel)
+        activeTaskExecutionPanel = null
+    }
+
+    private fun finishActiveTaskExecutionPanel(runId: String) {
+        val state = activeTaskExecutionPanel ?: return
+        if (state.runId != runId) {
+            return
+        }
+        if (!state.finished) {
+            state.panel.finishMessage()
+            state.finished = true
+        }
     }
 
     private fun addExecutionLaunchMessage(
@@ -6889,6 +7026,7 @@ class ImprovedChatPanel(
     private fun handleDeleteMessage(panel: ChatMessagePanel) {
         if (isGenerating) return
         userMessageRawContent.remove(panel)
+        removeTaskExecutionPanelReference(panel)
         messagesPanel.removeMessage(panel)
         // 同步删除对话历史中对应的消息
         rebuildConversationHistory()
@@ -7499,6 +7637,16 @@ class ImprovedChatPanel(
         )
     }
 
+    internal fun executionTracePanelsSnapshotForTest(): Map<String, String> {
+        val tracePanels = messagesPanel.getAllMessages()
+            .filter { panel -> panel.hasTraceForTest() }
+        return mapOf(
+            "count" to tracePanels.size.toString(),
+            "unfinishedCount" to tracePanels.count { panel -> !panel.isFinishedForTest() }.toString(),
+            "contents" to tracePanels.joinToString(" || ") { panel -> panel.getContent() },
+        )
+    }
+
     internal fun executionLaunchSnapshotForTest(): Map<String, String> {
         val panel = messagesPanel.getAllMessages()
             .filterIsInstance<WorkflowChatExecutionLaunchMessagePanel>()
@@ -7521,10 +7669,21 @@ class ImprovedChatPanel(
                 "systemContextExpanded" to "false",
                 "debugEntryVisible" to "false",
                 "rawPromptVisible" to "false",
+                "rawPromptInspectInvocations" to "0",
                 "labels" to "",
                 "content" to "",
             )
     }
+
+    internal fun syncTaskExecutionSessionMessagesForTest(
+        sessionId: String,
+        runId: String?,
+        requestId: String?,
+    ) {
+        syncTaskExecutionSessionMessages(sessionId, runId, requestId)
+    }
+
+    internal fun messageCountForTest(): Int = messagesPanel.messageCount()
 
     internal fun addImageAttachmentsForTest(paths: List<String>) {
         imageAttachmentPreviewPanel.addImagePaths(paths)
@@ -7940,5 +8099,23 @@ class ImprovedChatPanel(
             values += collectComponentTextsForSnapshot(child)
         }
         return values
+    }
+
+    private fun TaskExecutionSessionMetadataCodec.DecodedMetadata.isTaskExecutionMessage(): Boolean {
+        return !runId.isNullOrBlank() || !requestId.isNullOrBlank()
+    }
+
+    private fun TaskExecutionSessionMetadataCodec.DecodedMetadata.matchesTaskExecutionMessage(
+        expectedRunId: String?,
+        expectedRequestId: String?,
+    ): Boolean {
+        if (!isTaskExecutionMessage()) {
+            return false
+        }
+        return when {
+            expectedRunId != null && runId == expectedRunId -> true
+            expectedRequestId != null && requestId == expectedRequestId -> true
+            else -> false
+        }
     }
 }

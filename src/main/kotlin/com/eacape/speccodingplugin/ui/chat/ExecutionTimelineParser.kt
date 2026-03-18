@@ -31,6 +31,7 @@ internal object ExecutionTimelineParser {
         val kind: Kind,
         val status: Status,
         val detail: String,
+        val logicalKeyHint: String? = null,
     )
 
     fun parse(content: String): List<TimelineItem> {
@@ -65,6 +66,8 @@ internal object ExecutionTimelineParser {
             kind = mapKind(event.kind),
             status = mapStatus(event.status),
             detail = event.detail.trim().ifBlank { event.kind.name.lowercase() },
+            logicalKeyHint = event.metadata["timelineKey"]?.trim()?.ifBlank { null }
+                ?: event.id?.trim()?.ifBlank { null },
         )
     }
 
@@ -160,6 +163,9 @@ internal object ExecutionTimelineParser {
     }
 
     private fun logicalKey(item: TimelineItem): String {
+        item.logicalKeyHint?.takeIf(String::isNotBlank)?.let { keyHint ->
+            return "${item.kind.name}:$keyHint"
+        }
         val normalizedDetail = normalizeDetailForKey(item.kind, item.detail)
         return "${item.kind.name}:${normalizedDetail.ifBlank { "_" }}"
     }
