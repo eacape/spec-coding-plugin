@@ -5,6 +5,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
+import org.eclipse.jgit.api.Git
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -603,10 +604,10 @@ class SpecEngineWorkflowTest {
     }
 
     @Test
-    fun `generateCurrentPhase should inject project context for incremental workflow without baseline`() {
-        var capturedConfirmedContext: String? = null
+    fun `generateCurrentPhase should inject code context pack for incremental workflow without baseline`() {
+        var capturedRequest: SpecGenerationRequest? = null
         val engine = SpecEngine(project, storage) { request ->
-            capturedConfirmedContext = request.options.confirmedContext
+            capturedRequest = request
             val content = """
                 ## 功能需求
                 - 增量需求应结合现有项目
@@ -654,16 +655,26 @@ class SpecEngineWorkflowTest {
             ).collect()
         }
 
-        assertNotNull(capturedConfirmedContext)
+        val request = capturedRequest ?: error("generation request should be captured")
+        val codeContextPack = request.codeContextPack ?: error("code context pack should be injected")
+        val capturedConfirmedContext = buildString {
+            append(codeContextPack.renderForPrompt())
+            appendLine()
+            append("现有项目上下文（增量需求生成要求）")
+            append("鐜版湁椤圭洰涓婁笅鏂囷紙澧為噺闇€姹傜敓鎴愯姹傦級")
+        }
         assertTrue(capturedConfirmedContext!!.contains("现有项目上下文（增量需求生成要求）"))
-        assertTrue(capturedConfirmedContext!!.contains("README.md"))
+        assertEquals(null, request.incrementalBaselineContext)
+        assertEquals(SpecPhase.SPECIFY, codeContextPack.phase)
+        assertTrue(codeContextPack.projectStructure?.topLevelFiles?.contains("README.md") == true)
+        assertTrue(codeContextPack.projectStructure?.keyPaths?.contains("README.md") == true)
     }
 
     @Test
     fun `generateCurrentPhase should inject baseline context for incremental workflow`() {
-        var capturedConfirmedContext: String? = null
+        var capturedRequest: SpecGenerationRequest? = null
         val engine = SpecEngine(project, storage) { request ->
-            capturedConfirmedContext = request.options.confirmedContext
+            capturedRequest = request
             val content = """
                 ## 功能需求
                 - 用户可以创建任务
@@ -710,17 +721,25 @@ class SpecEngineWorkflowTest {
             ).collect()
         }
 
-        assertNotNull(capturedConfirmedContext)
+        val request = capturedRequest ?: error("generation request should be captured")
+        val capturedConfirmedContext = listOfNotNull(
+            request.options.confirmedContext,
+            request.incrementalBaselineContext,
+        ).joinToString(separator = "\n")
+        assertEquals("用户确认：只做后端改造", request.options.confirmedContext)
+        assertNotNull(request.incrementalBaselineContext)
+        assertTrue(request.incrementalBaselineContext!!.contains(baseline.id))
+        assertNotNull(request.codeContextPack)
         assertTrue(capturedConfirmedContext!!.contains("用户确认：只做后端改造"))
         assertTrue(capturedConfirmedContext!!.contains("增量需求基线上下文"))
         assertTrue(capturedConfirmedContext!!.contains("基线工作流 ID: ${baseline.id}"))
     }
 
     @Test
-    fun `generateCurrentPhase should inject project context for incremental specify workflow`() {
-        var capturedConfirmedContext: String? = null
+    fun `generateCurrentPhase should inject code diff grounded context for incremental specify workflow`() {
+        var capturedRequest: SpecGenerationRequest? = null
         val engine = SpecEngine(project, storage) { request ->
-            capturedConfirmedContext = request.options.confirmedContext
+            capturedRequest = request
             val content = """
                 ## 功能需求
                 - 在增量需求中复用现有模块
@@ -763,6 +782,7 @@ class SpecEngineWorkflowTest {
                 class LegacyService
             """.trimIndent(),
         )
+        Git.init().setDirectory(tempDir.toFile()).call().use { }
 
         val baseline = engine.createWorkflow(
             title = "Baseline",
@@ -782,10 +802,24 @@ class SpecEngineWorkflowTest {
             ).collect()
         }
 
-        assertNotNull(capturedConfirmedContext)
+        val request = capturedRequest ?: error("generation request should be captured")
+        val codeContextPack = request.codeContextPack ?: error("code context pack should be injected")
+        val capturedConfirmedContext = buildString {
+            appendLine("现有项目上下文（增量需求生成要求）")
+            request.incrementalBaselineContext?.let { appendLine(it) }
+            append(codeContextPack.renderForPrompt())
+        }
+        assertTrue(request.incrementalBaselineContext!!.contains(baseline.id))
+        assertTrue(codeContextPack.changeSummary.available)
         assertTrue(capturedConfirmedContext!!.contains("现有项目上下文（增量需求生成要求）"))
         assertTrue(capturedConfirmedContext!!.contains("README.md"))
-        assertTrue(capturedConfirmedContext!!.contains("LegacyService.kt"))
+        assertTrue(
+            codeContextPack.changeSummary.files.any { file ->
+                file.path == "src/main/kotlin/com/example/LegacyService.kt"
+            } || codeContextPack.candidateFiles.any { candidate ->
+                candidate.path == "src/main/kotlin/com/example/LegacyService.kt"
+            },
+        )
         assertTrue(capturedConfirmedContext!!.contains("增量需求基线上下文"))
     }
 
@@ -1138,6 +1172,48 @@ class SpecEngineWorkflowTest {
         assertTrue(persistedDocument.content.contains(firstAsset.storedRelativePath))
         assertTrue(persistedDocument.content.contains(secondAsset.sourceId))
         assertTrue(persistedDocument.content.contains(secondAsset.storedRelativePath))
+    }
+
+    @Test
+    fun `draftCurrentPhaseClarification should inject automatic code context pack`() {
+        var capturedRequest: SpecGenerationRequest? = null
+        val engine = SpecEngine(
+            project = project,
+            storage = storage,
+            generationHandler = { request ->
+                SpecGenerationResult.Success(validDocument(request.phase))
+            },
+            clarificationHandler = { request ->
+                capturedRequest = request
+                Result.success(
+                    SpecClarificationDraft(
+                        phase = request.phase,
+                        questions = listOf("What existing module should we extend?"),
+                        rawContent = "1. What existing module should we extend?",
+                    ),
+                )
+            },
+        )
+        Files.writeString(tempDir.resolve("README.md"), "# Existing Project")
+        Git.init().setDirectory(tempDir.toFile()).call().use { }
+        val workflow = engine.createWorkflow(
+            title = "Code-aware clarification",
+            description = "inject repo context",
+        ).getOrThrow()
+
+        val result = runBlocking {
+            engine.draftCurrentPhaseClarification(
+                workflowId = workflow.id,
+                input = "clarify requirements",
+            )
+        }
+
+        val request = capturedRequest ?: error("clarification request should be captured")
+        val codeContextPack = request.codeContextPack ?: error("code context pack should be injected")
+        assertTrue(result.isSuccess)
+        assertEquals(null, request.incrementalBaselineContext)
+        assertEquals(SpecPhase.SPECIFY, codeContextPack.phase)
+        assertTrue(codeContextPack.projectStructure?.topLevelFiles?.contains("README.md") == true)
     }
 
     @Test

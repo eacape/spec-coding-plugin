@@ -170,6 +170,7 @@ class SpecGenerator(
             appendLine("```")
             appendLine(request.previousDocument?.content?.ifBlank { "(空)" } ?: "(无)")
             appendLine("```")
+            appendIncrementalBaselineContext(request.incrementalBaselineContext)
             appendWorkflowSourceContext(request.options.workflowSourceUsage)
             val confirmedContext = request.options.confirmedContext
                 ?.replace("\r\n", "\n")
@@ -183,6 +184,7 @@ class SpecGenerator(
                 appendLine(confirmedContext)
                 appendLine("```")
             }
+            appendCodeContext(request.codeContextPack)
             appendLine()
             appendLine("请严格使用以下 Markdown 输出：")
             appendLine("## 需要确认的问题")
@@ -209,8 +211,7 @@ class SpecGenerator(
             appendLine("```")
             appendLine(request.input)
             appendLine("```")
-            appendConfirmedContext(request.options.confirmedContext)
-            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendSupportingContext(request)
             appendLine()
             appendLine("要求：")
             appendLine("1. 提取功能需求（Functional Requirements）")
@@ -242,8 +243,7 @@ class SpecGenerator(
             appendLine("```")
             appendLine(request.previousDocument?.content ?: request.input)
             appendLine("```")
-            appendConfirmedContext(request.options.confirmedContext)
-            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendSupportingContext(request)
             appendLine()
             appendLine("要求：")
             appendLine("0. 只输出最终 design.md 正文，不要输出思考过程、工具日志、路径信息或 JSON。")
@@ -276,8 +276,7 @@ class SpecGenerator(
             appendLine("```")
             appendLine(request.previousDocument?.content ?: request.input)
             appendLine("```")
-            appendConfirmedContext(request.options.confirmedContext)
-            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendSupportingContext(request)
             appendLine()
             appendLine("要求：")
             appendLine("0. 只输出最终 tasks.md 正文，不要输出思考过程、工具日志、文件路径、JSON 字符串或转义字符。")
@@ -326,8 +325,10 @@ class SpecGenerator(
                 title = "## Upstream Reference Document",
                 content = request.previousDocument?.content,
             )
+            appendIncrementalBaselineContext(request.incrementalBaselineContext)
             appendWorkflowSourceContext(request.options.workflowSourceUsage)
             appendConfirmedContext(request.options.confirmedContext)
+            appendCodeContext(request.codeContextPack)
             appendLine()
             appendLine("Return Markdown using exactly this structure:")
             appendLine("## Clarification Questions")
@@ -355,8 +356,7 @@ class SpecGenerator(
                 content = request.input,
                 emptyPlaceholder = "(no explicit revision instruction; only apply confirmed context)",
             )
-            appendConfirmedContext(request.options.confirmedContext)
-            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendSupportingContext(request)
             appendLine()
             appendLine("Requirements:")
             appendLine("0. Output only the final requirements.md body. Do not output explanations, diff, JSON, or code fences.")
@@ -391,8 +391,7 @@ class SpecGenerator(
                 title = "## Upstream requirements.md Reference",
                 content = request.previousDocument?.content,
             )
-            appendConfirmedContext(request.options.confirmedContext)
-            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendSupportingContext(request)
             appendLine()
             appendLine("Requirements:")
             appendLine("0. Output only the final design.md body. Do not output explanations, diff, JSON, or code fences.")
@@ -427,8 +426,7 @@ class SpecGenerator(
                 title = "## Upstream design.md Reference",
                 content = request.previousDocument?.content,
             )
-            appendConfirmedContext(request.options.confirmedContext)
-            appendWorkflowSourceContext(request.options.workflowSourceUsage)
+            appendSupportingContext(request)
             appendLine()
             appendLine("Requirements:")
             appendLine("0. Output only the final tasks.md body. Do not output explanations, diff, JSON, or code fences.")
@@ -720,6 +718,20 @@ class SpecGenerator(
         appendLine("```")
     }
 
+    private fun StringBuilder.appendIncrementalBaselineContext(incrementalBaselineContext: String?) {
+        val normalized = incrementalBaselineContext
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            .orEmpty()
+        if (normalized.isBlank()) {
+            return
+        }
+
+        appendLine()
+        appendLine(normalized)
+    }
+
     private fun StringBuilder.appendWorkflowSourceContext(workflowSourceUsage: WorkflowSourceUsage) {
         val normalized = workflowSourceUsage.renderedContext
             ?.replace("\r\n", "\n")
@@ -732,6 +744,28 @@ class SpecGenerator(
 
         appendLine()
         appendLine(normalized)
+    }
+
+    private fun StringBuilder.appendCodeContext(codeContextPack: CodeContextPack?) {
+        val rendered = codeContextPack
+            ?.renderForPrompt()
+            ?.replace("\r\n", "\n")
+            ?.replace('\r', '\n')
+            ?.trim()
+            .orEmpty()
+        if (rendered.isBlank()) {
+            return
+        }
+
+        appendLine()
+        appendLine(rendered)
+    }
+
+    private fun StringBuilder.appendSupportingContext(request: SpecGenerationRequest) {
+        appendConfirmedContext(request.options.confirmedContext)
+        appendIncrementalBaselineContext(request.incrementalBaselineContext)
+        appendWorkflowSourceContext(request.options.workflowSourceUsage)
+        appendCodeContext(request.codeContextPack)
     }
 
     private fun buildRequestMetadata(options: GenerationOptions): Map<String, String> {

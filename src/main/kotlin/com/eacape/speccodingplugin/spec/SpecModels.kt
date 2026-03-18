@@ -327,6 +327,8 @@ data class SpecGenerationRequest(
     val input: String,
     val previousDocument: SpecDocument? = null,
     val currentDocument: SpecDocument? = null,
+    val incrementalBaselineContext: String? = null,
+    val codeContextPack: CodeContextPack? = null,
     val options: GenerationOptions = GenerationOptions()
 ) {
     fun resolveComposeActionMode(): ArtifactComposeActionMode {

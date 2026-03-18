@@ -348,7 +348,15 @@ class SpecCodeContextService(private val project: Project) {
 
     private fun workspaceCandidateFilesProvider(): List<String> {
         return (workspaceCandidateFilesProviderOverride
-            ?: { SpecRelatedFilesService.getInstance(project).snapshotWorkspaceCandidatePaths() })()
+            ?: {
+                SpecRelatedFilesService(
+                    project = project,
+                    vcsSource = GitStatusCandidateSource(project),
+                    fileEventSource = object : RelatedFilesCandidateSource {
+                        override fun snapshotProjectRelativePaths(): List<String> = emptyList()
+                    },
+                ).snapshotWorkspaceCandidatePaths()
+            })()
     }
 
     private fun projectConfigLoader(): SpecProjectConfig {

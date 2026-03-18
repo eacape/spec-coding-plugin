@@ -64,6 +64,11 @@ class SpecGeneratorComposeModeTest {
                         - Existing workflow state model.
                     """.trimIndent(),
                 ),
+                incrementalBaselineContext = """
+                    ## Incremental Workflow Baseline
+                    - Baseline workflow ID: wf-baseline
+                """.trimIndent(),
+                codeContextPack = promptCodeContextPack(),
                 options = GenerationOptions(
                     providerId = "mock",
                     model = "mock-model",
@@ -84,6 +89,9 @@ class SpecGeneratorComposeModeTest {
         assertTrue(userPrompt.contains("Add sourceId traceability to the existing design artifact."))
         assertTrue(userPrompt.contains("## Upstream requirements.md Reference"))
         assertTrue(userPrompt.contains("Keep source references traceable."))
+        assertTrue(userPrompt.contains("## Incremental Workflow Baseline"))
+        assertTrue(userPrompt.contains("## Local Repository Code Context"))
+        assertTrue(userPrompt.contains("src/main/kotlin/com/example/WorkflowEngine.kt"))
         assertTrue(
             userPrompt.indexOf("## Current design.md") < userPrompt.indexOf("## Upstream requirements.md Reference"),
         )
@@ -130,6 +138,7 @@ class SpecGeneratorComposeModeTest {
                         - Existing design baseline to revise.
                     """.trimIndent(),
                 ),
+                codeContextPack = promptCodeContextPack(),
                 options = GenerationOptions(
                     providerId = "mock",
                     model = "mock-model",
@@ -152,6 +161,37 @@ class SpecGeneratorComposeModeTest {
         assertTrue(userPrompt.contains("Existing design baseline to revise."))
         assertTrue(userPrompt.contains("## Upstream Reference Document"))
         assertTrue(userPrompt.contains("Trace sources by sourceId."))
+        assertTrue(userPrompt.contains("## Local Repository Code Context"))
+        assertTrue(userPrompt.contains("Candidate Files To Reuse Or Inspect"))
+    }
+
+    private fun promptCodeContextPack(): CodeContextPack {
+        return CodeContextPack(
+            phase = SpecPhase.DESIGN,
+            projectStructure = ProjectStructureSummary(
+                topLevelDirectories = listOf("src", "docs"),
+                topLevelFiles = listOf("README.md"),
+                keyPaths = listOf("src/main/kotlin", "src/test/kotlin"),
+                summary = "Summarize existing modules, boundaries, extension points, and implementation constraints.",
+            ),
+            candidateFiles = listOf(
+                CodeContextCandidateFile(
+                    path = "src/main/kotlin/com/example/WorkflowEngine.kt",
+                    signals = setOf(CodeContextCandidateSignal.VCS_CHANGE),
+                ),
+            ),
+            changeSummary = CodeChangeSummary(
+                source = CodeChangeSource.VCS_STATUS,
+                files = listOf(
+                    CodeChangeFile(
+                        path = "src/main/kotlin/com/example/WorkflowEngine.kt",
+                        status = CodeChangeFileStatus.MODIFIED,
+                    ),
+                ),
+                summary = "Git working tree reports 1 changed file(s).",
+                available = true,
+            ),
+        )
     }
 
     private fun promptDocument(

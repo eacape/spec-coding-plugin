@@ -29,6 +29,7 @@ class SpecEngine(private val project: Project) {
     private val templateSwitchIdGenerator = WorkflowIdGenerator(prefix = "switch")
     private val projectConfigDelegate: SpecProjectConfigService by lazy { SpecProjectConfigService(project) }
     private val artifactServiceDelegate: SpecArtifactService by lazy { SpecArtifactService(project) }
+    private val codeContextServiceDelegate: SpecCodeContextService by lazy { SpecCodeContextService(project) }
     private val tasksServiceDelegate: SpecTasksService by lazy { SpecTasksService(project) }
     private val taskExecutionServiceDelegate: SpecTaskExecutionService by lazy { SpecTaskExecutionService(project) }
     private val verificationServiceDelegate: SpecVerificationService by lazy { SpecVerificationService(project) }
@@ -587,17 +588,13 @@ class SpecEngine(private val project: Project) {
             ?: storageDelegate.loadWorkflow(workflowId).getOrElse { return Result.failure(it) }
         activeWorkflows[workflowId] = workflow
 
-        val previousPhase = workflow.currentPhase.previous()
-        val previousDocument = previousPhase?.let { workflow.getDocument(it) }
-        val currentDocument = workflow.getCurrentDocument()
-        val effectiveOptions = enrichGenerationOptions(workflow, options)
-        val request = SpecGenerationRequest(
-            phase = workflow.currentPhase,
+        val preparedRequest = prepareGenerationRequest(
+            workflow = workflow,
             input = input,
-            previousDocument = previousDocument,
-            currentDocument = currentDocument,
-            options = effectiveOptions,
+            options = options,
         )
+        val effectiveOptions = preparedRequest.options
+        val request = preparedRequest.request
         val result = clarificationHandler(request)
         appendWorkflowSourceUsageAudit(
             workflowId = workflowId,
@@ -637,22 +634,19 @@ class SpecEngine(private val project: Project) {
         var effectiveOptions = options
         try {
             // 获取前一阶段的文档（如果有）
-            val previousPhase = workflow.currentPhase.previous()
-            val previousDocument = previousPhase?.let { workflow.getDocument(it) }
-            val currentDocument = workflow.getCurrentDocument()
-            effectiveOptions = enrichGenerationOptions(workflow, options)
+            val preparedRequest = prepareGenerationRequest(
+                workflow = workflow,
+                input = input,
+                options = options,
+            )
+            val currentDocument = preparedRequest.currentDocument
+            effectiveOptions = preparedRequest.options
             val auditActionType = auditActionTypeForComposeMode(
                 effectiveOptions.composeActionMode ?: ArtifactComposeActionMode.GENERATE,
             )
 
             // 构建生成请求
-            val request = SpecGenerationRequest(
-                phase = workflow.currentPhase,
-                input = input,
-                previousDocument = previousDocument,
-                currentDocument = currentDocument,
-                options = effectiveOptions
-            )
+            val request = preparedRequest.request
 
             emit(SpecGenerationProgress.Generating(workflow.currentPhase, 0.3))
 
@@ -2359,28 +2353,41 @@ class SpecEngine(private val project: Project) {
             workflow = workflow,
             requestedUsage = enrichedOptions.workflowSourceUsage,
         )
+        return enrichedOptions.copy(workflowSourceUsage = workflowSourceUsage)
+    }
 
-        val baselineContext = buildIncrementalBaselineContext(workflow)
-        val projectContext = buildIncrementalProjectContext(workflow)
-        val existingContext = enrichedOptions.confirmedContext
-            ?.replace("\r\n", "\n")
-            ?.replace('\r', '\n')
-            ?.trim()
-            .orEmpty()
-        val mergedContextSections = listOfNotNull(
-            existingContext.takeIf { it.isNotBlank() },
-            baselineContext?.takeIf { it.isNotBlank() },
-            projectContext?.takeIf { it.isNotBlank() },
+    private fun prepareGenerationRequest(
+        workflow: SpecWorkflow,
+        input: String,
+        options: GenerationOptions,
+    ): PreparedGenerationRequest {
+        val effectiveOptions = enrichGenerationOptions(workflow, options)
+        val previousDocument = workflow.currentPhase.previous()?.let { phase -> workflow.getDocument(phase) }
+        val currentDocument = workflow.getCurrentDocument()
+        val request = SpecGenerationRequest(
+            phase = workflow.currentPhase,
+            input = input,
+            previousDocument = previousDocument,
+            currentDocument = currentDocument,
+            incrementalBaselineContext = buildIncrementalBaselineContext(workflow),
+            codeContextPack = codeContextServiceDelegate.buildCodeContextPack(
+                workflow = workflow,
+                phase = workflow.currentPhase,
+            ),
+            options = effectiveOptions,
         )
-        if (mergedContextSections.isEmpty()) {
-            return enrichedOptions.copy(workflowSourceUsage = workflowSourceUsage)
-        }
-        val mergedContext = mergedContextSections.joinToString(separator = "\n\n---\n\n")
-        return enrichedOptions.copy(
-            confirmedContext = mergedContext,
-            workflowSourceUsage = workflowSourceUsage,
+        return PreparedGenerationRequest(
+            options = effectiveOptions,
+            currentDocument = currentDocument,
+            request = request,
         )
     }
+
+    private data class PreparedGenerationRequest(
+        val options: GenerationOptions,
+        val currentDocument: SpecDocument?,
+        val request: SpecGenerationRequest,
+    )
 
     private fun buildWorkflowSourceUsage(
         workflow: SpecWorkflow,
