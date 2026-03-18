@@ -114,22 +114,32 @@ internal class WorkflowChatExecutionPromptDialog(
 
         overview.leadLines.takeIf { it.isNotEmpty() }?.let { leadLines ->
             content.add(
-                createSectionPanel(
-                    SpecCodingBundle.message("chat.execution.launch.dialog.section.requestMeta"),
-                    leadLines,
+                createSectionPreviewPanel(
+                    WorkflowChatExecutionPromptDebugSection(
+                        title = SpecCodingBundle.message("chat.execution.launch.dialog.section.requestMeta"),
+                        lines = leadLines,
+                    ),
                 ),
             )
         }
         if (overview.sections.isEmpty()) {
+            if (content.componentCount > 0) {
+                content.add(createSectionGap())
+            }
             content.add(
-                createSectionPanel(
-                    SpecCodingBundle.message("chat.execution.launch.dialog.section.empty"),
-                    listOf(promptText.trim().ifBlank { SpecCodingBundle.message("chat.execution.launch.section.empty") }),
+                createSectionPreviewPanel(
+                    WorkflowChatExecutionPromptDebugSection(
+                        title = SpecCodingBundle.message("chat.execution.launch.dialog.section.empty"),
+                        lines = listOf(promptText.trim().ifBlank { SpecCodingBundle.message("chat.execution.launch.section.empty") }),
+                    ),
                 ),
             )
         } else {
-            overview.sections.forEach { section ->
-                content.add(createSectionPanel(section.title, section.lines))
+            overview.sections.forEachIndexed { index, section ->
+                if (index > 0 || overview.leadLines.isNotEmpty()) {
+                    content.add(createSectionGap())
+                }
+                content.add(createSectionPreviewPanel(section))
             }
         }
 
@@ -159,56 +169,137 @@ internal class WorkflowChatExecutionPromptDialog(
         }
     }
 
-    private fun createSectionPanel(
-        title: String,
-        lines: List<String>,
-    ): JPanel {
-        val normalizedLines = lines.map(String::trimEnd).dropWhile(String::isBlank).dropLastWhile(String::isBlank)
-        val detailText = normalizedLines.joinToString("\n").ifBlank {
-            SpecCodingBundle.message("chat.execution.launch.section.empty")
-        }
-        val panel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+    private fun createSectionGap(): JPanel {
+        return JPanel().apply {
             isOpaque = false
+            border = JBUI.Borders.emptyTop(8)
+        }
+    }
+
+    private fun createSectionPreviewPanel(section: WorkflowChatExecutionPromptDebugSection): JPanel {
+        val previewLines = section.previewLines()
+        val hiddenLineCount = section.hiddenLineCount()
+        val panel = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+            isOpaque = true
+            background = CARD_BG
             border = JBUI.Borders.compound(
                 JBUI.Borders.customLine(BORDER_FG, 1),
-                JBUI.Borders.empty(8, 10, 8, 10),
+                JBUI.Borders.empty(10, 12, 10, 12),
             )
-            maximumSize = java.awt.Dimension(Int.MAX_VALUE, preferredSize.height)
         }
-        panel.add(
-            JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-                isOpaque = false
-                add(
-                    JBLabel(title).apply {
-                        foreground = TITLE_FG
-                        font = font.deriveFont(Font.BOLD, 12f)
-                    },
-                )
-                add(
-                    JBLabel(normalizedLines.size.toString()).apply {
-                        foreground = META_FG
-                        font = JBUI.Fonts.miniFont()
-                    },
-                )
-            },
-            BorderLayout.NORTH,
-        )
-        panel.add(
-            JBTextArea(detailText).apply {
-                isEditable = false
-                isOpaque = false
-                lineWrap = true
-                wrapStyleWord = true
-                font = JBUI.Fonts.label().deriveFont(12f)
-                border = JBUI.Borders.empty(0)
-                foreground = BODY_FG
-            },
-            BorderLayout.CENTER,
-        )
+
+        val header = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque = false
+            add(
+                JBLabel(section.title).apply {
+                    foreground = TITLE_FG
+                    font = font.deriveFont(Font.BOLD, 12f)
+                },
+                BorderLayout.CENTER,
+            )
+            add(
+                createBadge(
+                    SpecCodingBundle.message(
+                        "chat.execution.launch.dialog.section.lines",
+                        section.displayLineCount(),
+                    ),
+                ),
+                BorderLayout.EAST,
+            )
+        }
+
+        val body = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+        }
+        if (previewLines.isEmpty()) {
+            body.add(
+                createMutedTextArea(SpecCodingBundle.message("chat.execution.launch.dialog.preview.empty")).apply {
+                    border = JBUI.Borders.emptyTop(2)
+                },
+            )
+        } else {
+            previewLines.forEachIndexed { index, line ->
+                if (index > 0) {
+                    body.add(createSectionGap())
+                }
+                body.add(createPreviewLine(line))
+            }
+        }
+        if (hiddenLineCount > 0) {
+            body.add(
+                createMutedTextArea(
+                    SpecCodingBundle.message(
+                        "chat.execution.launch.dialog.section.more",
+                        hiddenLineCount,
+                    ),
+                ).apply {
+                    border = JBUI.Borders.emptyTop(8)
+                },
+            )
+        }
+
+        panel.add(header, BorderLayout.NORTH)
+        panel.add(body, BorderLayout.CENTER)
         return panel
     }
 
+    private fun createBadge(text: String): JPanel {
+        return JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+            isOpaque = true
+            background = BADGE_BG
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(BADGE_BORDER, 1),
+                JBUI.Borders.empty(2, 8, 2, 8),
+            )
+            add(
+                JBLabel(text).apply {
+                    foreground = META_FG
+                    font = JBUI.Fonts.miniFont()
+                },
+            )
+        }
+    }
+
+    private fun createPreviewLine(text: String): JPanel {
+        return JPanel(BorderLayout(JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            add(
+                JBLabel("-").apply {
+                    foreground = ACCENT_FG
+                    font = font.deriveFont(Font.BOLD, 12f)
+                },
+                BorderLayout.WEST,
+            )
+            add(createBodyTextArea(text), BorderLayout.CENTER)
+        }
+    }
+
+    private fun createBodyTextArea(text: String): JBTextArea {
+        return JBTextArea(text).apply {
+            isEditable = false
+            isOpaque = false
+            lineWrap = true
+            wrapStyleWord = true
+            columns = 72
+            font = JBUI.Fonts.label().deriveFont(12f)
+            border = JBUI.Borders.empty(0)
+            foreground = BODY_FG
+            isFocusable = false
+        }
+    }
+
+    private fun createMutedTextArea(text: String): JBTextArea {
+        return createBodyTextArea(text).apply {
+            foreground = SUMMARY_FG
+        }
+    }
+
     companion object {
+        private val CARD_BG = JBColor(Color(247, 250, 254), Color(44, 51, 60))
+        private val BADGE_BG = JBColor(Color(238, 243, 249), Color(54, 61, 73))
+        private val BADGE_BORDER = JBColor(Color(203, 212, 223), Color(84, 95, 108))
+        private val ACCENT_FG = JBColor(Color(70, 104, 150), Color(148, 186, 236))
         private val TITLE_FG = JBColor(Color(55, 63, 74), Color(224, 229, 236))
         private val BODY_FG = JBColor(Color(52, 60, 70), Color(211, 217, 226))
         private val SUMMARY_FG = JBColor(Color(96, 107, 121), Color(176, 184, 196))
@@ -220,7 +311,54 @@ internal class WorkflowChatExecutionPromptDialog(
 internal data class WorkflowChatExecutionPromptDebugSection(
     val title: String,
     val lines: List<String>,
-)
+) {
+    fun displayLineCount(): Int = normalizedDisplayLines().size
+
+    fun previewLines(
+        maxLines: Int = DEFAULT_PREVIEW_LINES,
+        maxLineLength: Int = DEFAULT_PREVIEW_LINE_LENGTH,
+    ): List<String> {
+        return normalizedDisplayLines()
+            .take(maxLines)
+            .map { compactLine(it, maxLineLength) }
+    }
+
+    fun hiddenLineCount(maxLines: Int = DEFAULT_PREVIEW_LINES): Int {
+        return (displayLineCount() - maxLines).coerceAtLeast(0)
+    }
+
+    private fun normalizedDisplayLines(): List<String> {
+        return lines.mapNotNull(::normalizeDisplayLine)
+    }
+
+    private fun normalizeDisplayLine(value: String): String? {
+        val trimmed = value.trim()
+        if (trimmed.isBlank() || trimmed == "```") {
+            return null
+        }
+        return trimmed
+            .replace(BULLET_PREFIX_REGEX, "")
+            .replace(NUMBERED_PREFIX_REGEX, "")
+            .replace(MULTI_SPACE_REGEX, " ")
+            .trim()
+            .takeIf(String::isNotBlank)
+    }
+
+    private fun compactLine(value: String, maxLineLength: Int): String {
+        if (value.length <= maxLineLength) {
+            return value
+        }
+        return value.take((maxLineLength - 3).coerceAtLeast(1)).trimEnd() + "..."
+    }
+
+    companion object {
+        private const val DEFAULT_PREVIEW_LINES = 3
+        private const val DEFAULT_PREVIEW_LINE_LENGTH = 112
+        private val BULLET_PREFIX_REGEX = Regex("^[-*+]\\s+")
+        private val NUMBERED_PREFIX_REGEX = Regex("^\\d+[.)]\\s+")
+        private val MULTI_SPACE_REGEX = Regex("\\s+")
+    }
+}
 
 internal data class WorkflowChatExecutionPromptDebugOverview(
     val leadLines: List<String>,

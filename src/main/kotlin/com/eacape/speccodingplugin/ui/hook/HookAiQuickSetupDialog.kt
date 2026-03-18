@@ -1,4 +1,4 @@
-﻿package com.eacape.speccodingplugin.ui.hook
+package com.eacape.speccodingplugin.ui.hook
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.llm.ClaudeCliLlmProvider
@@ -16,6 +16,7 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.util.Locale
 import javax.swing.JComponent
 import javax.swing.JPanel
 
@@ -47,10 +48,10 @@ class HookAiQuickSetupDialog(
             .distinct()
         availableProviders.forEach { providerCombo.addItem(it) }
         providerCombo.renderer = SimpleListCellRenderer.create<String> { label, value, _ ->
-            label.text = value?.let(::providerDisplayName).orEmpty()
+            label.text = value?.let(::providerDisplayName)?.let(::toUiLowercase).orEmpty()
         }
         modelCombo.renderer = SimpleListCellRenderer.create<ModelChoice> { label, value, _ ->
-            label.text = value?.label.orEmpty()
+            label.text = value?.label?.let(::toUiLowercase).orEmpty()
         }
         ComboBoxAutoWidthSupport.installSelectedItemAutoWidth(
             comboBox = providerCombo,
@@ -156,6 +157,8 @@ class HookAiQuickSetupDialog(
             }
         }
     }
+
+    private fun toUiLowercase(value: String): String = value.lowercase(Locale.ROOT)
 
     private data class ModelChoice(
         val id: String?,
