@@ -18,6 +18,7 @@ import com.eacape.speccodingplugin.spec.StageState
 import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.WorkflowStatus
+import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowPanel
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.wm.RegisterToolWindowTask
@@ -120,6 +121,107 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
         assertEquals(workflow.id, clearedSnapshot.getValue("workflowId"))
         assertEquals("", clearedSnapshot.getValue("taskId"))
         assertEquals("false", clearedSnapshot.getValue("taskChipVisible"))
+    }
+
+    fun `test sequential task executions should reuse same workflow chat session`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Chat Session Reuse",
+            description = "task 140 reuse workflow chat session",
+        ).getOrThrow()
+        val firstTask = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Implement session reuse entry",
+            priority = TaskPriority.P0,
+        )
+        val secondTask = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Implement follow-up in same chat",
+            priority = TaskPriority.P1,
+        )
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+
+        val modelId = "task-140-${System.nanoTime()}"
+        ModelRegistry.getInstance().register(
+            ModelInfo(
+                id = modelId,
+                name = "Task 140 Mock Model",
+                provider = MockLlmProvider.ID,
+                contextWindow = 32_000,
+                capabilities = setOf(ModelCapability.CHAT),
+            ),
+        )
+
+        val toolWindow = registerSpecCodeToolWindow()
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val specPanel = currentSpecPanel(toolWindow)
+        val chatPanel = currentChatPanel(toolWindow)
+        val executionService = SpecTaskExecutionService.getInstance(project)
+        val sessionManager = SessionManager.getInstance(project)
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.openWorkflowForTest(workflow.id)
+        }
+        waitUntil {
+            specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(firstTask.id) &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(secondTask.id)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.selectToolbarModelForTest(MockLlmProvider.ID, modelId)
+            assertTrue(specPanel.requestExecutionForTaskForTest(firstTask.id))
+        }
+
+        waitUntil(timeoutMs = 10_000) {
+            chatPanel.workflowBindingSnapshotForTest().getValue("workflowId") == workflow.id &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == firstTask.id
+        }
+        waitUntil(timeoutMs = 10_000) {
+            executionService.listRuns(workflow.id, firstTask.id).firstOrNull()?.status ==
+                TaskExecutionRunStatus.WAITING_CONFIRMATION
+        }
+
+        val firstSessionId = chatPanel.workflowBindingSnapshotForTest().getValue("sessionId")
+        assertTrue(firstSessionId.isNotBlank())
+        assertEquals(1, sessionManager.listSessions().size)
+
+        executionService.resolveWaitingConfirmationRun(
+            workflowId = workflow.id,
+            taskId = firstTask.id,
+            summary = "Complete first task before starting second.",
+        )
+
+        waitUntil(timeoutMs = 10_000) {
+            chatPanel.workflowBindingSnapshotForTest().getValue("taskChipVisible") == "false"
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(specPanel.requestExecutionForTaskForTest(secondTask.id))
+        }
+
+        waitUntil(timeoutMs = 10_000) {
+            chatPanel.workflowBindingSnapshotForTest().getValue("workflowId") == workflow.id &&
+                chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == secondTask.id
+        }
+        waitUntil(timeoutMs = 10_000) {
+            executionService.listRuns(workflow.id, secondTask.id).firstOrNull()?.status ==
+                TaskExecutionRunStatus.WAITING_CONFIRMATION
+        }
+
+        val secondSnapshot = chatPanel.workflowBindingSnapshotForTest()
+        assertEquals(firstSessionId, secondSnapshot.getValue("sessionId"))
+        assertEquals(secondTask.id, secondSnapshot.getValue("taskId"))
+        assertEquals("true", secondSnapshot.getValue("taskChipVisible"))
+        assertEquals(1, sessionManager.listSessions().size)
     }
 
     private fun registerSpecCodeToolWindow(): ToolWindow {

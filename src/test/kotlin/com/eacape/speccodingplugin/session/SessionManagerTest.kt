@@ -117,6 +117,67 @@ class SessionManagerTest {
     }
 
     @Test
+    fun `findReusableWorkflowChatSession should prefer requested same workflow session`() {
+        val primary = manager.createSession(
+            title = "Workflow Main",
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = "wf-reuse-preferred",
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.TASK_PANEL,
+                actionIntent = WorkflowChatActionIntent.DISCUSS,
+            ),
+        ).getOrThrow()
+        val branch = manager.createSession(
+            title = "Workflow Branch",
+            parentSessionId = primary.id,
+            branchName = "explore",
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = "wf-reuse-preferred",
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.SIDEBAR,
+                actionIntent = WorkflowChatActionIntent.DISCUSS,
+            ),
+        ).getOrThrow()
+
+        val reused = manager.findReusableWorkflowChatSession(
+            workflowId = "wf-reuse-preferred",
+            preferredSessionId = branch.id,
+        )
+
+        assertNotNull(reused)
+        assertEquals(branch.id, reused?.id)
+    }
+
+    @Test
+    fun `findReusableWorkflowChatSession should prefer primary session when no preferred match`() {
+        val primary = manager.createSession(
+            title = "Workflow Main",
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = "wf-reuse-primary",
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.TASK_PANEL,
+                actionIntent = WorkflowChatActionIntent.DISCUSS,
+            ),
+        ).getOrThrow()
+        manager.createSession(
+            title = "Workflow Branch",
+            parentSessionId = primary.id,
+            branchName = "experiment",
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = "wf-reuse-primary",
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.SIDEBAR,
+                actionIntent = WorkflowChatActionIntent.DISCUSS,
+            ),
+        ).getOrThrow()
+
+        val reused = manager.findReusableWorkflowChatSession("wf-reuse-primary")
+
+        assertNotNull(reused)
+        assertEquals(primary.id, reused?.id)
+    }
+
+    @Test
     fun `renameSession should update title and updatedAt`() {
         val created = manager.createSession(title = "Old title").getOrThrow()
 

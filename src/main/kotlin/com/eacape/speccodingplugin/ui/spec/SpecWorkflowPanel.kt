@@ -14,6 +14,7 @@ import com.eacape.speccodingplugin.llm.LlmRouter
 import com.eacape.speccodingplugin.llm.MockLlmProvider
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
+import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
 import com.eacape.speccodingplugin.session.WorkflowChatBinding
 import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
@@ -30,6 +31,7 @@ import com.eacape.speccodingplugin.ui.actions.SpecWorkflowActionSupport
 import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.eacape.speccodingplugin.window.GlobalConfigChangedEvent
 import com.eacape.speccodingplugin.window.GlobalConfigSyncListener
+import com.eacape.speccodingplugin.window.WindowSessionIsolationService
 import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
 import com.eacape.speccodingplugin.worktree.WorktreeStatus
@@ -105,6 +107,8 @@ class SpecWorkflowPanel(
     private val specVerificationService = SpecVerificationService.getInstance(project)
     private val specRequirementsQuickFixService = SpecRequirementsQuickFixService(project)
     private val specTasksQuickFixService = SpecTasksQuickFixService(project)
+    private val sessionManager = SessionManager.getInstance(project)
+    private val sessionIsolationService = WindowSessionIsolationService.getInstance(project)
     private val artifactService = SpecArtifactService(project)
     private val codeGraphService = CodeGraphService.getInstance(project)
     private val worktreeManager = WorktreeManager.getInstance(project)
@@ -3779,6 +3783,7 @@ class SpecWorkflowPanel(
     private fun onTaskExecutionRequested(taskId: String, retry: Boolean) {
         val workflowId = selectedWorkflowId ?: return
         val executionContext = resolveTaskExecutionContext() ?: return
+        val reusableSessionId = resolveReusableWorkflowChatSessionId(workflowId)
         val actionName = if (retry) "RETRY_EXECUTION" else "EXECUTE_WITH_AI"
         val auditContext = buildTaskAuditContext(taskId, actionName)
         val progressKey = if (retry) {
@@ -3824,6 +3829,7 @@ class SpecWorkflowPanel(
                         modelId = executionContext.modelId,
                         operationMode = executionContext.operationMode,
                         previousRunId = previousRunId,
+                        sessionId = reusableSessionId,
                         auditContext = auditContext,
                         onRequestRegistered = onRequestRegistered,
                     )
@@ -3834,6 +3840,7 @@ class SpecWorkflowPanel(
                         providerId = executionContext.providerId,
                         modelId = executionContext.modelId,
                         operationMode = executionContext.operationMode,
+                        sessionId = reusableSessionId,
                         auditContext = auditContext,
                         onRequestRegistered = onRequestRegistered,
                     )
@@ -3879,6 +3886,15 @@ class SpecWorkflowPanel(
                 )
             },
         )
+    }
+
+    private fun resolveReusableWorkflowChatSessionId(workflowId: String): String? {
+        val normalizedWorkflowId = workflowId.trim().ifBlank { return null }
+        val preferredSessionId = sessionIsolationService.activeSessionId()
+        return sessionManager.findReusableWorkflowChatSession(
+            workflowId = normalizedWorkflowId,
+            preferredSessionId = preferredSessionId,
+        )?.id
     }
 
     private fun openWorkflowChatExecutionSession(sessionId: String, workflowId: String) {

@@ -897,7 +897,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         val persistedTasks = artifactService.readArtifact(workflow.id, StageId.TASKS).orEmpty()
 
         assertEquals(task.id, tasksSnapshot.getValue("selectedTaskId"))
-        assertEquals("complete", tasksSnapshot.getValue("executeIconId"))
+        assertEquals("waitingComplete", tasksSnapshot.getValue("executeIconId"))
         assertEquals("true", tasksSnapshot.getValue("executeFocusable"))
         assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT))
         assertTrue(persistedTasks.contains("status: PENDING"))
@@ -949,7 +949,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         val firstTasksSnapshot = firstPanel.tasksSnapshotForTest()
         val firstOverviewSnapshot = firstPanel.overviewSnapshotForTest()
         assertEquals(task.id, firstTasksSnapshot.getValue("selectedTaskId"))
-        assertEquals("complete", firstTasksSnapshot.getValue("executeIconId"))
+        assertEquals("waitingComplete", firstTasksSnapshot.getValue("executeIconId"))
         assertEquals(
             "Recovered run awaiting confirmation.",
             firstTasksSnapshot.getValue("selectedTaskExecutionDetail"),

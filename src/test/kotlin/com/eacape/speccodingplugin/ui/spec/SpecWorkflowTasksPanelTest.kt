@@ -61,8 +61,9 @@ class SpecWorkflowTasksPanelTest {
         assertTrue(snapshot.getValue("tasks").contains("T-002:IN_PROGRESS:P1"))
         assertEquals("T-001", snapshot.getValue("selectedTaskId"))
         assertEquals("", snapshot.getValue("executeText"))
-        assertEquals("execute", snapshot.getValue("executeIconId"))
+        assertEquals("taskExecute", snapshot.getValue("executeIconId"))
         assertEquals("true", snapshot.getValue("executeHasIcon"))
+        assertEquals("false", snapshot.getValue("executeVisible"))
         assertEquals("true", snapshot.getValue("executeRolloverEnabled"))
         assertEquals("true", snapshot.getValue("executeFocusable"))
         assertEquals("true", snapshot.getValue("executeEnabled"))
@@ -147,6 +148,7 @@ class SpecWorkflowTasksPanelTest {
         val snapshot = panel.snapshotForTest()
         assertEquals("", snapshot.getValue("executeText"))
         assertEquals("complete", snapshot.getValue("executeIconId"))
+        assertEquals("false", snapshot.getValue("executeVisible"))
         assertEquals("false", snapshot.getValue("executeEnabled"))
         assertEquals("true", snapshot.getValue("executeFocusable"))
         assertEquals(
@@ -341,7 +343,7 @@ class SpecWorkflowTasksPanelTest {
             mapOf(
                 "visible" to "true",
                 "enabled" to "true",
-                "iconId" to "execute",
+                "iconId" to "taskExecute",
                 "tooltip" to SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", "T-001"),
                 "accessibleName" to SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
             ),
@@ -349,7 +351,7 @@ class SpecWorkflowTasksPanelTest {
         )
         assertEquals("false", panel.taskRowPrimaryActionSnapshotForTest("T-002").getValue("visible"))
         assertEquals("refresh", panel.taskRowPrimaryActionSnapshotForTest("T-003").getValue("iconId"))
-        assertEquals("complete", panel.taskRowPrimaryActionSnapshotForTest("T-004").getValue("iconId"))
+        assertEquals("waitingComplete", panel.taskRowPrimaryActionSnapshotForTest("T-004").getValue("iconId"))
         assertEquals("close", panel.taskRowPrimaryActionSnapshotForTest("T-005").getValue("iconId"))
         assertEquals("false", panel.taskRowPrimaryActionSnapshotForTest("T-006").getValue("visible"))
         assertEquals("false", panel.taskRowPrimaryActionSnapshotForTest("T-007").getValue("visible"))
@@ -442,7 +444,7 @@ class SpecWorkflowTasksPanelTest {
         assertTrue(panel.selectTask("T-002"))
         val snapshot = panel.snapshotForTest()
 
-        assertEquals("execute", snapshot.getValue("executeIconId"))
+        assertEquals("taskExecute", snapshot.getValue("executeIconId"))
         assertEquals("false", snapshot.getValue("executeEnabled"))
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.tasks.execute.dependenciesBlocked", "T-002", "T-001"),
@@ -591,7 +593,7 @@ class SpecWorkflowTasksPanelTest {
 
         assertTrue(snapshot.getValue("tasks").contains("T-010:IN_PROGRESS:P0"))
         assertEquals("", snapshot.getValue("executeText"))
-        assertEquals("complete", snapshot.getValue("executeIconId"))
+        assertEquals("waitingComplete", snapshot.getValue("executeIconId"))
         assertEquals("true", snapshot.getValue("executeEnabled"))
         assertEquals("false", snapshot.getValue("secondaryEnabled"))
         assertEquals("WAITING_CONFIRMATION", snapshot.getValue("selectedTaskPhase"))

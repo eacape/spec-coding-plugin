@@ -94,6 +94,8 @@ internal class SpecWorkflowTasksPanel(
 
     private val executeTaskButton = createIconActionButton {
         handleExecuteTask()
+    }.apply {
+        isVisible = false
     }
     private val openWorkflowChatButton = createIconActionButton {
         handleOpenWorkflowChat()
@@ -273,6 +275,7 @@ internal class SpecWorkflowTasksPanel(
             "executeRolloverEnabled" to executeTaskButton.isRolloverEnabled.toString(),
             "executeFocusable" to executeTaskButton.isFocusable.toString(),
             "executeEnabled" to executeTaskButton.isEnabled.toString(),
+            "executeVisible" to executeTaskButton.isVisible.toString(),
             "executeTooltip" to executeTaskButton.toolTipText.orEmpty(),
             "executeAccessibleName" to executeTaskButton.accessibleContext.accessibleName.orEmpty(),
             "executeAccessibleDescription" to executeTaskButton.accessibleContext.accessibleDescription.orEmpty(),
@@ -422,7 +425,6 @@ internal class SpecWorkflowTasksPanel(
         val row = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
             isOpaque = false
             border = JBUI.Borders.emptyTop(4)
-            add(executeTaskButton)
             add(openWorkflowChatButton)
             add(secondaryActionsButton)
             add(editVerificationResultButton)
@@ -528,12 +530,7 @@ internal class SpecWorkflowTasksPanel(
             }
 
             TaskStatus.IN_PROGRESS -> when (progress?.phase) {
-                ExecutionLivePhase.WAITING_CONFIRMATION -> SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.IN_PROGRESS),
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete"),
-                    enabled = true,
-                )
+                ExecutionLivePhase.WAITING_CONFIRMATION -> waitingCompletionPresentation(taskId)
 
                 ExecutionLivePhase.CANCELLING -> SpecIconActionPresentation(
                     icon = SpecWorkflowIcons.Close,
@@ -691,6 +688,15 @@ internal class SpecWorkflowTasksPanel(
         )
     }
 
+    private fun waitingCompletionPresentation(taskId: String): SpecIconActionPresentation {
+        return SpecIconActionPresentation(
+            icon = SpecWorkflowIcons.WaitingComplete,
+            tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
+            accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete"),
+            enabled = true,
+        )
+    }
+
     private fun handleExecuteTask() {
         requestExecutionForSelection()
     }
@@ -762,11 +768,11 @@ internal class SpecWorkflowTasksPanel(
                     null
                 } else {
                     SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.Execute,
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
-                    enabled = true,
-                )
+                        icon = SpecWorkflowIcons.TaskExecute,
+                        tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
+                        accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
+                        enabled = true,
+                    )
                 }
             }
 
@@ -785,12 +791,7 @@ internal class SpecWorkflowTasksPanel(
             }
 
             TaskStatus.IN_PROGRESS -> when (progress?.phase) {
-                ExecutionLivePhase.WAITING_CONFIRMATION -> SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.Complete,
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete"),
-                    enabled = true,
-                )
+                ExecutionLivePhase.WAITING_CONFIRMATION -> waitingCompletionPresentation(taskId)
 
                 ExecutionLivePhase.CANCELLING -> null
 
@@ -1064,6 +1065,7 @@ internal class SpecWorkflowTasksPanel(
         private val metaLabel = JBLabel()
         private val statusChipLabel = JBLabel()
         private val primaryActionLabel = JBLabel()
+        private val primaryActionContainer = JPanel(BorderLayout())
         private val rightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0))
 
         init {
@@ -1083,7 +1085,12 @@ internal class SpecWorkflowTasksPanel(
             primaryActionLabel.preferredSize = JBUI.size(16, 16)
             primaryActionLabel.minimumSize = primaryActionLabel.preferredSize
             primaryActionLabel.isOpaque = false
-            rightPanel.add(primaryActionLabel)
+            primaryActionLabel.horizontalAlignment = SwingConstants.CENTER
+            primaryActionLabel.verticalAlignment = SwingConstants.CENTER
+            primaryActionContainer.isOpaque = false
+            primaryActionContainer.border = JBUI.Borders.empty(2)
+            primaryActionContainer.add(primaryActionLabel, BorderLayout.CENTER)
+            rightPanel.add(primaryActionContainer)
             rightPanel.add(statusChipLabel)
 
             panel.add(
@@ -1108,6 +1115,9 @@ internal class SpecWorkflowTasksPanel(
                 titleLabel.text = ""
                 metaLabel.text = ""
                 statusChipLabel.text = ""
+                primaryActionLabel.icon = null
+                primaryActionLabel.toolTipText = null
+                primaryActionContainer.isVisible = false
                 return panel
             }
             val background = if (isSelected) SELECTED_BG else ROW_BG
@@ -1115,7 +1125,7 @@ internal class SpecWorkflowTasksPanel(
             titleLabel.text = "${value.id}: ${value.title}"
             metaLabel.text = taskMetaText(value)
             statusChipLabel.text = taskChipText(value)
-            applyPrimaryActionStyle(primaryActionLabel, value)
+            applyPrimaryActionStyle(value, isSelected)
             applyChipStyle(statusChipLabel, value, isSelected)
             return panel
         }
@@ -1130,12 +1140,12 @@ internal class SpecWorkflowTasksPanel(
             val rendererComponent = getListCellRendererComponent(list, value, index, isSelected, false)
             rendererComponent.setBounds(0, 0, cellBounds.width, cellBounds.height)
             layoutRecursively(rendererComponent)
-            if (!primaryActionLabel.isVisible || primaryActionLabel.icon == null) {
+            if (!primaryActionContainer.isVisible || primaryActionLabel.icon == null) {
                 return null
             }
             val actionRect = SwingUtilities.convertRectangle(
-                primaryActionLabel.parent,
-                primaryActionLabel.bounds,
+                primaryActionContainer.parent,
+                primaryActionContainer.bounds,
                 rendererComponent,
             )
             return Rectangle(
@@ -1146,11 +1156,28 @@ internal class SpecWorkflowTasksPanel(
             )
         }
 
-        private fun applyPrimaryActionStyle(label: JBLabel, task: StructuredTask) {
+        private fun applyPrimaryActionStyle(task: StructuredTask, isSelected: Boolean) {
             val action = resolveTaskRowPrimaryAction(task)
-            label.icon = action?.presentation?.icon
-            label.toolTipText = action?.presentation?.tooltip
-            label.isVisible = action != null
+            primaryActionLabel.icon = action?.presentation?.icon
+            primaryActionLabel.toolTipText = action?.presentation?.tooltip
+            primaryActionContainer.isVisible = action != null
+            if (action == null) {
+                primaryActionContainer.isOpaque = false
+                primaryActionContainer.border = JBUI.Borders.empty(2)
+                return
+            }
+            val isWaitingConfirmation = executionPresentation(task)?.phase == ExecutionLivePhase.WAITING_CONFIRMATION
+            if (isWaitingConfirmation) {
+                primaryActionContainer.isOpaque = true
+                primaryActionContainer.background = if (isSelected) WAITING_ACTION_BG_SELECTED else WAITING_ACTION_BG
+                primaryActionContainer.border = BorderFactory.createCompoundBorder(
+                    SpecUiStyle.roundedLineBorder(WAITING_ACTION_BORDER, JBUI.scale(10)),
+                    BorderFactory.createEmptyBorder(2, 2, 2, 2),
+                )
+            } else {
+                primaryActionContainer.isOpaque = false
+                primaryActionContainer.border = JBUI.Borders.empty(2)
+            }
         }
 
         private fun layoutRecursively(component: Component) {
@@ -1244,5 +1271,8 @@ internal class SpecWorkflowTasksPanel(
         private val META_FG = JBColor(Color(86, 96, 110), Color(175, 182, 190))
         private val ROW_BG = JBColor(Color(255, 255, 255), Color(47, 51, 56))
         private val SELECTED_BG = JBColor(Color(231, 241, 255), Color(59, 77, 92))
+        private val WAITING_ACTION_BG = JBColor(Color(236, 246, 238), Color(57, 78, 64))
+        private val WAITING_ACTION_BG_SELECTED = JBColor(Color(221, 238, 225), Color(67, 90, 73))
+        private val WAITING_ACTION_BORDER = JBColor(Color(176, 219, 188), Color(83, 112, 91))
     }
 }

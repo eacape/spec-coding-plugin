@@ -16,8 +16,16 @@ internal enum class SpecWorkflowActionIcon(
         IconLoader.getIcon("/icons/spec-workflow-next-stage.svg", SpecWorkflowActionIcon::class.java),
     ),
     EXECUTE("execute", AllIcons.Actions.Execute),
+    TASK_EXECUTE(
+        "taskExecute",
+        IconLoader.getIcon("/icons/spec-task-execute-lightning.svg", SpecWorkflowActionIcon::class.java),
+    ),
     RETRY("refresh", AllIcons.General.InlineRefresh),
     COMPLETE("complete", AllIcons.General.GreenCheckmark),
+    WAITING_COMPLETE(
+        "waitingComplete",
+        IconLoader.getIcon("/icons/spec-task-complete-waiting.svg", SpecWorkflowActionIcon::class.java),
+    ),
     INTENTION_BULB(
         "intentionBulb",
         IconLoader.getIcon("/icons/spec-workflow-intention-bulb.svg", SpecWorkflowActionIcon::class.java),
@@ -55,8 +63,10 @@ internal object SpecWorkflowIcons {
     val SwitchWorkflow: Icon = SpecWorkflowActionIcon.SWITCH_WORKFLOW.icon
     val NextStage: Icon = SpecWorkflowActionIcon.NEXT_STAGE.icon
     val Execute: Icon = SpecWorkflowActionIcon.EXECUTE.icon
+    val TaskExecute: Icon = SpecWorkflowActionIcon.TASK_EXECUTE.icon
     val Refresh: Icon = SpecWorkflowActionIcon.RETRY.icon
     val Complete: Icon = SpecWorkflowActionIcon.COMPLETE.icon
+    val WaitingComplete: Icon = SpecWorkflowActionIcon.WAITING_COMPLETE.icon
     val IntentionBulb: Icon = SpecWorkflowActionIcon.INTENTION_BULB.icon
     val Pause: Icon = SpecWorkflowActionIcon.PAUSE.icon
     val Resume: Icon = SpecWorkflowActionIcon.RESUME.icon
@@ -103,7 +113,7 @@ internal object SpecWorkflowIcons {
 
     fun taskPrimaryAction(displayStatus: TaskStatus): Icon {
         return when (displayStatus) {
-            TaskStatus.PENDING -> Execute
+            TaskStatus.PENDING -> TaskExecute
             TaskStatus.BLOCKED -> Refresh
             TaskStatus.IN_PROGRESS,
             TaskStatus.COMPLETED,

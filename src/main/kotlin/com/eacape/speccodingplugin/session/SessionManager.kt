@@ -293,6 +293,52 @@ class SessionManager internal constructor(
         }
     }
 
+    fun findReusableWorkflowChatSession(
+        workflowId: String,
+        preferredSessionId: String? = null,
+    ): ConversationSession? {
+        val normalizedWorkflowId = workflowId.trim().ifBlank { return null }
+        val normalizedPreferredSessionId = preferredSessionId?.trim()?.ifBlank { null }
+        return withConnection { connection ->
+            connection.prepareStatement(
+                """
+                SELECT
+                    id, title, spec_task_id, worktree_id, model_provider,
+                    workflow_id, task_id, focused_stage, workflow_source, workflow_action_intent,
+                    parent_session_id, branch_from_message_id, branch_name,
+                    created_at, updated_at
+                FROM sessions
+                WHERE workflow_id = ?
+                   OR (workflow_id IS NULL AND spec_task_id = ?)
+                ORDER BY updated_at DESC, created_at DESC
+                """.trimIndent(),
+            ).use { statement ->
+                statement.setString(1, normalizedWorkflowId)
+                statement.setString(2, normalizedWorkflowId)
+                statement.executeQuery().use { resultSet ->
+                    buildList {
+                        while (resultSet.next()) {
+                            add(resultSet.toSession())
+                        }
+                    }
+                }
+            }
+        }
+            .asSequence()
+            .filter { session -> session.resolvedWorkflowChatBinding()?.workflowId == normalizedWorkflowId }
+            .sortedWith(
+                compareBy<ConversationSession> { session ->
+                    if (session.id == normalizedPreferredSessionId) 0 else 1
+                }
+                    .thenBy { session ->
+                        if (session.parentSessionId == null) 0 else 1
+                    }
+                    .thenByDescending { session -> session.updatedAt }
+                    .thenByDescending { session -> session.createdAt },
+            )
+            .firstOrNull()
+    }
+
     fun addMessage(
         sessionId: String,
         role: ConversationRole,
