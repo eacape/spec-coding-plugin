@@ -464,7 +464,6 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals(
             linkedSetOf(
                 SpecWorkflowWorkspaceSectionId.OVERVIEW,
-                SpecWorkflowWorkspaceSectionId.TASKS,
                 SpecWorkflowWorkspaceSectionId.GATE,
                 SpecWorkflowWorkspaceSectionId.VERIFY,
                 SpecWorkflowWorkspaceSectionId.DOCUMENTS,
@@ -482,6 +481,8 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             ),
         )
         assertEquals("IMPLEMENT", panel.selectedDocumentPhaseForTest())
+        assertTrue(panel.isDocumentWorkspaceViewTabsVisibleForTest())
+        assertEquals("DOCUMENT", panel.documentWorkspaceViewForTest())
     }
 
     fun `test verify focused stage should switch document preview to verification artifact`() {
@@ -716,6 +717,103 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
 
         assertEquals(SpecWorkflowWorkbenchActionKind.ADVANCE, panel.currentPrimaryActionKindForTest())
         assertEquals("true", panel.overviewSnapshotForTest().getValue("primaryActionEnabled"))
+    }
+
+    fun `test tasks document workspace should switch between document and structured tasks views`() {
+        val engine = SpecEngine.getInstance(project)
+        val tasksService = SpecTasksService(project)
+        val workflow = engine.createWorkflow(
+            title = "Tasks Dual View",
+            description = "document workspace should expose structured task tab",
+        ).getOrThrow()
+        val task = tasksService.addTask(workflow.id, "Drive dual view", TaskPriority.P1)
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.TASKS,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.focusedStageForTest() == StageId.TASKS &&
+                panel.isDocumentWorkspaceViewTabsVisibleForTest()
+        }
+
+        assertFalse(panel.visibleWorkspaceSectionIdsForTest().contains(SpecWorkflowWorkspaceSectionId.TASKS))
+        assertEquals("DOCUMENT", panel.documentWorkspaceViewForTest())
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(panel.selectTaskForTest(task.id))
+            panel.clickDocumentWorkspaceViewForTest("STRUCTURED_TASKS")
+        }
+
+        waitUntil {
+            panel.documentWorkspaceViewForTest() == "STRUCTURED_TASKS" &&
+                panel.detailTasksSnapshotForTest().getValue("selectedTaskId") == task.id
+        }
+
+        assertTrue(panel.detailTasksSnapshotForTest().getValue("tasks").contains("${task.id}:PENDING"))
+        assertEquals(task.id, panel.tasksSnapshotForTest().getValue("selectedTaskId"))
+    }
+
+    fun `test structured tasks tab should reuse task execution actions`() {
+        val engine = SpecEngine.getInstance(project)
+        val tasksService = SpecTasksService(project)
+        val workflow = engine.createWorkflow(
+            title = "Tasks Dual View Execution",
+            description = "embedded task view should reuse execution actions",
+        ).getOrThrow()
+        val task = tasksService.addTask(workflow.id, "Execute from embedded tab", TaskPriority.P1)
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            workflow.id in panel.workflowIdsForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.openWorkflowForTest(workflow.id)
+        }
+
+        waitUntil {
+            panel.isDetailModeForTest() &&
+                panel.selectedWorkflowIdForTest() == workflow.id &&
+                panel.focusedStageForTest() == StageId.IMPLEMENT &&
+                panel.isDocumentWorkspaceViewTabsVisibleForTest()
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            panel.clickDocumentWorkspaceViewForTest("STRUCTURED_TASKS")
+        }
+
+        waitUntil {
+            panel.documentWorkspaceViewForTest() == "STRUCTURED_TASKS"
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            assertTrue(panel.requestExecutionForDetailTaskForTest(task.id))
+        }
+
+        waitUntil {
+            panel.detailTasksSnapshotForTest().getValue("tasks").contains("${task.id}:IN_PROGRESS") &&
+                panel.tasksSnapshotForTest().getValue("tasks").contains("${task.id}:IN_PROGRESS")
+        }
     }
 
     fun `test stage navigation should stay read only while current stage keeps the primary path`() {

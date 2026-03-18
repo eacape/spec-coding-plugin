@@ -6,6 +6,7 @@ import com.eacape.speccodingplugin.mcp.McpRuntimeLogLevel
 import com.eacape.speccodingplugin.mcp.McpServer
 import com.eacape.speccodingplugin.mcp.McpTool
 import com.eacape.speccodingplugin.mcp.ServerStatus
+import com.eacape.speccodingplugin.mcp.isBuiltInRuntimeSupported
 import com.eacape.speccodingplugin.ui.spec.SpecUiStyle
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.util.IconLoader
@@ -302,7 +303,7 @@ class McpServerDetailPanel(
         )
         updateStatusLabel(server.status)
         updateErrorLabel(server.status, server.error)
-        updateButtonStates(server.status, server.config.trusted)
+        updateButtonStates(server.status, server.config.trusted, server.config.transport.isBuiltInRuntimeSupported())
 
         toolsLabel.text = SpecCodingBundle.message("mcp.server.tools", tools.size)
         toolListModel.clear()
@@ -401,16 +402,25 @@ class McpServerDetailPanel(
         statusLabel.foreground = color
     }
 
-    private fun updateButtonStates(status: ServerStatus, trusted: Boolean) {
-        startBtn.isEnabled = (status == ServerStatus.STOPPED || status == ServerStatus.ERROR) && trusted
+    private fun updateButtonStates(status: ServerStatus, trusted: Boolean, builtInRuntimeSupported: Boolean) {
+        startBtn.isEnabled = (status == ServerStatus.STOPPED || status == ServerStatus.ERROR) &&
+            trusted &&
+            builtInRuntimeSupported
         stopBtn.isEnabled = status == ServerStatus.RUNNING || status == ServerStatus.STARTING
-        restartBtn.isEnabled = status == ServerStatus.RUNNING || status == ServerStatus.ERROR
+        restartBtn.isEnabled = (status == ServerStatus.RUNNING || status == ServerStatus.ERROR) && builtInRuntimeSupported
         editBtn.isEnabled = status != ServerStatus.STARTING
 
-        if (!trusted && (status == ServerStatus.STOPPED || status == ServerStatus.ERROR)) {
+        if (!builtInRuntimeSupported && (status == ServerStatus.STOPPED || status == ServerStatus.ERROR)) {
+            startBtn.toolTipText = SpecCodingBundle.message("mcp.server.transportUnsupported")
+        } else if (!trusted && (status == ServerStatus.STOPPED || status == ServerStatus.ERROR)) {
             startBtn.toolTipText = SpecCodingBundle.message("mcp.server.untrusted")
         } else {
             startBtn.toolTipText = startBtn.getClientProperty(DEFAULT_TOOLTIP_CLIENT_KEY) as? String
+        }
+        restartBtn.toolTipText = if (!builtInRuntimeSupported) {
+            SpecCodingBundle.message("mcp.server.transportUnsupported")
+        } else {
+            restartBtn.getClientProperty(DEFAULT_TOOLTIP_CLIENT_KEY) as? String
         }
     }
 

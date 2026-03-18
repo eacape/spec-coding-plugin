@@ -25,6 +25,8 @@ enum class TransportType {
     SSE     // Server-Sent Events
 }
 
+fun TransportType.isBuiltInRuntimeSupported(): Boolean = this == TransportType.STDIO
+
 /**
  * MCP Server 状态
  */
@@ -62,11 +64,16 @@ data class McpRuntimeLogEntry(
     val message: String,
 )
 
+data class McpClientUnexpectedTermination(
+    val message: String,
+    val exitCode: Int? = null,
+)
+
 /**
  * MCP Server 实例
  */
 data class McpServer(
-    val config: McpServerConfig,
+    var config: McpServerConfig,
     var status: ServerStatus = ServerStatus.STOPPED,
     var process: Process? = null,
     var capabilities: ServerCapabilities? = null,

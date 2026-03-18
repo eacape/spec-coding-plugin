@@ -98,6 +98,11 @@ class SpecWorkflowPanel(
     },
 ) : JBPanel<SpecWorkflowPanel>(BorderLayout()), Disposable {
 
+    private enum class DocumentWorkspaceView {
+        DOCUMENT,
+        STRUCTURED_TASKS,
+    }
+
     private val logger = thisLogger()
     private val specEngine = SpecEngine.getInstance(project)
     private val specDeltaService = SpecDeltaService.getInstance(project)
@@ -148,6 +153,21 @@ class SpecWorkflowPanel(
         suggestRelatedFiles = { taskId, existingRelatedFiles ->
             specRelatedFilesService.suggestRelatedFiles(taskId, existingRelatedFiles)
         },
+        onTaskSelected = ::onStructuredTaskSelectionChanged,
+        showHeader = false,
+    )
+    private val detailTasksPanel = SpecWorkflowTasksPanel(
+        onTransitionStatus = ::onTaskStatusTransitionRequested,
+        onCancelExecution = ::onTaskExecutionCancelRequested,
+        onExecuteTask = ::onTaskExecutionRequested,
+        onOpenWorkflowChat = ::onTaskWorkflowChatRequested,
+        onUpdateDependsOn = ::onTaskDependsOnUpdateRequested,
+        onCompleteWithRelatedFiles = ::onTaskCompleteRequested,
+        onUpdateVerificationResult = ::onTaskVerificationResultUpdateRequested,
+        suggestRelatedFiles = { taskId, existingRelatedFiles ->
+            specRelatedFilesService.suggestRelatedFiles(taskId, existingRelatedFiles)
+        },
+        onTaskSelected = ::onStructuredTaskSelectionChanged,
         showHeader = false,
     )
     private val verifyDeltaPanel = SpecWorkflowVerifyDeltaPanel(
@@ -197,6 +217,8 @@ class SpecWorkflowPanel(
     private lateinit var gateSection: SpecCollapsibleWorkspaceSection
     private lateinit var verifySection: SpecCollapsibleWorkspaceSection
     private lateinit var documentsSection: SpecCollapsibleWorkspaceSection
+    private lateinit var documentWorkspaceViewTabsPanel: JPanel
+    private lateinit var documentWorkspaceViewCardPanel: JPanel
     private val workspaceSectionItems = mutableMapOf<SpecWorkflowWorkspaceSectionId, JPanel>()
     private val workspaceSectionOverrides = mutableMapOf<SpecWorkflowWorkspaceSectionId, Boolean>()
     private var workspaceSectionPresetToken: String? = null
@@ -229,6 +251,9 @@ class SpecWorkflowPanel(
     private var highlightedWorkflowId: String? = null
     private var currentWorkflow: SpecWorkflow? = null
     private var focusedStage: StageId? = null
+    private var selectedDocumentWorkspaceView: DocumentWorkspaceView = DocumentWorkspaceView.DOCUMENT
+    private var selectedStructuredTaskId: String? = null
+    private var isSynchronizingStructuredTaskSelection: Boolean = false
     private var pendingOpenWorkflowRequest: SpecToolWindowOpenRequest? = null
     private var isWorkspaceMode: Boolean = false
     private var detailDividerLocation: Int = 210
@@ -572,7 +597,7 @@ class SpecWorkflowPanel(
         documentsSection = createWorkspaceSection(
             id = SpecWorkflowWorkspaceSectionId.DOCUMENTS,
             titleProvider = { SpecCodingBundle.message("spec.toolwindow.section.documents") },
-            content = detailPanel,
+            content = buildDocumentWorkspaceContent(),
         )
 
         workspaceSectionItems.clear()
@@ -617,6 +642,56 @@ class SpecWorkflowPanel(
             add(contentPanel, WORKSPACE_CARD_CONTENT)
         }
         return workspaceCardPanel
+    }
+
+    private fun buildDocumentWorkspaceContent(): JPanel {
+        documentWorkspaceViewTabsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(2, 2, 0, 2)
+            add(
+                createDocumentWorkspaceViewButton(
+                    view = DocumentWorkspaceView.DOCUMENT,
+                    labelKey = "spec.toolwindow.documents.view.document",
+                    tooltipKey = "spec.toolwindow.documents.view.document.tooltip",
+                ),
+            )
+            add(
+                createDocumentWorkspaceViewButton(
+                    view = DocumentWorkspaceView.STRUCTURED_TASKS,
+                    labelKey = "spec.toolwindow.documents.view.structuredTasks",
+                    tooltipKey = "spec.toolwindow.documents.view.structuredTasks.tooltip",
+                ),
+            )
+        }
+        documentWorkspaceViewCardPanel = JPanel(CardLayout()).apply {
+            isOpaque = false
+            add(detailPanel, DOCUMENT_WORKSPACE_CARD_DOCUMENT)
+            add(detailTasksPanel, DOCUMENT_WORKSPACE_CARD_STRUCTURED_TASKS)
+        }
+        val container = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
+            isOpaque = false
+            add(documentWorkspaceViewTabsPanel, BorderLayout.NORTH)
+            add(documentWorkspaceViewCardPanel, BorderLayout.CENTER)
+        }
+        updateDocumentWorkspaceViewPresentation(null)
+        return container
+    }
+
+    private fun createDocumentWorkspaceViewButton(
+        view: DocumentWorkspaceView,
+        labelKey: String,
+        tooltipKey: String,
+    ): JButton {
+        return JButton().apply {
+            isFocusable = false
+            addActionListener {
+                selectedDocumentWorkspaceView = view
+                updateDocumentWorkspaceViewPresentation(currentWorkbenchState)
+            }
+            putClientProperty("documentWorkspaceView", view)
+            text = SpecCodingBundle.message(labelKey)
+            toolTipText = SpecCodingBundle.message(tooltipKey)
+        }
     }
 
     private fun createWorkspaceSectionItem(
@@ -1064,6 +1139,100 @@ class SpecWorkflowPanel(
         }
     }
 
+    private fun updateDocumentWorkspaceViewPresentation(workbenchState: SpecWorkflowStageWorkbenchState?) {
+        if (!::documentWorkspaceViewTabsPanel.isInitialized || !::documentWorkspaceViewCardPanel.isInitialized) {
+            return
+        }
+        val supportsStructuredTasksView = supportsStructuredTasksDocumentWorkspaceView(workbenchState)
+        documentWorkspaceViewTabsPanel.isVisible = supportsStructuredTasksView
+        val effectiveView = if (supportsStructuredTasksView) {
+            selectedDocumentWorkspaceView
+        } else {
+            DocumentWorkspaceView.DOCUMENT
+        }
+        (documentWorkspaceViewCardPanel.layout as CardLayout).show(
+            documentWorkspaceViewCardPanel,
+            when (effectiveView) {
+                DocumentWorkspaceView.DOCUMENT -> DOCUMENT_WORKSPACE_CARD_DOCUMENT
+                DocumentWorkspaceView.STRUCTURED_TASKS -> DOCUMENT_WORKSPACE_CARD_STRUCTURED_TASKS
+            },
+        )
+        documentWorkspaceViewTabsPanel.components
+            .filterIsInstance<JButton>()
+            .forEach { button ->
+                val view = button.getClientProperty("documentWorkspaceView") as? DocumentWorkspaceView
+                val selected = view == effectiveView
+                val enabled = view != DocumentWorkspaceView.STRUCTURED_TASKS || supportsStructuredTasksView
+                applyDocumentWorkspaceViewButtonStyle(button, selected = selected, enabled = enabled)
+            }
+        if (supportsStructuredTasksView && effectiveView == DocumentWorkspaceView.STRUCTURED_TASKS) {
+            syncStructuredTaskSelection(selectedStructuredTaskId)
+        }
+        documentWorkspaceViewTabsPanel.revalidate()
+        documentWorkspaceViewTabsPanel.repaint()
+        documentWorkspaceViewCardPanel.revalidate()
+        documentWorkspaceViewCardPanel.repaint()
+    }
+
+    private fun applyDocumentWorkspaceViewButtonStyle(
+        button: JButton,
+        selected: Boolean,
+        enabled: Boolean,
+    ) {
+        button.isEnabled = enabled
+        button.background = if (selected) DOCUMENT_WORKSPACE_VIEW_SELECTED_BG else DOCUMENT_WORKSPACE_VIEW_IDLE_BG
+        button.foreground = when {
+            !enabled -> DOCUMENT_WORKSPACE_VIEW_DISABLED_FG
+            selected -> DOCUMENT_WORKSPACE_VIEW_SELECTED_FG
+            else -> DOCUMENT_WORKSPACE_VIEW_IDLE_FG
+        }
+        button.border = BorderFactory.createCompoundBorder(
+            SpecUiStyle.roundedLineBorder(
+                if (selected) DOCUMENT_WORKSPACE_VIEW_SELECTED_BORDER else DOCUMENT_WORKSPACE_VIEW_IDLE_BORDER,
+                JBUI.scale(12),
+            ),
+            JBUI.Borders.empty(3, 10, 3, 10),
+        )
+    }
+
+    private fun supportsStructuredTasksDocumentWorkspaceView(
+        workbenchState: SpecWorkflowStageWorkbenchState?,
+    ): Boolean {
+        val binding = workbenchState?.artifactBinding ?: return false
+        return workbenchState.focusedStage in setOf(StageId.TASKS, StageId.IMPLEMENT) &&
+            binding.documentPhase == SpecPhase.IMPLEMENT &&
+            binding.fileName == StageId.TASKS.artifactFileName
+    }
+
+    private fun onStructuredTaskSelectionChanged(taskId: String?) {
+        if (isSynchronizingStructuredTaskSelection) {
+            return
+        }
+        syncStructuredTaskSelection(taskId)
+    }
+
+    private fun syncStructuredTaskSelection(taskId: String?) {
+        selectedStructuredTaskId = taskId?.takeIf { it.isNotBlank() }
+        val selectedTaskId = selectedStructuredTaskId
+        val previous = isSynchronizingStructuredTaskSelection
+        isSynchronizingStructuredTaskSelection = true
+        try {
+            if (selectedTaskId == null) {
+                tasksPanel.clearTaskSelection()
+                detailTasksPanel.clearTaskSelection()
+                return
+            }
+            if (tasksPanel.selectedTaskId() != selectedTaskId) {
+                tasksPanel.selectTask(selectedTaskId)
+            }
+            if (detailTasksPanel.selectedTaskId() != selectedTaskId) {
+                detailTasksPanel.selectTask(selectedTaskId)
+            }
+        } finally {
+            isSynchronizingStructuredTaskSelection = previous
+        }
+    }
+
     private fun refreshWorkspacePresentation() {
         val workflow = currentWorkflow
         val overviewState = currentOverviewState
@@ -1093,6 +1262,10 @@ class SpecWorkflowPanel(
         val updatedLiveProgress = buildTaskLiveProgressByTaskId(workflowId)
         currentTaskLiveProgressByTaskId = updatedLiveProgress
         tasksPanel.updateLiveProgress(
+            tasks = currentStructuredTasks,
+            liveProgressByTaskId = updatedLiveProgress,
+        )
+        detailTasksPanel.updateLiveProgress(
             tasks = currentStructuredTasks,
             liveProgressByTaskId = updatedLiveProgress,
         )
@@ -1265,6 +1438,7 @@ class SpecWorkflowPanel(
             previousWorkbenchState = previousWorkbenchState,
             workbenchState = workbenchState,
         )
+        updateDocumentWorkspaceViewPresentation(workbenchState)
         applyWorkspaceSectionVisibility(workbenchState)
         applyWorkspaceSectionPreset(workflow, workbenchState)
     }
@@ -1280,7 +1454,7 @@ class SpecWorkflowPanel(
         val shouldSyncSelection = previousWorkbenchState?.focusedStage != workbenchState.focusedStage ||
             previousWorkbenchState?.implementationFocus?.taskId != taskId
         if (shouldSyncSelection) {
-            tasksPanel.selectTask(taskId)
+            syncStructuredTaskSelection(taskId)
         }
     }
 
@@ -1311,8 +1485,10 @@ class SpecWorkflowPanel(
 
     private fun applyWorkspaceSectionVisibility(workbenchState: SpecWorkflowStageWorkbenchState) {
         val visibleSections = workbenchState.visibleSections
+        val supportsEmbeddedTasksView = supportsStructuredTasksDocumentWorkspaceView(workbenchState)
         workspaceSectionItems.forEach { (sectionId, item) ->
-            item.isVisible = visibleSections.contains(sectionId)
+            item.isVisible = visibleSections.contains(sectionId) &&
+                !(supportsEmbeddedTasksView && sectionId == SpecWorkflowWorkspaceSectionId.TASKS)
         }
         workspaceCardPanel.revalidate()
         workspaceCardPanel.repaint()
@@ -1530,12 +1706,16 @@ class SpecWorkflowPanel(
         currentWorkflowSources = emptyList()
         focusedStage = null
         currentWorkbenchState = null
+        selectedDocumentWorkspaceView = DocumentWorkspaceView.DOCUMENT
+        selectedStructuredTaskId = null
         phaseIndicator.reset()
         overviewPanel.showEmpty()
         tasksPanel.showEmpty()
+        detailTasksPanel.showEmpty()
         gateDetailsPanel.showEmpty()
         verifyDeltaPanel.showEmpty()
         detailPanel.showEmpty()
+        updateDocumentWorkspaceViewPresentation(null)
         createWorktreeButton.isEnabled = false
         mergeWorktreeButton.isEnabled = false
         deltaButton.isEnabled = false
@@ -1660,10 +1840,13 @@ class SpecWorkflowPanel(
         selectedWorkflowId = workflowId
         if (previousSelectedWorkflowId != workflowId) {
             focusedStage = null
+            selectedDocumentWorkspaceView = DocumentWorkspaceView.DOCUMENT
+            selectedStructuredTaskId = null
         }
         overviewPanel.showLoading()
         verifyDeltaPanel.showLoading()
         tasksPanel.showLoading()
+        detailTasksPanel.showLoading()
         gateDetailsPanel.showLoading()
         showWorkspaceContent()
         scope.launch(Dispatchers.IO) {
@@ -1727,6 +1910,12 @@ class SpecWorkflowPanel(
                             liveProgressByTaskId = liveProgressByTaskId,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
+                        detailTasksPanel.updateTasks(
+                            workflowId = workflowId,
+                            tasks = decoratedTasks,
+                            liveProgressByTaskId = liveProgressByTaskId,
+                            refreshedAtMillis = System.currentTimeMillis(),
+                        )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
@@ -1737,6 +1926,12 @@ class SpecWorkflowPanel(
                         )
                     }.onFailure { error ->
                         tasksPanel.updateTasks(
+                            workflowId = workflowId,
+                            tasks = emptyList(),
+                            liveProgressByTaskId = emptyMap(),
+                            refreshedAtMillis = System.currentTimeMillis(),
+                        )
+                        detailTasksPanel.updateTasks(
                             workflowId = workflowId,
                             tasks = emptyList(),
                             liveProgressByTaskId = emptyMap(),
@@ -4609,6 +4804,7 @@ class SpecWorkflowPanel(
         overviewPanel.refreshLocalizedTexts()
         verifyDeltaPanel.refreshLocalizedTexts()
         tasksPanel.refreshLocalizedTexts()
+        detailTasksPanel.refreshLocalizedTexts()
         gateDetailsPanel.refreshLocalizedTexts()
         if (::overviewSection.isInitialized) {
             overviewSection.refreshLocalizedTexts()
@@ -4616,6 +4812,26 @@ class SpecWorkflowPanel(
             gateSection.refreshLocalizedTexts()
             verifySection.refreshLocalizedTexts()
             documentsSection.refreshLocalizedTexts()
+        }
+        if (::documentWorkspaceViewTabsPanel.isInitialized) {
+            documentWorkspaceViewTabsPanel.components
+                .filterIsInstance<JButton>()
+                .forEach { button ->
+                    when (button.getClientProperty("documentWorkspaceView") as? DocumentWorkspaceView) {
+                        DocumentWorkspaceView.DOCUMENT -> {
+                            button.text = SpecCodingBundle.message("spec.toolwindow.documents.view.document")
+                            button.toolTipText = SpecCodingBundle.message("spec.toolwindow.documents.view.document.tooltip")
+                        }
+
+                        DocumentWorkspaceView.STRUCTURED_TASKS -> {
+                            button.text = SpecCodingBundle.message("spec.toolwindow.documents.view.structuredTasks")
+                            button.toolTipText = SpecCodingBundle.message("spec.toolwindow.documents.view.structuredTasks.tooltip")
+                        }
+
+                        null -> Unit
+                    }
+                }
+            updateDocumentWorkspaceViewPresentation(currentWorkbenchState)
         }
         applyToolbarButtonPresentation()
         modelLabel.text = SpecCodingBundle.message("toolwindow.model.label")
@@ -4803,6 +5019,7 @@ class SpecWorkflowPanel(
             overviewPanel.showLoading()
             verifyDeltaPanel.showLoading()
             tasksPanel.showLoading()
+            detailTasksPanel.showLoading()
             gateDetailsPanel.showLoading()
         }
         scope.launch(Dispatchers.IO) {
@@ -4845,6 +5062,12 @@ class SpecWorkflowPanel(
                             liveProgressByTaskId = liveProgressByTaskId,
                             refreshedAtMillis = System.currentTimeMillis(),
                         )
+                        detailTasksPanel.updateTasks(
+                            workflowId = wf.id,
+                            tasks = decoratedTasks,
+                            liveProgressByTaskId = liveProgressByTaskId,
+                            refreshedAtMillis = System.currentTimeMillis(),
+                        )
                         updateWorkspacePresentation(
                             workflow = wf,
                             overviewState = snapshot.overviewState,
@@ -4855,6 +5078,12 @@ class SpecWorkflowPanel(
                         )
                     }.onFailure { error ->
                         tasksPanel.updateTasks(
+                            workflowId = wf.id,
+                            tasks = emptyList(),
+                            liveProgressByTaskId = emptyMap(),
+                            refreshedAtMillis = System.currentTimeMillis(),
+                        )
+                        detailTasksPanel.updateTasks(
                             workflowId = wf.id,
                             tasks = emptyList(),
                             liveProgressByTaskId = emptyMap(),
@@ -5175,7 +5404,13 @@ class SpecWorkflowPanel(
             return
         }
         request.focusedStage?.let(::focusStage)
-        request.taskId?.let(tasksPanel::selectTask)
+        request.taskId?.let { taskId ->
+            syncStructuredTaskSelection(taskId)
+            if (supportsStructuredTasksDocumentWorkspaceView(currentWorkbenchState)) {
+                selectedDocumentWorkspaceView = DocumentWorkspaceView.STRUCTURED_TASKS
+                updateDocumentWorkspaceViewPresentation(currentWorkbenchState)
+            }
+        }
         pendingOpenWorkflowRequest = null
     }
 
@@ -5229,6 +5464,7 @@ class SpecWorkflowPanel(
 
             SpecWorkflowWorkbenchActionKind.START_TASK -> {
                 val taskId = action.taskId ?: return
+                syncStructuredTaskSelection(taskId)
                 if (!tasksPanel.requestExecutionForTask(taskId)) {
                     setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.execute.failed", taskId))
                 }
@@ -5236,6 +5472,7 @@ class SpecWorkflowPanel(
 
             SpecWorkflowWorkbenchActionKind.RESUME_TASK -> {
                 val taskId = action.taskId ?: return
+                syncStructuredTaskSelection(taskId)
                 if (!tasksPanel.requestExecutionForTask(taskId)) {
                     setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.execute.failed", taskId))
                 }
@@ -5243,7 +5480,7 @@ class SpecWorkflowPanel(
 
             SpecWorkflowWorkbenchActionKind.COMPLETE_TASK -> {
                 val taskId = action.taskId ?: return
-                tasksPanel.selectTask(taskId)
+                syncStructuredTaskSelection(taskId)
                 if (!tasksPanel.requestCompletionForTask(taskId)) {
                     setStatusText(SpecCodingBundle.message("spec.toolwindow.tasks.complete.failed", taskId))
                 }
@@ -5334,9 +5571,35 @@ class SpecWorkflowPanel(
 
     internal fun tasksSnapshotForTest(): Map<String, String> = tasksPanel.snapshotForTest()
 
-    internal fun selectTaskForTest(taskId: String): Boolean = tasksPanel.selectTask(taskId)
+    internal fun detailTasksSnapshotForTest(): Map<String, String> = detailTasksPanel.snapshotForTest()
+
+    internal fun documentWorkspaceViewForTest(): String =
+        if (::documentWorkspaceViewTabsPanel.isInitialized && documentWorkspaceViewTabsPanel.isVisible) {
+            selectedDocumentWorkspaceView.name
+        } else {
+            DocumentWorkspaceView.DOCUMENT.name
+        }
+
+    internal fun isDocumentWorkspaceViewTabsVisibleForTest(): Boolean =
+        ::documentWorkspaceViewTabsPanel.isInitialized && documentWorkspaceViewTabsPanel.isVisible
+
+    internal fun clickDocumentWorkspaceViewForTest(view: String) {
+        val targetView = runCatching { DocumentWorkspaceView.valueOf(view) }.getOrNull() ?: return
+        documentWorkspaceViewTabsPanel.components
+            .filterIsInstance<JButton>()
+            .firstOrNull { it.getClientProperty("documentWorkspaceView") == targetView }
+            ?.doClick()
+    }
+
+    internal fun selectTaskForTest(taskId: String): Boolean {
+        syncStructuredTaskSelection(taskId)
+        return tasksPanel.selectedTaskId() == taskId
+    }
 
     internal fun requestExecutionForTaskForTest(taskId: String): Boolean = tasksPanel.requestExecutionForTask(taskId)
+
+    internal fun requestExecutionForDetailTaskForTest(taskId: String): Boolean =
+        detailTasksPanel.requestExecutionForTask(taskId)
 
     internal fun clickOpenWorkflowChatForSelectedTaskForTest() {
         tasksPanel.clickOpenWorkflowChatForTest()
@@ -5488,10 +5751,19 @@ class SpecWorkflowPanel(
         private val PHASE_SECTION_BG = JBColor(Color(240, 246, 255), Color(62, 69, 80))
         private val DETAIL_SECTION_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
         private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
+        private val DOCUMENT_WORKSPACE_VIEW_SELECTED_BG = JBColor(Color(233, 242, 255), Color(71, 80, 95))
+        private val DOCUMENT_WORKSPACE_VIEW_SELECTED_BORDER = JBColor(Color(174, 196, 229), Color(112, 126, 148))
+        private val DOCUMENT_WORKSPACE_VIEW_SELECTED_FG = JBColor(Color(43, 67, 105), Color(214, 224, 238))
+        private val DOCUMENT_WORKSPACE_VIEW_IDLE_BG = JBColor(Color(248, 251, 255), Color(55, 61, 70))
+        private val DOCUMENT_WORKSPACE_VIEW_IDLE_BORDER = JBColor(Color(211, 222, 239), Color(86, 96, 111))
+        private val DOCUMENT_WORKSPACE_VIEW_IDLE_FG = JBColor(Color(89, 103, 130), Color(177, 188, 203))
+        private val DOCUMENT_WORKSPACE_VIEW_DISABLED_FG = JBColor(Color(146, 156, 171), Color(124, 132, 145))
         private const val WORKSPACE_SECTION_CARD_PADDING = 12
         private val SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT = JBUI.scale(320)
         private const val WORKSPACE_SCROLL_UNIT_INCREMENT = 24
         private const val WORKSPACE_SCROLL_BLOCK_INCREMENT = 96
+        private const val DOCUMENT_WORKSPACE_CARD_DOCUMENT = "document"
+        private const val DOCUMENT_WORKSPACE_CARD_STRUCTURED_TASKS = "structuredTasks"
         private val COMPOSER_SOURCE_EDITABLE_STAGES = setOf(
             StageId.REQUIREMENTS,
             StageId.DESIGN,

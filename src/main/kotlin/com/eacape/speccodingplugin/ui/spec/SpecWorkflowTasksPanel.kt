@@ -51,6 +51,7 @@ internal class SpecWorkflowTasksPanel(
     ) -> Unit = { _, _, _ -> },
     private val onUpdateVerificationResult: (taskId: String, verificationResult: TaskVerificationResult?) -> Unit = { _, _ -> },
     private val suggestRelatedFiles: (taskId: String, existingRelatedFiles: List<String>) -> List<String> = { _, existing -> existing },
+    private val onTaskSelected: (taskId: String?) -> Unit = {},
     private val showHeader: Boolean = true,
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
@@ -128,6 +129,7 @@ internal class SpecWorkflowTasksPanel(
         tasksList.addListSelectionListener {
             if (!it.valueIsAdjusting) {
                 updateControlsForSelection()
+                onTaskSelected(tasksList.selectedValue?.id)
             }
         }
         tasksList.addMouseListener(
@@ -332,6 +334,12 @@ internal class SpecWorkflowTasksPanel(
         }
         return false
     }
+
+    internal fun clearTaskSelection() {
+        tasksList.clearSelection()
+    }
+
+    internal fun selectedTaskId(): String? = tasksList.selectedValue?.id
 
     internal fun requestCompletionForTask(taskId: String): Boolean {
         if (!selectTask(taskId)) {

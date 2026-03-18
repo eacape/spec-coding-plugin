@@ -17,8 +17,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 
 /**
  * MCP 客户端
@@ -40,6 +40,7 @@ class McpClient(
     private var reader: BufferedReader? = null
     private var errorReader: BufferedReader? = null
     private var stderrJob: Job? = null
+    private var processMonitorJob: Job? = null
 
     // 请求-响应映射
     private val pendingRequests = ConcurrentHashMap<String, CompletableDeferred<JsonRpcResponse>>()
@@ -53,8 +54,13 @@ class McpClient(
 
     private val stderrTail = ArrayDeque<String>()
     private val stderrTailLock = Any()
+    private val terminationHandled = AtomicBoolean(false)
+    @Volatile
+    private var stopRequested = false
     @Volatile
     private var runtimeLogListener: ((McpRuntimeLogEvent) -> Unit)? = null
+    @Volatile
+    private var lifecycleListener: ((McpClientUnexpectedTermination) -> Unit)? = null
 
     /**
      * 启动 MCP Server
@@ -62,6 +68,8 @@ class McpClient(
     suspend fun start(): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             logger.info("Starting MCP server: ${server.config.name}")
+            stopRequested = false
+            terminationHandled.set(false)
 
             val launchCommand = resolveLaunchCommand(
                 command = server.config.command,
@@ -118,6 +126,9 @@ class McpClient(
             stderrJob = scope.launch(Dispatchers.IO) {
                 consumeStderr()
             }
+            processMonitorJob = scope.launch(Dispatchers.IO) {
+                monitorProcess(process)
+            }
 
             // 启动读取协程
             scope.launch {
@@ -150,12 +161,17 @@ class McpClient(
         val writerToClose = writer
         val readerToClose = reader
         val stderrJobToCancel = stderrJob
+        val processMonitorJobToCancel = processMonitorJob
+        stopRequested = true
+        terminationHandled.set(true)
         errorReader = null
         writer = null
         reader = null
         stderrJob = null
+        processMonitorJob = null
         try {
             stderrJobToCancel?.cancel()
+            processMonitorJobToCancel?.cancel()
             if (process != null) {
                 runCatching { process.destroy() }
                 if (process.isAlive) {
@@ -181,11 +197,7 @@ class McpClient(
         server.process = null
         initialized = false
 
-        val stopCause = CancellationException("MCP server stopped")
-        pendingRequests.values.forEach { deferred ->
-            deferred.completeExceptionally(stopCause)
-        }
-        pendingRequests.clear()
+        failPendingRequests(CancellationException("MCP server stopped"))
 
         emitRuntimeLog(McpRuntimeLogLevel.INFO, "Server stopped")
         logger.info("MCP server stopped: ${server.config.name}")
@@ -354,12 +366,23 @@ class McpClient(
                 }
             }
         } catch (e: Exception) {
+            if (stopRequested) {
+                return@withContext
+            }
             logger.warn("Read loop error", e)
-            server.status = ServerStatus.ERROR
-            server.error = e.message
-            emitRuntimeLog(
-                level = McpRuntimeLogLevel.ERROR,
-                message = "Read loop error: ${e.message ?: e::class.java.simpleName}",
+            reportUnexpectedTermination(
+                baseMessage = "Read loop error: ${e.message ?: e::class.java.simpleName}",
+                exitCode = runCatching { server.process?.exitValue() }.getOrNull(),
+            )
+        }
+    }
+
+    private suspend fun monitorProcess(process: Process) = withContext(Dispatchers.IO) {
+        val exitCode = runCatching { process.waitFor() }.getOrNull() ?: return@withContext
+        if (!stopRequested) {
+            reportUnexpectedTermination(
+                baseMessage = "Server process exited unexpectedly",
+                exitCode = exitCode,
             )
         }
     }
@@ -573,6 +596,58 @@ class McpClient(
 
     fun setRuntimeLogListener(listener: (McpRuntimeLogEvent) -> Unit) {
         runtimeLogListener = listener
+    }
+
+    fun setLifecycleListener(listener: (McpClientUnexpectedTermination) -> Unit) {
+        lifecycleListener = listener
+    }
+
+    private fun reportUnexpectedTermination(baseMessage: String, exitCode: Int?) {
+        if (!terminationHandled.compareAndSet(false, true)) return
+        initialized = false
+        server.process = null
+        server.status = ServerStatus.ERROR
+        val stderrSummary = latestStderrSummary()
+        val message = buildTerminationMessage(baseMessage, exitCode, stderrSummary)
+        server.error = message
+        failPendingRequests(IllegalStateException(message))
+        emitRuntimeLog(McpRuntimeLogLevel.ERROR, message)
+        runCatching {
+            lifecycleListener?.invoke(
+                McpClientUnexpectedTermination(
+                    message = message,
+                    exitCode = exitCode,
+                )
+            )
+        }.onFailure { error ->
+            logger.debug("Failed to emit MCP lifecycle event", error)
+        }
+    }
+
+    private fun buildTerminationMessage(
+        baseMessage: String,
+        exitCode: Int?,
+        stderrSummary: String,
+    ): String {
+        return buildString {
+            append(baseMessage)
+            if (exitCode != null) {
+                append(" (exit=")
+                append(exitCode)
+                append(')')
+            }
+            if (stderrSummary.isNotBlank()) {
+                append("; stderr: ")
+                append(stderrSummary)
+            }
+        }
+    }
+
+    private fun failPendingRequests(cause: Throwable) {
+        pendingRequests.values.forEach { deferred ->
+            deferred.completeExceptionally(cause)
+        }
+        pendingRequests.clear()
     }
 
     private fun emitRuntimeLog(level: McpRuntimeLogLevel, message: String) {

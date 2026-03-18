@@ -18,7 +18,7 @@ object McpSecurityValidator {
         "chrome-devtools-mcp", "chrome-devtools-mcp.cmd"
     )
 
-    private val SHELL_METACHARACTERS = Regex("[;&|`\\\$(){}\\[\\]<>!]")
+    private val UNSAFE_CONTROL_CHARACTERS = Regex("[\\u0000\\r\\n]")
 
     /**
      * 启动前完整校验
@@ -28,6 +28,12 @@ object McpSecurityValidator {
             if (!config.trusted) {
                 throw SecurityException(
                     "Server '${config.name}' is not trusted. Mark as trusted before starting."
+                )
+            }
+            if (!config.transport.isBuiltInRuntimeSupported()) {
+                throw IllegalStateException(
+                    "Transport '${config.transport.name}' is not supported by the built-in MCP runtime. " +
+                        "Use STDIO for managed startup."
                 )
             }
             validateCommandPath(config.command).getOrThrow()
@@ -44,8 +50,8 @@ object McpSecurityValidator {
             if (command.isBlank()) {
                 throw SecurityException("Command cannot be empty")
             }
-            if (SHELL_METACHARACTERS.containsMatchIn(command)) {
-                throw SecurityException("Command contains unsafe characters: $command")
+            if (UNSAFE_CONTROL_CHARACTERS.containsMatchIn(command)) {
+                throw SecurityException("Command contains unsafe control characters")
             }
             val commandName = Paths.get(command).fileName?.toString() ?: command
             if (commandName in SAFE_COMMANDS) return@runCatching
@@ -65,8 +71,8 @@ object McpSecurityValidator {
     private fun validateArgs(args: List<String>): Result<Unit> {
         return runCatching {
             for (arg in args) {
-                if (SHELL_METACHARACTERS.containsMatchIn(arg)) {
-                    throw SecurityException("Argument contains unsafe characters: $arg")
+                if (UNSAFE_CONTROL_CHARACTERS.containsMatchIn(arg)) {
+                    throw SecurityException("Argument contains unsafe control characters")
                 }
             }
         }

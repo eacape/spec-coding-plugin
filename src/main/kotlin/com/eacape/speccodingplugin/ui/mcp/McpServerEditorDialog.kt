@@ -31,6 +31,7 @@ import javax.swing.*
 class McpServerEditorDialog(
     private val existing: McpServerConfig? = null,
     private val draft: McpServerConfig? = null,
+    private val idExists: ((String) -> Boolean)? = null,
 ) : DialogWrapper(true) {
 
     private val idField = JBTextField()
@@ -38,7 +39,7 @@ class McpServerEditorDialog(
     private val commandField = JBTextField()
     private val argsField = JBTextField()
     private val envArea = JBTextArea(4, 40)
-    private val transportCombo = ComboBox(TransportType.entries.toTypedArray())
+    private val transportCombo = ComboBox(buildTransportOptions(existing, draft).toTypedArray())
     private val autoStartCheckBox = JBCheckBox(
         SpecCodingBundle.message("mcp.dialog.field.autoStart")
     )
@@ -295,6 +296,10 @@ class McpServerEditorDialog(
         trustedCheckBox.foreground = CHECKBOX_FG
         autoStartCheckBox.font = JBUI.Fonts.smallFont()
         trustedCheckBox.font = JBUI.Fonts.smallFont()
+        if (transportCombo.itemCount == 1 && transportCombo.getItemAt(0) == TransportType.STDIO) {
+            transportCombo.isEnabled = false
+            transportCombo.toolTipText = SpecCodingBundle.message("mcp.dialog.transport.stdioOnly")
+        }
     }
 
     private fun styleDialogButtons() {
@@ -329,6 +334,11 @@ class McpServerEditorDialog(
         if (!idField.text.matches(Regex("^[a-zA-Z0-9_-]+$"))) {
             return ValidationInfo(
                 SpecCodingBundle.message("mcp.dialog.validation.idFormat"), idField
+            )
+        }
+        if (existing == null && idExists?.invoke(idField.text.trim()) == true) {
+            return ValidationInfo(
+                SpecCodingBundle.message("mcp.dialog.validation.idExists"), idField
             )
         }
         if (nameField.text.isBlank()) {
@@ -374,6 +384,18 @@ class McpServerEditorDialog(
 
     companion object {
         private const val LABEL_WIDTH = 156
+
+        private fun buildTransportOptions(
+            existing: McpServerConfig?,
+            draft: McpServerConfig?,
+        ): List<TransportType> {
+            val options = mutableListOf(TransportType.STDIO)
+            val currentTransport = existing?.transport ?: draft?.transport
+            if (currentTransport == TransportType.SSE) {
+                options += TransportType.SSE
+            }
+            return options
+        }
 
         private val DIALOG_BG = JBColor(Color(247, 250, 255), Color(53, 58, 66))
         private val CARD_BG = JBColor(Color(250, 252, 255), Color(57, 62, 70))

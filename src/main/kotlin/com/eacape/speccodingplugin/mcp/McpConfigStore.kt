@@ -35,36 +35,40 @@ class McpConfigStore(private val project: Project) {
     /**
      * 保存或更新配置
      */
-    fun save(config: McpServerConfig) {
-        synchronized(lock) {
-            ensureLoaded()
+    fun save(config: McpServerConfig): Result<Unit> {
+        return runCatching {
+            synchronized(lock) {
+                ensureLoaded()
 
-            val index = configs.indexOfFirst { it.id == config.id }
-            if (index >= 0) {
-                configs[index] = config
-                logger.info("Updated MCP server config: ${config.name} (${config.id})")
-            } else {
-                configs.add(config)
-                logger.info("Saved MCP server config: ${config.name} (${config.id})")
+                val index = configs.indexOfFirst { it.id == config.id }
+                if (index >= 0) {
+                    configs[index] = config
+                    logger.info("Updated MCP server config: ${config.name} (${config.id})")
+                } else {
+                    configs.add(config)
+                    logger.info("Saved MCP server config: ${config.name} (${config.id})")
+                }
+
+                persistToDisk()
             }
-
-            persistToDisk()
         }
     }
 
     /**
      * 删除配置
      */
-    fun delete(configId: String): Boolean {
-        synchronized(lock) {
-            ensureLoaded()
+    fun delete(configId: String): Result<Boolean> {
+        return runCatching {
+            synchronized(lock) {
+                ensureLoaded()
 
-            val removed = configs.removeIf { it.id == configId }
-            if (removed) {
-                logger.info("Deleted MCP server config: $configId")
-                persistToDisk()
+                val removed = configs.removeIf { it.id == configId }
+                if (removed) {
+                    logger.info("Deleted MCP server config: $configId")
+                    persistToDisk()
+                }
+                removed
             }
-            return removed
         }
     }
 
@@ -131,27 +135,22 @@ class McpConfigStore(private val project: Project) {
 
     private fun persistToDisk() {
         val storePath = getStorePath() ?: return
+        storePath.parent?.let { Files.createDirectories(it) }
 
-        try {
-            storePath.parent?.let { Files.createDirectories(it) }
+        val stored = StoredMcpConfigs(
+            version = 1,
+            servers = configs.map { StoredMcpServerConfig.fromConfig(it) }
+        )
 
-            val stored = StoredMcpConfigs(
-                version = 1,
-                servers = configs.map { StoredMcpServerConfig.fromConfig(it) }
-            )
+        val content = json.encodeToString(stored)
+        Files.writeString(
+            storePath,
+            content,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING
+        )
 
-            val content = json.encodeToString(stored)
-            Files.writeString(
-                storePath,
-                content,
-                StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING
-            )
-
-            logger.debug("Persisted ${configs.size} MCP server configs to disk")
-        } catch (e: Exception) {
-            logger.error("Failed to persist MCP server configs to disk", e)
-        }
+        logger.debug("Persisted ${configs.size} MCP server configs to disk")
     }
 
     private fun getStorePath(): Path? {

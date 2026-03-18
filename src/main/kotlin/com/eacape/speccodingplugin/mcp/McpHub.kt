@@ -136,6 +136,9 @@ class McpHub internal constructor(
                 client.setRuntimeLogListener { event ->
                     appendRuntimeLog(serverId, event.level, event.message)
                 }
+                client.setLifecycleListener { event ->
+                    handleClientUnexpectedTermination(serverId, event)
+                }
                 clients[serverId] = client
                 if (!isLifecycleVersionCurrent(serverId, lifecycleVersion)) {
                     appendRuntimeLog(serverId, McpRuntimeLogLevel.INFO, "Startup aborted by stop request")
@@ -209,6 +212,8 @@ class McpHub internal constructor(
             servers[serverId]?.apply {
                 status = ServerStatus.STOPPED
                 error = null
+                process = null
+                capabilities = null
             }
 
             // 清除工具注册
@@ -393,12 +398,54 @@ class McpHub internal constructor(
     /**
      * 更新 Server 配置（同步到内存）
      */
-    fun updateServerConfig(config: McpServerConfig) {
-        val existing = servers[config.id]
-        if (existing != null) {
-            servers[config.id] = existing.copy(config = config)
-        } else {
-            servers[config.id] = McpServer(config)
+    suspend fun updateServerConfig(config: McpServerConfig): Result<Unit> {
+        return runCatching {
+            val existing = servers[config.id]
+            if (existing == null) {
+                servers[config.id] = McpServer(config)
+                return@runCatching
+            }
+
+            if (existing.status == ServerStatus.STARTING) {
+                throw IllegalStateException("Cannot update MCP server while it is starting: ${config.id}")
+            }
+
+            val previousConfig = existing.config
+            val runtimeSettingsChanged = previousConfig.command != config.command ||
+                previousConfig.args != config.args ||
+                previousConfig.env != config.env ||
+                previousConfig.transport != config.transport
+
+            existing.config = config
+
+            if (runtimeSettingsChanged) {
+                when (existing.status) {
+                    ServerStatus.RUNNING -> {
+                        restartServer(config.id).getOrThrow()
+                    }
+
+                    ServerStatus.ERROR -> {
+                        existing.status = ServerStatus.STOPPED
+                        existing.error = null
+                        existing.process = null
+                        existing.capabilities = null
+                        toolRegistry.clearServerTools(config.id)
+                        appendRuntimeLog(config.id, McpRuntimeLogLevel.INFO, "Server config updated; status reset to stopped")
+                        notifyStatusChanged(config.id, ServerStatus.STOPPED)
+                    }
+
+                    ServerStatus.STOPPED -> {
+                        existing.error = null
+                        existing.process = null
+                        existing.capabilities = null
+                        toolRegistry.clearServerTools(config.id)
+                    }
+
+                    ServerStatus.STARTING -> Unit
+                }
+            } else {
+                notifyStatusChanged(config.id, existing.status)
+            }
         }
     }
 
@@ -434,9 +481,22 @@ class McpHub internal constructor(
         servers[serverId]?.apply {
             status = ServerStatus.STOPPED
             error = null
+            process = null
+            capabilities = null
         }
         toolRegistry.clearServerTools(serverId)
         notifyStatusChanged(serverId, ServerStatus.STOPPED)
+    }
+
+    private fun handleClientUnexpectedTermination(serverId: String, event: McpClientUnexpectedTermination) {
+        val server = servers[serverId] ?: return
+        clients.remove(serverId)
+        server.status = ServerStatus.ERROR
+        server.error = event.message
+        server.process = null
+        server.capabilities = null
+        toolRegistry.clearServerTools(serverId)
+        notifyStatusChanged(serverId, ServerStatus.ERROR)
     }
 
     /**
@@ -502,6 +562,7 @@ internal interface McpClientAdapter {
     fun stop()
     fun isRunning(): Boolean
     fun setRuntimeLogListener(listener: (McpRuntimeLogEvent) -> Unit) {}
+    fun setLifecycleListener(listener: (McpClientUnexpectedTermination) -> Unit) {}
 }
 
 private class RealMcpClientAdapter(
@@ -523,6 +584,10 @@ private class RealMcpClientAdapter(
 
     override fun setRuntimeLogListener(listener: (McpRuntimeLogEvent) -> Unit) {
         delegate.setRuntimeLogListener(listener)
+    }
+
+    override fun setLifecycleListener(listener: (McpClientUnexpectedTermination) -> Unit) {
+        delegate.setLifecycleListener(listener)
     }
 }
 

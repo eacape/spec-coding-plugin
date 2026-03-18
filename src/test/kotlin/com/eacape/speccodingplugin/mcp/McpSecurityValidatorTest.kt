@@ -35,7 +35,7 @@ class McpSecurityValidatorTest {
 
     @Test
     fun `should fail validation for command with shell metacharacters`() {
-        val result = McpSecurityValidator.validateCommandPath("cmd; rm -rf /")
+        val result = McpSecurityValidator.validateCommandPath("cmd\r\nmalicious")
         assertTrue(result.isFailure)
     }
 
@@ -78,10 +78,41 @@ class McpSecurityValidatorTest {
         val config = McpServerConfig(
             id = "test", name = "Test",
             command = "npx",
-            args = listOf("--flag", "value; rm -rf /"),
+            args = listOf("--flag", "value\r\nnext"),
             trusted = true
         )
         val result = McpSecurityValidator.validateBeforeStart(config)
         assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun `should allow safe args with urls and json fragments`() {
+        val config = McpServerConfig(
+            id = "test",
+            name = "Test",
+            command = "npx",
+            args = listOf(
+                "--endpoint",
+                "https://example.com/sse?token=a&mode=dev",
+                """{"path":"C:/Program Files (x86)/demo"}""",
+            ),
+            trusted = true,
+        )
+        val result = McpSecurityValidator.validateBeforeStart(config)
+        assertTrue(result.isSuccess)
+    }
+
+    @Test
+    fun `should fail validation for unsupported built in transport`() {
+        val config = McpServerConfig(
+            id = "test",
+            name = "Test",
+            command = "https://example.com/sse",
+            transport = TransportType.SSE,
+            trusted = true,
+        )
+        val result = McpSecurityValidator.validateBeforeStart(config)
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is IllegalStateException)
     }
 }

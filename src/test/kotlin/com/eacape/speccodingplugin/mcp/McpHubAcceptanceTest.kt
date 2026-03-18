@@ -216,6 +216,69 @@ class McpHubAcceptanceTest {
         assertTrue(fakeClient.stopped)
     }
 
+    @Test
+    fun `updating running server config restarts server with new runtime config`() = runBlocking {
+        val fakeClient = FakeMcpClientAdapter(
+            startResult = Result.success(Unit),
+            listToolsResult = Result.success(emptyList()),
+        )
+        hub = createHubWithFakeClient(mapOf("demo" to fakeClient))
+
+        val config = McpServerConfig(
+            id = "demo",
+            name = "Demo MCP",
+            command = "npx",
+            args = listOf("-y", "demo-server"),
+            trusted = true,
+        )
+
+        hub.registerServer(config).getOrThrow()
+        hub.startServer(config.id).getOrThrow()
+
+        val updated = config.copy(
+            command = "node",
+            args = listOf("server.js"),
+        )
+        hub.updateServerConfig(updated).getOrThrow()
+
+        assertEquals(listOf("npx", "node"), fakeClient.startedCommands)
+        assertTrue(fakeClient.stopCount >= 1)
+        assertEquals(updated, hub.getServer(config.id)?.config)
+        assertEquals(ServerStatus.RUNNING, hub.getServer(config.id)?.status)
+    }
+
+    @Test
+    fun `unexpected client termination marks server as error and clears tools`() = runBlocking {
+        val fakeClient = FakeMcpClientAdapter(
+            startResult = Result.success(Unit),
+            listToolsResult = Result.success(
+                listOf(
+                    McpTool(
+                        name = "echo",
+                        description = "Echo message",
+                        inputSchema = Json.parseToJsonElement("{}"),
+                    )
+                )
+            ),
+        )
+        hub = createHubWithFakeClient(mapOf("demo" to fakeClient))
+
+        val config = McpServerConfig(
+            id = "demo",
+            name = "Demo MCP",
+            command = "npx",
+            trusted = true,
+        )
+
+        hub.registerServer(config).getOrThrow()
+        hub.startServer(config.id).getOrThrow()
+        fakeClient.emitUnexpectedTermination("Server process exited unexpectedly (exit=1)", exitCode = 1)
+
+        assertEquals(ServerStatus.ERROR, hub.getServer(config.id)?.status)
+        assertTrue(hub.getServer(config.id)?.error?.contains("exit=1") == true)
+        assertTrue(hub.getServerTools(config.id).isEmpty())
+    }
+
     private fun createHubWithFakeClient(fakeClients: Map<String, FakeMcpClientAdapter>): McpHub {
         val fakeClientMap = ConcurrentHashMap(fakeClients)
         return McpHub(
@@ -224,6 +287,7 @@ class McpHubAcceptanceTest {
             configStoreProvider = { error("unused") },
             clientFactory = { server, _ ->
                 fakeClientMap[server.config.id]
+                    ?.apply { bindTo(server) }
                     ?: error("No fake client prepared for server: ${server.config.id}")
             },
             toolRegistry = McpToolRegistry()
@@ -241,11 +305,23 @@ class McpHubAcceptanceTest {
         private val onStop: (() -> Unit)? = null,
     ) : McpClientAdapter {
 
+        private lateinit var boundServer: McpServer
+        private var lifecycleListener: ((McpClientUnexpectedTermination) -> Unit)? = null
+
         var stopped: Boolean = false
             private set
+        var stopCount: Int = 0
+            private set
+        val startedCommands = mutableListOf<String>()
+
+        fun bindTo(server: McpServer) {
+            boundServer = server
+        }
 
         override suspend fun start(): Result<Unit> {
             onStart?.invoke()
+            startedCommands += boundServer.config.command
+            stopped = false
             return startResult
         }
 
@@ -261,9 +337,23 @@ class McpHubAcceptanceTest {
 
         override fun stop() {
             stopped = true
+            stopCount += 1
             onStop?.invoke()
         }
 
         override fun isRunning(): Boolean = startResult.isSuccess && !stopped
+
+        override fun setLifecycleListener(listener: (McpClientUnexpectedTermination) -> Unit) {
+            lifecycleListener = listener
+        }
+
+        fun emitUnexpectedTermination(message: String, exitCode: Int? = null) {
+            lifecycleListener?.invoke(
+                McpClientUnexpectedTermination(
+                    message = message,
+                    exitCode = exitCode,
+                )
+            )
+        }
     }
 }

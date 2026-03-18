@@ -315,26 +315,38 @@ class McpPanel(
     }
 
     private fun onAddServer() {
-        val dialog = McpServerEditorDialog()
-        if (dialog.showAndGet()) {
-            val config = dialog.result ?: return
-            mcpConfigStore.save(config)
-            mcpHub.registerServer(config)
-            refreshServers()
-            serverListPanel.setSelectedServer(config.id)
-            onServerSelected(config.id)
+        val dialog = createServerEditorDialog()
+        if (!dialog.showAndGet()) return
+        val config = dialog.result ?: return
+        scope.launch(Dispatchers.IO) {
+            val result = registerNewServer(config)
+            invokeLaterSafe {
+                if (result.isFailure) {
+                    setToolbarStatus(result.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown"))
+                    return@invokeLaterSafe
+                }
+                refreshServers()
+                serverListPanel.setSelectedServer(config.id)
+                onServerSelected(config.id)
+            }
         }
     }
 
     private fun onEditServer(serverId: String) {
         val existing = mcpConfigStore.getById(serverId) ?: return
-        val dialog = McpServerEditorDialog(existing)
-        if (dialog.showAndGet()) {
-            val config = dialog.result ?: return
-            mcpConfigStore.save(config)
-            mcpHub.updateServerConfig(config)
-            refreshServers()
-            onServerSelected(serverId)
+        val dialog = createServerEditorDialog(existing = existing)
+        if (!dialog.showAndGet()) return
+        val config = dialog.result ?: return
+        scope.launch(Dispatchers.IO) {
+            val result = updateExistingServer(existing, config)
+            invokeLaterSafe {
+                if (result.isFailure) {
+                    setToolbarStatus(result.exceptionOrNull()?.message ?: SpecCodingBundle.message("common.unknown"))
+                    return@invokeLaterSafe
+                }
+                refreshServers()
+                onServerSelected(serverId)
+            }
         }
     }
 
@@ -346,8 +358,18 @@ class McpPanel(
         }
         scope.launch(Dispatchers.IO) {
             val result = runCatching {
-                mcpHub.unregisterServer(serverId).getOrThrow()
-                mcpConfigStore.delete(serverId)
+                val persistedConfig = mcpConfigStore.getById(serverId) ?: mcpHub.getServer(serverId)?.config
+                persistedConfig?.let {
+                    mcpConfigStore.delete(serverId).getOrThrow()
+                }
+                try {
+                    mcpHub.unregisterServer(serverId).getOrThrow()
+                } catch (error: Exception) {
+                    persistedConfig?.let { rollback ->
+                        mcpConfigStore.save(rollback).getOrThrow()
+                    }
+                    throw error
+                }
             }
             invokeLaterSafe {
                 if (result.isFailure) {
@@ -360,6 +382,57 @@ class McpPanel(
                     serverDetailPanel.showEmpty()
                 }
                 refreshServers()
+            }
+        }
+    }
+
+    private fun createServerEditorDialog(
+        existing: McpServerConfig? = null,
+        draft: McpServerConfig? = null,
+    ): McpServerEditorDialog {
+        return McpServerEditorDialog(
+            existing = existing,
+            draft = draft,
+            idExists = { candidateId -> isServerIdTaken(candidateId, existing?.id) },
+        )
+    }
+
+    private fun isServerIdTaken(serverId: String, excludingServerId: String? = null): Boolean {
+        val normalizedId = serverId.trim()
+        if (normalizedId.isEmpty()) return false
+        if (excludingServerId != null && normalizedId == excludingServerId) return false
+        return mcpHub.getServer(normalizedId) != null || mcpConfigStore.getById(normalizedId) != null
+    }
+
+    private fun registerNewServer(config: McpServerConfig): Result<Unit> {
+        return runCatching {
+            if (isServerIdTaken(config.id)) {
+                throw IllegalArgumentException(SpecCodingBundle.message("mcp.dialog.validation.idExists"))
+            }
+            mcpHub.registerServer(config).getOrThrow()
+            try {
+                mcpConfigStore.save(config).getOrThrow()
+            } catch (error: Exception) {
+                mcpHub.unregisterServer(config.id).getOrThrow()
+                throw error
+            }
+        }
+    }
+
+    private suspend fun updateExistingServer(
+        previousConfig: McpServerConfig,
+        newConfig: McpServerConfig,
+    ): Result<Unit> {
+        return runCatching {
+            if (previousConfig.id != newConfig.id) {
+                throw IllegalArgumentException("Changing MCP server id is not supported")
+            }
+            mcpHub.updateServerConfig(newConfig).getOrThrow()
+            try {
+                mcpConfigStore.save(newConfig).getOrThrow()
+            } catch (error: Exception) {
+                mcpHub.updateServerConfig(previousConfig).getOrThrow()
+                throw error
             }
         }
     }
@@ -415,18 +488,30 @@ class McpPanel(
                 }
                 result.onSuccess { draft ->
                     val deduplicatedDraft = ensureUniqueId(draft)
-                    val editor = McpServerEditorDialog(draft = deduplicatedDraft)
+                    val editor = createServerEditorDialog(draft = deduplicatedDraft)
                     if (!editor.showAndGet()) {
                         setToolbarStatus(SpecCodingBundle.message("mcp.server.aiSetup.cancelled"))
                         return@onSuccess
                     }
                     val config = editor.result ?: return@onSuccess
-                    mcpConfigStore.save(config)
-                    mcpHub.registerServer(config)
-                    refreshServers()
-                    serverListPanel.setSelectedServer(config.id)
-                    onServerSelected(config.id)
-                    setToolbarStatus(SpecCodingBundle.message("mcp.server.aiSetup.saved", config.name))
+                    scope.launch(Dispatchers.IO) {
+                        val saveResult = registerNewServer(config)
+                        invokeLaterSafe {
+                            saveResult.onSuccess {
+                                refreshServers()
+                                serverListPanel.setSelectedServer(config.id)
+                                onServerSelected(config.id)
+                                setToolbarStatus(SpecCodingBundle.message("mcp.server.aiSetup.saved", config.name))
+                            }.onFailure { error ->
+                                setToolbarStatus(
+                                    SpecCodingBundle.message(
+                                        "mcp.server.aiSetup.failed",
+                                        error.message ?: SpecCodingBundle.message("common.unknown"),
+                                    )
+                                )
+                            }
+                        }
+                    }
                 }.onFailure { error ->
                     setToolbarStatus(SpecCodingBundle.message(
                         "mcp.server.aiSetup.failed",
@@ -541,7 +626,7 @@ class McpPanel(
               "command": "command binary",
               "args": ["arg1", "arg2"],
               "env": {"KEY": "VALUE"},
-              "transport": "STDIO or SSE",
+              "transport": "STDIO",
               "autoStart": false,
               "trusted": false
             }
@@ -549,6 +634,7 @@ class McpPanel(
             Rules:
             - command must not be empty.
             - args/env can be empty.
+            - transport must stay STDIO because the built-in MCP manager does not support SSE yet.
             - keep trusted=false by default unless user explicitly requests trusted startup.
         """.trimIndent()
     }
@@ -626,9 +712,10 @@ class McpPanel(
 
     private fun parseTransport(raw: String): TransportType {
         val normalized = raw.trim().uppercase(Locale.ROOT)
-        return runCatching {
+        val parsed = runCatching {
             TransportType.valueOf(normalized)
         }.getOrDefault(TransportType.STDIO)
+        return if (parsed.isBuiltInRuntimeSupported()) parsed else TransportType.STDIO
     }
 
     private fun availableAiProviders(): List<String> {
