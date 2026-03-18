@@ -1304,20 +1304,22 @@ class SpecTaskExecutionService(private val project: Project) {
             presentation.taskStatusBeforeExecution?.let { appendLine("- Status before execution: ${it.name}") }
             presentation.taskPriority?.let { appendLine("- Priority: ${it.name}") }
             appendLine()
-            appendLine("## Context Summary")
+            appendLine("## System Context")
             presentation.sections.forEach { section ->
                 appendLine("- ${section.kind.toTimelineLabel()}: ${section.toTimelinePreview()}")
             }
             presentation.supplementalInstruction?.let { instruction ->
+                appendLine()
+                appendLine("## User Note")
                 appendLine(
-                    "- Supplemental instruction: " +
+                    "- " +
                         clipExecutionPreview(instruction, EXECUTION_SUPPLEMENTAL_INSTRUCTION_CHAR_LIMIT),
                 )
             }
             presentation.degradationReasons.forEach { reason ->
                 appendLine("- Note: ${clipExecutionPreview(reason, EXECUTION_SECTION_ITEM_CHAR_LIMIT)}")
             }
-            appendLine("- Internal execution prompt hidden from chat and retained for debug/audit.")
+            appendLine("- Internal execution prompt hidden from default chat view and retained for explicit debug inspection.")
         }.trimEnd()
     }
 
@@ -1943,13 +1945,14 @@ private fun WorkflowChatExecutionPresentationSection.toTimelinePreview(): String
     if (itemCount <= 0) {
         return emptyStateReason ?: "None"
     }
-    val preview = previewItems.joinToString(" | ").ifBlank {
+    val primaryPreview = previewItems.firstOrNull().orEmpty().ifBlank {
         "$itemCount item" + if (itemCount == 1) "" else "s"
     }
-    return if (truncated) {
-        "$preview (+${itemCount - previewItems.size} more)"
+    val hiddenCount = (itemCount - 1).coerceAtLeast(0)
+    return if (hiddenCount > 0) {
+        "$primaryPreview (+$hiddenCount more)"
     } else {
-        preview
+        primaryPreview
     }
 }
 

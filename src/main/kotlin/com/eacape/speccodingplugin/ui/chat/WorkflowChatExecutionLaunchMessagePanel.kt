@@ -11,6 +11,7 @@ import com.eacape.speccodingplugin.spec.WorkflowChatExecutionPresentationSection
 import com.intellij.icons.AllIcons
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
@@ -24,6 +25,7 @@ import javax.swing.JTextArea
 internal class WorkflowChatExecutionLaunchMessagePanel(
     private val payload: WorkflowChatExecutionLaunchRestorePayload,
     visibleContent: String,
+    private val rawPromptContent: String? = null,
     private val onDeleteMessage: ((ChatMessagePanel) -> Unit)? = null,
 ) : ChatMessagePanel(
     role = MessageRole.USER,
@@ -34,10 +36,19 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
     private val wrapper = JPanel(BorderLayout())
     private val bodyPanel = JPanel()
     private val metaChipPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), JBUI.scale(4)))
-    private val sectionsPanel = JPanel()
+    private val userNotePanel = JPanel()
+    private val systemContextPanel = JPanel(BorderLayout())
+    private val systemContextSummaryPanel = JPanel()
+    private val systemContextDetailsPanel = JPanel()
+    private val systemContextToggleButton = JButton()
+    private val debugPanel = JPanel()
+    private val rawPromptContainer = JPanel(BorderLayout())
+    private val rawPromptToggleButton = JButton()
     private val notesPanel = JPanel()
     private val titleLabel = JBLabel(SpecCodingBundle.message("chat.execution.launch.title"), AllIcons.Actions.Execute, JBLabel.LEADING)
     private val summaryLabel = JBLabel(SpecCodingBundle.message("chat.execution.launch.summary"))
+    private var systemContextExpanded = false
+    private var rawPromptVisible = false
 
     init {
         removeAll()
@@ -59,16 +70,34 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
         metaChipPanel.isOpaque = false
         metaChipPanel.alignmentX = LEFT_ALIGNMENT
 
-        sectionsPanel.layout = BoxLayout(sectionsPanel, BoxLayout.Y_AXIS)
-        sectionsPanel.isOpaque = false
-        sectionsPanel.alignmentX = LEFT_ALIGNMENT
+        userNotePanel.layout = BoxLayout(userNotePanel, BoxLayout.Y_AXIS)
+        userNotePanel.isOpaque = false
+        userNotePanel.alignmentX = LEFT_ALIGNMENT
+
+        systemContextPanel.isOpaque = false
+        systemContextPanel.alignmentX = LEFT_ALIGNMENT
+
+        systemContextSummaryPanel.layout = BoxLayout(systemContextSummaryPanel, BoxLayout.Y_AXIS)
+        systemContextSummaryPanel.isOpaque = false
+
+        systemContextDetailsPanel.layout = BoxLayout(systemContextDetailsPanel, BoxLayout.Y_AXIS)
+        systemContextDetailsPanel.isOpaque = false
+
+        debugPanel.layout = BoxLayout(debugPanel, BoxLayout.Y_AXIS)
+        debugPanel.isOpaque = false
+        debugPanel.alignmentX = LEFT_ALIGNMENT
+
+        rawPromptContainer.isOpaque = false
+        rawPromptContainer.alignmentX = LEFT_ALIGNMENT
 
         notesPanel.layout = BoxLayout(notesPanel, BoxLayout.Y_AXIS)
         notesPanel.isOpaque = false
         notesPanel.alignmentX = LEFT_ALIGNMENT
 
         bodyPanel.add(metaChipPanel)
-        bodyPanel.add(sectionsPanel)
+        bodyPanel.add(userNotePanel)
+        bodyPanel.add(systemContextPanel)
+        bodyPanel.add(debugPanel)
         bodyPanel.add(notesPanel)
 
         wrapper.add(header, BorderLayout.NORTH)
@@ -91,6 +120,10 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
                 "trigger" to current.launch.trigger.name,
                 "sectionKinds" to current.launch.sections.joinToString(",") { it.kind.name },
                 "rawPromptDebugAvailable" to current.launch.rawPromptDebugAvailable.toString(),
+                "userNoteVisible" to (userNotePanel.componentCount > 0).toString(),
+                "systemContextExpanded" to systemContextExpanded.toString(),
+                "debugEntryVisible" to rawPromptToggleButton.isVisible.toString(),
+                "rawPromptVisible" to rawPromptVisible.toString(),
                 "content" to getContent(),
             )
 
@@ -106,9 +139,21 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
                 "sectionKinds" to current.notice.sectionKinds.joinToString(",") { it.name },
                 "fallbackReason" to current.notice.fallbackReason.name,
                 "rawPromptDebugAvailable" to current.notice.rawPromptDebugAvailable.toString(),
+                "userNoteVisible" to (userNotePanel.componentCount > 0).toString(),
+                "systemContextExpanded" to systemContextExpanded.toString(),
+                "debugEntryVisible" to rawPromptToggleButton.isVisible.toString(),
+                "rawPromptVisible" to rawPromptVisible.toString(),
                 "content" to getContent(),
             )
         }
+    }
+
+    internal fun toggleSystemContextForTest() {
+        systemContextToggleButton.doClick()
+    }
+
+    internal fun toggleRawPromptForTest() {
+        rawPromptToggleButton.doClick()
     }
 
     private fun createHeader(): JPanel {
@@ -145,7 +190,12 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
 
     private fun renderCard() {
         metaChipPanel.removeAll()
-        sectionsPanel.removeAll()
+        userNotePanel.removeAll()
+        systemContextPanel.removeAll()
+        systemContextSummaryPanel.removeAll()
+        systemContextDetailsPanel.removeAll()
+        debugPanel.removeAll()
+        rawPromptContainer.removeAll()
         notesPanel.removeAll()
 
         when (val current = payload) {
@@ -178,39 +228,24 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
             metaChipPanel.add(createMetaChip(SpecCodingBundle.message("chat.execution.launch.meta.priority", priority.name)))
         }
 
+        renderUserNote(launch.supplementalInstruction)
+
         val visibleSections = launch.sections.filter { section ->
             section.itemCount > 0 || !section.emptyStateReason.isNullOrBlank()
         }
-        if (visibleSections.isEmpty()) {
-            sectionsPanel.add(
-                createSectionPanel(
-                    title = SpecCodingBundle.message("chat.execution.launch.section.contextSummary"),
-                    detail = SpecCodingBundle.message("chat.execution.launch.section.empty"),
-                    badgeText = null,
-                ),
-            )
-        } else {
-            visibleSections.forEach { section ->
-                sectionsPanel.add(createSectionPanel(sectionLabel(section.kind), sectionPreview(section), sectionBadgeText(section)))
-            }
-        }
-
-        launch.supplementalInstruction?.takeIf(String::isNotBlank)?.let { instruction ->
-            sectionsPanel.add(
-                createSectionPanel(
-                    title = SpecCodingBundle.message("chat.execution.launch.section.supplementalInstruction"),
-                    detail = instruction.trim(),
-                    badgeText = null,
-                ),
-            )
-        }
+        renderSystemContext(
+            summaryLines = buildContextSummaryLines(visibleSections),
+            detailPanels = visibleSections.map { section ->
+                createSectionPanel(sectionLabel(section.kind), sectionPreview(section), sectionBadgeText(section))
+            },
+            badgeText = visibleSections.size.takeIf { it > 0 }?.toString(),
+            allowExpand = visibleSections.isNotEmpty(),
+        )
 
         launch.degradationReasons.forEach { reason ->
             notesPanel.add(createNoteLabel(reason))
         }
-        if (launch.rawPromptDebugAvailable) {
-            notesPanel.add(createNoteLabel(SpecCodingBundle.message("chat.execution.launch.note.rawPromptHidden")))
-        }
+        renderDebugEntry(launch.rawPromptDebugAvailable)
     }
 
     private fun renderLegacy(notice: WorkflowChatExecutionLegacyCompactNotice) {
@@ -231,25 +266,190 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
             metaChipPanel.add(createMetaChip(SpecCodingBundle.message("chat.execution.launch.meta.trigger", triggerLabel(trigger))))
         }
 
-        sectionsPanel.add(
-            createSectionPanel(
-                title = SpecCodingBundle.message("chat.execution.launch.section.contextSummary"),
-                detail = if (notice.sectionKinds.isEmpty()) {
-                    SpecCodingBundle.message("chat.execution.launch.section.empty")
-                } else {
-                    notice.sectionKinds.joinToString(separator = "\n") { kind -> "- ${sectionLabel(kind)}" }
-                },
-                badgeText = notice.sectionKinds.size.takeIf { it > 0 }?.toString(),
-            ),
+        if (notice.supplementalInstructionPresent) {
+            renderUserNote(SpecCodingBundle.message("chat.execution.launch.note.legacy.userNote"))
+        }
+
+        renderSystemContext(
+            summaryLines = if (notice.sectionKinds.isEmpty()) {
+                listOf(SpecCodingBundle.message("chat.execution.launch.section.empty"))
+            } else {
+                notice.sectionKinds.map { kind -> sectionLabel(kind) }
+            },
+            detailPanels = emptyList(),
+            badgeText = notice.sectionKinds.size.takeIf { it > 0 }?.toString(),
+            allowExpand = false,
         )
 
         notesPanel.add(createNoteLabel(SpecCodingBundle.message("chat.execution.launch.note.legacy")))
         notesPanel.add(createNoteLabel(legacyReasonLabel(notice.fallbackReason)))
-        if (notice.supplementalInstructionPresent) {
-            notesPanel.add(createNoteLabel(SpecCodingBundle.message("chat.execution.launch.note.supplementalInstructionPresent")))
+        renderDebugEntry(notice.rawPromptDebugAvailable)
+    }
+
+    private fun renderUserNote(userNote: String?) {
+        val normalized = userNote?.trim()?.takeIf(String::isNotBlank) ?: return
+        userNotePanel.add(
+            createSectionPanel(
+                title = SpecCodingBundle.message("chat.execution.launch.section.userNote"),
+                detail = normalized,
+                badgeText = null,
+            ),
+        )
+    }
+
+    private fun renderSystemContext(
+        summaryLines: List<String>,
+        detailPanels: List<JPanel>,
+        badgeText: String?,
+        allowExpand: Boolean,
+    ) {
+        val header = JPanel(BorderLayout())
+        header.isOpaque = false
+        header.border = JBUI.Borders.emptyTop(8)
+
+        val headerLeft = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+            isOpaque = false
+            add(
+                JBLabel(SpecCodingBundle.message("chat.execution.launch.section.systemContext")).apply {
+                    foreground = TITLE_FG
+                    font = font.deriveFont(Font.BOLD, 11f)
+                },
+            )
+            badgeText?.takeIf(String::isNotBlank)?.let { badge ->
+                add(
+                    JBLabel(badge).apply {
+                        foreground = SUMMARY_FG
+                        font = font.deriveFont(10f)
+                    },
+                )
+            }
         }
-        if (notice.rawPromptDebugAvailable) {
-            notesPanel.add(createNoteLabel(SpecCodingBundle.message("chat.execution.launch.note.rawPromptHidden")))
+        header.add(headerLeft, BorderLayout.WEST)
+
+        systemContextToggleButton.apply {
+            isVisible = allowExpand
+            isOpaque = false
+            isContentAreaFilled = false
+            isBorderPainted = false
+            foreground = ACTION_FG
+            font = JBUI.Fonts.smallFont()
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            addActionListener {
+                systemContextExpanded = !systemContextExpanded
+                refreshSystemContextExpansion()
+            }
+        }
+        if (allowExpand) {
+            header.add(systemContextToggleButton, BorderLayout.EAST)
+        }
+
+        summaryLines.forEach { line ->
+            systemContextSummaryPanel.add(createWrappedLabel(line))
+        }
+
+        detailPanels.forEach(systemContextDetailsPanel::add)
+
+        systemContextPanel.add(header, BorderLayout.NORTH)
+        systemContextPanel.add(systemContextSummaryPanel, BorderLayout.CENTER)
+        if (detailPanels.isNotEmpty()) {
+            systemContextPanel.add(systemContextDetailsPanel, BorderLayout.SOUTH)
+        }
+        refreshSystemContextExpansion()
+    }
+
+    private fun refreshSystemContextExpansion() {
+        systemContextDetailsPanel.isVisible = systemContextExpanded && systemContextDetailsPanel.componentCount > 0
+        systemContextToggleButton.text = if (systemContextExpanded) {
+            SpecCodingBundle.message("chat.execution.launch.action.hideContext")
+        } else {
+            SpecCodingBundle.message("chat.execution.launch.action.showContext")
+        }
+        systemContextPanel.revalidate()
+        systemContextPanel.repaint()
+    }
+
+    private fun renderDebugEntry(rawPromptDebugAvailable: Boolean) {
+        if (!rawPromptDebugAvailable) {
+            return
+        }
+        val normalizedRawPrompt = rawPromptContent?.trim()?.takeIf(String::isNotBlank)
+        debugPanel.add(createNoteLabel(SpecCodingBundle.message("chat.execution.launch.note.rawPromptHidden")))
+
+        rawPromptToggleButton.apply {
+            isVisible = normalizedRawPrompt != null
+            isOpaque = false
+            isContentAreaFilled = false
+            isBorderPainted = false
+            foreground = ACTION_FG
+            font = JBUI.Fonts.smallFont()
+            cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            addActionListener {
+                rawPromptVisible = !rawPromptVisible
+                refreshRawPromptVisibility(normalizedRawPrompt)
+            }
+        }
+        if (normalizedRawPrompt != null) {
+            debugPanel.add(
+                JPanel(FlowLayout(FlowLayout.LEFT, 0, JBUI.scale(4))).apply {
+                    isOpaque = false
+                    border = JBUI.Borders.emptyTop(4)
+                    add(rawPromptToggleButton)
+                },
+            )
+            debugPanel.add(rawPromptContainer)
+            refreshRawPromptVisibility(normalizedRawPrompt)
+        }
+    }
+
+    private fun refreshRawPromptVisibility(rawPrompt: String?) {
+        rawPromptContainer.removeAll()
+        rawPromptToggleButton.text = if (rawPromptVisible) {
+            SpecCodingBundle.message("chat.execution.launch.action.hidePrompt")
+        } else {
+            SpecCodingBundle.message("chat.execution.launch.action.inspectPrompt")
+        }
+        if (rawPromptVisible && !rawPrompt.isNullOrBlank()) {
+            val area = JTextArea(rawPrompt).apply {
+                isEditable = false
+                isOpaque = false
+                lineWrap = false
+                wrapStyleWord = false
+                isFocusable = false
+                foreground = BODY_FG
+                font = JBUI.Fonts.label().deriveFont(Font.PLAIN, 11f)
+                border = JBUI.Borders.empty(0, 0, 0, 0)
+            }
+            rawPromptContainer.add(
+                JBScrollPane(area).apply {
+                    isOpaque = false
+                    viewport.isOpaque = false
+                    border = JBUI.Borders.compound(
+                        JBUI.Borders.customLine(CARD_BORDER, 1),
+                        JBUI.Borders.empty(6, 6, 6, 6),
+                    )
+                    preferredSize = JBUI.size(420, 180)
+                    alignmentX = LEFT_ALIGNMENT
+                },
+                BorderLayout.CENTER,
+            )
+        }
+        rawPromptContainer.isVisible = rawPromptVisible && !rawPrompt.isNullOrBlank()
+        debugPanel.revalidate()
+        debugPanel.repaint()
+    }
+
+    private fun buildContextSummaryLines(
+        sections: List<WorkflowChatExecutionPresentationSection>,
+    ): List<String> {
+        if (sections.isEmpty()) {
+            return listOf(SpecCodingBundle.message("chat.execution.launch.section.empty"))
+        }
+        return sections.map { section ->
+            val headline = section.previewItems.firstOrNull()
+                ?: section.emptyStateReason
+                ?: SpecCodingBundle.message("chat.execution.launch.section.empty")
+            val countLabel = sectionBadgeText(section)?.let { " [$it]" }.orEmpty()
+            "${sectionLabel(section.kind)}$countLabel: $headline"
         }
     }
 
@@ -387,5 +587,6 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
         private val TITLE_FG = JBColor(Color(49, 66, 92), Color(225, 232, 243))
         private val SUMMARY_FG = JBColor(Color(104, 118, 140), Color(159, 170, 186))
         private val BODY_FG = JBColor(Color(72, 84, 103), Color(213, 220, 231))
+        private val ACTION_FG = JBColor(Color(41, 104, 174), Color(122, 181, 242))
     }
 }

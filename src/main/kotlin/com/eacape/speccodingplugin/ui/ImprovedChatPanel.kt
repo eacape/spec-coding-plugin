@@ -4889,6 +4889,7 @@ class ImprovedChatPanel(
         val panel = WorkflowChatExecutionLaunchMessagePanel(
             payload = payload,
             visibleContent = visibleContent,
+            rawPromptContent = rawContent,
             onDeleteMessage = ::handleDeleteMessage,
         )
         messagesPanel.addMessage(panel)
@@ -7516,6 +7517,10 @@ class ImprovedChatPanel(
                 "trigger" to "",
                 "sectionKinds" to "",
                 "rawPromptDebugAvailable" to "false",
+                "userNoteVisible" to "false",
+                "systemContextExpanded" to "false",
+                "debugEntryVisible" to "false",
+                "rawPromptVisible" to "false",
                 "labels" to "",
                 "content" to "",
             )

@@ -13,6 +13,7 @@ import com.eacape.speccodingplugin.spec.WorkflowChatExecutionLaunchSurface
 import com.eacape.speccodingplugin.spec.WorkflowChatExecutionPresentationSection
 import com.eacape.speccodingplugin.spec.WorkflowChatExecutionPresentationSectionKind
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.awt.Component
@@ -57,6 +58,7 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
                     ),
                 ),
                 visibleContent = "## Execution Request",
+                rawPromptContent = "Interaction mode: workflow\n## Execution Request\nExecute task T-149",
             )
         }
 
@@ -66,6 +68,10 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
         assertEquals("T-149", snapshot.getValue("taskId"))
         assertEquals("run-149", snapshot.getValue("runId"))
         assertEquals(StageId.TASKS.name, snapshot.getValue("focusedStage"))
+        assertEquals("true", snapshot.getValue("userNoteVisible"))
+        assertEquals("false", snapshot.getValue("systemContextExpanded"))
+        assertEquals("true", snapshot.getValue("debugEntryVisible"))
+        assertEquals("false", snapshot.getValue("rawPromptVisible"))
 
         val renderedText = collectDescendants(panel)
             .filterIsInstance<JTextArea>()
@@ -73,6 +79,21 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
         assertTrue(renderedText.contains("requirements.md"))
         assertTrue(renderedText.contains("Keep the summary compact."))
         assertTrue(renderedText.contains(SpecCodingBundle.message("chat.execution.launch.note.rawPromptHidden")))
+        assertFalse(renderedText.contains("Interaction mode: workflow"))
+
+        runOnEdtResult {
+            panel.toggleSystemContextForTest()
+            panel.toggleRawPromptForTest()
+        }
+
+        val expandedSnapshot = panel.snapshotForTest()
+        assertEquals("true", expandedSnapshot.getValue("systemContextExpanded"))
+        assertEquals("true", expandedSnapshot.getValue("rawPromptVisible"))
+
+        val expandedText = collectDescendants(panel)
+            .filterIsInstance<JTextArea>()
+            .joinToString("\n") { it.text.orEmpty() }
+        assertTrue(expandedText.contains("Interaction mode: workflow"))
     }
 
     @Test
@@ -98,6 +119,7 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
                     ),
                 ),
                 visibleContent = "## Execution Request",
+                rawPromptContent = "Interaction mode: workflow\n## Execution Request\nLegacy task execution",
             )
         }
 
@@ -107,6 +129,10 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
         assertEquals("T-019", snapshot.getValue("taskId"))
         assertEquals("run-019", snapshot.getValue("runId"))
         assertEquals("MISSING_PRESENTATION_METADATA", snapshot.getValue("fallbackReason"))
+        assertEquals("true", snapshot.getValue("userNoteVisible"))
+        assertEquals("false", snapshot.getValue("systemContextExpanded"))
+        assertEquals("true", snapshot.getValue("debugEntryVisible"))
+        assertEquals("false", snapshot.getValue("rawPromptVisible"))
 
         val renderedText = collectDescendants(panel)
             .filterIsInstance<JTextArea>()
@@ -114,6 +140,13 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
         assertTrue(renderedText.contains(SpecCodingBundle.message("chat.execution.launch.note.legacy")))
         assertTrue(renderedText.contains(SpecCodingBundle.message("chat.execution.launch.section.codeContext")))
         assertTrue(renderedText.contains(SpecCodingBundle.message("chat.execution.launch.section.artifactSummaries")))
+        assertTrue(renderedText.contains(SpecCodingBundle.message("chat.execution.launch.note.legacy.userNote")))
+        assertFalse(renderedText.contains("Interaction mode: workflow"))
+
+        runOnEdtResult {
+            panel.toggleRawPromptForTest()
+        }
+        assertEquals("true", panel.snapshotForTest().getValue("rawPromptVisible"))
     }
 
     private fun <T> runOnEdtResult(action: () -> T): T {
