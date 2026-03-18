@@ -95,7 +95,52 @@ class SpecTaskCompletionService(private val project: Project) {
         auditContext: Map<String, String> = emptyMap(),
         completionRunSummary: String? = null,
     ): StructuredTask {
-        val task = resolveTask(workflowId, taskId)
+        val normalizedWorkflowId = workflowId.trim()
+        val normalizedTask = resolveTask(normalizedWorkflowId, taskId)
+        return runCatching {
+            completeTaskOnce(
+                workflowId = normalizedWorkflowId,
+                task = normalizedTask,
+                relatedFiles = relatedFiles,
+                verificationResult = verificationResult,
+                auditContext = auditContext,
+                completionRunSummary = completionRunSummary,
+            )
+        }.recoverCatching { error ->
+            if (error !is InvalidTasksArtifactEditError) {
+                throw error
+            }
+            val repairResult = SpecTasksQuickFixService(
+                project = project,
+                storage = storage,
+                artifactService = SpecArtifactService(project),
+                tasksService = tasksService,
+            ).repairTasksArtifact(
+                workflowId = normalizedWorkflowId,
+                trigger = TASK_COMPLETION_AUTO_REPAIR_TRIGGER,
+            )
+            if (repairResult.issuesAfter.isNotEmpty()) {
+                throw error
+            }
+            completeTaskOnce(
+                workflowId = normalizedWorkflowId,
+                task = resolveTask(normalizedWorkflowId, normalizedTask.id),
+                relatedFiles = relatedFiles,
+                verificationResult = verificationResult,
+                auditContext = auditContext,
+                completionRunSummary = completionRunSummary,
+            )
+        }.getOrThrow()
+    }
+
+    private fun completeTaskOnce(
+        workflowId: String,
+        task: StructuredTask,
+        relatedFiles: List<String>,
+        verificationResult: TaskVerificationResult?,
+        auditContext: Map<String, String>,
+        completionRunSummary: String?,
+    ): StructuredTask {
         tasksService.updateRelatedFiles(
             workflowId = workflowId,
             taskId = task.id,
@@ -129,7 +174,7 @@ class SpecTaskCompletionService(private val project: Project) {
             to = TaskStatus.COMPLETED,
             auditContext = auditContext,
         )
-        return resolveTask(workflowId, taskId)
+        return resolveTask(workflowId, task.id)
     }
 
     private fun resolveTask(workflowId: String, taskId: String): StructuredTask {
@@ -142,6 +187,8 @@ class SpecTaskCompletionService(private val project: Project) {
     }
 
     companion object {
+        private const val TASK_COMPLETION_AUTO_REPAIR_TRIGGER = "task-completion-auto-repair"
+
         fun getInstance(project: Project): SpecTaskCompletionService = project.service()
     }
 }

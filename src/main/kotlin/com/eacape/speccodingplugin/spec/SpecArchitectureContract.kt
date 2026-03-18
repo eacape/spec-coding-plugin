@@ -288,9 +288,27 @@ object SpecArchitectureContract {
 
     val sourceRules: List<SourceRule> = listOf(
         SourceRule(
+            fileName = "ArtifactDraftStateSupport.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
+        ),
+        SourceRule(
             fileName = "AtomicFileIO.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "RequirementsSectionAiSupport.kt",
+            layer = Layer.APPLICATION,
+        ),
+        SourceRule(
+            fileName = "RequirementsSectionRepairService.kt",
+            layer = Layer.APPLICATION,
+        ),
+        SourceRule(
+            fileName = "RequirementsSectionSupport.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
         ),
         SourceRule(
             fileName = "SpecAuditLogCodec.kt",
@@ -307,6 +325,11 @@ object SpecArchitectureContract {
             layer = Layer.APPLICATION,
         ),
         SourceRule(
+            fileName = "SpecArtifactSourceCitationWriteback.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
+        ),
+        SourceRule(
             fileName = "SpecRequirementsQuickFixService.kt",
             layer = Layer.APPLICATION,
         ),
@@ -317,6 +340,21 @@ object SpecArchitectureContract {
         ),
         SourceRule(
             fileName = "SpecArchiveModels.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecCodeContextModels.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecCodeContextService.kt",
+            layer = Layer.INFRASTRUCTURE,
+            blockedImportPrefixes = infrastructureBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecClarificationWriteback.kt",
             layer = Layer.DOMAIN,
             blockedImportPrefixes = domainBlockedImportPrefixes,
         ),
@@ -392,6 +430,19 @@ object SpecArchitectureContract {
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
         ),
         SourceRule(
+            fileName = "SpecTaskCompletionService.kt",
+            layer = Layer.APPLICATION,
+        ),
+        SourceRule(
+            fileName = "SpecTaskDependencyRules.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "SpecTaskExecutionService.kt",
+            layer = Layer.APPLICATION,
+        ),
+        SourceRule(
             fileName = "SpecTaskMarkdownParser.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
@@ -444,6 +495,11 @@ object SpecArchitectureContract {
             fileName = "WorkflowIdGenerator.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
+        ),
+        SourceRule(
+            fileName = "WorkflowSourceImportSupport.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
         ),
     )
 

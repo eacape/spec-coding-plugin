@@ -2,14 +2,18 @@ package com.eacape.speccodingplugin.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.llm.LlmRouter
-import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
+
+internal data class RequirementsSectionAiSettings(
+    val defaultProviderId: String? = null,
+    val selectedCliModel: String? = null,
+)
 
 internal object RequirementsSectionAiSupport {
 
     fun resolvePreferredRealProviderId(
         providerHint: String? = null,
         llmRouter: LlmRouter? = null,
-        settingsProvider: (() -> SpecCodingSettingsState)? = null,
+        settingsProvider: (() -> RequirementsSectionAiSettings)? = null,
     ): String? {
         val router = llmRouter ?: runCatching { LlmRouter.getInstance() }.getOrNull() ?: return null
         val availableProviders = router.availableUiProviders()
@@ -25,10 +29,7 @@ internal object RequirementsSectionAiSupport {
         }
 
         val defaultProvider = runCatching {
-            (settingsProvider ?: { SpecCodingSettingsState.getInstance() })()
-                .defaultProvider
-                .trim()
-                .takeIf(String::isNotBlank)
+            (settingsProvider ?: ::loadSettings)().defaultProviderId.trimToValue()
         }.getOrNull()
         if (defaultProvider != null) {
             availableProviders.firstOrNull { provider -> provider == defaultProvider }?.let { return it }
@@ -37,10 +38,25 @@ internal object RequirementsSectionAiSupport {
         return availableProviders.firstOrNull()
     }
 
+    fun loadSettings(): RequirementsSectionAiSettings {
+        return runCatching {
+            val settingsClass = Class.forName("com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState")
+            val instance = settingsClass.getMethod("getInstance").invoke(null)
+            RequirementsSectionAiSettings(
+                defaultProviderId = settingsClass
+                    .getMethod("getDefaultProvider")
+                    .invoke(instance) as? String,
+                selectedCliModel = settingsClass
+                    .getMethod("getSelectedCliModel")
+                    .invoke(instance) as? String,
+            )
+        }.getOrElse { RequirementsSectionAiSettings() }
+    }
+
     fun unavailableReason(
         providerHint: String? = null,
         llmRouter: LlmRouter? = null,
-        settingsProvider: (() -> SpecCodingSettingsState)? = null,
+        settingsProvider: (() -> RequirementsSectionAiSettings)? = null,
     ): String? {
         return if (
             resolvePreferredRealProviderId(
@@ -54,4 +70,11 @@ internal object RequirementsSectionAiSupport {
             null
         }
     }
+
+    private fun String?.trimToValue(): String? {
+        return this
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+    }
+
 }

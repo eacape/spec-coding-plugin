@@ -395,12 +395,12 @@ internal class SpecWorkflowTasksPanel(
             action.perform()
             return true
         }
-        val progress = executionPresentation(selectedTask)
-        if (
-            selectedTask.displayStatus == TaskStatus.IN_PROGRESS &&
-            progress?.phase != ExecutionLivePhase.WAITING_CONFIRMATION &&
-            progress?.phase != ExecutionLivePhase.CANCELLING
-        ) {
+        val progressPhase = executionPresentation(selectedTask)?.phase
+        if (progressPhase != null && progressPhase != ExecutionLivePhase.WAITING_CONFIRMATION && progressPhase != ExecutionLivePhase.CANCELLING) {
+            executeTaskButton.doClick()
+            return true
+        }
+        if (selectedTask.displayStatus == TaskStatus.IN_PROGRESS) {
             executeTaskButton.doClick()
             return true
         }
@@ -496,8 +496,9 @@ internal class SpecWorkflowTasksPanel(
     private fun updateExecuteButtonPresentation(selected: StructuredTask?) {
         val taskId = selected?.id.orEmpty()
         val progress = selected?.let(::executionPresentation)
-        val presentation = when (selected?.displayStatus) {
-            null -> SpecIconActionPresentation(
+        val progressPhase = progress?.phase
+        val presentation = when {
+            selected == null -> SpecIconActionPresentation(
                 icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.PENDING),
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.unavailable"),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.none"),
@@ -505,8 +506,25 @@ internal class SpecWorkflowTasksPanel(
                 disabledReason = SpecCodingBundle.message("spec.toolwindow.tasks.execute.unavailable"),
             )
 
-            TaskStatus.PENDING -> {
-                val blockedReason = selected?.executionBlockedReason(retry = false)
+            progressPhase == ExecutionLivePhase.WAITING_CONFIRMATION -> waitingCompletionPresentation(taskId)
+
+            progressPhase == ExecutionLivePhase.CANCELLING -> SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.Close,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling.tooltip", taskId),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling"),
+                enabled = false,
+                disabledReason = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling.tooltip", taskId),
+            )
+
+            progressPhase != null || selected.displayStatus == TaskStatus.IN_PROGRESS -> SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.Close,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", taskId),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop"),
+                enabled = true,
+            )
+
+            selected.displayStatus == TaskStatus.PENDING -> {
+                val blockedReason = selected.executionBlockedReason(retry = false)
                 SpecIconActionPresentation(
                     icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.PENDING),
                     tooltip = blockedReason
@@ -517,8 +535,8 @@ internal class SpecWorkflowTasksPanel(
                 )
             }
 
-            TaskStatus.BLOCKED -> {
-                val blockedReason = selected?.executionBlockedReason(retry = true)
+            selected.displayStatus == TaskStatus.BLOCKED -> {
+                val blockedReason = selected.executionBlockedReason(retry = true)
                 SpecIconActionPresentation(
                     icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.BLOCKED),
                     tooltip = blockedReason
@@ -529,26 +547,7 @@ internal class SpecWorkflowTasksPanel(
                 )
             }
 
-            TaskStatus.IN_PROGRESS -> when (progress?.phase) {
-                ExecutionLivePhase.WAITING_CONFIRMATION -> waitingCompletionPresentation(taskId)
-
-                ExecutionLivePhase.CANCELLING -> SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.Close,
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling"),
-                    enabled = false,
-                    disabledReason = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelling.tooltip", taskId),
-                )
-
-                else -> SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.Close,
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop"),
-                    enabled = true,
-                )
-            }
-
-            TaskStatus.COMPLETED -> SpecIconActionPresentation(
+            selected.displayStatus == TaskStatus.COMPLETED -> SpecIconActionPresentation(
                 icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.COMPLETED),
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.done.tooltip", taskId),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.done"),
@@ -556,7 +555,7 @@ internal class SpecWorkflowTasksPanel(
                 disabledReason = SpecCodingBundle.message("spec.toolwindow.tasks.execute.done.tooltip", taskId),
             )
 
-            TaskStatus.CANCELLED -> SpecIconActionPresentation(
+            else -> SpecIconActionPresentation(
                 icon = SpecWorkflowIcons.taskPrimaryAction(TaskStatus.CANCELLED),
                 tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelled.tooltip", taskId),
                 accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.cancelled"),
@@ -634,19 +633,17 @@ internal class SpecWorkflowTasksPanel(
         val progress = selected?.let(::executionPresentation)
         val disabledReason = when {
             selected == null -> SpecCodingBundle.message("spec.toolwindow.tasks.secondary.unavailable")
-            actions.isEmpty() && selected.displayStatus == TaskStatus.IN_PROGRESS -> when (progress?.phase) {
-                ExecutionLivePhase.WAITING_CONFIRMATION -> SpecCodingBundle.message(
-                    "spec.toolwindow.tasks.secondary.waitingConfirmation",
-                    taskId,
-                )
+            progress?.phase == ExecutionLivePhase.WAITING_CONFIRMATION -> SpecCodingBundle.message(
+                "spec.toolwindow.tasks.secondary.waitingConfirmation",
+                taskId,
+            )
 
-                ExecutionLivePhase.CANCELLING -> SpecCodingBundle.message(
-                    "spec.toolwindow.tasks.secondary.cancelling",
-                    taskId,
-                )
+            progress?.phase == ExecutionLivePhase.CANCELLING -> SpecCodingBundle.message(
+                "spec.toolwindow.tasks.secondary.cancelling",
+                taskId,
+            )
 
-                else -> SpecCodingBundle.message("spec.toolwindow.tasks.secondary.inProgress", taskId)
-            }
+            actions.isEmpty() && progress != null -> SpecCodingBundle.message("spec.toolwindow.tasks.secondary.inProgress", taskId)
             actions.isEmpty() -> SpecCodingBundle.message("spec.toolwindow.tasks.secondary.none", taskId)
             else -> null
         }
@@ -761,8 +758,18 @@ internal class SpecWorkflowTasksPanel(
     private fun resolveTaskRowPrimaryAction(task: StructuredTask): TaskRowPrimaryAction? {
         val taskId = task.id
         val progress = executionPresentation(task)
-        val presentation = when (task.displayStatus) {
-            TaskStatus.PENDING -> {
+        val progressPhase = progress?.phase
+        val presentation = when {
+            progressPhase == ExecutionLivePhase.WAITING_CONFIRMATION -> waitingCompletionPresentation(taskId)
+            progressPhase == ExecutionLivePhase.CANCELLING -> null
+            progressPhase != null || task.displayStatus == TaskStatus.IN_PROGRESS -> SpecIconActionPresentation(
+                icon = SpecWorkflowIcons.Close,
+                tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", taskId),
+                accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop"),
+                enabled = true,
+            )
+
+            task.displayStatus == TaskStatus.PENDING -> {
                 val blockedReason = task.executionBlockedReason(retry = false)
                 if (blockedReason != null) {
                     null
@@ -776,36 +783,21 @@ internal class SpecWorkflowTasksPanel(
                 }
             }
 
-            TaskStatus.BLOCKED -> {
+            task.displayStatus == TaskStatus.BLOCKED -> {
                 val blockedReason = task.executionBlockedReason(retry = true)
                 if (blockedReason != null) {
                     null
                 } else {
                     SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.Refresh,
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"),
-                    enabled = true,
-                )
+                        icon = SpecWorkflowIcons.Refresh,
+                        tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
+                        accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"),
+                        enabled = true,
+                    )
                 }
             }
 
-            TaskStatus.IN_PROGRESS -> when (progress?.phase) {
-                ExecutionLivePhase.WAITING_CONFIRMATION -> waitingCompletionPresentation(taskId)
-
-                ExecutionLivePhase.CANCELLING -> null
-
-                else -> SpecIconActionPresentation(
-                    icon = SpecWorkflowIcons.Close,
-                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", taskId),
-                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop"),
-                    enabled = true,
-                )
-            }
-
-            TaskStatus.COMPLETED,
-            TaskStatus.CANCELLED,
-            -> null
+            else -> null
         }
         return presentation?.let { TaskRowPrimaryAction(taskId = taskId, presentation = it) }
     }
@@ -819,27 +811,26 @@ internal class SpecWorkflowTasksPanel(
 
     private fun requestExecutionForSelection(): Boolean {
         val selectedTask = tasksList.selectedValue ?: return false
-        val progress = executionPresentation(selectedTask)
-        when (selectedTask.displayStatus) {
-            TaskStatus.PENDING -> {
+        val progressPhase = executionPresentation(selectedTask)?.phase
+        when {
+            progressPhase == ExecutionLivePhase.WAITING_CONFIRMATION -> requestCompletionWithRelatedFiles(selectedTask)
+            progressPhase == ExecutionLivePhase.CANCELLING -> return false
+            progressPhase != null || selectedTask.displayStatus == TaskStatus.IN_PROGRESS -> onCancelExecution(selectedTask.id)
+
+            selectedTask.displayStatus == TaskStatus.PENDING -> {
                 if (selectedTask.executionBlockedReason(retry = false) != null) {
                     return false
                 }
                 onExecuteTask(selectedTask.id, false)
             }
 
-            TaskStatus.BLOCKED -> {
+            selectedTask.displayStatus == TaskStatus.BLOCKED -> {
                 if (selectedTask.executionBlockedReason(retry = true) != null) {
                     return false
                 }
                 onExecuteTask(selectedTask.id, true)
             }
 
-            TaskStatus.IN_PROGRESS -> when (progress?.phase) {
-                ExecutionLivePhase.WAITING_CONFIRMATION -> requestCompletionWithRelatedFiles(selectedTask)
-                ExecutionLivePhase.CANCELLING -> return false
-                else -> onCancelExecution(selectedTask.id)
-            }
             else -> return false
         }
         return true
@@ -906,6 +897,9 @@ internal class SpecWorkflowTasksPanel(
     }
 
     private fun buildSecondaryActions(task: StructuredTask): List<TaskSecondaryAction> {
+        if (executionPresentation(task) != null) {
+            return emptyList()
+        }
         val cancellationBlockedReason = task.cancellationBlockedReason()
         return when (task.displayStatus) {
             TaskStatus.PENDING -> listOf(

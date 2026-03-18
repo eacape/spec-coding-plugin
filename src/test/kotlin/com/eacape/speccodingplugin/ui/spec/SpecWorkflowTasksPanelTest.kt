@@ -613,6 +613,46 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
+    fun `waiting live progress without active run should still expose completion action`() {
+        val panel = SpecWorkflowTasksPanel()
+        val now = Instant.now()
+
+        panel.updateTasks(
+            workflowId = "wf-live-waiting",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-014",
+                    title = "Live waiting only",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+            ),
+            liveProgressByTaskId = mapOf(
+                "T-014" to TaskExecutionLiveProgress(
+                    workflowId = "wf-live-waiting",
+                    runId = "run-14",
+                    taskId = "T-014",
+                    phase = ExecutionLivePhase.WAITING_CONFIRMATION,
+                    startedAt = now.minusSeconds(300),
+                    lastUpdatedAt = now.minusSeconds(5),
+                    lastDetail = "Waiting for confirmation",
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.selectTask("T-014"))
+        val snapshot = panel.snapshotForTest()
+        val rowActionSnapshot = panel.taskRowPrimaryActionSnapshotForTest("T-014")
+
+        assertEquals("WAITING_CONFIRMATION", snapshot.getValue("selectedTaskPhase"))
+        assertEquals("waitingComplete", snapshot.getValue("executeIconId"))
+        assertEquals("false", snapshot.getValue("secondaryEnabled"))
+        assertEquals("true", rowActionSnapshot.getValue("visible"))
+        assertEquals("waitingComplete", rowActionSnapshot.getValue("iconId"))
+    }
+
+    @Test
     fun `in progress task should expose stop execution secondary action`() {
         val cancellations = mutableListOf<String>()
         val panel = SpecWorkflowTasksPanel(

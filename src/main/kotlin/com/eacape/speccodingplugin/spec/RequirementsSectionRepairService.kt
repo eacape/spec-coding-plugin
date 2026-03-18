@@ -8,7 +8,6 @@ import com.eacape.speccodingplugin.llm.LlmRequest
 import com.eacape.speccodingplugin.llm.LlmResponse
 import com.eacape.speccodingplugin.llm.LlmRole
 import com.eacape.speccodingplugin.llm.LlmRouter
-import com.eacape.speccodingplugin.ui.settings.SpecCodingSettingsState
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Path
@@ -64,7 +63,7 @@ internal class RequirementsSectionRepairService(
     },
     draftGenerator: (suspend (RequirementsSectionDraftRequest) -> Result<String>)? = null,
     private val llmRouter: LlmRouter = LlmRouter.getInstance(),
-    private val settingsProvider: () -> SpecCodingSettingsState = { SpecCodingSettingsState.getInstance() },
+    private val settingsProvider: () -> RequirementsSectionAiSettings = RequirementsSectionAiSupport::loadSettings,
     requestCanceller: ((String?, String) -> Unit)? = null,
 ) {
     private val requestCanceller: (String?, String) -> Unit = requestCanceller ?: ::cancelRequestAcrossProviders
@@ -344,8 +343,8 @@ internal class RequirementsSectionRepairService(
                 )
             val effectiveRequestId = requestId ?: UUID.randomUUID().toString()
             val model = settings.selectedCliModel
-                .trim()
-                .takeIf { configuredModel -> configuredModel.isNotEmpty() }
+                ?.trim()
+                ?.takeIf { configuredModel -> configuredModel.isNotEmpty() }
             val llmRequest = LlmRequest(
                 messages = listOf(
                     LlmMessage(LlmRole.SYSTEM, systemPrompt()),
