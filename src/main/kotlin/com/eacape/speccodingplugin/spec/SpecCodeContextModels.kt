@@ -94,6 +94,10 @@ data class CodeContextCandidateFile(
 data class CodeChangeFile(
     val path: String,
     val status: CodeChangeFileStatus = CodeChangeFileStatus.UNKNOWN,
+    val addedLineCount: Int = 0,
+    val removedLineCount: Int = 0,
+    val symbolChanges: List<String> = emptyList(),
+    val apiChanges: List<String> = emptyList(),
 )
 
 data class CodeChangeSummary(

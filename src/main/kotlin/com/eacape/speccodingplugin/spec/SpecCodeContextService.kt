@@ -4,7 +4,12 @@ import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.project.Project
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.diff.DiffFormatter
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.treewalk.CanonicalTreeParser
+import org.eclipse.jgit.treewalk.FileTreeIterator
+import java.io.ByteArrayOutputStream
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -447,6 +452,10 @@ internal class GitStatusCodeChangeSummaryProvider(private val projectRoot: Path)
             }
             builder.build().use { repository ->
                 val workTreeRoot = repository.workTree?.toPath()?.toAbsolutePath()?.normalize() ?: return null
+                val diffDetailsByPath = collectWorkspaceDiffDetails(
+                    repository = repository,
+                    workTreeRoot = workTreeRoot,
+                )
                 Git(repository).use { git ->
                     val status = git.status().call()
                     val filesByPath = linkedMapOf<String, CodeChangeFileStatus>()
@@ -471,9 +480,14 @@ internal class GitStatusCodeChangeSummaryProvider(private val projectRoot: Path)
                     val files = filesByPath.entries
                         .sortedBy { it.key }
                         .map { (path, statusValue) ->
+                            val diffDetail = diffDetailsByPath[path]
                             CodeChangeFile(
                                 path = path,
                                 status = statusValue,
+                                addedLineCount = diffDetail?.addedLineCount ?: 0,
+                                removedLineCount = diffDetail?.removedLineCount ?: 0,
+                                symbolChanges = diffDetail?.symbolChanges.orEmpty(),
+                                apiChanges = diffDetail?.apiChanges.orEmpty(),
                             )
                         }
 
@@ -490,6 +504,49 @@ internal class GitStatusCodeChangeSummaryProvider(private val projectRoot: Path)
                 }
             }
         }.getOrNull()
+    }
+
+    private fun collectWorkspaceDiffDetails(
+        repository: org.eclipse.jgit.lib.Repository,
+        workTreeRoot: Path,
+    ): Map<String, WorkspaceDiffDetail> {
+        val headTreeId = repository.resolve("HEAD^{tree}") ?: return emptyMap()
+        repository.newObjectReader().use { reader ->
+            val oldTree = CanonicalTreeParser().apply { reset(reader, headTreeId) }
+            val newTree = FileTreeIterator(repository)
+            val patchOutput = ByteArrayOutputStream()
+            DiffFormatter(patchOutput).use { formatter ->
+                formatter.setRepository(repository)
+                formatter.setDetectRenames(true)
+                val detailsByPath = linkedMapOf<String, WorkspaceDiffDetail>()
+                formatter.scan(oldTree, newTree).forEach { entry ->
+                    val pathToken = when (entry.changeType) {
+                        org.eclipse.jgit.diff.DiffEntry.ChangeType.DELETE -> entry.oldPath
+                        else -> entry.newPath
+                    }
+                    val normalizedPath = toProjectRelativePath(workTreeRoot, projectRoot, pathToken)
+                        ?: return@forEach
+                    patchOutput.reset()
+                    formatter.format(entry)
+                    formatter.flush()
+                    val patchText = patchOutput.toString(StandardCharsets.UTF_8)
+                    val edits = formatter.toFileHeader(entry).toEditList()
+                    detailsByPath[normalizedPath] = WorkspaceDiffDetail(
+                        addedLineCount = edits.sumOf { edit -> edit.lengthB },
+                        removedLineCount = edits.sumOf { edit -> edit.lengthA },
+                        symbolChanges = extractSignatureHints(
+                            patchText = patchText,
+                            matcher = ::looksLikeSymbolSignature,
+                        ),
+                        apiChanges = extractSignatureHints(
+                            patchText = patchText,
+                            matcher = ::looksLikeApiSignature,
+                        ),
+                    )
+                }
+                return detailsByPath
+            }
+        }
     }
 
     private fun toProjectRelativePath(
@@ -528,6 +585,56 @@ internal class GitStatusCodeChangeSummaryProvider(private val projectRoot: Path)
         }
     }
 
+    private fun extractSignatureHints(
+        patchText: String,
+        matcher: (String) -> Boolean,
+    ): List<String> {
+        return patchText.lineSequence()
+            .mapNotNull { rawLine ->
+                val marker = when {
+                    rawLine.startsWith("+") && !rawLine.startsWith("+++") -> "+"
+                    rawLine.startsWith("-") && !rawLine.startsWith("---") -> "-"
+                    else -> null
+                } ?: return@mapNotNull null
+                val body = rawLine.substring(1).trim()
+                if (!matcher(body)) {
+                    return@mapNotNull null
+                }
+                "$marker ${collapseWhitespace(body)}"
+            }
+            .filter(String::isNotBlank)
+            .distinct()
+            .take(MAX_SIGNATURE_HINTS)
+            .toList()
+    }
+
+    private fun looksLikeSymbolSignature(line: String): Boolean {
+        if (line.isBlank() || line.startsWith("@")) {
+            return false
+        }
+        val normalized = collapseWhitespace(line)
+        return SYMBOL_SIGNATURE_PATTERNS.any { pattern -> pattern.containsMatchIn(normalized) }
+    }
+
+    private fun looksLikeApiSignature(line: String): Boolean {
+        if (line.isBlank() || line.startsWith("@")) {
+            return false
+        }
+        val normalized = collapseWhitespace(line)
+        return API_SIGNATURE_PATTERNS.any { pattern -> pattern.containsMatchIn(normalized) }
+    }
+
+    private fun collapseWhitespace(line: String): String {
+        return line.replace(Regex("\\s+"), " ").trim()
+    }
+
+    private data class WorkspaceDiffDetail(
+        val addedLineCount: Int = 0,
+        val removedLineCount: Int = 0,
+        val symbolChanges: List<String> = emptyList(),
+        val apiChanges: List<String> = emptyList(),
+    )
+
     companion object {
         private val STATUS_PRIORITY = mapOf(
             CodeChangeFileStatus.CONFLICTED to 0,
@@ -538,5 +645,16 @@ internal class GitStatusCodeChangeSummaryProvider(private val projectRoot: Path)
             CodeChangeFileStatus.UNTRACKED to 5,
             CodeChangeFileStatus.UNKNOWN to 6,
         )
+        private val SYMBOL_SIGNATURE_PATTERNS = listOf(
+            Regex("""\b(class|interface|object|enum class|sealed class|data class|record)\s+[A-Za-z_][A-Za-z0-9_]*"""),
+            Regex("""\bfun\s+[A-Za-z_][A-Za-z0-9_]*\s*\("""),
+            Regex("""\b[A-Za-z_][A-Za-z0-9_<>,?\s]*\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^;]*\)\s*\{?$"""),
+        )
+        private val API_SIGNATURE_PATTERNS = listOf(
+            Regex("""\b(public|protected|internal)\b.*\b(class|interface|object|enum class|record|fun)\b"""),
+            Regex("""^(class|interface|object|enum class|sealed class|data class|record)\s+[A-Za-z_][A-Za-z0-9_]*"""),
+            Regex("""^fun\s+[A-Za-z_][A-Za-z0-9_]*\s*\("""),
+        )
+        private const val MAX_SIGNATURE_HINTS = 6
     }
 }

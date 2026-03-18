@@ -354,6 +354,11 @@ object SpecArchitectureContract {
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
         ),
         SourceRule(
+            fileName = "SpecCodeContextPromptRenderer.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
+        ),
+        SourceRule(
             fileName = "SpecClarificationWriteback.kt",
             layer = Layer.DOMAIN,
             blockedImportPrefixes = domainBlockedImportPrefixes,
@@ -441,6 +446,11 @@ object SpecArchitectureContract {
         SourceRule(
             fileName = "SpecTaskExecutionService.kt",
             layer = Layer.APPLICATION,
+        ),
+        SourceRule(
+            fileName = "SpecTaskPlanningGroundingSupport.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
         ),
         SourceRule(
             fileName = "SpecTaskMarkdownParser.kt",

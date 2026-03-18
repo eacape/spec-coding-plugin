@@ -13,6 +13,7 @@ class SpecDeltaService(private val project: Project) {
     private var _storageOverride: SpecStorage? = null
     private var _artifactServiceOverride: SpecArtifactService? = null
     private var _workspaceCandidateFilesProviderOverride: (() -> List<String>)? = null
+    private var _codeChangeSummaryProviderOverride: ((Path) -> CodeChangeSummary?)? = null
     private var _atomicFileIOOverride: AtomicFileIO? = null
 
     private val specEngine: SpecEngine
@@ -35,18 +36,25 @@ class SpecDeltaService(private val project: Project) {
             }.getOrDefault(emptyList())
         }
 
+    private val codeChangeSummaryProvider: (Path) -> CodeChangeSummary?
+        get() = _codeChangeSummaryProviderOverride ?: { projectRoot ->
+            GitStatusCodeChangeSummaryProvider(projectRoot).collect()
+        }
+
     internal constructor(
         project: Project,
         specEngine: SpecEngine,
         storage: SpecStorage,
         artifactService: SpecArtifactService = SpecArtifactService(project),
         workspaceCandidateFilesProvider: () -> List<String> = { emptyList() },
+        codeChangeSummaryProvider: (Path) -> CodeChangeSummary? = { _ -> null },
         atomicFileIO: AtomicFileIO = AtomicFileIO(),
     ) : this(project) {
         _specEngineOverride = specEngine
         _storageOverride = storage
         _artifactServiceOverride = artifactService
         _workspaceCandidateFilesProviderOverride = workspaceCandidateFilesProvider
+        _codeChangeSummaryProviderOverride = codeChangeSummaryProvider
         _atomicFileIOOverride = atomicFileIO
     }
 
@@ -57,12 +65,14 @@ class SpecDeltaService(private val project: Project) {
         return runCatching {
             val baseline = specEngine.loadWorkflow(baselineWorkflowId).getOrThrow()
             val target = specEngine.loadWorkflow(targetWorkflowId).getOrThrow()
+            val workspaceCandidateFiles = workspaceCandidateFilesProvider()
             val delta = SpecDeltaCalculator.compareWorkflows(
                 baselineWorkflow = baseline,
                 targetWorkflow = target,
                 baselineVerificationContent = artifactService.readArtifact(baselineWorkflowId, StageId.VERIFY),
                 targetVerificationContent = artifactService.readArtifact(targetWorkflowId, StageId.VERIFY),
-                workspaceCandidateFiles = workspaceCandidateFilesProvider(),
+                workspaceCandidateFiles = workspaceCandidateFiles,
+                codeChangeSummary = collectCodeChangeSummary(workspaceCandidateFiles),
             ).withComparisonContext(
                 SpecDeltaComparisonContext(
                     baselineKind = SpecDeltaBaselineKind.WORKFLOW,
@@ -88,6 +98,7 @@ class SpecDeltaService(private val project: Project) {
         return runCatching {
             val baseline = specEngine.loadWorkflowSnapshot(workflowId, snapshotId).getOrThrow()
             val target = specEngine.loadWorkflow(targetWorkflowId).getOrThrow()
+            val workspaceCandidateFiles = workspaceCandidateFilesProvider()
             val delta = SpecDeltaCalculator.compareWorkflows(
                 baselineWorkflow = baseline,
                 targetWorkflow = target,
@@ -97,7 +108,8 @@ class SpecDeltaService(private val project: Project) {
                     stageId = StageId.VERIFY,
                 ).getOrThrow(),
                 targetVerificationContent = artifactService.readArtifact(targetWorkflowId, StageId.VERIFY),
-                workspaceCandidateFiles = workspaceCandidateFilesProvider(),
+                workspaceCandidateFiles = workspaceCandidateFiles,
+                codeChangeSummary = collectCodeChangeSummary(workspaceCandidateFiles),
             ).withComparisonContext(
                 SpecDeltaComparisonContext(
                     baselineKind = SpecDeltaBaselineKind.SNAPSHOT,
@@ -125,6 +137,7 @@ class SpecDeltaService(private val project: Project) {
         return runCatching {
             val baseline = specEngine.loadDeltaBaselineWorkflow(workflowId, baselineId).getOrThrow()
             val target = specEngine.loadWorkflow(targetWorkflowId).getOrThrow()
+            val workspaceCandidateFiles = workspaceCandidateFilesProvider()
             val delta = SpecDeltaCalculator.compareWorkflows(
                 baselineWorkflow = baseline,
                 targetWorkflow = target,
@@ -134,7 +147,8 @@ class SpecDeltaService(private val project: Project) {
                     stageId = StageId.VERIFY,
                 ).getOrThrow(),
                 targetVerificationContent = artifactService.readArtifact(targetWorkflowId, StageId.VERIFY),
-                workspaceCandidateFiles = workspaceCandidateFilesProvider(),
+                workspaceCandidateFiles = workspaceCandidateFiles,
+                codeChangeSummary = collectCodeChangeSummary(workspaceCandidateFiles),
             ).withComparisonContext(
                 SpecDeltaComparisonContext(
                     baselineKind = SpecDeltaBaselineKind.PINNED_BASELINE,
@@ -152,6 +166,49 @@ class SpecDeltaService(private val project: Project) {
             )
             delta
         }
+    }
+
+    private fun collectCodeChangeSummary(workspaceCandidateFiles: List<String>): CodeChangeSummary {
+        val normalizedWorkspaceCandidateFiles = workspaceCandidateFiles
+            .mapNotNull(::normalizePath)
+            .distinct()
+            .sorted()
+        val projectRoot = resolveProjectRoot()
+        val providerSummary = projectRoot?.let(codeChangeSummaryProvider)
+        if (providerSummary != null) {
+            return providerSummary
+        }
+        if (normalizedWorkspaceCandidateFiles.isNotEmpty()) {
+            return CodeChangeSummary(
+                source = CodeChangeSource.WORKSPACE_CANDIDATES,
+                files = normalizedWorkspaceCandidateFiles.map { path ->
+                    CodeChangeFile(
+                        path = path,
+                        status = CodeChangeFileStatus.UNKNOWN,
+                    )
+                },
+                summary = "Git working tree was unavailable; using workspace candidate files as the code change summary.",
+                available = true,
+            )
+        }
+        return CodeChangeSummary.unavailable(
+            "No Git working tree or workspace candidate changes were detected.",
+        )
+    }
+
+    private fun resolveProjectRoot(): Path? {
+        val basePath = project.basePath?.trim().orEmpty()
+        if (basePath.isBlank()) {
+            return null
+        }
+        return runCatching { Path.of(basePath).toAbsolutePath().normalize() }.getOrNull()
+    }
+
+    private fun normalizePath(rawPath: String): String? {
+        val normalized = rawPath.trim()
+            .replace('\\', '/')
+            .trim('/')
+        return normalized.takeIf { it.isNotEmpty() }
     }
 
     fun exportMarkdown(report: SpecWorkflowDelta): String {
@@ -203,6 +260,7 @@ class SpecDeltaService(private val project: Project) {
             "targetWorkflowId" to targetWorkflowId,
             "artifactChangeCount" to delta.artifactDeltas.count { artifact -> artifact.status != SpecDeltaStatus.UNCHANGED }.toString(),
             "taskChangeCount" to delta.taskSummary.changes.size.toString(),
+            "codeChangeCount" to delta.codeChangesSummary.files.count { file -> file.status != SpecDeltaStatus.UNCHANGED }.toString(),
             "relatedFileChangeCount" to delta.relatedFilesSummary.files.count { file -> file.status != SpecDeltaStatus.UNCHANGED }.toString(),
             "verificationChanged" to delta.verificationSummary.hasChanges().toString(),
         )
@@ -240,6 +298,7 @@ class SpecDeltaService(private val project: Project) {
             "targetWorkflowId" to comparisonContext.targetWorkflowId,
             "artifactChangeCount" to report.artifactDeltas.count { artifact -> artifact.status != SpecDeltaStatus.UNCHANGED }.toString(),
             "taskChangeCount" to report.taskSummary.changes.size.toString(),
+            "codeChangeCount" to report.codeChangesSummary.files.count { file -> file.status != SpecDeltaStatus.UNCHANGED }.toString(),
             "relatedFileChangeCount" to report.relatedFilesSummary.files.count { file -> file.status != SpecDeltaStatus.UNCHANGED }.toString(),
             "verificationChanged" to report.verificationSummary.hasChanges().toString(),
         )
@@ -293,12 +352,13 @@ private fun SpecWorkflowDelta.effectiveComparisonContext(): SpecDeltaComparisonC
 }
 
 private object SpecDeltaReportExporter {
-    private const val REPORT_SCHEMA_VERSION = 1
+    private const val REPORT_SCHEMA_VERSION = 2
 
     fun exportMarkdown(report: SpecWorkflowDelta): String {
         val metadata = SpecYamlCodec.encodeMap(buildReplayMetadata(report)).trimEnd()
         val context = report.effectiveComparisonContext()
         val changedArtifacts = report.artifactDeltas.filter { artifact -> artifact.status != SpecDeltaStatus.UNCHANGED }
+        val changedCodeFiles = report.codeChangesSummary.files.filter { file -> file.status != SpecDeltaStatus.UNCHANGED }
         val changedRelatedFiles = report.relatedFilesSummary.files.filter { file -> file.status != SpecDeltaStatus.UNCHANGED }
         return buildString {
             appendLine("---")
@@ -313,6 +373,7 @@ private object SpecDeltaReportExporter {
             appendLine("- Has changes: `${report.hasChanges()}`")
             appendLine("- Artifact counts: `${formatArtifactCounts(report)}`")
             appendLine("- Task changes: `${report.taskSummary.changes.size}`")
+            appendLine("- Code change files: `${changedCodeFiles.size}`")
             appendLine("- Related file changes: `${changedRelatedFiles.size}`")
             appendLine("- Verification changed: `${report.verificationSummary.hasChanges()}`")
             appendLine()
@@ -358,6 +419,30 @@ private object SpecDeltaReportExporter {
                     appendLine()
                 }
             }
+            appendLine("## Code Changes Summary")
+            appendLine("- Baseline reference: ${formatMarkdownComparisonContext(context)}")
+            appendLine("- Source: `${report.codeChangesSummary.source.name}`")
+            appendLine("- Summary: ${escapeMarkdownText(report.codeChangesSummary.summary.ifBlank { "No code change summary was collected." })}")
+            appendLine("- Workspace candidates: ${formatMarkdownList(report.codeChangesSummary.workspaceCandidateFiles)}")
+            if (report.codeChangesSummary.degradationReasons.isNotEmpty()) {
+                report.codeChangesSummary.degradationReasons.forEach { reason ->
+                    appendLine("- Degraded: ${escapeMarkdownText(reason)}")
+                }
+            }
+            if (changedCodeFiles.isEmpty()) {
+                appendLine()
+                appendLine("No code changes detected.")
+            } else {
+                appendLine()
+                appendLine("| Path | Status | Workspace | Baseline Tasks | Target Tasks | + | - | Hints |")
+                appendLine("| --- | --- | --- | --- | --- | ---: | ---: | --- |")
+                changedCodeFiles.forEach { file ->
+                    appendLine(
+                        "| `${file.path}` | ${file.status.name} | ${escapeMarkdownCell(formatWorkspaceStatus(file.workspaceStatus, file.presentInWorkspaceDiff, file.presentInWorkspaceCandidates))} | ${escapeMarkdownCell(formatPlainList(file.baselineTaskIds))} | ${escapeMarkdownCell(formatPlainList(file.targetTaskIds))} | ${file.addedLineCount} | ${file.removedLineCount} | ${escapeMarkdownCell(formatCodeChangeHints(file))} |",
+                    )
+                }
+            }
+            appendLine()
             appendLine("## Related Files Summary")
             appendLine("- Workspace candidates: ${formatMarkdownList(report.relatedFilesSummary.workspaceCandidateFiles)}")
             if (changedRelatedFiles.isEmpty()) {
@@ -397,6 +482,7 @@ private object SpecDeltaReportExporter {
     fun exportHtml(report: SpecWorkflowDelta): String {
         val context = report.effectiveComparisonContext()
         val changedArtifacts = report.artifactDeltas.filter { artifact -> artifact.status != SpecDeltaStatus.UNCHANGED }
+        val changedCodeFiles = report.codeChangesSummary.files.filter { file -> file.status != SpecDeltaStatus.UNCHANGED }
         val changedRelatedFiles = report.relatedFilesSummary.files.filter { file -> file.status != SpecDeltaStatus.UNCHANGED }
         val metadata = escapeHtml(SpecYamlCodec.encodeMap(buildReplayMetadata(report)).trimEnd())
         return buildString {
@@ -450,6 +536,7 @@ private object SpecDeltaReportExporter {
             appendLine("      <ul>")
             appendLine("        <li>Artifact counts: <code>${escapeHtml(formatArtifactCounts(report))}</code></li>")
             appendLine("        <li>Task changes: <code>${report.taskSummary.changes.size}</code></li>")
+            appendLine("        <li>Code change files: <code>${changedCodeFiles.size}</code></li>")
             appendLine("        <li>Related file changes: <code>${changedRelatedFiles.size}</code></li>")
             appendLine("        <li>Verification changed: <code>${report.verificationSummary.hasChanges()}</code></li>")
             appendLine("      </ul>")
@@ -501,6 +588,36 @@ private object SpecDeltaReportExporter {
                     appendLine("        <p><strong>Target:</strong> ${escapeHtml(formatTaskSnapshot(change.targetTask))}</p>")
                     appendLine("      </article>")
                 }
+            }
+            appendLine("    </section>")
+            appendLine("    <section>")
+            appendLine("      <h2>Code Changes Summary</h2>")
+            appendLine("      <ul>")
+            appendLine("        <li>Baseline reference: ${escapeHtml(formatHtmlComparisonContext(context))}</li>")
+            appendLine("        <li>Source: <code>${report.codeChangesSummary.source.name}</code></li>")
+            appendLine("        <li>Summary: ${escapeHtml(report.codeChangesSummary.summary.ifBlank { "No code change summary was collected." })}</li>")
+            appendLine("        <li>Workspace candidates: ${escapeHtml(formatPlainList(report.codeChangesSummary.workspaceCandidateFiles))}</li>")
+            appendLine("      </ul>")
+            if (report.codeChangesSummary.degradationReasons.isNotEmpty()) {
+                appendLine("      <ul>")
+                report.codeChangesSummary.degradationReasons.forEach { reason ->
+                    appendLine("        <li>Degraded: ${escapeHtml(reason)}</li>")
+                }
+                appendLine("      </ul>")
+            }
+            if (changedCodeFiles.isEmpty()) {
+                appendLine("      <p>No code changes detected.</p>")
+            } else {
+                appendLine("      <table>")
+                appendLine("        <thead><tr><th>Path</th><th>Status</th><th>Workspace</th><th>Baseline tasks</th><th>Target tasks</th><th>Added</th><th>Removed</th><th>Hints</th></tr></thead>")
+                appendLine("        <tbody>")
+                changedCodeFiles.forEach { file ->
+                    appendLine(
+                        "          <tr><td><code>${escapeHtml(file.path)}</code></td><td>${statusBadge(file.status)}</td><td>${escapeHtml(formatWorkspaceStatus(file.workspaceStatus, file.presentInWorkspaceDiff, file.presentInWorkspaceCandidates))}</td><td>${escapeHtml(formatPlainList(file.baselineTaskIds))}</td><td>${escapeHtml(formatPlainList(file.targetTaskIds))}</td><td>${file.addedLineCount}</td><td>${file.removedLineCount}</td><td>${escapeHtml(formatCodeChangeHints(file))}</td></tr>",
+                    )
+                }
+                appendLine("        </tbody>")
+                appendLine("      </table>")
             }
             appendLine("    </section>")
             appendLine("    <section>")
@@ -564,6 +681,13 @@ private object SpecDeltaReportExporter {
             "completed" to report.taskSummary.completedTaskIds.size,
             "cancelled" to report.taskSummary.cancelledTaskIds.size,
         )
+        val codeChangeCounts = linkedMapOf(
+            "changed" to report.codeChangesSummary.files.count { file -> file.status != SpecDeltaStatus.UNCHANGED },
+            "added" to report.codeChangesSummary.count(SpecDeltaStatus.ADDED),
+            "modified" to report.codeChangesSummary.count(SpecDeltaStatus.MODIFIED),
+            "removed" to report.codeChangesSummary.count(SpecDeltaStatus.REMOVED),
+            "workspaceCandidates" to report.codeChangesSummary.workspaceCandidateFiles.size,
+        )
         val relatedFileCounts = linkedMapOf(
             "changed" to report.relatedFilesSummary.files.count { file -> file.status != SpecDeltaStatus.UNCHANGED },
             "workspaceCandidates" to report.relatedFilesSummary.workspaceCandidateFiles.size,
@@ -580,6 +704,8 @@ private object SpecDeltaReportExporter {
             "artifacts" to report.artifactDeltas.map { artifact -> artifact.artifact.fileName },
             "artifactCounts" to artifactCounts,
             "taskCounts" to taskCounts,
+            "codeChangeSource" to report.codeChangesSummary.source.name,
+            "codeChangeCounts" to codeChangeCounts,
             "relatedFileCounts" to relatedFileCounts,
             "verificationChanged" to report.verificationSummary.hasChanges(),
         )
@@ -667,6 +793,31 @@ private object SpecDeltaReportExporter {
         return items.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "none"
     }
 
+    private fun formatWorkspaceStatus(
+        workspaceStatus: CodeChangeFileStatus?,
+        presentInWorkspaceDiff: Boolean,
+        presentInWorkspaceCandidates: Boolean,
+    ): String {
+        return when {
+            workspaceStatus != null -> workspaceStatus.name
+            presentInWorkspaceDiff -> "WORKSPACE_DIFF"
+            presentInWorkspaceCandidates -> "WORKSPACE_CANDIDATE"
+            else -> "none"
+        }
+    }
+
+    private fun formatCodeChangeHints(file: SpecCodeFileDelta): String {
+        val hints = buildList {
+            if (file.symbolChanges.isNotEmpty()) {
+                add("symbols: ${file.symbolChanges.joinToString("; ")}")
+            }
+            if (file.apiChanges.isNotEmpty()) {
+                add("api: ${file.apiChanges.joinToString("; ")}")
+            }
+        }
+        return hints.joinToString(" | ").ifBlank { "none" }
+    }
+
     private fun escapeMarkdownCell(raw: String): String {
         return raw
             .replace("|", "\\|")
@@ -711,6 +862,7 @@ object SpecDeltaCalculator {
         baselineVerificationContent: String? = null,
         targetVerificationContent: String? = null,
         workspaceCandidateFiles: List<String> = emptyList(),
+        codeChangeSummary: CodeChangeSummary = CodeChangeSummary(),
     ): SpecWorkflowDelta {
         val artifactDeltas = buildList {
             add(
@@ -775,6 +927,12 @@ object SpecDeltaCalculator {
             phaseDeltas = phaseDeltas,
             artifactDeltas = artifactDeltas,
             taskSummary = buildTaskSummary(baselineTasks, targetTasks),
+            codeChangesSummary = buildCodeChangesSummary(
+                baselineTasks = baselineTasks,
+                targetTasks = targetTasks,
+                workspaceCandidateFiles = workspaceCandidateFiles,
+                codeChangeSummary = codeChangeSummary,
+            ),
             relatedFilesSummary = buildRelatedFilesSummary(
                 baselineTasks = baselineTasks,
                 targetTasks = targetTasks,
@@ -932,6 +1090,78 @@ object SpecDeltaCalculator {
         )
     }
 
+    private fun buildCodeChangesSummary(
+        baselineTasks: Map<String, StructuredTask>,
+        targetTasks: Map<String, StructuredTask>,
+        workspaceCandidateFiles: List<String>,
+        codeChangeSummary: CodeChangeSummary,
+    ): SpecCodeChangesDeltaSummary {
+        val baselineByFile = indexRelatedFiles(baselineTasks.values)
+        val targetByFile = indexRelatedFiles(targetTasks.values)
+        val normalizedWorkspaceFiles = workspaceCandidateFiles
+            .mapNotNull(::normalizePath)
+            .distinct()
+            .sorted()
+        val workspaceSet = normalizedWorkspaceFiles.toSet()
+        val codeChangesByFile = linkedMapOf<String, CodeChangeFile>()
+
+        codeChangeSummary.files.forEach { rawChange ->
+            val normalizedPath = normalizePath(rawChange.path) ?: return@forEach
+            val normalizedChange = rawChange.copy(path = normalizedPath)
+            val existing = codeChangesByFile[normalizedPath]
+            codeChangesByFile[normalizedPath] = if (existing == null) {
+                normalizedChange
+            } else {
+                mergeCodeChangeFile(existing, normalizedChange)
+            }
+        }
+
+        val files = (baselineByFile.keys + targetByFile.keys + workspaceSet + codeChangesByFile.keys)
+            .toSortedSet()
+            .map { path ->
+                val change = codeChangesByFile[path]
+                val baselineTaskIds = baselineByFile[path].orEmpty()
+                val targetTaskIds = targetByFile[path].orEmpty()
+                val presentInWorkspaceCandidates = workspaceSet.contains(path)
+                SpecCodeFileDelta(
+                    path = path,
+                    status = resolveCodeFileStatus(
+                        workspaceStatus = change?.status,
+                        baselineTaskIds = baselineTaskIds,
+                        targetTaskIds = targetTaskIds,
+                        presentInWorkspaceCandidates = presentInWorkspaceCandidates,
+                    ),
+                    workspaceStatus = change?.status,
+                    baselineTaskIds = baselineTaskIds,
+                    targetTaskIds = targetTaskIds,
+                    presentInWorkspaceDiff = change != null,
+                    presentInWorkspaceCandidates = presentInWorkspaceCandidates,
+                    addedLineCount = change?.addedLineCount ?: 0,
+                    removedLineCount = change?.removedLineCount ?: 0,
+                    symbolChanges = change?.symbolChanges.orEmpty(),
+                    apiChanges = change?.apiChanges.orEmpty(),
+                )
+            }
+
+        return SpecCodeChangesDeltaSummary(
+            source = codeChangeSummary.source,
+            summary = codeChangeSummary.summary.ifBlank {
+                if (files.isEmpty()) {
+                    "No code change summary was collected."
+                } else {
+                    "Aggregated ${files.size} file-level code change signal(s)."
+                }
+            },
+            files = files,
+            workspaceCandidateFiles = normalizedWorkspaceFiles,
+            degradationReasons = if (codeChangeSummary.available) {
+                emptyList()
+            } else {
+                listOf(codeChangeSummary.summary.ifBlank { "Code change signals were unavailable." })
+            },
+        )
+    }
+
     private fun buildRelatedFilesSummary(
         baselineTasks: Map<String, StructuredTask>,
         targetTasks: Map<String, StructuredTask>,
@@ -970,6 +1200,53 @@ object SpecDeltaCalculator {
             files = files,
             workspaceCandidateFiles = normalizedWorkspaceFiles,
         )
+    }
+
+    private fun mergeCodeChangeFile(
+        current: CodeChangeFile,
+        next: CodeChangeFile,
+    ): CodeChangeFile {
+        return CodeChangeFile(
+            path = current.path,
+            status = if (codeChangeStatusPriority(next.status) < codeChangeStatusPriority(current.status)) {
+                next.status
+            } else {
+                current.status
+            },
+            addedLineCount = maxOf(current.addedLineCount, next.addedLineCount),
+            removedLineCount = maxOf(current.removedLineCount, next.removedLineCount),
+            symbolChanges = (current.symbolChanges + next.symbolChanges).distinct(),
+            apiChanges = (current.apiChanges + next.apiChanges).distinct(),
+        )
+    }
+
+    private fun resolveCodeFileStatus(
+        workspaceStatus: CodeChangeFileStatus?,
+        baselineTaskIds: List<String>,
+        targetTaskIds: List<String>,
+        presentInWorkspaceCandidates: Boolean,
+    ): SpecDeltaStatus {
+        return when (workspaceStatus) {
+            CodeChangeFileStatus.ADDED,
+            CodeChangeFileStatus.UNTRACKED,
+            -> SpecDeltaStatus.ADDED
+
+            CodeChangeFileStatus.REMOVED,
+            CodeChangeFileStatus.MISSING,
+            -> SpecDeltaStatus.REMOVED
+
+            CodeChangeFileStatus.MODIFIED,
+            CodeChangeFileStatus.CONFLICTED,
+            CodeChangeFileStatus.UNKNOWN,
+            -> SpecDeltaStatus.MODIFIED
+
+            null -> when {
+                baselineTaskIds.isEmpty() && targetTaskIds.isNotEmpty() -> SpecDeltaStatus.ADDED
+                baselineTaskIds.isNotEmpty() && targetTaskIds.isEmpty() -> SpecDeltaStatus.REMOVED
+                baselineTaskIds != targetTaskIds || presentInWorkspaceCandidates -> SpecDeltaStatus.MODIFIED
+                else -> SpecDeltaStatus.UNCHANGED
+            }
+        }
     }
 
     private fun buildVerificationSummary(
@@ -1175,6 +1452,18 @@ object SpecDeltaCalculator {
             }
         }
         return dp[rows][cols]
+    }
+
+    private fun codeChangeStatusPriority(status: CodeChangeFileStatus): Int {
+        return when (status) {
+            CodeChangeFileStatus.CONFLICTED -> 0
+            CodeChangeFileStatus.REMOVED -> 1
+            CodeChangeFileStatus.MISSING -> 2
+            CodeChangeFileStatus.ADDED -> 3
+            CodeChangeFileStatus.MODIFIED -> 4
+            CodeChangeFileStatus.UNTRACKED -> 5
+            CodeChangeFileStatus.UNKNOWN -> 6
+        }
     }
 
     private fun normalizePath(rawPath: String): String? {

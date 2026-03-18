@@ -165,9 +165,101 @@ class SpecGeneratorComposeModeTest {
         assertTrue(userPrompt.contains("Candidate Files To Reuse Or Inspect"))
     }
 
-    private fun promptCodeContextPack(): CodeContextPack {
+    @Test
+    fun `generate should guide and enrich relatedFiles for implement planning`() = runBlocking {
+        val llmRouter = mockk<LlmRouter>()
+        val generator = SpecGenerator(llmRouter)
+        var capturedLlmRequest: LlmRequest? = null
+        coEvery {
+            llmRouter.generate(providerId = any(), request = any())
+        } coAnswers {
+            capturedLlmRequest = invocation.args[1] as LlmRequest
+            LlmResponse(
+                content = """
+                    ## Task List
+
+                    ### T-001: Update SpecWorkflowPanel session reuse
+                    ```spec-task
+                    status: PENDING
+                    priority: P0
+                    dependsOn: []
+                    relatedFiles: []
+                    verificationResult: null
+                    ```
+                    - [ ] Update shared chat session reuse in SpecWorkflowPanel.
+
+                    ## Implementation Steps
+                    1. Update implementation and regression coverage.
+
+                    ## Test Plan
+                    - [ ] Run regression coverage.
+                """.trimIndent(),
+                model = "mock-model",
+            )
+        }
+
+        val result = generator.generate(
+            SpecGenerationRequest(
+                phase = SpecPhase.IMPLEMENT,
+                input = "Split the design into implementation tasks.",
+                previousDocument = promptDocument(
+                    phase = SpecPhase.DESIGN,
+                    id = "design-upstream",
+                    content = """
+                        ## Architecture Design
+                        - Reuse a shared workflow chat session during task execution.
+                    """.trimIndent(),
+                ),
+                codeContextPack = CodeContextPack(
+                    phase = SpecPhase.IMPLEMENT,
+                    projectStructure = ProjectStructureSummary(
+                        topLevelDirectories = listOf("src"),
+                        topLevelFiles = listOf("README.md"),
+                        keyPaths = listOf("src/main/kotlin", "src/test/kotlin"),
+                        summary = "Summarize likely implementation files, tests, and verification entry points.",
+                    ),
+                    candidateFiles = listOf(
+                        CodeContextCandidateFile(
+                            path = "src/main/kotlin/com/example/SpecWorkflowPanel.kt",
+                            signals = setOf(CodeContextCandidateSignal.VCS_CHANGE),
+                        ),
+                    ),
+                    changeSummary = CodeChangeSummary(
+                        source = CodeChangeSource.VCS_STATUS,
+                        files = listOf(
+                            CodeChangeFile(
+                                path = "src/main/kotlin/com/example/SpecWorkflowPanel.kt",
+                                status = CodeChangeFileStatus.MODIFIED,
+                            ),
+                        ),
+                        summary = "Git working tree reports 1 changed file(s).",
+                        available = true,
+                    ),
+                ),
+                options = GenerationOptions(
+                    providerId = "mock",
+                    model = "mock-model",
+                ),
+            ),
+        )
+
+        val userPrompt = capturedLlmRequest
+            ?.messages
+            ?.lastOrNull { message -> message.role == LlmRole.USER }
+            ?.content
+        val generated = (result as SpecGenerationResult.Success).document.content
+
+        assertNotNull(userPrompt)
+        assertTrue(userPrompt!!.contains("## relatedFiles Planning Guidance"))
+        assertTrue(userPrompt.contains(SpecTaskPlanningGroundingSupport.RELATED_FILES_REASON_PREFIX))
+        assertTrue(userPrompt.contains("src/main/kotlin/com/example/SpecWorkflowPanel.kt"))
+        assertTrue(generated.contains("relatedFiles:"))
+        assertTrue(generated.contains("src/main/kotlin/com/example/SpecWorkflowPanel.kt"))
+    }
+
+    private fun promptCodeContextPack(phase: SpecPhase = SpecPhase.DESIGN): CodeContextPack {
         return CodeContextPack(
-            phase = SpecPhase.DESIGN,
+            phase = phase,
             projectStructure = ProjectStructureSummary(
                 topLevelDirectories = listOf("src", "docs"),
                 topLevelFiles = listOf("README.md"),

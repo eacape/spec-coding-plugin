@@ -180,6 +180,28 @@ class SpecDeltaCalculatorTest {
                 "src/main/kotlin/B.kt",
                 "src/test/kotlin/SpecDeltaCalculatorTest.kt",
             ),
+            codeChangeSummary = CodeChangeSummary(
+                source = CodeChangeSource.VCS_STATUS,
+                available = true,
+                summary = "Git working tree reports 2 changed file(s).",
+                files = listOf(
+                    CodeChangeFile(
+                        path = "src/main/kotlin/B.kt",
+                        status = CodeChangeFileStatus.MODIFIED,
+                        addedLineCount = 12,
+                        removedLineCount = 3,
+                        symbolChanges = listOf("+ fun runNewFlow()"),
+                        apiChanges = listOf("+ public fun runNewFlow()"),
+                    ),
+                    CodeChangeFile(
+                        path = "src/main/kotlin/NewFlow.kt",
+                        status = CodeChangeFileStatus.ADDED,
+                        addedLineCount = 18,
+                        removedLineCount = 0,
+                        symbolChanges = listOf("+ class NewFlow"),
+                    ),
+                ),
+            ),
         )
         val verificationArtifact = delta.artifactDeltas.first { artifact ->
             artifact.artifact == SpecDeltaArtifact.VERIFICATION
@@ -200,6 +222,15 @@ class SpecDeltaCalculatorTest {
         assertEquals(SpecDeltaStatus.ADDED, relatedB.status)
         assertEquals(SpecDeltaStatus.REMOVED, relatedLegacy.status)
         assertTrue(delta.relatedFilesSummary.workspaceCandidateFiles.contains("src/test/kotlin/SpecDeltaCalculatorTest.kt"))
+
+        val codeChangeB = delta.codeChangesSummary.files.first { file -> file.path == "src/main/kotlin/B.kt" }
+        val codeChangeNewFlow = delta.codeChangesSummary.files.first { file -> file.path == "src/main/kotlin/NewFlow.kt" }
+        assertEquals(CodeChangeSource.VCS_STATUS, delta.codeChangesSummary.source)
+        assertEquals(SpecDeltaStatus.MODIFIED, codeChangeB.status)
+        assertEquals(12, codeChangeB.addedLineCount)
+        assertTrue(codeChangeB.symbolChanges.contains("+ fun runNewFlow()"))
+        assertEquals(SpecDeltaStatus.ADDED, codeChangeNewFlow.status)
+        assertTrue(delta.codeChangesSummary.workspaceCandidateFiles.contains("src/test/kotlin/SpecDeltaCalculatorTest.kt"))
 
         assertEquals(VerificationConclusion.PASS, delta.verificationSummary.baselineArtifact.conclusion)
         assertEquals(VerificationConclusion.FAIL, delta.verificationSummary.targetArtifact.conclusion)

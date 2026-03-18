@@ -60,6 +60,7 @@ class SpecGenerator(
             val content = normalizeGeneratedDocument(
                 phase = request.phase,
                 rawContent = llmResponse.content,
+                codeContextPack = request.codeContextPack,
             )
 
             // 创建文档
@@ -277,6 +278,7 @@ class SpecGenerator(
             appendLine(request.previousDocument?.content ?: request.input)
             appendLine("```")
             appendSupportingContext(request)
+            appendTaskPlanningGuidance(request.codeContextPack)
             appendLine()
             appendLine("要求：")
             appendLine("0. 只输出最终 tasks.md 正文，不要输出思考过程、工具日志、文件路径、JSON 字符串或转义字符。")
@@ -288,9 +290,11 @@ class SpecGenerator(
             appendLine("6. 包含测试计划")
             appendLine("7. 每个任务必须使用标题 `### T-001: 标题`，并在下一行紧跟 `spec-task` YAML 代码块")
             appendLine("8. `spec-task` 必须包含固定字段：status、priority、dependsOn、relatedFiles、verificationResult")
-            appendLine("9. 初始任务状态使用 `PENDING`，依赖/关联文件默认 `[]`，verificationResult 默认 `null`")
-            appendLine("10. 在 `spec-task` 代码块后使用 Markdown Checkbox 描述该任务的执行子项")
-            appendLine("11. 必须包含二级标题：## 任务列表 与 ## 实现步骤")
+            appendLine("9. 初始任务状态使用 `PENDING`，verificationResult 默认 `null`")
+            appendLine("10. `relatedFiles` 应优先绑定到已有模块、实现文件、测试文件或验证入口，使用项目相对路径")
+            appendLine("11. 只有在没有可靠代码线索时才允许 `relatedFiles: []`，并且必须在 `spec-task` 后紧跟一条普通列表说明，前缀使用 `${SpecTaskPlanningGroundingSupport.RELATED_FILES_REASON_PREFIX}`")
+            appendLine("12. 在 `spec-task` 代码块后使用 Markdown Checkbox 描述该任务的执行子项")
+            appendLine("13. 必须包含二级标题：## 任务列表 与 ## 实现步骤")
 
             if (request.options.includeExamples) {
                 appendLine()
@@ -427,13 +431,16 @@ class SpecGenerator(
                 content = request.previousDocument?.content,
             )
             appendSupportingContext(request)
+            appendTaskPlanningGuidance(request.codeContextPack)
             appendLine()
             appendLine("Requirements:")
             appendLine("0. Output only the final tasks.md body. Do not output explanations, diff, JSON, or code fences.")
             appendLine("1. Use the current tasks.md as the primary baseline. Make incremental additions or local edits instead of regenerating the whole plan.")
             appendLine("2. Preserve existing task IDs, task status blocks, and spec-task YAML structure unless the revision explicitly requires a change.")
             appendLine("3. Any newly added task must use a new `T-xxx` identifier and keep dependsOn, relatedFiles, and verificationResult consistent.")
-            appendLine("4. Keep the task list and implementation steps structure stable while integrating the new work.")
+            appendLine("4. Fill or update `relatedFiles` when the local repository code context gives a reliable file-level signal for that task.")
+            appendLine("5. If a task still keeps `relatedFiles: []`, add a plain bullet immediately after its `spec-task` fence using the prefix `${SpecTaskPlanningGroundingSupport.RELATED_FILES_REASON_PREFIX}` and explain why no reliable file mapping was available.")
+            appendLine("6. Keep the task list and implementation steps structure stable while integrating the new work.")
 
             if (request.options.includeExamples) {
                 appendLine()
@@ -446,6 +453,7 @@ class SpecGenerator(
     private fun normalizeGeneratedDocument(
         phase: SpecPhase,
         rawContent: String,
+        codeContextPack: CodeContextPack? = null,
     ): String {
         if (rawContent.isBlank()) return ""
 
@@ -463,6 +471,7 @@ class SpecGenerator(
         }
         if (phase == SpecPhase.IMPLEMENT) {
             normalized = ensureImplementStructure(normalized)
+            normalized = SpecTaskPlanningGroundingSupport.enrichTasksMarkdown(normalized, codeContextPack)
         }
         return normalized.trim()
     }
@@ -766,6 +775,26 @@ class SpecGenerator(
         appendIncrementalBaselineContext(request.incrementalBaselineContext)
         appendWorkflowSourceContext(request.options.workflowSourceUsage)
         appendCodeContext(request.codeContextPack)
+    }
+
+    private fun StringBuilder.appendTaskPlanningGuidance(codeContextPack: CodeContextPack?) {
+        if (codeContextPack == null) {
+            return
+        }
+        appendLine()
+        appendLine("## relatedFiles Planning Guidance")
+        appendLine("Use the local repository code context above to bind each task to concrete project-relative files whenever there is a reliable signal.")
+        appendLine("- Prefer existing modules, implementation files, test files, and verification entry points that already appear in the repository context.")
+        appendLine("- Implementation tasks should usually point at concrete source files; regression or verification tasks should usually point at test files.")
+        appendLine("- Only keep `relatedFiles: []` when there is no reliable file-level mapping for that specific task.")
+        appendLine("- If `relatedFiles` stays empty, add a plain bullet immediately after the `spec-task` block with the prefix `${SpecTaskPlanningGroundingSupport.RELATED_FILES_REASON_PREFIX}` and explain why.")
+        val candidatePaths = codeContextPack.candidateFiles
+            .map { candidate -> candidate.path }
+            .distinct()
+            .take(8)
+        if (candidatePaths.isNotEmpty()) {
+            appendLine("- Candidate file paths to prioritize: ${candidatePaths.joinToString(", ")}")
+        }
     }
 
     private fun buildRequestMetadata(options: GenerationOptions): Map<String, String> {
@@ -1165,7 +1194,9 @@ class SpecGenerator(
             status: PENDING
             priority: P0
             dependsOn: []
-            relatedFiles: []
+            relatedFiles:
+              - src/main/kotlin/com/example/user/User.kt
+              - src/test/kotlin/com/example/user/UserTest.kt
             verificationResult: null
             ```
             - [ ] 定义实体字段与约束
@@ -1177,7 +1208,9 @@ class SpecGenerator(
             priority: P0
             dependsOn:
               - T-001
-            relatedFiles: []
+            relatedFiles:
+              - src/main/kotlin/com/example/user/UserRegistrationController.kt
+              - src/test/kotlin/com/example/user/UserRegistrationControllerTest.kt
             verificationResult: null
             ```
             - [ ] 定义请求/响应模型
@@ -1189,7 +1222,9 @@ class SpecGenerator(
             priority: P1
             dependsOn:
               - T-002
-            relatedFiles: []
+            relatedFiles:
+              - src/main/kotlin/com/example/ui/LoginPanel.kt
+              - src/test/kotlin/com/example/ui/LoginPanelTest.kt
             verificationResult: null
             ```
             - [ ] 创建表单 UI
@@ -1244,7 +1279,8 @@ class SpecGenerator(
             status: PENDING
             priority: P0
             dependsOn: []
-            relatedFiles: []
+            relatedFiles:
+              - src/main/kotlin/com/example/ScopePlanner.kt
             verificationResult: null
             ```
             - [ ] 明确需求范围、接口边界与关键依赖
@@ -1255,7 +1291,9 @@ class SpecGenerator(
             priority: P0
             dependsOn:
               - T-001
-            relatedFiles: []
+            relatedFiles:
+              - src/main/kotlin/com/example/CoreFeatureService.kt
+              - src/test/kotlin/com/example/CoreFeatureServiceTest.kt
             verificationResult: null
             ```
             - [ ] 实现核心逻辑并补充单元/集成测试
@@ -1266,7 +1304,9 @@ class SpecGenerator(
             priority: P1
             dependsOn:
               - T-002
-            relatedFiles: []
+            relatedFiles:
+              - src/test/kotlin/com/example/CoreFeatureRegressionTest.kt
+              - README.md
             verificationResult: null
             ```
             - [ ] 运行回归验证并同步文档与状态

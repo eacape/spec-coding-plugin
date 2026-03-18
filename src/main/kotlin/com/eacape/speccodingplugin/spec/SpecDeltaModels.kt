@@ -144,6 +144,36 @@ data class SpecRelatedFilesDeltaSummary(
     }
 }
 
+data class SpecCodeFileDelta(
+    val path: String,
+    val status: SpecDeltaStatus,
+    val workspaceStatus: CodeChangeFileStatus? = null,
+    val baselineTaskIds: List<String> = emptyList(),
+    val targetTaskIds: List<String> = emptyList(),
+    val presentInWorkspaceDiff: Boolean = false,
+    val presentInWorkspaceCandidates: Boolean = false,
+    val addedLineCount: Int = 0,
+    val removedLineCount: Int = 0,
+    val symbolChanges: List<String> = emptyList(),
+    val apiChanges: List<String> = emptyList(),
+)
+
+data class SpecCodeChangesDeltaSummary(
+    val source: CodeChangeSource = CodeChangeSource.NONE,
+    val summary: String = "",
+    val files: List<SpecCodeFileDelta> = emptyList(),
+    val workspaceCandidateFiles: List<String> = emptyList(),
+    val degradationReasons: List<String> = emptyList(),
+) {
+    fun count(status: SpecDeltaStatus): Int {
+        return files.count { file -> file.status == status }
+    }
+
+    fun hasChanges(): Boolean {
+        return files.any { file -> file.status != SpecDeltaStatus.UNCHANGED }
+    }
+}
+
 data class SpecVerificationArtifactSummary(
     val documentAvailable: Boolean = false,
     val conclusion: VerificationConclusion? = null,
@@ -185,6 +215,7 @@ data class SpecWorkflowDelta(
     val phaseDeltas: List<SpecPhaseDelta>,
     val artifactDeltas: List<SpecArtifactDelta> = emptyList(),
     val taskSummary: SpecTaskDeltaSummary = SpecTaskDeltaSummary(),
+    val codeChangesSummary: SpecCodeChangesDeltaSummary = SpecCodeChangesDeltaSummary(),
     val relatedFilesSummary: SpecRelatedFilesDeltaSummary = SpecRelatedFilesDeltaSummary(),
     val verificationSummary: SpecVerificationDeltaSummary = SpecVerificationDeltaSummary(),
     val comparisonContext: SpecDeltaComparisonContext? = null,
@@ -203,6 +234,7 @@ data class SpecWorkflowDelta(
     fun hasChanges(): Boolean {
         return effectiveArtifactDeltas.any { artifactDelta -> artifactDelta.status != SpecDeltaStatus.UNCHANGED } ||
             taskSummary.hasChanges() ||
+            codeChangesSummary.hasChanges() ||
             relatedFilesSummary.hasChanges() ||
             verificationSummary.hasChanges()
     }

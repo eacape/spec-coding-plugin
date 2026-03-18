@@ -3,6 +3,7 @@ package com.eacape.speccodingplugin.spec
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
+import org.eclipse.jgit.api.Git
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -157,6 +158,52 @@ class SpecCodeContextServiceTest {
             },
         )
         assertFalse(pack.hasAutoContext())
+    }
+
+    @Test
+    fun `git status provider should capture diff stats and symbol api hints`() {
+        Files.createDirectories(tempDir.resolve("src/main/kotlin/com/example"))
+        val sourceFile = tempDir.resolve("src/main/kotlin/com/example/App.kt")
+        Files.writeString(
+            sourceFile,
+            """
+            package com.example
+
+            class App {
+                fun stable() = Unit
+            }
+            """.trimIndent(),
+        )
+
+        Git.init().setDirectory(tempDir.toFile()).call().use { git ->
+            git.add().addFilepattern(".").call()
+            git.commit()
+                .setMessage("initial")
+                .setAuthor("Spec", "spec@example.com")
+                .setCommitter("Spec", "spec@example.com")
+                .call()
+        }
+
+        Files.writeString(
+            sourceFile,
+            """
+            package com.example
+
+            class App {
+                fun stable() = Unit
+                public fun newApi() = Unit
+            }
+            """.trimIndent(),
+        )
+
+        val summary = GitStatusCodeChangeSummaryProvider(tempDir).collect()
+
+        assertEquals(CodeChangeSource.VCS_STATUS, summary?.source)
+        val changedFile = summary?.files?.firstOrNull { it.path == "src/main/kotlin/com/example/App.kt" }
+        assertEquals(CodeChangeFileStatus.MODIFIED, changedFile?.status)
+        assertTrue((changedFile?.addedLineCount ?: 0) > 0)
+        assertTrue(changedFile?.symbolChanges?.any { hint -> hint.contains("newApi") } == true)
+        assertTrue(changedFile?.apiChanges?.any { hint -> hint.contains("newApi") } == true)
     }
 
     private fun workflowWithTasks(tasksMarkdown: String): SpecWorkflow {

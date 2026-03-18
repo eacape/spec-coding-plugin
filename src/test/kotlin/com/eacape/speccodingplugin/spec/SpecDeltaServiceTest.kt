@@ -35,6 +35,29 @@ class SpecDeltaServiceTest {
             storage = storage,
             artifactService = artifactService,
             workspaceCandidateFilesProvider = { listOf("src/test/kotlin/SpecDeltaServiceTest.kt") },
+            codeChangeSummaryProvider = {
+                CodeChangeSummary(
+                    source = CodeChangeSource.VCS_STATUS,
+                    available = true,
+                    summary = "Git working tree reports 2 changed file(s).",
+                    files = listOf(
+                        CodeChangeFile(
+                            path = "src/main/kotlin/Regression.kt",
+                            status = CodeChangeFileStatus.MODIFIED,
+                            addedLineCount = 9,
+                            removedLineCount = 2,
+                            symbolChanges = listOf("+ fun verifyRegression()"),
+                            apiChanges = listOf("+ public fun verifyRegression()"),
+                        ),
+                        CodeChangeFile(
+                            path = "src/test/kotlin/SpecDeltaServiceTest.kt",
+                            status = CodeChangeFileStatus.MODIFIED,
+                            addedLineCount = 4,
+                            removedLineCount = 0,
+                        ),
+                    ),
+                )
+            },
         )
     }
 
@@ -257,6 +280,8 @@ class SpecDeltaServiceTest {
         assertTrue(markdown.contains("## Artifact Diffs"))
         assertTrue(markdown.contains("```diff"))
         assertTrue(markdown.contains("## Task Changes"))
+        assertTrue(markdown.contains("## Code Changes Summary"))
+        assertTrue(markdown.contains("symbols: + fun verifyRegression()"))
         assertTrue(markdown.contains("## Related Files Summary"))
         assertTrue(markdown.contains("## Verification Summary"))
         assertTrue(markdown.contains("+++ target/verification.md"))
@@ -265,6 +290,8 @@ class SpecDeltaServiceTest {
         assertTrue(html.startsWith("<!DOCTYPE html>"))
         assertTrue(html.contains("<h2>Replay Metadata</h2>"))
         assertTrue(html.contains("<h2>Artifact Diffs</h2>"))
+        assertTrue(html.contains("<h2>Code Changes Summary</h2>"))
+        assertTrue(html.contains("verifyRegression"))
         assertTrue(html.contains("&lt;!DOCTYPE html&gt;").not())
         assertTrue(html.contains("+++ target/verification.md"))
         assertEquals(html, deltaService.exportHtml(delta))
