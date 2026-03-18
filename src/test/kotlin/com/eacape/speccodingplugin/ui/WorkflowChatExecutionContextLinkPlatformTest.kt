@@ -4,13 +4,20 @@ import com.eacape.speccodingplugin.llm.ModelCapability
 import com.eacape.speccodingplugin.llm.ModelInfo
 import com.eacape.speccodingplugin.llm.ModelRegistry
 import com.eacape.speccodingplugin.llm.MockLlmProvider
+import com.eacape.speccodingplugin.session.ConversationRole
+import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
+import com.eacape.speccodingplugin.session.WorkflowChatBinding
+import com.eacape.speccodingplugin.session.WorkflowChatEntrySource
 import com.eacape.speccodingplugin.spec.SpecArtifactService
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecEngine
 import com.eacape.speccodingplugin.spec.SpecMetadata
 import com.eacape.speccodingplugin.spec.SpecPhase
 import com.eacape.speccodingplugin.spec.SpecStorage
+import com.eacape.speccodingplugin.spec.ExecutionTrigger
 import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
+import com.eacape.speccodingplugin.spec.TaskExecutionRun
+import com.eacape.speccodingplugin.spec.TaskExecutionSessionMetadataCodec
 import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StageProgress
@@ -88,7 +95,8 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
                 chatPanel.workflowBindingSnapshotForTest().getValue("workflowId") == workflow.id &&
                 chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == task.id &&
                 chatPanel.workflowBindingSnapshotForTest().getValue("taskChipVisible") == "true" &&
-                chatPanel.liveTaskExecutionSnapshotForTest().getValue("visible") == "true"
+                chatPanel.liveTaskExecutionSnapshotForTest().getValue("visible") == "true" &&
+                chatPanel.executionLaunchSnapshotForTest().getValue("visible") == "true"
         }
 
         waitUntil(timeoutMs = 10_000) {
@@ -99,6 +107,7 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
         val runId = executionService.listRuns(workflow.id, task.id).first().runId
         val bindingSnapshot = chatPanel.workflowBindingSnapshotForTest()
         val liveSnapshot = chatPanel.liveTaskExecutionSnapshotForTest()
+        val launchSnapshot = chatPanel.executionLaunchSnapshotForTest()
         assertEquals(workflow.id, bindingSnapshot.getValue("workflowId"))
         assertEquals(task.id, bindingSnapshot.getValue("taskId"))
         assertEquals("true", bindingSnapshot.getValue("taskChipVisible"))
@@ -106,6 +115,13 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
         assertEquals(task.id, liveSnapshot.getValue("taskId"))
         assertEquals("true", liveSnapshot.getValue("visible"))
         assertTrue(liveSnapshot.getValue("eventCount").toInt() >= 1)
+        assertEquals("presentation", launchSnapshot.getValue("kind"))
+        assertEquals(workflow.id, launchSnapshot.getValue("workflowId"))
+        assertEquals(task.id, launchSnapshot.getValue("taskId"))
+        assertEquals(runId, launchSnapshot.getValue("runId"))
+        assertEquals("false", launchSnapshot.getValue("rawPromptVisible"))
+        assertTrue(launchSnapshot.getValue("labels").contains("Execution Request"))
+        assertFalse(launchSnapshot.getValue("content").contains("Interaction mode: workflow"))
 
         executionService.resolveWaitingConfirmationRun(
             workflowId = workflow.id,
@@ -296,6 +312,7 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
         assertEquals("presentation", initialSnapshot.getValue("kind"))
         assertEquals(task.id, initialSnapshot.getValue("taskId"))
         assertEquals(workflow.id, initialSnapshot.getValue("workflowId"))
+        assertEquals("false", initialSnapshot.getValue("rawPromptVisible"))
         assertTrue(initialSnapshot.getValue("labels").contains("Execution Request"))
         assertFalse(initialSnapshot.getValue("content").contains("Interaction mode: workflow"))
 
@@ -312,8 +329,99 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
         assertEquals("presentation", restoredSnapshot.getValue("kind"))
         assertEquals(task.id, restoredSnapshot.getValue("taskId"))
         assertEquals(workflow.id, restoredSnapshot.getValue("workflowId"))
+        assertEquals("false", restoredSnapshot.getValue("rawPromptVisible"))
         assertTrue(restoredSnapshot.getValue("labels").contains("Execution Request"))
         assertFalse(restoredSnapshot.getValue("content").contains("Interaction mode: workflow"))
+    }
+
+    fun `test history restore should degrade legacy execution prompt into compact launch card`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Chat Legacy Launch Restore",
+            description = "task 151 legacy execution launch restore",
+        ).getOrThrow()
+        val task = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Restore legacy execution launch prompt",
+            priority = TaskPriority.P1,
+        )
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+
+        val sessionManager = SessionManager.getInstance(project)
+        val session = sessionManager.createSession(
+            title = "Legacy execution launch restore",
+            specTaskId = workflow.id,
+            workflowChatBinding = WorkflowChatBinding(
+                workflowId = workflow.id,
+                focusedStage = StageId.IMPLEMENT,
+                source = WorkflowChatEntrySource.SESSION_RESTORE,
+                actionIntent = WorkflowChatActionIntent.EXECUTE_TASK,
+            ),
+        ).getOrThrow()
+        val run = TaskExecutionRun(
+            runId = "run-legacy-151",
+            taskId = task.id,
+            status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+            trigger = ExecutionTrigger.USER_EXECUTE,
+            startedAt = "2026-03-18T10:15:00Z",
+        )
+        val metadataJson = TaskExecutionSessionMetadataCodec.encode(
+            run = run,
+            workflowId = workflow.id,
+            requestId = "request-legacy-151",
+            providerId = "mock",
+            modelId = "mock-model-v1",
+            previousRunId = null,
+        )
+        sessionManager.addMessage(
+            sessionId = session.id,
+            role = ConversationRole.USER,
+            content = legacyExecutionPrompt(
+                workflowId = workflow.id,
+                taskId = task.id,
+                taskTitle = task.title,
+                runId = run.runId,
+            ),
+            metadataJson = metadataJson,
+        ).getOrThrow()
+        sessionManager.addMessage(
+            sessionId = session.id,
+            role = ConversationRole.ASSISTANT,
+            content = "Legacy execution is waiting for confirmation.",
+        ).getOrThrow()
+
+        val toolWindow = registerSpecCodeToolWindow()
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val chatPanel = currentChatPanel(toolWindow)
+
+        openSessionFromHistory(session.id)
+
+        waitUntil(timeoutMs = 10_000) {
+            val snapshot = chatPanel.executionLaunchSnapshotForTest()
+            snapshot.getValue("visible") == "true" &&
+                snapshot.getValue("kind") == "legacy" &&
+                snapshot.getValue("taskId") == task.id &&
+                snapshot.getValue("workflowId") == workflow.id
+        }
+
+        val snapshot = chatPanel.executionLaunchSnapshotForTest()
+        assertEquals("legacy", snapshot.getValue("kind"))
+        assertEquals(workflow.id, snapshot.getValue("workflowId"))
+        assertEquals(task.id, snapshot.getValue("taskId"))
+        assertEquals(run.runId, snapshot.getValue("runId"))
+        assertEquals("MISSING_PRESENTATION_METADATA", snapshot.getValue("fallbackReason"))
+        assertEquals("true", snapshot.getValue("debugEntryVisible"))
+        assertEquals("false", snapshot.getValue("rawPromptVisible"))
+        assertTrue(snapshot.getValue("labels").contains("Execution Request"))
+        assertFalse(snapshot.getValue("content").contains("Interaction mode: workflow"))
     }
 
     private fun registerSpecCodeToolWindow(): ToolWindow {
@@ -347,6 +455,42 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
                 .onSessionOpenRequested(sessionId)
         }
         UIUtil.dispatchAllInvocationEvents()
+    }
+
+    private fun legacyExecutionPrompt(
+        workflowId: String,
+        taskId: String,
+        taskTitle: String,
+        runId: String,
+    ): String {
+        return """
+            Interaction mode: workflow
+            Workflow=$workflowId (docs: .spec-coding/specs/$workflowId/{requirements,design,tasks}.md)
+            Execution action: EXECUTE_WITH_AI
+            Run ID: $runId
+            
+            ## Task
+            Task ID: $taskId
+            Task Title: $taskTitle
+            Task Status: PENDING
+            Priority: P1
+            
+            ## Stage Context
+            Current phase: IMPLEMENT
+            Current stage: TASKS
+            
+            ## Artifact Summaries
+            - requirements.md: Workflow Chat should show a structured execution request card.
+            
+            ## Candidate Related Files
+            - src/main/kotlin/com/eacape/speccodingplugin/ui/ImprovedChatPanel.kt
+            
+            ## Supplemental Instruction
+            Keep the launch summary compact.
+            
+            ## Execution Request
+            Continue this task in the bound workflow chat session.
+        """.trimIndent()
     }
 
     private fun stageWorkflow(

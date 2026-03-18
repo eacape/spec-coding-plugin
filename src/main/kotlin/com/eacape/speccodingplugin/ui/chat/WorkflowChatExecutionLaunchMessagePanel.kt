@@ -45,7 +45,7 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
     private val rawPromptContainer = JPanel(BorderLayout())
     private val rawPromptToggleButton = JButton()
     private val notesPanel = JPanel()
-    private val titleLabel = JBLabel(SpecCodingBundle.message("chat.execution.launch.title"), AllIcons.Actions.Execute, JBLabel.LEADING)
+    private val titleLabel = JBLabel(SpecCodingBundle.message("chat.execution.launch.title"))
     private val summaryLabel = JBLabel(SpecCodingBundle.message("chat.execution.launch.summary"))
     private var systemContextExpanded = false
     private var rawPromptVisible = false
@@ -121,6 +121,7 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
                 "sectionKinds" to current.launch.sections.joinToString(",") { it.kind.name },
                 "rawPromptDebugAvailable" to current.launch.rawPromptDebugAvailable.toString(),
                 "userNoteVisible" to (userNotePanel.componentCount > 0).toString(),
+                "titleHasIcon" to (titleLabel.icon != null).toString(),
                 "systemContextExpanded" to systemContextExpanded.toString(),
                 "debugEntryVisible" to rawPromptToggleButton.isVisible.toString(),
                 "rawPromptVisible" to rawPromptVisible.toString(),
@@ -140,6 +141,7 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
                 "fallbackReason" to current.notice.fallbackReason.name,
                 "rawPromptDebugAvailable" to current.notice.rawPromptDebugAvailable.toString(),
                 "userNoteVisible" to (userNotePanel.componentCount > 0).toString(),
+                "titleHasIcon" to (titleLabel.icon != null).toString(),
                 "systemContextExpanded" to systemContextExpanded.toString(),
                 "debugEntryVisible" to rawPromptToggleButton.isVisible.toString(),
                 "rawPromptVisible" to rawPromptVisible.toString(),
