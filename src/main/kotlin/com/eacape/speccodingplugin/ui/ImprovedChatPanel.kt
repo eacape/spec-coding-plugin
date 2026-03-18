@@ -64,6 +64,7 @@ import com.eacape.speccodingplugin.spec.SpecTaskDependencyRules
 import com.eacape.speccodingplugin.spec.SpecTaskExecutionService
 import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgress
 import com.eacape.speccodingplugin.spec.TaskExecutionLiveProgressListener
+import com.eacape.speccodingplugin.spec.TaskExecutionSessionMetadataCodec
 import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.SpecTasksService
 import com.eacape.speccodingplugin.spec.SpecWorkflow
@@ -71,12 +72,15 @@ import com.eacape.speccodingplugin.spec.StageId
 import com.eacape.speccodingplugin.spec.StructuredTask
 import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.attachActiveExecutionRuns
+import com.eacape.speccodingplugin.spec.resolveExecutionLaunchRawPrompt
+import com.eacape.speccodingplugin.spec.resolveExecutionLaunchRestorePayload
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.stream.ChatTraceKind
 import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import com.eacape.speccodingplugin.terminal.IdeTerminalCommandExecutor
 import com.eacape.speccodingplugin.ui.chat.ChatSpecSidebarPanel
+import com.eacape.speccodingplugin.ui.chat.WorkflowChatExecutionLaunchMessagePanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagePanel
 import com.eacape.speccodingplugin.ui.chat.ChatMessagesListPanel
 import com.eacape.speccodingplugin.ui.chat.SpecCardMetadata
@@ -4545,8 +4549,20 @@ class ImprovedChatPanel(
         for (message in messages) {
             when (message.role) {
                 ConversationRole.USER -> {
-                    appendUserMessage(content = message.content, rawContent = message.content)
-                    appendToConversationHistory(LlmMessage(LlmRole.USER, message.content))
+                    val executionMetadata = TaskExecutionSessionMetadataCodec.decode(message.metadataJson)
+                    val executionLaunchPayload = executionMetadata.resolveExecutionLaunchRestorePayload(message.content)
+                    val rawUserContent = executionMetadata.resolveExecutionLaunchRawPrompt() ?: message.content
+                    if (executionLaunchPayload != null) {
+                        addExecutionLaunchMessage(
+                            visibleContent = message.content,
+                            payload = executionLaunchPayload,
+                            rawContent = rawUserContent,
+                        )
+                        appendToConversationHistory(LlmMessage(LlmRole.USER, rawUserContent))
+                    } else {
+                        appendUserMessage(content = message.content, rawContent = message.content)
+                        appendToConversationHistory(LlmMessage(LlmRole.USER, message.content))
+                    }
                 }
 
                 ConversationRole.ASSISTANT -> {
@@ -4862,6 +4878,21 @@ class ImprovedChatPanel(
         } else {
             userMessageRawContent.remove(panel)
         }
+        return panel
+    }
+
+    private fun addExecutionLaunchMessage(
+        visibleContent: String,
+        payload: com.eacape.speccodingplugin.spec.WorkflowChatExecutionLaunchRestorePayload,
+        rawContent: String?,
+    ): WorkflowChatExecutionLaunchMessagePanel {
+        val panel = WorkflowChatExecutionLaunchMessagePanel(
+            payload = payload,
+            visibleContent = visibleContent,
+            onDeleteMessage = ::handleDeleteMessage,
+        )
+        messagesPanel.addMessage(panel)
+        rawContent?.takeIf(String::isNotBlank)?.let { userMessageRawContent[panel] = it } ?: userMessageRawContent.remove(panel)
         return panel
     }
 
@@ -7465,6 +7496,29 @@ class ImprovedChatPanel(
             "content" to state?.panel?.getContent().orEmpty(),
             "labels" to labels.joinToString(" | "),
         )
+    }
+
+    internal fun executionLaunchSnapshotForTest(): Map<String, String> {
+        val panel = messagesPanel.getAllMessages()
+            .filterIsInstance<WorkflowChatExecutionLaunchMessagePanel>()
+            .lastOrNull()
+        val labels = panel?.let(::collectComponentTextsForSnapshot).orEmpty()
+        return panel?.snapshotForTest()
+            ?.plus("labels" to labels.joinToString(" | "))
+            ?: mapOf(
+                "visible" to "false",
+                "kind" to "",
+                "workflowId" to "",
+                "taskId" to "",
+                "runId" to "",
+                "taskTitle" to "",
+                "focusedStage" to "",
+                "trigger" to "",
+                "sectionKinds" to "",
+                "rawPromptDebugAvailable" to "false",
+                "labels" to "",
+                "content" to "",
+            )
     }
 
     internal fun addImageAttachmentsForTest(paths: List<String>) {

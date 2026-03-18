@@ -11,6 +11,7 @@ import com.eacape.speccodingplugin.llm.CodexCliLlmProvider
 import com.eacape.speccodingplugin.llm.LlmChunk
 import com.eacape.speccodingplugin.llm.LlmResponse
 import com.eacape.speccodingplugin.llm.LlmRouter
+import com.eacape.speccodingplugin.session.ConversationMessage
 import com.eacape.speccodingplugin.session.ConversationRole
 import com.eacape.speccodingplugin.session.SessionManager
 import com.eacape.speccodingplugin.session.WorkflowChatActionIntent
@@ -29,8 +30,10 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.time.Instant
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -65,6 +68,13 @@ class SpecTaskExecutionService(private val project: Project) {
         val prompt: String,
         val assistantReply: String,
         val previousRunId: String? = null,
+    )
+
+    private data class ExecutionLaunchArtifacts(
+        val prompt: String,
+        val timelineMessage: String,
+        val presentation: WorkflowChatExecutionLaunchPresentation,
+        val debugPayload: WorkflowChatExecutionLaunchDebugPayload,
     )
 
     data class LegacyTaskExecutionMigrationResult(
@@ -383,7 +393,7 @@ class SpecTaskExecutionService(private val project: Project) {
         )
         activeRequestHandles.remove(currentRun.runId)
         cancellationHandle?.let { handle -> requestCanceller(handle.providerId, handle.requestId) }
-        if (cancellationHandle == null && cancelledRun != null) {
+        if (cancellationHandle == null) {
             finishLiveProgress(
                 workflowId = workflowId,
                 run = cancelledRun,
@@ -543,7 +553,7 @@ class SpecTaskExecutionService(private val project: Project) {
         )
         activeRequestHandles[queuedRun.runId] = cancellationHandle
         onRequestRegistered(cancellationHandle)
-        val prompt = buildExecutionPrompt(
+        val executionLaunch = buildExecutionLaunchArtifacts(
             workflow = workflow,
             task = task,
             run = queuedRun,
@@ -551,7 +561,9 @@ class SpecTaskExecutionService(private val project: Project) {
             previousRun = previousRun,
             suggestedRelatedFiles = suggestedRelatedFiles,
             supplementalInstruction = supplementalInstruction,
+            sessionSource = sessionSource,
         )
+        val prompt = executionLaunch.prompt
         val contextSnapshot = buildRelatedFilesContextSnapshot(suggestedRelatedFiles)
         var sawStreamingSignal = false
         val streamedTraceEvents = mutableListOf<ChatStreamEvent>()
@@ -608,16 +620,32 @@ class SpecTaskExecutionService(private val project: Project) {
             previousRunId = previousRun?.runId,
         )
 
-        persistExecutionMessage(
+        val persistedLaunchMessage = persistExecutionMessage(
             sessionId = session.id,
             role = ConversationRole.USER,
-            content = prompt,
+            content = executionLaunch.timelineMessage,
             run = queuedRun,
             workflowId = workflowId,
             requestId = requestId,
             providerId = providerId,
             modelId = modelId,
             previousRunId = previousRun?.runId,
+            launchPresentation = executionLaunch.presentation,
+            launchDebugPayload = executionLaunch.debugPayload,
+        )
+        recordExecutionLaunchAudit(
+            workflowId = workflowId,
+            task = task,
+            run = queuedRun,
+            sessionId = session.id,
+            messageId = persistedLaunchMessage.id,
+            requestId = requestId,
+            providerId = providerId,
+            modelId = modelId,
+            previousRunId = previousRun?.runId,
+            rawPrompt = prompt,
+            visibleSummary = executionLaunch.timelineMessage,
+            presentation = executionLaunch.presentation,
         )
 
         normalizeTaskLifecycleForExecution(workflowId, task, executionAuditContext)
@@ -1083,6 +1111,97 @@ class SpecTaskExecutionService(private val project: Project) {
         return "$workflowLabel · ${task.id} · $triggerLabel".take(MAX_SESSION_TITLE_LENGTH)
     }
 
+    private fun buildExecutionLaunchArtifacts(
+        workflow: SpecWorkflow,
+        task: StructuredTask,
+        run: TaskExecutionRun,
+        trigger: ExecutionTrigger,
+        previousRun: TaskExecutionRun?,
+        suggestedRelatedFiles: List<String>,
+        supplementalInstruction: String?,
+        sessionSource: WorkflowChatEntrySource,
+    ): ExecutionLaunchArtifacts {
+        val dependencySummary = buildDependencySummary(workflow.id, task)
+        val documentSummaries = buildDocumentSummaries(workflow)
+        val clarificationConclusions = extractClarificationConclusions(workflow)
+        val normalizedSupplementalInstruction = supplementalInstruction?.trim()?.takeIf(String::isNotBlank)
+        val presentation = WorkflowChatExecutionLaunchPresentation(
+            workflowId = workflow.id,
+            taskId = task.id,
+            taskTitle = task.title,
+            runId = run.runId,
+            focusedStage = workflow.currentStage,
+            trigger = trigger,
+            launchSurface = sessionSource.toExecutionLaunchSurface(),
+            taskStatusBeforeExecution = task.status,
+            taskPriority = task.priority,
+            sections = listOf(
+                buildExecutionPresentationSection(
+                    kind = WorkflowChatExecutionPresentationSectionKind.DEPENDENCIES,
+                    items = dependencySummary,
+                    emptyStateReason = "No dependencies recorded.",
+                    previewLimit = EXECUTION_DEPENDENCY_PREVIEW_LIMIT,
+                ),
+                buildExecutionPresentationSection(
+                    kind = WorkflowChatExecutionPresentationSectionKind.ARTIFACT_SUMMARIES,
+                    items = documentSummaries,
+                    emptyStateReason = "No artifact summaries available.",
+                    previewLimit = EXECUTION_ARTIFACT_SUMMARY_PREVIEW_LIMIT,
+                ),
+                buildExecutionPresentationSection(
+                    kind = WorkflowChatExecutionPresentationSectionKind.CLARIFICATION_CONCLUSIONS,
+                    items = clarificationConclusions,
+                    emptyStateReason = "No confirmed clarifications recorded.",
+                    previewLimit = EXECUTION_CLARIFICATION_PREVIEW_LIMIT,
+                ),
+                buildExecutionPresentationSection(
+                    kind = WorkflowChatExecutionPresentationSectionKind.CODE_CONTEXT,
+                    items = suggestedRelatedFiles,
+                    emptyStateReason = "No candidate related files suggested.",
+                    previewLimit = EXECUTION_CODE_CONTEXT_PREVIEW_LIMIT,
+                ),
+            ),
+            supplementalInstruction = normalizedSupplementalInstruction,
+            rawPromptDebugAvailable = true,
+        )
+        val prompt = buildExecutionPrompt(
+            workflow = workflow,
+            task = task,
+            run = run,
+            trigger = trigger,
+            previousRun = previousRun,
+            suggestedRelatedFiles = suggestedRelatedFiles,
+            supplementalInstruction = normalizedSupplementalInstruction,
+            dependencySummary = dependencySummary,
+            documentSummaries = documentSummaries,
+            clarificationConclusions = clarificationConclusions,
+        )
+        return ExecutionLaunchArtifacts(
+            prompt = prompt,
+            timelineMessage = buildExecutionLaunchTimelineMessage(workflow, presentation),
+            presentation = presentation,
+            debugPayload = WorkflowChatExecutionLaunchDebugPayload(rawPrompt = prompt),
+        )
+    }
+
+    private fun buildExecutionPresentationSection(
+        kind: WorkflowChatExecutionPresentationSectionKind,
+        items: List<String>,
+        emptyStateReason: String,
+        previewLimit: Int,
+    ): WorkflowChatExecutionPresentationSection {
+        val previewItems = items
+            .take(previewLimit.coerceAtLeast(1))
+            .map { item -> clipExecutionPreview(item, EXECUTION_SECTION_ITEM_CHAR_LIMIT) }
+        return WorkflowChatExecutionPresentationSection(
+            kind = kind,
+            itemCount = items.size,
+            previewItems = previewItems,
+            emptyStateReason = emptyStateReason.takeIf { items.isEmpty() },
+            truncated = items.size > previewItems.size,
+        )
+    }
+
     private fun buildExecutionPrompt(
         workflow: SpecWorkflow,
         task: StructuredTask,
@@ -1091,6 +1210,9 @@ class SpecTaskExecutionService(private val project: Project) {
         previousRun: TaskExecutionRun?,
         suggestedRelatedFiles: List<String>,
         supplementalInstruction: String?,
+        dependencySummary: List<String>,
+        documentSummaries: List<String>,
+        clarificationConclusions: List<String>,
     ): String {
         val taskSummary = listOf(
             "Task ID: ${task.id}",
@@ -1098,10 +1220,6 @@ class SpecTaskExecutionService(private val project: Project) {
             "Task Status: ${task.status.name}",
             "Priority: ${task.priority.name}",
         )
-        val dependencySummary = buildDependencySummary(workflow.id, task)
-        val documentSummaries = buildDocumentSummaries(workflow)
-        val clarificationConclusions = extractClarificationConclusions(workflow)
-
         return buildString {
             appendLine("Interaction mode: workflow")
             appendLine("Workflow=${workflow.id} (docs: .spec-coding/specs/${workflow.id}/{requirements,design,tasks}.md)")
@@ -1169,6 +1287,37 @@ class SpecTaskExecutionService(private val project: Project) {
             appendLine("1. a concise implementation summary,")
             appendLine("2. suggested relatedFiles entries,")
             appendLine("3. an optional verificationResult draft if verification evidence exists.")
+        }.trimEnd()
+    }
+
+    private fun buildExecutionLaunchTimelineMessage(
+        workflow: SpecWorkflow,
+        presentation: WorkflowChatExecutionLaunchPresentation,
+    ): String {
+        return buildString {
+            appendLine("## Execution Request")
+            appendLine("- Task: ${presentation.taskId} · ${presentation.taskTitle}")
+            appendLine("- Workflow: ${presentation.workflowId}")
+            appendLine("- Run: ${presentation.runId}")
+            appendLine("- Stage: ${workflow.currentPhase.name} / ${presentation.focusedStage.name}")
+            appendLine("- Trigger: ${presentation.trigger.toTimelineLabel()}")
+            presentation.taskStatusBeforeExecution?.let { appendLine("- Status before execution: ${it.name}") }
+            presentation.taskPriority?.let { appendLine("- Priority: ${it.name}") }
+            appendLine()
+            appendLine("## Context Summary")
+            presentation.sections.forEach { section ->
+                appendLine("- ${section.kind.toTimelineLabel()}: ${section.toTimelinePreview()}")
+            }
+            presentation.supplementalInstruction?.let { instruction ->
+                appendLine(
+                    "- Supplemental instruction: " +
+                        clipExecutionPreview(instruction, EXECUTION_SUPPLEMENTAL_INSTRUCTION_CHAR_LIMIT),
+                )
+            }
+            presentation.degradationReasons.forEach { reason ->
+                appendLine("- Note: ${clipExecutionPreview(reason, EXECUTION_SECTION_ITEM_CHAR_LIMIT)}")
+            }
+            appendLine("- Internal execution prompt hidden from chat and retained for debug/audit.")
         }.trimEnd()
     }
 
@@ -1304,11 +1453,13 @@ class SpecTaskExecutionService(private val project: Project) {
         providerId: String?,
         modelId: String?,
         previousRunId: String?,
+        launchPresentation: WorkflowChatExecutionLaunchPresentation? = null,
+        launchDebugPayload: WorkflowChatExecutionLaunchDebugPayload? = null,
         traceEvents: List<ChatStreamEvent> = emptyList(),
         startedAtMillis: Long? = null,
         finishedAtMillis: Long? = null,
-    ) {
-        sessionManager.addMessage(
+    ): ConversationMessage {
+        return sessionManager.addMessage(
             sessionId = sessionId,
             role = role,
             content = content,
@@ -1319,6 +1470,8 @@ class SpecTaskExecutionService(private val project: Project) {
                 providerId = providerId,
                 modelId = modelId,
                 previousRunId = previousRunId,
+                launchPresentation = launchPresentation,
+                launchDebugPayload = launchDebugPayload,
                 traceEvents = traceEvents,
                 startedAtMillis = startedAtMillis,
                 finishedAtMillis = finishedAtMillis,
@@ -1510,6 +1663,69 @@ class SpecTaskExecutionService(private val project: Project) {
         return message.takeIf(String::isNotBlank)?.take(RUN_SUMMARY_CHAR_LIMIT) ?: USER_CANCELLED_RUN_SUMMARY
     }
 
+    private fun recordExecutionLaunchAudit(
+        workflowId: String,
+        task: StructuredTask,
+        run: TaskExecutionRun,
+        sessionId: String,
+        messageId: String,
+        requestId: String,
+        providerId: String?,
+        modelId: String?,
+        previousRunId: String?,
+        rawPrompt: String,
+        visibleSummary: String,
+        presentation: WorkflowChatExecutionLaunchPresentation,
+    ) {
+        val sectionKinds = presentation.sections.joinToString(",") { section -> section.kind.name }
+        val sectionCounts = presentation.sections.joinToString(",") { section ->
+            "${section.kind.name}=${section.itemCount}"
+        }
+        storage.appendAuditEvent(
+            workflowId = workflowId,
+            eventType = SpecAuditEventType.TASK_EXECUTION_REQUEST_RECORDED,
+            details = linkedMapOf(
+                "runId" to run.runId,
+                "taskId" to task.id,
+                "trigger" to run.trigger.name,
+                "sessionId" to sessionId,
+                "messageId" to messageId,
+                "requestId" to requestId,
+                "launchSurface" to presentation.launchSurface.name,
+                "focusedStage" to presentation.focusedStage.name,
+                "taskStatusBeforeExecution" to presentation.taskStatusBeforeExecution?.name.orEmpty(),
+                "taskPriority" to presentation.taskPriority?.name.orEmpty(),
+                "providerId" to providerId.orEmpty(),
+                "modelId" to modelId.orEmpty(),
+                "previousRunId" to previousRunId.orEmpty(),
+                "rawPromptStorage" to "session_message_metadata",
+                "rawPromptChars" to rawPrompt.length.toString(),
+                "rawPromptDigest" to sha256Hex(rawPrompt),
+                "visibleSummaryPreview" to clipExecutionPreview(visibleSummary, EXECUTION_AUDIT_SUMMARY_CHAR_LIMIT),
+                "sectionKinds" to sectionKinds,
+                "sectionCounts" to sectionCounts,
+                "supplementalInstructionPresent" to presentation.supplementalInstruction.isNullOrBlank().not().toString(),
+                "rawPromptDebugAvailable" to presentation.rawPromptDebugAvailable.toString(),
+            ),
+        ).getOrThrow()
+    }
+
+    private fun clipExecutionPreview(content: String, maxChars: Int): String {
+        return content.trim().replace(WHITESPACE_REGEX, " ").let { normalized ->
+            if (normalized.length <= maxChars) {
+                normalized
+            } else {
+                normalized.take(maxChars - 3).trimEnd() + "..."
+            }
+        }
+    }
+
+    private fun sha256Hex(content: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(content.toByteArray(StandardCharsets.UTF_8))
+        return digest.joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
     private fun buildQueuedSummary(
         trigger: ExecutionTrigger,
         previousRun: TaskExecutionRun?,
@@ -1545,6 +1761,13 @@ class SpecTaskExecutionService(private val project: Project) {
         private const val MAX_SESSION_TITLE_LENGTH = 80
         private const val MAX_CONTEXT_FILES = 6
         private const val MAX_CONTEXT_FILE_CHARS = 12_000
+        private const val EXECUTION_DEPENDENCY_PREVIEW_LIMIT = 2
+        private const val EXECUTION_ARTIFACT_SUMMARY_PREVIEW_LIMIT = 2
+        private const val EXECUTION_CLARIFICATION_PREVIEW_LIMIT = 2
+        private const val EXECUTION_CODE_CONTEXT_PREVIEW_LIMIT = 3
+        private const val EXECUTION_SECTION_ITEM_CHAR_LIMIT = 180
+        private const val EXECUTION_SUPPLEMENTAL_INSTRUCTION_CHAR_LIMIT = 220
+        private const val EXECUTION_AUDIT_SUMMARY_CHAR_LIMIT = 240
         private const val RUN_SUMMARY_CHAR_LIMIT = 260
         private const val DOCUMENT_SUMMARY_CHAR_LIMIT = 240
         private const val MAX_CLARIFICATION_LINES = 12
@@ -1592,6 +1815,8 @@ internal object TaskExecutionSessionMetadataCodec {
         val providerId: String?,
         val modelId: String?,
         val previousRunId: String?,
+        val launchPresentation: WorkflowChatExecutionLaunchPresentation? = null,
+        val launchDebugPayload: WorkflowChatExecutionLaunchDebugPayload? = null,
     )
 
     fun encode(
@@ -1601,6 +1826,8 @@ internal object TaskExecutionSessionMetadataCodec {
         providerId: String?,
         modelId: String?,
         previousRunId: String?,
+        launchPresentation: WorkflowChatExecutionLaunchPresentation? = null,
+        launchDebugPayload: WorkflowChatExecutionLaunchDebugPayload? = null,
         traceEvents: List<ChatStreamEvent> = emptyList(),
         startedAtMillis: Long? = null,
         finishedAtMillis: Long? = null,
@@ -1616,6 +1843,12 @@ internal object TaskExecutionSessionMetadataCodec {
             providerId?.takeIf(String::isNotBlank)?.let { put("providerId", JsonPrimitive(it.trim())) }
             modelId?.takeIf(String::isNotBlank)?.let { put("modelId", JsonPrimitive(it.trim())) }
             previousRunId?.takeIf(String::isNotBlank)?.let { put("previousRunId", JsonPrimitive(it.trim())) }
+            launchPresentation?.let {
+                put("execution_launch_presentation", WorkflowChatExecutionLaunchPresentationCodec.encodeToJson(it))
+            }
+            launchDebugPayload?.let {
+                put("execution_launch_debug", WorkflowChatExecutionLaunchDebugPayloadCodec.encodeToJson(it))
+            }
             startedAtMillis?.takeIf { it >= 0L }?.let { put("started_at_ms", JsonPrimitive(it)) }
             finishedAtMillis?.takeIf { it >= 0L }?.let { put("finished_at_ms", JsonPrimitive(it)) }
             val normalizedTraceEvents = traceEvents
@@ -1656,11 +1889,11 @@ internal object TaskExecutionSessionMetadataCodec {
 
     fun decode(metadataJson: String?): DecodedMetadata {
         if (metadataJson.isNullOrBlank()) {
-            return DecodedMetadata(null, null, null, null, null, null, null, null)
+            return DecodedMetadata(null, null, null, null, null, null, null, null, null, null)
         }
         val root = runCatching { json.parseToJsonElement(metadataJson) as? JsonObject }
             .getOrNull()
-            ?: return DecodedMetadata(null, null, null, null, null, null, null, null)
+            ?: return DecodedMetadata(null, null, null, null, null, null, null, null, null, null)
         val trigger = root["trigger"]
             ?.toString()
             ?.trim('"')
@@ -1674,8 +1907,56 @@ internal object TaskExecutionSessionMetadataCodec {
             providerId = root["providerId"]?.toString()?.trim('"'),
             modelId = root["modelId"]?.toString()?.trim('"'),
             previousRunId = root["previousRunId"]?.toString()?.trim('"'),
+            launchPresentation = WorkflowChatExecutionLaunchPresentationCodec.decodeFromJson(
+                root["execution_launch_presentation"],
+            ),
+            launchDebugPayload = WorkflowChatExecutionLaunchDebugPayloadCodec.decodeFromJson(
+                root["execution_launch_debug"],
+            ),
         )
     }
 
     private const val MAX_TRACE_EVENTS = 600
+}
+
+private fun WorkflowChatEntrySource.toExecutionLaunchSurface(): WorkflowChatExecutionLaunchSurface {
+    return when (this) {
+        WorkflowChatEntrySource.TASK_PANEL -> WorkflowChatExecutionLaunchSurface.TASK_ROW
+        WorkflowChatEntrySource.SPEC_PAGE,
+        WorkflowChatEntrySource.SIDEBAR,
+        WorkflowChatEntrySource.MODE_SWITCH,
+        WorkflowChatEntrySource.SESSION_RESTORE,
+        -> WorkflowChatExecutionLaunchSurface.WORKFLOW_CHAT
+    }
+}
+
+private fun WorkflowChatExecutionPresentationSectionKind.toTimelineLabel(): String {
+    return when (this) {
+        WorkflowChatExecutionPresentationSectionKind.DEPENDENCIES -> "Dependencies"
+        WorkflowChatExecutionPresentationSectionKind.ARTIFACT_SUMMARIES -> "Artifact summaries"
+        WorkflowChatExecutionPresentationSectionKind.CLARIFICATION_CONCLUSIONS -> "Clarifications"
+        WorkflowChatExecutionPresentationSectionKind.CODE_CONTEXT -> "Candidate related files"
+    }
+}
+
+private fun WorkflowChatExecutionPresentationSection.toTimelinePreview(): String {
+    if (itemCount <= 0) {
+        return emptyStateReason ?: "None"
+    }
+    val preview = previewItems.joinToString(" | ").ifBlank {
+        "$itemCount item" + if (itemCount == 1) "" else "s"
+    }
+    return if (truncated) {
+        "$preview (+${itemCount - previewItems.size} more)"
+    } else {
+        preview
+    }
+}
+
+private fun ExecutionTrigger.toTimelineLabel(): String {
+    return when (this) {
+        ExecutionTrigger.USER_EXECUTE -> "Execute with AI"
+        ExecutionTrigger.USER_RETRY -> "Retry execution"
+        ExecutionTrigger.SYSTEM_RECOVERY -> "Recovered execution"
+    }
 }

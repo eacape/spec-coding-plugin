@@ -294,6 +294,9 @@ class SpecTaskExecutionServiceTest {
         val session = sessionManager.listSessions().single()
         val messages = sessionManager.listMessages(session.id)
         val userMetadata = TaskExecutionSessionMetadataCodec.decode(messages.first().metadataJson)
+        val launchPayload = userMetadata.resolveExecutionLaunchRestorePayload(messages.first().content)
+        val launchAudit = storage.listAuditEvents(workflowId).getOrThrow()
+            .last { event -> event.eventType == SpecAuditEventType.TASK_EXECUTION_REQUEST_RECORDED }
 
         assertEquals(TaskExecutionRunStatus.WAITING_CONFIRMATION, result.run.status)
         assertEquals(
@@ -312,23 +315,49 @@ class SpecTaskExecutionServiceTest {
         assertEquals(WorkflowChatActionIntent.EXECUTE_TASK, session.workflowChatBinding?.actionIntent)
         assertTrue(session.title.contains("T-002"))
         assertEquals(listOf(ConversationRole.USER, ConversationRole.ASSISTANT), messages.map { it.role })
-        assertTrue(messages.first().content.contains("Task ID: T-002"))
-        assertTrue(messages.first().content.contains("## Supplemental Instruction"))
+        assertTrue(messages.first().content.contains("## Execution Request"))
+        assertTrue(messages.first().content.contains("Task: T-002"))
+        assertTrue(messages.first().content.contains("## Context Summary"))
         assertTrue(messages.first().content.contains("Prefer the existing file-first workflow behavior."))
         assertTrue(messages.first().content.contains("T-001 · COMPLETED · Prepare base"))
         assertTrue(messages.first().content.contains("requirements.md:"))
-        assertTrue(messages.first().content.contains("Use task-scoped execution runs for AI execution."))
         assertTrue(messages.first().content.contains("src/main/kotlin/demo/FeatureService.kt"))
+        assertTrue(messages.first().content.contains("Internal execution prompt hidden from chat"))
         assertTrue(messages.last().content.contains("Implemented demo feature"))
         assertEquals(result.run.runId, userMetadata.runId)
         assertEquals("T-002", userMetadata.taskId)
         assertEquals(workflowId, userMetadata.workflowId)
         assertEquals(ExecutionTrigger.USER_EXECUTE, userMetadata.trigger)
         assertEquals(result.requestId, userMetadata.requestId)
+        assertNotNull(userMetadata.launchPresentation)
+        assertEquals(
+            WorkflowChatExecutionLaunchSurface.TASK_ROW,
+            userMetadata.launchPresentation?.launchSurface,
+        )
+        assertEquals(
+            "Prefer the existing file-first workflow behavior.",
+            userMetadata.launchPresentation?.supplementalInstruction,
+        )
+        assertEquals(result.prompt, userMetadata.resolveExecutionLaunchRawPrompt())
+        assertTrue(launchPayload is WorkflowChatExecutionLaunchRestorePayload.Presentation)
+        val presentation = (launchPayload as WorkflowChatExecutionLaunchRestorePayload.Presentation).launch
+        assertEquals(result.run.runId, presentation.runId)
+        assertEquals("T-002", presentation.taskId)
+        assertTrue(
+            presentation.sections.any { section ->
+                section.kind == WorkflowChatExecutionPresentationSectionKind.ARTIFACT_SUMMARIES &&
+                    section.itemCount > 0
+            },
+        )
         assertNotNull(registeredHandle)
         assertEquals(result.run.runId, registeredHandle!!.runId)
         assertEquals(result.sessionId, registeredHandle!!.sessionId)
         assertEquals("T-002", registeredHandle!!.taskId)
+        assertEquals(result.run.runId, launchAudit.details["runId"])
+        assertEquals(session.id, launchAudit.details["sessionId"])
+        assertEquals("session_message_metadata", launchAudit.details["rawPromptStorage"])
+        assertTrue(launchAudit.details["visibleSummaryPreview"].orEmpty().contains("Execution Request"))
+        assertEquals("true", launchAudit.details["rawPromptDebugAvailable"])
         assertNotNull(capturedRequest)
         assertEquals(result.requestId, capturedRequest!!.requestId)
         assertEquals("mock-model-v1", capturedRequest!!.modelId)
@@ -765,9 +794,10 @@ class SpecTaskExecutionServiceTest {
         assertEquals(TaskStatus.PENDING, latestTask.status)
         assertEquals(workflowId, session?.workflowChatBinding?.workflowId)
         assertEquals(WorkflowChatActionIntent.RETRY_TASK, session?.workflowChatBinding?.actionIntent)
-        assertTrue(userMessage.content.contains("Previous run ID: ${previousRun.runId}"))
-        assertTrue(userMessage.content.contains("Previous summary: First attempt failed."))
+        assertTrue(userMessage.content.contains("Trigger: Retry execution"))
+        assertTrue(userMessage.content.contains("Internal execution prompt hidden from chat"))
         assertEquals(previousRun.runId, userMetadata.previousRunId)
+        assertEquals(result.prompt, userMetadata.resolveExecutionLaunchRawPrompt())
         assertEquals(previousRun.runId, result.previousRunId)
         assertNotNull(capturedRequest)
         assertTrue(capturedRequest!!.userInput.contains("RETRY_EXECUTION"))

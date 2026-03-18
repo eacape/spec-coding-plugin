@@ -22,6 +22,7 @@ import com.eacape.speccodingplugin.spec.TaskStatus
 import com.eacape.speccodingplugin.spec.TaskVerificationResult
 import com.eacape.speccodingplugin.spec.VerificationConclusion
 import com.eacape.speccodingplugin.spec.WorkflowStatus
+import com.eacape.speccodingplugin.spec.resolveExecutionLaunchRawPrompt
 import com.intellij.openapi.project.Project
 import io.mockk.every
 import io.mockk.mockk
@@ -99,6 +100,9 @@ class WorkflowChatActionRouterTest {
             messages.map { message -> message.role },
         )
         assertEquals(result.run.runId, userMetadata.runId)
+        assertTrue(messages.first().content.contains("## Execution Request"))
+        assertTrue(userMetadata.launchPresentation != null)
+        assertEquals(result.prompt, userMetadata.resolveExecutionLaunchRawPrompt())
         assertTrue(capturedRequest?.userInput?.contains("EXECUTE_WITH_AI") == true)
         assertTrue(capturedRequest?.userInput?.contains("## Supplemental Instruction") == true)
         assertTrue(capturedRequest?.userInput?.contains("Also update the related tests.") == true)
@@ -172,7 +176,7 @@ class WorkflowChatActionRouterTest {
         assertEquals(WorkflowChatActionIntent.RETRY_TASK, loadedSession?.workflowChatBinding?.actionIntent)
         assertEquals(WorkflowChatEntrySource.SPEC_PAGE, loadedSession?.workflowChatBinding?.source)
         assertEquals(previousRun.runId, result.previousRunId)
-        assertTrue(userMessage.content.contains("Previous run ID: ${previousRun.runId}"))
+        assertTrue(userMessage.content.contains("Trigger: Retry execution"))
         assertTrue(capturedRequest?.userInput?.contains("RETRY_EXECUTION") == true)
     }
 

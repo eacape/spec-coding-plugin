@@ -122,9 +122,18 @@ internal class SpecComposerSourcePanel(
         )
     }
 
+    fun refreshLocalizedTexts() {
+        rebuildUi()
+    }
+
     private fun rebuildUi() {
         removeButtonsBySourceId.clear()
         chipRow.removeAll()
+        titleLabel.text = SpecCodingBundle.message("spec.detail.sources.title")
+        addButton.toolTipText = SpecCodingBundle.message("spec.detail.sources.add.tooltip")
+        addButton.accessibleContext.accessibleName = SpecCodingBundle.message("spec.detail.sources.add")
+        restoreButton.text = SpecCodingBundle.message("spec.detail.sources.restore")
+        restoreButton.toolTipText = SpecCodingBundle.message("spec.detail.sources.restore.tooltip")
 
         val hasWorkflow = workflowId != null
         val selectedAssets = assets.filter { asset -> selectedSourceIds.contains(asset.sourceId) }
@@ -253,6 +262,8 @@ internal class SpecComposerSourcePanel(
     internal fun metaTextForTest(): String = metaLabel.text.orEmpty()
 
     internal fun hintTextForTest(): String = hintLabel.text.orEmpty()
+
+    internal fun titleTextForTest(): String = titleLabel.text.orEmpty()
 
     internal fun isRestoreVisibleForTest(): Boolean = restoreButton.isVisible
 

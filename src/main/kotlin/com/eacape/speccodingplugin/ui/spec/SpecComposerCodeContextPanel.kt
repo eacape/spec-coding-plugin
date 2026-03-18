@@ -77,9 +77,14 @@ internal class SpecComposerCodeContextPanel : JPanel(BorderLayout(0, JBUI.scale(
         updateState(workflowId = null, codeContextPack = null)
     }
 
+    fun refreshLocalizedTexts() {
+        rebuildUi()
+    }
+
     private fun rebuildUi() {
         summaryChipRow.removeAll()
         candidateChipRow.removeAll()
+        titleLabel.text = SpecCodingBundle.message("spec.detail.codeContext.title")
 
         val hasWorkflow = workflowId != null
         val pack = codeContextPack
@@ -362,6 +367,8 @@ internal class SpecComposerCodeContextPanel : JPanel(BorderLayout(0, JBUI.scale(
     internal fun metaTextForTest(): String = metaLabel.text.orEmpty()
 
     internal fun hintTextForTest(): String = hintLabel.text.orEmpty()
+
+    internal fun titleTextForTest(): String = titleLabel.text.orEmpty()
 
     private enum class ChipTone {
         INFO,

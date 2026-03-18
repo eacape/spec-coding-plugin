@@ -19,6 +19,7 @@ import com.eacape.speccodingplugin.spec.TaskExecutionRunStatus
 import com.eacape.speccodingplugin.spec.TaskPriority
 import com.eacape.speccodingplugin.spec.WorkflowStatus
 import com.eacape.speccodingplugin.session.SessionManager
+import com.eacape.speccodingplugin.ui.history.HistorySessionOpenListener
 import com.eacape.speccodingplugin.ui.spec.SpecWorkflowPanel
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.wm.RegisterToolWindowTask
@@ -224,6 +225,97 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
         assertEquals(1, sessionManager.listSessions().size)
     }
 
+    fun `test task execution should restore structured execution launch card instead of raw prompt bubble`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Workflow Chat Launch Card",
+            description = "task 149 execution launch card restore",
+        ).getOrThrow()
+        val task = SpecTasksService(project).addTask(
+            workflowId = workflow.id,
+            title = "Render structured execution launch card",
+            priority = TaskPriority.P1,
+        )
+        stageWorkflow(
+            workflowId = workflow.id,
+            currentStage = StageId.IMPLEMENT,
+            verifyEnabled = false,
+            includeTasksDocument = true,
+        )
+
+        val modelId = "task-149-${System.nanoTime()}"
+        ModelRegistry.getInstance().register(
+            ModelInfo(
+                id = modelId,
+                name = "Task 149 Mock Model",
+                provider = MockLlmProvider.ID,
+                contextWindow = 32_000,
+                capabilities = setOf(ModelCapability.CHAT),
+            ),
+        )
+
+        val toolWindow = registerSpecCodeToolWindow()
+        ApplicationManager.getApplication().invokeAndWait {
+            ChatToolWindowFactory().createToolWindowContent(project, toolWindow)
+        }
+        UIUtil.dispatchAllInvocationEvents()
+
+        val specPanel = currentSpecPanel(toolWindow)
+        val chatPanel = currentChatPanel(toolWindow)
+        val executionService = SpecTaskExecutionService.getInstance(project)
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.openWorkflowForTest(workflow.id)
+        }
+        waitUntil {
+            specPanel.selectedWorkflowIdForTest() == workflow.id &&
+                specPanel.tasksSnapshotForTest().getValue("tasks").contains(task.id)
+        }
+
+        ApplicationManager.getApplication().invokeAndWait {
+            specPanel.selectToolbarModelForTest(MockLlmProvider.ID, modelId)
+            assertTrue(specPanel.requestExecutionForTaskForTest(task.id))
+        }
+
+        waitUntil(timeoutMs = 10_000) {
+            executionService.listRuns(workflow.id, task.id).firstOrNull()?.status ==
+                TaskExecutionRunStatus.WAITING_CONFIRMATION
+        }
+
+        val sessionId = chatPanel.workflowBindingSnapshotForTest().getValue("sessionId")
+        assertTrue(sessionId.isNotBlank())
+
+        waitUntil(timeoutMs = 10_000) {
+            val snapshot = chatPanel.executionLaunchSnapshotForTest()
+            snapshot.getValue("visible") == "true" &&
+                snapshot.getValue("kind") == "presentation" &&
+                snapshot.getValue("taskId") == task.id &&
+                snapshot.getValue("workflowId") == workflow.id
+        }
+
+        val initialSnapshot = chatPanel.executionLaunchSnapshotForTest()
+        assertEquals("presentation", initialSnapshot.getValue("kind"))
+        assertEquals(task.id, initialSnapshot.getValue("taskId"))
+        assertEquals(workflow.id, initialSnapshot.getValue("workflowId"))
+        assertTrue(initialSnapshot.getValue("labels").contains("Execution Request"))
+        assertFalse(initialSnapshot.getValue("content").contains("Interaction mode: workflow"))
+
+        openSessionFromHistory(sessionId)
+
+        waitUntil(timeoutMs = 10_000) {
+            val snapshot = chatPanel.executionLaunchSnapshotForTest()
+            snapshot.getValue("visible") == "true" &&
+                snapshot.getValue("kind") == "presentation" &&
+                snapshot.getValue("taskId") == task.id
+        }
+
+        val restoredSnapshot = chatPanel.executionLaunchSnapshotForTest()
+        assertEquals("presentation", restoredSnapshot.getValue("kind"))
+        assertEquals(task.id, restoredSnapshot.getValue("taskId"))
+        assertEquals(workflow.id, restoredSnapshot.getValue("workflowId"))
+        assertTrue(restoredSnapshot.getValue("labels").contains("Execution Request"))
+        assertFalse(restoredSnapshot.getValue("content").contains("Interaction mode: workflow"))
+    }
+
     private fun registerSpecCodeToolWindow(): ToolWindow {
         var toolWindow: ToolWindow? = null
         ApplicationManager.getApplication().invokeAndWait {
@@ -247,6 +339,14 @@ class WorkflowChatExecutionContextLinkPlatformTest : BasePlatformTestCase() {
         return toolWindow.contentManager.contents
             .first(ChatToolWindowFactory::isSpecContent)
             .component as SpecWorkflowPanel
+    }
+
+    private fun openSessionFromHistory(sessionId: String) {
+        ApplicationManager.getApplication().invokeAndWait {
+            project.messageBus.syncPublisher(HistorySessionOpenListener.TOPIC)
+                .onSessionOpenRequested(sessionId)
+        }
+        UIUtil.dispatchAllInvocationEvents()
     }
 
     private fun stageWorkflow(

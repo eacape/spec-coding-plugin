@@ -1458,6 +1458,8 @@ class SpecDetailPanel(
         clarificationChecklistHintLabel.text = SpecCodingBundle.message("spec.detail.clarify.checklist.hint")
         clarificationPreviewLabel.text = SpecCodingBundle.message("spec.detail.clarify.preview.title")
         composerTitleLabel.text = SpecCodingBundle.message("spec.detail.composer.title")
+        composerSourcePanel.refreshLocalizedTexts()
+        composerCodeContextPanel.refreshLocalizedTexts()
         applyActionButtonPresentation()
         updateInputPlaceholder(currentWorkflow?.currentPhase)
         styleActionButton(generateButton)

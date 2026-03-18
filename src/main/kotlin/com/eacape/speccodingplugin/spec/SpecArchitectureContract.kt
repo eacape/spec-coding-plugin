@@ -502,6 +502,11 @@ object SpecArchitectureContract {
             blockedImportPrefixes = domainBlockedImportPrefixes,
         ),
         SourceRule(
+            fileName = "WorkflowChatExecutionLaunchPresentation.kt",
+            layer = Layer.DOMAIN,
+            blockedImportPrefixes = domainBlockedImportPrefixes,
+        ),
+        SourceRule(
             fileName = "WorkflowIdGenerator.kt",
             layer = Layer.INFRASTRUCTURE,
             blockedImportPrefixes = infrastructureBlockedImportPrefixes,
