@@ -270,6 +270,149 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
+    fun `task row primary action should only be visible for actionable states`() {
+        val panel = SpecWorkflowTasksPanel()
+
+        panel.updateTasks(
+            workflowId = "wf-row-actions",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "Executable pending task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+                StructuredTask(
+                    id = "T-002",
+                    title = "Blocked by dependency",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                    dependsOn = listOf("T-001"),
+                ),
+                StructuredTask(
+                    id = "T-003",
+                    title = "Retryable blocked task",
+                    status = TaskStatus.BLOCKED,
+                    priority = TaskPriority.P1,
+                ),
+                StructuredTask(
+                    id = "T-004",
+                    title = "Waiting confirmation task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-4",
+                        taskId = "T-004",
+                        status = TaskExecutionRunStatus.WAITING_CONFIRMATION,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-17T10:00:00Z",
+                    ),
+                ),
+                StructuredTask(
+                    id = "T-005",
+                    title = "Running task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-5",
+                        taskId = "T-005",
+                        status = TaskExecutionRunStatus.RUNNING,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-17T10:05:00Z",
+                    ),
+                ),
+                StructuredTask(
+                    id = "T-006",
+                    title = "Completed task",
+                    status = TaskStatus.COMPLETED,
+                    priority = TaskPriority.P1,
+                ),
+                StructuredTask(
+                    id = "T-007",
+                    title = "Cancelled task",
+                    status = TaskStatus.CANCELLED,
+                    priority = TaskPriority.P1,
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertEquals(
+            mapOf(
+                "visible" to "true",
+                "enabled" to "true",
+                "iconId" to "execute",
+                "tooltip" to SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", "T-001"),
+                "accessibleName" to SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
+            ),
+            panel.taskRowPrimaryActionSnapshotForTest("T-001"),
+        )
+        assertEquals("false", panel.taskRowPrimaryActionSnapshotForTest("T-002").getValue("visible"))
+        assertEquals("refresh", panel.taskRowPrimaryActionSnapshotForTest("T-003").getValue("iconId"))
+        assertEquals("complete", panel.taskRowPrimaryActionSnapshotForTest("T-004").getValue("iconId"))
+        assertEquals("close", panel.taskRowPrimaryActionSnapshotForTest("T-005").getValue("iconId"))
+        assertEquals("false", panel.taskRowPrimaryActionSnapshotForTest("T-006").getValue("visible"))
+        assertEquals("false", panel.taskRowPrimaryActionSnapshotForTest("T-007").getValue("visible"))
+    }
+
+    @Test
+    fun `triggerTaskRowPrimaryActionForTest should route execute retry and stop actions`() {
+        val executions = mutableListOf<String>()
+        val cancellations = mutableListOf<String>()
+        val panel = SpecWorkflowTasksPanel(
+            onExecuteTask = { taskId, retry -> executions += "$taskId:$retry" },
+            onCancelExecution = { taskId -> cancellations += taskId },
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-row-action-routing",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "Pending task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+                StructuredTask(
+                    id = "T-002",
+                    title = "Blocked task",
+                    status = TaskStatus.BLOCKED,
+                    priority = TaskPriority.P1,
+                ),
+                StructuredTask(
+                    id = "T-003",
+                    title = "Running task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-3",
+                        taskId = "T-003",
+                        status = TaskExecutionRunStatus.RUNNING,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = "2026-03-17T11:00:00Z",
+                    ),
+                ),
+                StructuredTask(
+                    id = "T-004",
+                    title = "Dependency blocked task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                    dependsOn = listOf("T-001"),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertTrue(panel.triggerTaskRowPrimaryActionForTest("T-001"))
+        assertTrue(panel.triggerTaskRowPrimaryActionForTest("T-002"))
+        assertTrue(panel.triggerTaskRowPrimaryActionForTest("T-003"))
+        assertFalse(panel.triggerTaskRowPrimaryActionForTest("T-004"))
+
+        assertEquals(listOf("T-001:false", "T-002:true"), executions)
+        assertEquals(listOf("T-003"), cancellations)
+    }
+
+    @Test
     fun `pending task with unfinished dependencies should disable execute action`() {
         val executions = mutableListOf<String>()
         val panel = SpecWorkflowTasksPanel(

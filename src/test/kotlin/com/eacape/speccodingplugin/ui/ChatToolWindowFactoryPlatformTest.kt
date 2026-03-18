@@ -169,11 +169,11 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("false", snapshot.getValue("completeTaskVisible"))
         assertEquals("false", snapshot.getValue("completeTaskEnabled"))
         assertEquals(
-            "TASK_EXECUTE",
+            "CHAT_SEND",
             snapshot.getValue("sendActionKind"),
         )
         assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", task.id),
+            SpecCodingBundle.message("toolwindow.send"),
             snapshot.getValue("sendTooltip"),
         )
         assertEquals("true", snapshot.getValue("sendEnabled"))
@@ -181,25 +181,6 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         assertEquals("false", snapshot.getValue("taskClearVisible"))
         assertEquals("true", snapshot.getValue("composerAccessoryVisible"))
         assertFalse(snapshot.getValue("sessionId").isBlank())
-
-        ApplicationManager.getApplication().invokeAndWait {
-            chatPanel.clearTaskBindingForTest()
-        }
-        UIUtil.dispatchAllInvocationEvents()
-
-        waitUntil {
-            chatPanel.workflowBindingSnapshotForTest().getValue("taskChipVisible") == "false"
-        }
-
-        val clearedSnapshot = chatPanel.workflowBindingSnapshotForTest()
-        assertEquals(workflow.id, clearedSnapshot.getValue("workflowId"))
-        assertEquals("", clearedSnapshot.getValue("taskId"))
-        assertEquals("false", clearedSnapshot.getValue("workflowChipVisible"))
-        assertEquals("false", clearedSnapshot.getValue("taskChipVisible"))
-        assertEquals("false", clearedSnapshot.getValue("executeTaskVisible"))
-        assertEquals("false", clearedSnapshot.getValue("retryTaskVisible"))
-        assertEquals("false", clearedSnapshot.getValue("completeTaskVisible"))
-        assertEquals("false", clearedSnapshot.getValue("taskMoreVisible"))
     }
 
     fun `test bound task should disable send until dependencies are completed`() {
@@ -246,36 +227,9 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         }
 
         var snapshot = chatPanel.workflowBindingSnapshotForTest()
-        assertEquals("TASK_EXECUTE", snapshot.getValue("sendActionKind"))
-        assertEquals("false", snapshot.getValue("sendEnabled"))
-        assertEquals(
-            SpecCodingBundle.message(
-                "toolwindow.workflow.binding.execute.dependenciesBlocked",
-                blockedTask.id,
-                dependencyTask.id,
-            ),
-            snapshot.getValue("sendTooltip"),
-        )
-
-        ApplicationManager.getApplication().invokeAndWait {
-            chatPanel.clickSendForTest()
-        }
-        UIUtil.dispatchAllInvocationEvents()
-
-        val errorDialogSnapshot = chatPanel.workflowErrorDialogSnapshotForTest()
-        assertEquals("true", errorDialogSnapshot.getValue("visible"))
-        assertEquals(
-            SpecCodingBundle.message("toolwindow.workflow.error.dialog.title"),
-            errorDialogSnapshot.getValue("title"),
-        )
-        assertEquals(
-            SpecCodingBundle.message(
-                "toolwindow.workflow.binding.execute.dependenciesBlocked",
-                blockedTask.id,
-                dependencyTask.id,
-            ),
-            errorDialogSnapshot.getValue("message"),
-        )
+        assertEquals("CHAT_SEND", snapshot.getValue("sendActionKind"))
+        assertEquals("true", snapshot.getValue("sendEnabled"))
+        assertEquals(SpecCodingBundle.message("toolwindow.send"), snapshot.getValue("sendTooltip"))
 
         tasksService.transitionStatus(
             workflowId = workflow.id,
@@ -297,12 +251,9 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         }
 
         snapshot = chatPanel.workflowBindingSnapshotForTest()
-        assertEquals("TASK_EXECUTE", snapshot.getValue("sendActionKind"))
+        assertEquals("CHAT_SEND", snapshot.getValue("sendActionKind"))
         assertEquals("true", snapshot.getValue("sendEnabled"))
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", blockedTask.id),
-            snapshot.getValue("sendTooltip"),
-        )
+        assertEquals(SpecCodingBundle.message("toolwindow.send"), snapshot.getValue("sendTooltip"))
     }
 
     fun `test history open should normalize legacy spec session into workflow binding UI`() {
@@ -490,7 +441,7 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         }
         waitUntil {
             chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == task.id &&
-                chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_EXECUTE"
+                chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "CHAT_SEND"
         }
 
         val run = executionService.createRun(
@@ -510,14 +461,14 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             )
 
         waitUntil {
-            chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_STOP"
+            chatPanel.workflowBindingSnapshotForTest().getValue("taskChipText").contains(
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress"),
+            )
         }
 
         val runningSnapshot = chatPanel.workflowBindingSnapshotForTest()
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", task.id),
-            runningSnapshot.getValue("sendTooltip"),
-        )
+        assertEquals("CHAT_SEND", runningSnapshot.getValue("sendActionKind"))
+        assertEquals(SpecCodingBundle.message("toolwindow.send"), runningSnapshot.getValue("sendTooltip"))
         assertEquals("false", runningSnapshot.getValue("executeTaskVisible"))
         assertEquals("false", runningSnapshot.getValue("retryTaskVisible"))
         assertEquals("false", runningSnapshot.getValue("completeTaskVisible"))
@@ -538,7 +489,9 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             )
 
         waitUntil {
-            chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_COMPLETE"
+            chatPanel.workflowBindingSnapshotForTest().getValue("taskChipText").contains(
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.waitingConfirmation"),
+            )
         }
 
         val snapshot = chatPanel.workflowBindingSnapshotForTest()
@@ -552,10 +505,8 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             ),
             snapshot.getValue("taskChipTooltip"),
         )
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", task.id),
-            snapshot.getValue("sendTooltip"),
-        )
+        assertEquals("CHAT_SEND", snapshot.getValue("sendActionKind"))
+        assertEquals(SpecCodingBundle.message("toolwindow.send"), snapshot.getValue("sendTooltip"))
         assertEquals("false", snapshot.getValue("executeTaskEnabled"))
         assertEquals("false", snapshot.getValue("retryTaskEnabled"))
         assertEquals("false", snapshot.getValue("completeTaskEnabled"))
@@ -598,7 +549,7 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         }
         waitUntil {
             chatPanel.workflowBindingSnapshotForTest().getValue("taskId") == task.id &&
-                chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_EXECUTE"
+                chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "CHAT_SEND"
         }
 
         ApplicationManager.getApplication().invokeAndWait {
@@ -631,10 +582,9 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
         UIUtil.dispatchAllInvocationEvents()
 
         waitUntil {
-            chatPanel.workflowBindingSnapshotForTest().getValue("sendActionKind") == "TASK_STOP" &&
-                chatPanel.workflowBindingSnapshotForTest().getValue("taskChipText").contains(
-                    SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress"),
-                ) &&
+            chatPanel.workflowBindingSnapshotForTest().getValue("taskChipText").contains(
+                SpecCodingBundle.message("toolwindow.workflow.binding.task.status.inProgress"),
+            ) &&
                 chatPanel.liveTaskExecutionSnapshotForTest().getValue("visible") == "true"
         }
 
@@ -655,11 +605,8 @@ class ChatToolWindowFactoryPlatformTest : BasePlatformTestCase() {
             ),
             snapshot.getValue("taskChipTooltip"),
         )
-        assertEquals("TASK_STOP", snapshot.getValue("sendActionKind"))
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", task.id),
-            snapshot.getValue("sendTooltip"),
-        )
+        assertEquals("CHAT_SEND", snapshot.getValue("sendActionKind"))
+        assertEquals(SpecCodingBundle.message("toolwindow.send"), snapshot.getValue("sendTooltip"))
         assertEquals("true", liveSnapshot.getValue("visible"))
         assertEquals("run-live-001", liveSnapshot.getValue("runId"))
         assertEquals(task.id, liveSnapshot.getValue("taskId"))

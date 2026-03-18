@@ -16,20 +16,27 @@ import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
+import java.awt.Container
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Point
+import java.awt.Rectangle
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import javax.swing.BorderFactory
 import javax.swing.DefaultListModel
 import javax.swing.JButton
+import javax.swing.JList
 import javax.swing.JMenuItem
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingConstants
+import javax.swing.SwingUtilities
 
 internal class SpecWorkflowTasksPanel(
     private val onTransitionStatus: (taskId: String, to: TaskStatus) -> Unit = { _, _ -> },
@@ -63,8 +70,13 @@ internal class SpecWorkflowTasksPanel(
     private val headerPanel = buildHeader()
 
     private val listModel = DefaultListModel<StructuredTask>()
-    private val tasksList = JBList(listModel).apply {
-        cellRenderer = TaskCellRenderer()
+    private val taskCellRenderer = TaskCellRenderer()
+    private val tasksList = object : JBList<StructuredTask>(listModel) {
+        override fun getToolTipText(event: MouseEvent): String? {
+            return resolveTaskRowPrimaryActionAt(event.point)?.presentation?.tooltip
+        }
+    }.apply {
+        cellRenderer = taskCellRenderer
         visibleRowCount = -1
         fixedCellHeight = -1
         isOpaque = false
@@ -116,6 +128,24 @@ internal class SpecWorkflowTasksPanel(
                 updateControlsForSelection()
             }
         }
+        tasksList.addMouseListener(
+            object : MouseAdapter() {
+                override fun mouseClicked(event: MouseEvent) {
+                    handleTaskListClick(event)
+                }
+
+                override fun mouseExited(event: MouseEvent) {
+                    tasksList.cursor = Cursor.getDefaultCursor()
+                }
+            },
+        )
+        tasksList.addMouseMotionListener(
+            object : MouseAdapter() {
+                override fun mouseMoved(event: MouseEvent) {
+                    updateTaskListCursor(event.point)
+                }
+            },
+        )
         refreshLocalizedTexts()
         showEmpty()
     }
@@ -322,6 +352,26 @@ internal class SpecWorkflowTasksPanel(
 
     internal fun clickOpenWorkflowChatForTest() {
         openWorkflowChatButton.doClick()
+    }
+
+    internal fun taskRowPrimaryActionSnapshotForTest(taskId: String): Map<String, String> {
+        val task = currentTasksById[taskId]
+        val action = task?.let(::resolveTaskRowPrimaryAction)
+        return mapOf(
+            "visible" to (action != null).toString(),
+            "enabled" to (action?.presentation?.enabled ?: false).toString(),
+            "iconId" to SpecWorkflowIcons.debugId(action?.presentation?.icon),
+            "tooltip" to action?.presentation?.tooltip.orEmpty(),
+            "accessibleName" to action?.presentation?.accessibleName.orEmpty(),
+        )
+    }
+
+    internal fun triggerTaskRowPrimaryActionForTest(taskId: String): Boolean {
+        val task = currentTasksById[taskId] ?: return false
+        if (resolveTaskRowPrimaryAction(task) == null) {
+            return false
+        }
+        return performTaskRowPrimaryAction(taskId)
     }
 
     internal fun triggerSecondaryActionForTest(targetStatus: TaskStatus): Boolean {
@@ -651,6 +701,121 @@ internal class SpecWorkflowTasksPanel(
         onOpenWorkflowChat(workflowId, selectedTask.id)
     }
 
+    private fun handleTaskListClick(event: MouseEvent) {
+        if (!SwingUtilities.isLeftMouseButton(event)) {
+            return
+        }
+        val index = tasksList.locationToIndex(event.point)
+        if (index < 0) {
+            return
+        }
+        val cellBounds = tasksList.getCellBounds(index, index) ?: return
+        if (!cellBounds.contains(event.point)) {
+            return
+        }
+        tasksList.selectedIndex = index
+        val action = resolveTaskRowPrimaryActionAt(event.point) ?: return
+        if (!action.presentation.enabled) {
+            return
+        }
+        if (performTaskRowPrimaryAction(action.taskId)) {
+            event.consume()
+        }
+    }
+
+    private fun updateTaskListCursor(point: Point) {
+        val action = resolveTaskRowPrimaryActionAt(point)
+        tasksList.cursor = if (action?.presentation?.enabled == true) {
+            Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        } else {
+            Cursor.getDefaultCursor()
+        }
+    }
+
+    private fun resolveTaskRowPrimaryActionAt(point: Point): TaskRowPrimaryAction? {
+        val index = tasksList.locationToIndex(point)
+        if (index < 0) {
+            return null
+        }
+        val cellBounds = tasksList.getCellBounds(index, index) ?: return null
+        if (!cellBounds.contains(point)) {
+            return null
+        }
+        val task = listModel.getElementAt(index)
+        val action = resolveTaskRowPrimaryAction(task) ?: return null
+        val actionBounds = taskCellRenderer.resolvePrimaryActionBounds(
+            list = tasksList,
+            value = task,
+            index = index,
+            isSelected = tasksList.selectedIndex == index,
+        ) ?: return null
+        return action.takeIf { actionBounds.contains(point) }
+    }
+
+    private fun resolveTaskRowPrimaryAction(task: StructuredTask): TaskRowPrimaryAction? {
+        val taskId = task.id
+        val progress = executionPresentation(task)
+        val presentation = when (task.displayStatus) {
+            TaskStatus.PENDING -> {
+                val blockedReason = task.executionBlockedReason(retry = false)
+                if (blockedReason != null) {
+                    null
+                } else {
+                    SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.Execute,
+                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.start"),
+                    enabled = true,
+                )
+                }
+            }
+
+            TaskStatus.BLOCKED -> {
+                val blockedReason = task.executionBlockedReason(retry = true)
+                if (blockedReason != null) {
+                    null
+                } else {
+                    SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.Refresh,
+                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.resume"),
+                    enabled = true,
+                )
+                }
+            }
+
+            TaskStatus.IN_PROGRESS -> when (progress?.phase) {
+                ExecutionLivePhase.WAITING_CONFIRMATION -> SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.Complete,
+                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.complete"),
+                    enabled = true,
+                )
+
+                ExecutionLivePhase.CANCELLING -> null
+
+                else -> SpecIconActionPresentation(
+                    icon = SpecWorkflowIcons.Close,
+                    tooltip = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop.tooltip", taskId),
+                    accessibleName = SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop"),
+                    enabled = true,
+                )
+            }
+
+            TaskStatus.COMPLETED,
+            TaskStatus.CANCELLED,
+            -> null
+        }
+        return presentation?.let { TaskRowPrimaryAction(taskId = taskId, presentation = it) }
+    }
+
+    private fun performTaskRowPrimaryAction(taskId: String): Boolean {
+        if (!selectTask(taskId)) {
+            return false
+        }
+        return requestExecutionForSelection()
+    }
+
     private fun requestExecutionForSelection(): Boolean {
         val selectedTask = tasksList.selectedValue ?: return false
         val progress = executionPresentation(selectedTask)
@@ -898,6 +1063,7 @@ internal class SpecWorkflowTasksPanel(
         private val titleLabel = JBLabel()
         private val metaLabel = JBLabel()
         private val statusChipLabel = JBLabel()
+        private val primaryActionLabel = JBLabel()
         private val rightPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0))
 
         init {
@@ -914,6 +1080,10 @@ internal class SpecWorkflowTasksPanel(
             statusChipLabel.border = BorderFactory.createEmptyBorder(2, 6, 2, 6)
 
             rightPanel.isOpaque = false
+            primaryActionLabel.preferredSize = JBUI.size(16, 16)
+            primaryActionLabel.minimumSize = primaryActionLabel.preferredSize
+            primaryActionLabel.isOpaque = false
+            rightPanel.add(primaryActionLabel)
             rightPanel.add(statusChipLabel)
 
             panel.add(
@@ -945,8 +1115,50 @@ internal class SpecWorkflowTasksPanel(
             titleLabel.text = "${value.id}: ${value.title}"
             metaLabel.text = taskMetaText(value)
             statusChipLabel.text = taskChipText(value)
+            applyPrimaryActionStyle(primaryActionLabel, value)
             applyChipStyle(statusChipLabel, value, isSelected)
             return panel
+        }
+
+        fun resolvePrimaryActionBounds(
+            list: JList<out StructuredTask>,
+            value: StructuredTask,
+            index: Int,
+            isSelected: Boolean,
+        ): Rectangle? {
+            val cellBounds = list.getCellBounds(index, index) ?: return null
+            val rendererComponent = getListCellRendererComponent(list, value, index, isSelected, false)
+            rendererComponent.setBounds(0, 0, cellBounds.width, cellBounds.height)
+            layoutRecursively(rendererComponent)
+            if (!primaryActionLabel.isVisible || primaryActionLabel.icon == null) {
+                return null
+            }
+            val actionRect = SwingUtilities.convertRectangle(
+                primaryActionLabel.parent,
+                primaryActionLabel.bounds,
+                rendererComponent,
+            )
+            return Rectangle(
+                cellBounds.x + actionRect.x,
+                cellBounds.y + actionRect.y,
+                actionRect.width,
+                actionRect.height,
+            )
+        }
+
+        private fun applyPrimaryActionStyle(label: JBLabel, task: StructuredTask) {
+            val action = resolveTaskRowPrimaryAction(task)
+            label.icon = action?.presentation?.icon
+            label.toolTipText = action?.presentation?.tooltip
+            label.isVisible = action != null
+        }
+
+        private fun layoutRecursively(component: Component) {
+            if (component !is Container) {
+                return
+            }
+            component.doLayout()
+            component.components.forEach(::layoutRecursively)
         }
 
         private fun applyChipStyle(label: JBLabel, task: StructuredTask, selected: Boolean) {
@@ -1010,6 +1222,11 @@ internal class SpecWorkflowTasksPanel(
         val enabled: Boolean,
         val tooltip: String,
         val perform: () -> Unit,
+    )
+
+    private data class TaskRowPrimaryAction(
+        val taskId: String,
+        val presentation: SpecIconActionPresentation,
     )
 
     private data class ChipPalette(

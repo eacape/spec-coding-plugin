@@ -1546,31 +1546,6 @@ class ImprovedChatPanel(
         ) {
             handleTaskBindingChipClicked()
         })
-        resolvePrimaryTaskBindingAction(state)?.let { primaryAction ->
-            val presentation = buildTaskBindingActionPresentation(state, primaryAction)
-            if (presentation.enabled) {
-                popup.add(createTaskBindingMenuItem(
-                    text = when (primaryAction) {
-                        TaskBindingActionKind.EXECUTE -> SpecCodingBundle.message("toolwindow.workflow.binding.execute")
-                        TaskBindingActionKind.RETRY -> SpecCodingBundle.message("toolwindow.workflow.binding.retry")
-                        TaskBindingActionKind.COMPLETE -> SpecCodingBundle.message("toolwindow.workflow.binding.complete")
-                        TaskBindingActionKind.STOP -> SpecCodingBundle.message("spec.toolwindow.tasks.execute.stop")
-                    },
-                    icon = presentation.icon,
-                    tooltip = presentation.tooltip,
-                ) {
-                    performTaskBindingAction(primaryAction)
-                })
-            }
-        }
-        popup.addSeparator()
-        popup.add(createTaskBindingMenuItem(
-            text = SpecCodingBundle.message("toolwindow.workflow.binding.task.clear"),
-            icon = SpecWorkflowIcons.Close,
-            tooltip = SpecCodingBundle.message("toolwindow.workflow.binding.task.clear.tooltip", state.taskId),
-        ) {
-            clearActiveTaskBinding()
-        })
         popup.show(anchor, x, y)
     }
 
@@ -2131,7 +2106,7 @@ class ImprovedChatPanel(
         val visibleRawInput = inputField.text.trim()
         prunePendingPastedTextBlocks(visibleRawInput)
         val rawInput = expandPendingPastedTextBlocks(visibleRawInput)
-        val sendAction = resolveComposerSendAction(visibleRawInput)
+        val sendAction = resolveComposerSendAction()
         if (!sendAction.enabled) {
             showWorkflowTaskErrorDialog(sendAction.tooltip)
             return
@@ -2154,7 +2129,7 @@ class ImprovedChatPanel(
         }
     }
 
-    private fun resolveComposerSendAction(visibleRawInput: String = inputField.text.trim()): ComposerSendAction {
+    private fun resolveComposerSendAction(): ComposerSendAction {
         if (isGenerating && !isRestoringSession && !isFinalizingResponse) {
             return ComposerSendAction(
                 kind = ComposerSendActionKind.CHAT_STOP,
@@ -2162,35 +2137,10 @@ class ImprovedChatPanel(
                 accessibleName = SpecCodingBundle.message("toolwindow.stop"),
             )
         }
-        if (currentInteractionMode() != ChatInteractionMode.SPEC || visibleRawInput.startsWith("/")) {
-            return ComposerSendAction(
-                kind = ComposerSendActionKind.CHAT_SEND,
-                tooltip = SpecCodingBundle.message("toolwindow.send"),
-                accessibleName = SpecCodingBundle.message("toolwindow.send"),
-            )
-        }
-        val state = resolveBoundTaskBindingState()
-        val primaryAction = resolvePrimaryTaskBindingAction(state)
-        if (state == null || primaryAction == null) {
-            return ComposerSendAction(
-                kind = ComposerSendActionKind.CHAT_SEND,
-                tooltip = SpecCodingBundle.message("toolwindow.send"),
-                accessibleName = SpecCodingBundle.message("toolwindow.send"),
-            )
-        }
-        val presentation = buildTaskBindingActionPresentation(state, primaryAction)
-        val actionKind = when (primaryAction) {
-            TaskBindingActionKind.EXECUTE -> ComposerSendActionKind.TASK_EXECUTE
-            TaskBindingActionKind.RETRY -> ComposerSendActionKind.TASK_RETRY
-            TaskBindingActionKind.COMPLETE -> ComposerSendActionKind.TASK_COMPLETE
-            TaskBindingActionKind.STOP -> ComposerSendActionKind.TASK_STOP
-        }
         return ComposerSendAction(
-            kind = actionKind,
-            tooltip = presentation.tooltip,
-            accessibleName = presentation.accessibleName,
-            enabled = presentation.enabled,
-            taskId = state.taskId,
+            kind = ComposerSendActionKind.CHAT_SEND,
+            tooltip = SpecCodingBundle.message("toolwindow.send"),
+            accessibleName = SpecCodingBundle.message("toolwindow.send"),
         )
     }
 
