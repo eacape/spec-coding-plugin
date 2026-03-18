@@ -2,6 +2,7 @@ package com.eacape.speccodingplugin.ui.spec
 
 import com.eacape.speccodingplugin.SpecCodingBundle
 import com.eacape.speccodingplugin.spec.ArtifactComposeActionMode
+import com.eacape.speccodingplugin.spec.CodeContextPack
 import com.eacape.speccodingplugin.spec.SpecDocument
 import com.eacape.speccodingplugin.spec.SpecMarkdownSanitizer
 import com.eacape.speccodingplugin.spec.SpecPhase
@@ -112,6 +113,7 @@ class SpecDetailPanel(
         onRemoveRequested = { sourceId -> onRemoveWorkflowSourceRequested(sourceId) },
         onRestoreRequested = { onRestoreWorkflowSourcesRequested() },
     )
+    private val composerCodeContextPanel = SpecComposerCodeContextPanel()
     private lateinit var validationBannerPanel: JPanel
     private val inputArea = JBTextArea(3, 40)
     private lateinit var clarificationSplitPane: JSplitPane
@@ -163,6 +165,7 @@ class SpecDetailPanel(
     private var preferredWorkbenchPhase: SpecPhase? = null
     private var workbenchArtifactBinding: SpecWorkflowStageArtifactBinding? = null
     private var composerSourceState = ComposerSourceState()
+    private var composerCodeContextState = ComposerCodeContextState()
     private var activePreviewCard: String = CARD_PREVIEW
     private var clarificationState: ClarificationState? = null
     private var activeChecklistDetailIndex: Int? = null
@@ -202,6 +205,11 @@ class SpecDetailPanel(
         val assets: List<WorkflowSourceAsset> = emptyList(),
         val selectedSourceIds: Set<String> = emptySet(),
         val editable: Boolean = false,
+    )
+
+    private data class ComposerCodeContextState(
+        val workflowId: String? = null,
+        val codeContextPack: CodeContextPack? = null,
     )
 
     private enum class ClarificationQuestionDecision {
@@ -315,7 +323,15 @@ class SpecDetailPanel(
             border = JBUI.Borders.empty(4, 4, 2, 4)
         }
         composerSourcePanel.isOpaque = false
-        composerContent.add(composerSourcePanel, BorderLayout.NORTH)
+        composerCodeContextPanel.isOpaque = false
+        composerContent.add(
+            JPanel(BorderLayout(0, JBUI.scale(6))).apply {
+                isOpaque = false
+                add(composerSourcePanel, BorderLayout.NORTH)
+                add(composerCodeContextPanel, BorderLayout.CENTER)
+            },
+            BorderLayout.NORTH,
+        )
 
         inputArea.lineWrap = true
         inputArea.wrapStyleWord = true
@@ -1504,6 +1520,9 @@ class SpecDetailPanel(
             clearProcessTimeline()
             composerSourcePanel.clear()
         }
+        if (previousWorkflowId != workflow.id || composerCodeContextState.codeContextPack?.phase != workflow.currentPhase) {
+            composerCodeContextState = ComposerCodeContextState(workflowId = workflow.id)
+        }
         if (clarificationState?.phase != null && clarificationState?.phase != workflow.currentPhase) {
             clarificationState = null
             activeChecklistDetailIndex = null
@@ -1528,6 +1547,7 @@ class SpecDetailPanel(
         setPhaseStepperEnabled(!isEditing)
         updateTreeSelection(selectedPhase, forceComposerReset = false)
         updateButtonStates(workflow)
+        refreshComposerCodeContextPanelState()
         refreshInputAreaMode()
         syncComposerSectionState(forceReset = previousWorkflowId != workflow.id || followCurrentPhase)
         if (clarificationState == null) {
@@ -1551,6 +1571,7 @@ class SpecDetailPanel(
         preferredWorkbenchPhase = null
         workbenchArtifactBinding = null
         composerSourceState = ComposerSourceState()
+        composerCodeContextState = ComposerCodeContextState()
         selectedPhase = null
         clarificationState = null
         activeChecklistDetailIndex = null
@@ -1577,6 +1598,7 @@ class SpecDetailPanel(
         inputArea.isEditable = true
         inputArea.toolTipText = null
         composerSourcePanel.clear()
+        composerCodeContextPanel.clear()
         updateInputPlaceholder(null)
         applyActionButtonPresentation()
         generateButton.isVisible = true
@@ -1642,6 +1664,17 @@ class SpecDetailPanel(
             editable = editable,
         )
         refreshComposerSourcePanelState()
+    }
+
+    fun updateAutoCodeContext(
+        workflowId: String?,
+        codeContextPack: CodeContextPack?,
+    ) {
+        composerCodeContextState = ComposerCodeContextState(
+            workflowId = workflowId,
+            codeContextPack = codeContextPack,
+        )
+        refreshComposerCodeContextPanelState()
     }
 
     private fun updateInputPlaceholder(currentPhase: SpecPhase?) {
@@ -2825,6 +2858,14 @@ class SpecDetailPanel(
         )
     }
 
+    private fun refreshComposerCodeContextPanelState() {
+        val state = composerCodeContextState
+        composerCodeContextPanel.updateState(
+            workflowId = state.workflowId,
+            codeContextPack = state.codeContextPack,
+        )
+    }
+
     private fun refreshBottomSplitLayout(showInputSection: Boolean) {
         if (!::bottomPanelContainer.isInitialized) {
             return
@@ -3957,6 +3998,22 @@ class SpecDetailPanel(
 
     internal fun clickRemoveWorkflowSourceForTest(sourceId: String): Boolean {
         return composerSourcePanel.clickRemoveForTest(sourceId)
+    }
+
+    internal fun composerCodeContextSummaryChipLabelsForTest(): List<String> {
+        return composerCodeContextPanel.summaryChipLabelsForTest()
+    }
+
+    internal fun composerCodeContextCandidateLabelsForTest(): List<String> {
+        return composerCodeContextPanel.candidateFileLabelsForTest()
+    }
+
+    internal fun composerCodeContextMetaTextForTest(): String {
+        return composerCodeContextPanel.metaTextForTest()
+    }
+
+    internal fun composerCodeContextHintTextForTest(): String {
+        return composerCodeContextPanel.hintTextForTest()
     }
 
     internal fun toggleProcessTimelineExpandedForTest() {

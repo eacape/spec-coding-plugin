@@ -36,6 +36,7 @@ import com.eacape.speccodingplugin.ui.worktree.NewWorktreeDialog
 import com.eacape.speccodingplugin.worktree.WorktreeManager
 import com.eacape.speccodingplugin.worktree.WorktreeStatus
 import com.intellij.CommonBundle
+import com.intellij.openapi.components.service
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
@@ -103,6 +104,7 @@ class SpecWorkflowPanel(
     private val specTasksService = SpecTasksService.getInstance(project)
     private val specTaskExecutionService = SpecTaskExecutionService.getInstance(project)
     private val specTaskCompletionService = SpecTaskCompletionService.getInstance(project)
+    private val specCodeContextService = project.service<SpecCodeContextService>()
     private val specRelatedFilesService = SpecRelatedFilesService.getInstance(project)
     private val specVerificationService = SpecVerificationService.getInstance(project)
     private val specRequirementsQuickFixService = SpecRequirementsQuickFixService(project)
@@ -1669,6 +1671,14 @@ class SpecWorkflowPanel(
             val uiSnapshot = wf?.let(::buildWorkflowUiSnapshot)
             val tasksResult = runCatching { specTasksService.parse(workflowId) }
             val sourcesResult = runCatching { specEngine.listWorkflowSources(workflowId).getOrThrow() }
+            val codeContextResult = wf?.let { workflow ->
+                runCatching {
+                    specCodeContextService.buildCodeContextPack(
+                        workflow = workflow,
+                        phase = workflow.currentPhase,
+                    )
+                }
+            }
             val liveProgressByTaskId = wf?.let { buildTaskLiveProgressByTaskId(it.id) }.orEmpty()
             currentWorkflow = wf
             invokeLaterSafe {
@@ -1687,6 +1697,7 @@ class SpecWorkflowPanel(
                         refreshedAtMillis = snapshot.refreshedAtMillis,
                     )
                     detailPanel.updateWorkflow(wf)
+                    applyAutoCodeContextToDetailPanel(wf, codeContextResult)
                     sourcesResult
                         .onSuccess { sources ->
                             applyWorkflowSourcesToDetailPanel(
@@ -1966,6 +1977,36 @@ class SpecWorkflowPanel(
         return pendingClarificationRetryByWorkflowId[workflowId]
             ?.input
             ?.isNotBlank() == true
+    }
+
+    private fun applyAutoCodeContextToDetailPanel(
+        workflow: SpecWorkflow?,
+        codeContextResult: Result<CodeContextPack>?,
+    ) {
+        if (workflow == null) {
+            detailPanel.updateAutoCodeContext(workflowId = null, codeContextPack = null)
+            return
+        }
+
+        val pack = codeContextResult?.getOrElse { error ->
+            CodeContextPack(
+                phase = workflow.currentPhase,
+                strategy = CodeContextCollectionStrategy.forPhase(workflow.currentPhase),
+                degradationReasons = listOf(
+                    "Automatic code context collection failed: ${compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))}",
+                ),
+            )
+        } ?: CodeContextPack(
+            phase = workflow.currentPhase,
+            strategy = CodeContextCollectionStrategy.forPhase(workflow.currentPhase),
+            degradationReasons = listOf(
+                "Automatic code context collection was skipped for this workflow refresh.",
+            ),
+        )
+        detailPanel.updateAutoCodeContext(
+            workflowId = workflow.id,
+            codeContextPack = pack,
+        )
     }
 
     private fun applyWorkflowSourcesToDetailPanel(
@@ -4768,6 +4809,14 @@ class SpecWorkflowPanel(
             val wf = specEngine.reloadWorkflow(wfId).getOrNull()
             val uiSnapshot = wf?.let(::buildWorkflowUiSnapshot)
             val tasksResult = runCatching { specTasksService.parse(wfId) }
+            val codeContextResult = wf?.let { workflow ->
+                runCatching {
+                    specCodeContextService.buildCodeContextPack(
+                        workflow = workflow,
+                        phase = workflow.currentPhase,
+                    )
+                }
+            }
             val liveProgressByTaskId = wf?.let { buildTaskLiveProgressByTaskId(it.id) }.orEmpty()
             currentWorkflow = wf
             invokeLaterSafe {
@@ -4783,6 +4832,7 @@ class SpecWorkflowPanel(
                         refreshedAtMillis = snapshot.refreshedAtMillis,
                     )
                     detailPanel.updateWorkflow(wf, followCurrentPhase = followCurrentPhase)
+                    applyAutoCodeContextToDetailPanel(wf, codeContextResult)
                     tasksResult.onSuccess { tasks ->
                         val decoratedTasks = decorateTasksWithExecutionState(
                             workflow = wf,
@@ -5340,6 +5390,16 @@ class SpecWorkflowPanel(
     internal fun composerSourceMetaTextForTest(): String = detailPanel.composerSourceMetaTextForTest()
 
     internal fun composerSourceHintTextForTest(): String = detailPanel.composerSourceHintTextForTest()
+
+    internal fun composerCodeContextSummaryChipLabelsForTest(): List<String> =
+        detailPanel.composerCodeContextSummaryChipLabelsForTest()
+
+    internal fun composerCodeContextCandidateLabelsForTest(): List<String> =
+        detailPanel.composerCodeContextCandidateLabelsForTest()
+
+    internal fun composerCodeContextMetaTextForTest(): String = detailPanel.composerCodeContextMetaTextForTest()
+
+    internal fun composerCodeContextHintTextForTest(): String = detailPanel.composerCodeContextHintTextForTest()
 
     internal fun currentStatusTextForTest(): String = statusLabel.text.orEmpty()
 

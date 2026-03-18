@@ -213,6 +213,36 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test workflow panel should show automatic code context summary separately from persisted sources`() {
+        val workflow = SpecEngine.getInstance(project).createWorkflow(
+            title = "Auto Code Context",
+            description = "composer repo context summary",
+        ).getOrThrow()
+        val readmePath = Path.of(project.basePath!!).resolve("README.md")
+        Files.writeString(
+            readmePath,
+            "# Demo Project\n\n- repo context should appear in composer.\n",
+            StandardCharsets.UTF_8,
+        )
+        val panel = createPanel()
+
+        waitUntil {
+            panel.isDetailModeForTest() && panel.selectedWorkflowIdForTest() == workflow.id
+        }
+        waitUntil {
+            panel.composerCodeContextCandidateLabelsForTest().any { label -> label.contains("README.md") }
+        }
+
+        assertTrue(
+            panel.composerCodeContextSummaryChipLabelsForTest().contains(
+                SpecCodingBundle.message("spec.detail.codeContext.summary.repo"),
+            ),
+        )
+        assertTrue(panel.composerCodeContextMetaTextForTest().isNotBlank())
+        assertTrue(panel.composerCodeContextHintTextForTest().isNotBlank())
+        assertTrue(panel.composerSourceChipLabelsForTest().isEmpty())
+    }
+
     fun `test workflow panel should show validation feedback when composer sources are rejected`() {
         val workflow = SpecEngine.getInstance(project).createWorkflow(
             title = "Rejected Sources",
