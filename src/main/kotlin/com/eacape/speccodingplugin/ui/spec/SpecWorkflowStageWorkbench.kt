@@ -212,11 +212,11 @@ internal object SpecWorkflowStageWorkbenchBuilder {
             }
         }
         if (focusedStage == overviewState.currentStage && focusedStage == StageId.IMPLEMENT) {
-            buildImplementPrimaryAction(
+            return buildImplementPrimaryAction(
                 overviewState = overviewState,
                 tasks = tasks,
                 implementationFocus = implementationFocus,
-            )?.let { return it }
+            )
         }
         if (focusedStage == overviewState.currentStage && focusedStage == StageId.VERIFY) {
             buildVerifyPrimaryAction(
@@ -324,90 +324,35 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         val relatedFilesConfirmed = tasks
             .filter { it.status == TaskStatus.COMPLETED }
             .all { it.relatedFiles.isNotEmpty() }
-        return when (implementationFocus?.status) {
-            TaskStatus.IN_PROGRESS -> when (implementationFocus.progress?.phase) {
-                com.eacape.speccodingplugin.spec.ExecutionLivePhase.WAITING_CONFIRMATION -> SpecWorkflowWorkbenchAction(
-                    kind = SpecWorkflowWorkbenchActionKind.COMPLETE_TASK,
-                    label = SpecCodingBundle.message(
-                        "spec.toolwindow.overview.primary.implement.completeTask",
-                        implementationFocus.taskId,
-                    ),
-                    enabled = true,
-                    taskId = implementationFocus.taskId,
-                )
-
-                com.eacape.speccodingplugin.spec.ExecutionLivePhase.CANCELLING -> SpecWorkflowWorkbenchAction(
-                    kind = SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION,
-                    label = SpecCodingBundle.message(
-                        "spec.toolwindow.overview.primary.implement.cancellingTask",
-                        implementationFocus.taskId,
-                    ),
-                    enabled = false,
-                    taskId = implementationFocus.taskId,
-                    disabledReason = SpecCodingBundle.message(
-                        "spec.toolwindow.overview.primary.implement.cancellingTask",
-                        implementationFocus.taskId,
-                    ),
-                )
-
-                else -> SpecWorkflowWorkbenchAction(
-                    kind = SpecWorkflowWorkbenchActionKind.STOP_TASK_EXECUTION,
-                    label = SpecCodingBundle.message(
-                        "spec.toolwindow.overview.primary.implement.stopTask",
-                        implementationFocus.taskId,
-                    ),
-                    enabled = true,
-                    taskId = implementationFocus.taskId,
-                )
-            }
-
-            TaskStatus.PENDING -> SpecWorkflowWorkbenchAction(
-                kind = SpecWorkflowWorkbenchActionKind.START_TASK,
-                label = SpecCodingBundle.message(
-                    "spec.toolwindow.overview.primary.implement.startTask",
-                    implementationFocus.taskId,
-                ),
-                enabled = true,
-                taskId = implementationFocus.taskId,
-            )
-
-            TaskStatus.BLOCKED -> SpecWorkflowWorkbenchAction(
-                kind = SpecWorkflowWorkbenchActionKind.RESUME_TASK,
-                label = SpecCodingBundle.message(
-                    "spec.toolwindow.overview.primary.implement.resumeTask",
-                    implementationFocus.taskId,
-                ),
-                enabled = true,
-                taskId = implementationFocus.taskId,
-            )
-
-            else -> {
-                val allWorkSettled = tasks.isNotEmpty() && tasks.all(::isImplementationTaskSettled)
-                if (!allWorkSettled) {
-                    return null
-                }
-                val enabled = overviewState.stageStepper.canAdvance && relatedFilesConfirmed
-                SpecWorkflowWorkbenchAction(
-                    kind = SpecWorkflowWorkbenchActionKind.ADVANCE,
-                    label = overviewState.nextStage?.let { nextStage ->
-                        SpecCodingBundle.message(
-                            "spec.toolwindow.overview.primary.implement.continueCheck.withTarget",
-                            SpecWorkflowOverviewPresenter.stageLabel(nextStage),
-                        )
-                    } ?: SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.continueCheck"),
-                    enabled = enabled,
-                    targetStage = overviewState.nextStage,
-                    disabledReason = disabledReason(
-                        enabled = enabled,
-                        blockers = if (!relatedFilesConfirmed) {
-                            listOf(SpecCodingBundle.message("spec.toolwindow.overview.blockers.implement.relatedFiles"))
-                        } else {
-                            emptyList()
-                        },
-                    ),
-                )
-            }
+        // Task-level controls are already available in the structured task list.
+        // The overview keeps only the stage-level advance action to avoid duplicate entry points.
+        if (implementationFocus != null) {
+            return null
         }
+        val allWorkSettled = tasks.isNotEmpty() && tasks.all(::isImplementationTaskSettled)
+        if (!allWorkSettled) {
+            return null
+        }
+        val enabled = overviewState.stageStepper.canAdvance && relatedFilesConfirmed
+        return SpecWorkflowWorkbenchAction(
+            kind = SpecWorkflowWorkbenchActionKind.ADVANCE,
+            label = overviewState.nextStage?.let { nextStage ->
+                SpecCodingBundle.message(
+                    "spec.toolwindow.overview.primary.implement.continueCheck.withTarget",
+                    SpecWorkflowOverviewPresenter.stageLabel(nextStage),
+                )
+            } ?: SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.continueCheck"),
+            enabled = enabled,
+            targetStage = overviewState.nextStage,
+            disabledReason = disabledReason(
+                enabled = enabled,
+                blockers = if (!relatedFilesConfirmed) {
+                    listOf(SpecCodingBundle.message("spec.toolwindow.overview.blockers.implement.relatedFiles"))
+                } else {
+                    emptyList()
+                },
+            ),
+        )
     }
 
     private fun buildOverflowActions(
@@ -418,21 +363,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
     ): List<SpecWorkflowWorkbenchAction> {
         return buildList {
             when (focusedStage) {
-                StageId.IMPLEMENT -> {
-                    if (implementationFocus?.status == TaskStatus.IN_PROGRESS) {
-                        add(
-                            SpecWorkflowWorkbenchAction(
-                                kind = SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT,
-                                label = SpecCodingBundle.message(
-                                    "spec.toolwindow.overview.more.openTaskChat",
-                                    implementationFocus.taskId,
-                                ),
-                                enabled = true,
-                                taskId = implementationFocus.taskId,
-                            ),
-                        )
-                    }
-                }
+                StageId.IMPLEMENT -> Unit
 
                 StageId.VERIFY -> {
                     if (verifyDeltaState?.verifyEnabled == true) {

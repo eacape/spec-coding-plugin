@@ -31,6 +31,7 @@ import com.eacape.speccodingplugin.stream.ChatTraceStatus
 import java.time.Instant
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -291,18 +292,7 @@ class SpecWorkflowOverviewPanelTest {
         panel.updateOverview(overviewState, workbenchState)
 
         val snapshot = panel.snapshotForTest()
-        assertEquals("true", snapshot.getValue("primaryActionVisible"))
-        assertEquals("true", snapshot.getValue("primaryActionEnabled"))
-        assertEquals("", snapshot.getValue("primaryActionText"))
-        assertEquals("complete", snapshot.getValue("primaryActionIconId"))
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.completeTask", "T-001"),
-            snapshot.getValue("primaryActionTooltip"),
-        )
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.completeTask", "T-001"),
-            snapshot.getValue("primaryActionAccessibleDescription"),
-        )
+        assertEquals("false", snapshot.getValue("primaryActionVisible"))
         assertEquals(
             SpecCodingBundle.message(
                 "spec.toolwindow.overview.focus.summary.implement.waitingConfirmation",
@@ -312,19 +302,14 @@ class SpecWorkflowOverviewPanelTest {
             snapshot.getValue("focusSummary"),
         )
         assertEquals(StageId.IMPLEMENT.name, snapshot.getValue("focusedStage"))
-        assertTrue(
-            snapshot.getValue("overflowActions").contains(
-                SpecCodingBundle.message("spec.toolwindow.overview.more.openTaskChat", "T-001"),
-            ),
-        )
+        assertEquals("", snapshot.getValue("overflowActions"))
+        assertEquals("false", snapshot.getValue("overflowVisible"))
         assertEquals("intentionBulb", snapshot.getValue("overflowIconId"))
-
-        panel.clickPrimaryActionForTest()
-        assertEquals(SpecWorkflowWorkbenchActionKind.COMPLETE_TASK, actionKind)
+        assertNull(actionKind)
     }
 
     @Test
-    fun `updateOverview should render stop action for actively running implementation task`() {
+    fun `updateOverview should hide task-level actions for actively running implementation task`() {
         val now = Instant.now()
         val panel = SpecWorkflowOverviewPanel()
         val overviewState = overviewState(
@@ -383,11 +368,7 @@ class SpecWorkflowOverviewPanelTest {
         panel.updateOverview(overviewState, workbenchState)
 
         val snapshot = panel.snapshotForTest()
-        assertEquals("close", snapshot.getValue("primaryActionIconId"))
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.stopTask", "T-010"),
-            snapshot.getValue("primaryActionTooltip"),
-        )
+        assertEquals("false", snapshot.getValue("primaryActionVisible"))
         assertEquals(
             SpecCodingBundle.message(
                 "spec.toolwindow.overview.focus.summary.implement.running",
@@ -408,15 +389,12 @@ class SpecWorkflowOverviewPanelTest {
                     "Verify: ./gradlew.bat test --tests SpecWorkflowTasksPanelTest",
             ),
         )
-        assertTrue(
-            snapshot.getValue("overflowActions").contains(
-                SpecCodingBundle.message("spec.toolwindow.overview.more.openTaskChat", "T-010"),
-            ),
-        )
+        assertEquals("", snapshot.getValue("overflowActions"))
+        assertEquals("false", snapshot.getValue("overflowVisible"))
     }
 
     @Test
-    fun `updateOverview should render resume action for blocked implementation task`() {
+    fun `updateOverview should hide task-level resume action for blocked implementation task`() {
         var actionKind: SpecWorkflowWorkbenchActionKind? = null
         val panel = SpecWorkflowOverviewPanel(
             onWorkbenchActionRequested = { action -> actionKind = action.kind },
@@ -440,17 +418,10 @@ class SpecWorkflowOverviewPanelTest {
         panel.updateOverview(overviewState, workbenchState)
 
         val snapshot = panel.snapshotForTest()
-        assertEquals("true", snapshot.getValue("primaryActionVisible"))
-        assertEquals("true", snapshot.getValue("primaryActionEnabled"))
-        assertEquals("", snapshot.getValue("primaryActionText"))
-        assertEquals("refresh", snapshot.getValue("primaryActionIconId"))
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.resumeTask", "T-002"),
-            snapshot.getValue("primaryActionTooltip"),
-        )
-
-        panel.clickPrimaryActionForTest()
-        assertEquals(SpecWorkflowWorkbenchActionKind.RESUME_TASK, actionKind)
+        assertEquals("false", snapshot.getValue("primaryActionVisible"))
+        assertEquals("", snapshot.getValue("overflowActions"))
+        assertEquals("false", snapshot.getValue("overflowVisible"))
+        assertNull(actionKind)
     }
 
     @Test

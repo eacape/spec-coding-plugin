@@ -59,6 +59,11 @@ internal class SpecWorkflowOverviewPanel(
         addActionListener { showOverflowActionsMenu() }
         SpecUiStyle.styleIconActionButton(this, size = 24, arc = 12)
     }
+    private val focusActionsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        isOpaque = false
+        add(primaryActionButton)
+        add(overflowActionsButton)
+    }
     private val checklistTitleLabel = createSectionTitleLabel()
     private val checklistLabels = List(4) { createChecklistLabel() }
     private val stageFlowTitleLabel = createSectionTitleLabel()
@@ -329,11 +334,6 @@ internal class SpecWorkflowOverviewPanel(
             add(Box.createVerticalStrut(JBUI.scale(2)))
             add(focusMetaLabel)
         }
-        val actionRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-            isOpaque = false
-            add(primaryActionButton)
-            add(overflowActionsButton)
-        }
         return JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = false
             add(headerPanel, BorderLayout.NORTH)
@@ -351,7 +351,7 @@ internal class SpecWorkflowOverviewPanel(
                 },
                 BorderLayout.CENTER,
             )
-            add(actionRow, BorderLayout.SOUTH)
+            add(focusActionsPanel, BorderLayout.SOUTH)
         }
     }
 
@@ -415,6 +415,7 @@ internal class SpecWorkflowOverviewPanel(
         updateChecklist(guidance.checklist)
         updatePrimaryAction(workbenchState.primaryAction)
         updateOverflowActions(workbenchState.overflowActions)
+        updateFocusActionsVisibility()
 
         workflowValueLabel.text = state.title.takeIf { it.isNotBlank() }?.let { title ->
             if (title == state.workflowId) state.workflowId else "$title | ${state.workflowId}"
@@ -466,6 +467,7 @@ internal class SpecWorkflowOverviewPanel(
         updateChecklist(emptyList())
         updatePrimaryAction(null)
         updateOverflowActions(emptyList())
+        updateFocusActionsVisibility()
         workflowValueLabel.text = ""
         statusValueLabel.text = ""
         templateValueLabel.text = ""
@@ -666,6 +668,10 @@ internal class SpecWorkflowOverviewPanel(
                 disabledReason = disabledReason,
             ),
         )
+    }
+
+    private fun updateFocusActionsVisibility() {
+        focusActionsPanel.isVisible = primaryActionButton.isVisible || overflowActionsButton.isVisible
     }
 
     private fun addDetailRow(

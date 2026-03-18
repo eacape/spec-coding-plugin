@@ -503,7 +503,7 @@ class SpecWorkflowOverviewPresenterTest {
     }
 
     @Test
-    fun `workbench builder should surface start-task action during implement stage when no task is in progress`() {
+    fun `workbench builder should hide task-level start action during implement stage when no task is in progress`() {
         val workflow = workflow(currentStage = StageId.IMPLEMENT)
         val overviewState = SpecWorkflowOverviewPresenter.buildState(
             workflow = workflow,
@@ -523,19 +523,14 @@ class SpecWorkflowOverviewPresenterTest {
 
         assertEquals(StageId.IMPLEMENT, workbenchState.currentStage)
         assertEquals(StageId.IMPLEMENT, workbenchState.focusedStage)
-        assertEquals(SpecWorkflowWorkbenchActionKind.START_TASK, workbenchState.primaryAction?.kind)
-        assertEquals("T-002", workbenchState.primaryAction?.taskId)
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.startTask", "T-002"),
-            workbenchState.primaryAction?.label,
-        )
+        assertNull(workbenchState.primaryAction)
         assertEquals("T-002", workbenchState.implementationFocus?.taskId)
         assertEquals(TaskStatus.PENDING, workbenchState.implementationFocus?.status)
-        assertTrue(workbenchState.primaryAction?.enabled == true)
+        assertTrue(workbenchState.overflowActions.isEmpty())
     }
 
     @Test
-    fun `workbench builder should surface complete-task action during implement stage when a task is in progress`() {
+    fun `workbench builder should hide task-level complete action during implement stage when a task is in progress`() {
         val workflow = workflow(currentStage = StageId.IMPLEMENT)
         val overviewState = SpecWorkflowOverviewPresenter.buildState(
             workflow = workflow,
@@ -563,25 +558,14 @@ class SpecWorkflowOverviewPresenterTest {
             ),
         )
 
-        assertEquals(SpecWorkflowWorkbenchActionKind.COMPLETE_TASK, workbenchState.primaryAction?.kind)
-        assertEquals("T-001", workbenchState.primaryAction?.taskId)
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.completeTask", "T-001"),
-            workbenchState.primaryAction?.label,
-        )
+        assertNull(workbenchState.primaryAction)
         assertEquals("T-001", workbenchState.implementationFocus?.taskId)
         assertEquals(TaskStatus.IN_PROGRESS, workbenchState.implementationFocus?.status)
-        assertTrue(workbenchState.primaryAction?.enabled == true)
-        assertTrue(
-            workbenchState.overflowActions.any { action ->
-                action.kind == SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT &&
-                    action.taskId == "T-001"
-            },
-        )
+        assertTrue(workbenchState.overflowActions.isEmpty())
     }
 
     @Test
-    fun `workbench builder should surface resume-task action during implement stage when a task is blocked`() {
+    fun `workbench builder should hide task-level resume action during implement stage when a task is blocked`() {
         val workflow = workflow(currentStage = StageId.IMPLEMENT)
         val overviewState = SpecWorkflowOverviewPresenter.buildState(
             workflow = workflow,
@@ -599,15 +583,10 @@ class SpecWorkflowOverviewPresenterTest {
             ),
         )
 
-        assertEquals(SpecWorkflowWorkbenchActionKind.RESUME_TASK, workbenchState.primaryAction?.kind)
-        assertEquals("T-002", workbenchState.primaryAction?.taskId)
-        assertEquals(
-            SpecCodingBundle.message("spec.toolwindow.overview.primary.implement.resumeTask", "T-002"),
-            workbenchState.primaryAction?.label,
-        )
+        assertNull(workbenchState.primaryAction)
         assertEquals("T-002", workbenchState.implementationFocus?.taskId)
         assertEquals(TaskStatus.BLOCKED, workbenchState.implementationFocus?.status)
-        assertTrue(workbenchState.primaryAction?.enabled == true)
+        assertTrue(workbenchState.overflowActions.isEmpty())
     }
 
     @Test

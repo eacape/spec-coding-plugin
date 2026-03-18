@@ -679,18 +679,19 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         waitUntil {
             panel.isDetailModeForTest() &&
                 panel.selectedWorkflowIdForTest() == workflow.id &&
-                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.START_TASK
+                panel.tasksSnapshotForTest().getValue("selectedTaskId") == task.id &&
+                panel.overviewSnapshotForTest().getValue("primaryActionVisible") == "false"
         }
 
         assertEquals(task.id, panel.tasksSnapshotForTest().getValue("selectedTaskId"))
 
         ApplicationManager.getApplication().invokeAndWait {
-            panel.clickOverviewPrimaryActionForTest()
+            assertTrue(panel.requestExecutionForTaskForTest(task.id))
         }
 
         waitUntil {
-            panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK &&
-                panel.tasksSnapshotForTest().getValue("tasks").contains("${task.id}:IN_PROGRESS")
+            panel.tasksSnapshotForTest().getValue("tasks").contains("${task.id}:IN_PROGRESS") &&
+                panel.overviewSnapshotForTest().getValue("primaryActionVisible") == "false"
         }
 
         assertEquals(task.id, panel.tasksSnapshotForTest().getValue("selectedTaskId"))
@@ -865,7 +866,8 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         waitUntil {
             panel.isDetailModeForTest() &&
                 panel.selectedWorkflowIdForTest() == workflow.id &&
-                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.RESUME_TASK
+                panel.tasksSnapshotForTest().getValue("selectedTaskId") == blockedTask.id &&
+                panel.overviewSnapshotForTest().getValue("primaryActionVisible") == "false"
         }
 
         assertEquals(blockedTask.id, panel.tasksSnapshotForTest().getValue("selectedTaskId"))
@@ -873,12 +875,12 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals("refresh", panel.tasksSnapshotForTest().getValue("executeIconId"))
 
         ApplicationManager.getApplication().invokeAndWait {
-            panel.clickOverviewPrimaryActionForTest()
+            assertTrue(panel.requestExecutionForTaskForTest(blockedTask.id))
         }
 
         waitUntil {
-            panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK &&
-                panel.tasksSnapshotForTest().getValue("tasks").contains("${blockedTask.id}:IN_PROGRESS")
+            panel.tasksSnapshotForTest().getValue("tasks").contains("${blockedTask.id}:IN_PROGRESS") &&
+                panel.overviewSnapshotForTest().getValue("primaryActionVisible") == "false"
         }
     }
 
@@ -920,7 +922,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             panel.isDetailModeForTest() &&
                 panel.selectedWorkflowIdForTest() == workflow.id &&
                 panel.tasksSnapshotForTest().getValue("tasks").contains("${task.id}:IN_PROGRESS:P0") &&
-                panel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK
+                panel.overviewSnapshotForTest().getValue("primaryActionVisible") == "false"
         }
 
         val tasksSnapshot = panel.tasksSnapshotForTest()
@@ -929,7 +931,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
         assertEquals(task.id, tasksSnapshot.getValue("selectedTaskId"))
         assertEquals("waitingComplete", tasksSnapshot.getValue("executeIconId"))
         assertEquals("true", tasksSnapshot.getValue("executeFocusable"))
-        assertTrue(panel.currentOverflowActionKindsForTest().contains(SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT))
+        assertEquals("false", panel.overviewSnapshotForTest().getValue("overflowVisible"))
         assertTrue(persistedTasks.contains("status: PENDING"))
         assertFalse(persistedTasks.contains("status: IN_PROGRESS"))
     }
@@ -973,7 +975,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             firstPanel.isDetailModeForTest() &&
                 firstPanel.selectedWorkflowIdForTest() == workflow.id &&
                 firstPanel.tasksSnapshotForTest().getValue("selectedTaskPhase") == "WAITING_CONFIRMATION" &&
-                firstPanel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK
+                firstPanel.overviewSnapshotForTest().getValue("primaryActionVisible") == "false"
         }
 
         val firstTasksSnapshot = firstPanel.tasksSnapshotForTest()
@@ -984,8 +986,8 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             "Recovered run awaiting confirmation.",
             firstTasksSnapshot.getValue("selectedTaskExecutionDetail"),
         )
-        assertEquals("complete", firstOverviewSnapshot.getValue("primaryActionIconId"))
-        assertEquals("intentionBulb", firstOverviewSnapshot.getValue("overflowIconId"))
+        assertEquals("false", firstOverviewSnapshot.getValue("primaryActionVisible"))
+        assertEquals("false", firstOverviewSnapshot.getValue("overflowVisible"))
 
         ApplicationManager.getApplication().invokeAndWait {
             Disposer.dispose(firstPanel)
@@ -1004,7 +1006,7 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             reopenedPanel.isDetailModeForTest() &&
                 reopenedPanel.selectedWorkflowIdForTest() == workflow.id &&
                 reopenedPanel.tasksSnapshotForTest().getValue("selectedTaskPhase") == "WAITING_CONFIRMATION" &&
-                reopenedPanel.currentPrimaryActionKindForTest() == SpecWorkflowWorkbenchActionKind.COMPLETE_TASK
+                reopenedPanel.overviewSnapshotForTest().getValue("primaryActionVisible") == "false"
         }
 
         val reopenedTasksSnapshot = reopenedPanel.tasksSnapshotForTest()
@@ -1020,13 +1022,8 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
             "Recovered run awaiting confirmation.",
             reopenedTasksSnapshot.getValue("selectedTaskExecutionDetail"),
         )
-        assertEquals("complete", reopenedOverviewSnapshot.getValue("primaryActionIconId"))
-        assertEquals("intentionBulb", reopenedOverviewSnapshot.getValue("overflowIconId"))
-        assertTrue(
-            reopenedPanel.currentOverflowActionKindsForTest().contains(
-                SpecWorkflowWorkbenchActionKind.OPEN_TASK_CHAT,
-            ),
-        )
+        assertEquals("false", reopenedOverviewSnapshot.getValue("primaryActionVisible"))
+        assertEquals("false", reopenedOverviewSnapshot.getValue("overflowVisible"))
         assertEquals(tasksBeforeOpen, tasksAfterReopen)
         assertTrue(tasksAfterReopen.contains("status: PENDING"))
         assertFalse(tasksAfterReopen.contains("status: IN_PROGRESS"))
