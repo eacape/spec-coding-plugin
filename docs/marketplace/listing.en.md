@@ -2,14 +2,14 @@
 
 ## Short Description
 
-Spec-driven AI coding workflow for JetBrains IDEs. Plan, implement, verify, and audit AI-assisted changes with structured workflows, grounded context, and reviewable history.
+First beta release of Spec Code for JetBrains IDEs. Plan, implement, verify, and review AI-assisted changes with structured workflows, grounded context, and editor-native visibility.
 
 ## Overview
 
-Spec Code brings a spec-driven AI coding workflow into JetBrains IDEs.
-Instead of relying on ad-hoc prompts and disposable chat logs, it organizes each AI-assisted change as a reviewable workflow from requirements to archive.
+Spec Code 0.0.1-beta is the first beta release of a spec-driven AI coding workflow for JetBrains IDEs.
+Instead of relying on ad-hoc prompts and disposable chat logs, it organizes AI-assisted changes as reviewable workflows with grounded context and editor-native visibility.
 
-The plugin helps teams and individual developers keep AI work grounded in project context.
+This beta focuses on the core workflow experience inside JetBrains IDEs.
 It combines workflow artifacts, code graph awareness, related-file discovery, editor insights, and execution history so generated changes are easier to inspect, compare, and iterate.
 
 ## Key Features
@@ -22,8 +22,8 @@ It combines workflow artifacts, code graph awareness, related-file discovery, ed
 - Claude CLI and Codex CLI integration with model switching and slash-command discovery
 - Built-in operation modes, hooks, worktrees, prompt templates, skills, and session history
 
-## What's New in 0.0.8
+## What's New in 0.0.1-beta
 
-- Added code graph visualization and graph-aware context trimming for more grounded prompts.
-- Added editor gutter icons and inline hints for AI changes and Spec associations.
-- Improved workflow delta review, history comparison, and archive audit trail coverage.
+- First beta release of Spec Code for JetBrains IDEs.
+- Includes structured workflows, code graph grounding, editor hints, and review/history surfaces.
+- Includes Claude CLI / Codex CLI integration, operation modes, hooks, worktrees, prompt templates, skills, and session history.

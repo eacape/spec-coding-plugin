@@ -3,7 +3,7 @@
 [English](README.md) | [Chinese](README.zh-CN.md)
 
 Spec Code is a spec-driven AI coding workflow plugin for JetBrains IDEs.
-It turns ad-hoc prompting into a structured change process with workflow stages, editor-aware context, and audit-friendly history.
+Version `0.0.1-beta` is the first beta release, focused on turning ad-hoc prompting into a structured change process with workflow stages, editor-aware context, and reviewable history.
 
 ## Why Spec Code
 

@@ -104,7 +104,7 @@ intellijPlatform {
         description = """
             Spec-driven AI coding workflow for JetBrains IDEs.
             <p>
-            Move AI-assisted changes from requirements to archive with structured workflows, grounded context, and audit-friendly review.
+            First beta release of Spec Code. Move AI-assisted changes from ad-hoc prompts to structured workflows with grounded context and reviewable history.
             </p>
             <ul>
               <li>Stage-based workflows for requirements, design, tasks, implementation, verification, and archive.</li>
@@ -113,12 +113,27 @@ intellijPlatform {
               <li>History diff, delta comparison, changeset timeline, and rollback-oriented review.</li>
               <li>Claude CLI / Codex CLI integration with hooks, skills, worktrees, and operation modes.</li>
             </ul>
+            <p>
+            面向 JetBrains IDE 的规格驱动 AI 编码工作流插件。Spec Code 的首个 beta 版本，将 AI 辅助改动从零散提示词收敛为带有工作流阶段、上下文收敛和可审查历史的结构化流程。
+            </p>
+            <ul>
+              <li>以 requirements、design、tasks、implementation、verification、archive 为核心的阶段化工作流。</li>
+              <li>通过代码图谱、相关文件发现、来源附件和智能上下文裁剪提升提示词 grounding。</li>
+              <li>在编辑器中提供 AI 变更与 Spec 关联的 gutter 图标和行内提示。</li>
+              <li>提供历史对比、Delta 对比、changeset timeline 和面向回退的审查能力。</li>
+              <li>集成 Claude CLI / Codex CLI，以及 hooks、skills、worktrees 和 operation modes。</li>
+            </ul>
         """.trimIndent()
         changeNotes = """
             <ul>
-              <li>Added code graph visualization and graph-aware context trimming for more grounded prompts.</li>
-              <li>Added editor gutter icons and inline hints for AI changes and Spec associations.</li>
-              <li>Improved workflow delta review, history comparison, and archive audit trail coverage.</li>
+              <li>First beta release of Spec Code for JetBrains IDEs.</li>
+              <li>Includes structured workflows, code graph grounding, editor hints, and review/history surfaces.</li>
+              <li>Includes Claude CLI / Codex CLI integration, operation modes, hooks, worktrees, prompt templates, skills, and session history.</li>
+            </ul>
+            <ul>
+              <li>Spec Code 面向 JetBrains IDE 的首个 beta 版本。</li>
+              <li>当前版本包含结构化工作流、代码图谱收敛、编辑器提示以及历史和审查视图。</li>
+              <li>当前版本同时提供 Claude CLI / Codex CLI 集成，以及 operation modes、hooks、worktrees、prompt templates、skills 和 session history。</li>
             </ul>
         """.trimIndent()
 
