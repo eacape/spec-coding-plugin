@@ -199,12 +199,14 @@ class SpecWorkflowPanel(
     private val archiveButton = JButton()
     private val backToListButton = JButton()
     private val refreshButton = JButton()
+    private val documentWorkspaceViewButtons = linkedMapOf<DocumentWorkspaceView, JButton>()
     private lateinit var centerContentPanel: JPanel
     private lateinit var listSectionContainer: JPanel
     private lateinit var workspacePanelContainer: JPanel
     private lateinit var mainSplitPane: JSplitPane
     private val workspaceCardLayout = CardLayout()
     private val workspaceCardPanel = JPanel(workspaceCardLayout)
+    private lateinit var documentWorkspaceViewLabel: JBLabel
     private val workspaceSummaryTitleLabel = JBLabel()
     private val workspaceSummaryMetaLabel = JBLabel()
     private val workspaceSummaryFocusLabel = JBLabel()
@@ -219,6 +221,7 @@ class SpecWorkflowPanel(
     private lateinit var verifySection: SpecCollapsibleWorkspaceSection
     private lateinit var documentsSection: SpecCollapsibleWorkspaceSection
     private lateinit var documentWorkspaceViewTabsPanel: JPanel
+    private lateinit var documentWorkspaceViewSwitcherPanel: JPanel
     private lateinit var documentWorkspaceViewCardPanel: JPanel
     private val workspaceSectionItems = mutableMapOf<SpecWorkflowWorkspaceSectionId, JPanel>()
     private val workspaceSectionOverrides = mutableMapOf<SpecWorkflowWorkspaceSectionId, Boolean>()
@@ -646,30 +649,62 @@ class SpecWorkflowPanel(
     }
 
     private fun buildDocumentWorkspaceContent(): JPanel {
-        documentWorkspaceViewTabsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
-            isOpaque = false
-            border = JBUI.Borders.empty(2, 2, 0, 2)
-            add(
-                createDocumentWorkspaceViewButton(
-                    view = DocumentWorkspaceView.DOCUMENT,
-                    labelKey = "spec.toolwindow.documents.view.document",
-                    tooltipKey = "spec.toolwindow.documents.view.document.tooltip",
+        documentWorkspaceViewButtons.clear()
+        documentWorkspaceViewLabel = JBLabel(SpecCodingBundle.message("spec.toolwindow.documents.view.label")).apply {
+            foreground = DOCUMENT_WORKSPACE_VIEW_LABEL_FG
+            font = JBUI.Fonts.smallFont().deriveFont(DOCUMENT_WORKSPACE_VIEW_LABEL_FONT_SIZE)
+        }
+        documentWorkspaceViewSwitcherPanel = JPanel(
+            FlowLayout(
+                FlowLayout.LEFT,
+                JBUI.scale(DOCUMENT_WORKSPACE_VIEW_SWITCHER_GAP),
+                0,
+            ),
+        ).apply {
+            isOpaque = true
+            background = DOCUMENT_WORKSPACE_VIEW_GROUP_BG
+            border = BorderFactory.createCompoundBorder(
+                SpecUiStyle.roundedLineBorder(
+                    DOCUMENT_WORKSPACE_VIEW_GROUP_BORDER,
+                    JBUI.scale(DOCUMENT_WORKSPACE_VIEW_GROUP_ARC),
                 ),
-            )
-            add(
-                createDocumentWorkspaceViewButton(
-                    view = DocumentWorkspaceView.STRUCTURED_TASKS,
-                    labelKey = "spec.toolwindow.documents.view.structuredTasks",
-                    tooltipKey = "spec.toolwindow.documents.view.structuredTasks.tooltip",
+                JBUI.Borders.empty(
+                    DOCUMENT_WORKSPACE_VIEW_GROUP_INSET,
+                    DOCUMENT_WORKSPACE_VIEW_GROUP_INSET,
                 ),
             )
         }
+        documentWorkspaceViewTabsPanel = JPanel(
+            FlowLayout(
+                FlowLayout.LEFT,
+                JBUI.scale(DOCUMENT_WORKSPACE_VIEW_ROW_GAP),
+                0,
+            ),
+        ).apply {
+            isOpaque = false
+            add(documentWorkspaceViewLabel)
+            add(documentWorkspaceViewSwitcherPanel)
+        }
+        documentWorkspaceViewSwitcherPanel.add(
+            createDocumentWorkspaceViewButton(
+                view = DocumentWorkspaceView.DOCUMENT,
+                labelKey = "spec.toolwindow.documents.view.document",
+                tooltipKey = "spec.toolwindow.documents.view.document.tooltip",
+            ),
+        )
+        documentWorkspaceViewSwitcherPanel.add(
+            createDocumentWorkspaceViewButton(
+                view = DocumentWorkspaceView.STRUCTURED_TASKS,
+                labelKey = "spec.toolwindow.documents.view.structuredTasks",
+                tooltipKey = "spec.toolwindow.documents.view.structuredTasks.tooltip",
+            ),
+        )
         documentWorkspaceViewCardPanel = JPanel(CardLayout()).apply {
             isOpaque = false
             add(detailPanel, DOCUMENT_WORKSPACE_CARD_DOCUMENT)
             add(detailTasksPanel, DOCUMENT_WORKSPACE_CARD_STRUCTURED_TASKS)
         }
-        val container = JPanel(BorderLayout(0, JBUI.scale(8))).apply {
+        val container = JPanel(BorderLayout(0, JBUI.scale(6))).apply {
             isOpaque = false
             add(documentWorkspaceViewTabsPanel, BorderLayout.NORTH)
             add(documentWorkspaceViewCardPanel, BorderLayout.CENTER)
@@ -685,14 +720,26 @@ class SpecWorkflowPanel(
     ): JButton {
         return JButton().apply {
             isFocusable = false
+            isFocusPainted = false
+            isOpaque = true
+            isBorderPainted = true
+            isContentAreaFilled = true
+            isRolloverEnabled = true
+            margin = JBUI.emptyInsets()
+            installToolbarButtonCursorTracking(this)
             addActionListener {
                 selectedDocumentWorkspaceView = view
                 updateDocumentWorkspaceViewPresentation(currentWorkbenchState)
             }
+            model.addChangeListener {
+                refreshDocumentWorkspaceViewButtonStyle(this)
+            }
             putClientProperty("documentWorkspaceView", view)
             text = SpecCodingBundle.message(labelKey)
             toolTipText = SpecCodingBundle.message(tooltipKey)
+            font = JBUI.Fonts.smallFont()
         }
+            .also { documentWorkspaceViewButtons[view] = it }
     }
 
     private fun createWorkspaceSectionItem(
@@ -1158,14 +1205,7 @@ class SpecWorkflowPanel(
                 DocumentWorkspaceView.STRUCTURED_TASKS -> DOCUMENT_WORKSPACE_CARD_STRUCTURED_TASKS
             },
         )
-        documentWorkspaceViewTabsPanel.components
-            .filterIsInstance<JButton>()
-            .forEach { button ->
-                val view = button.getClientProperty("documentWorkspaceView") as? DocumentWorkspaceView
-                val selected = view == effectiveView
-                val enabled = view != DocumentWorkspaceView.STRUCTURED_TASKS || supportsStructuredTasksView
-                applyDocumentWorkspaceViewButtonStyle(button, selected = selected, enabled = enabled)
-            }
+        documentWorkspaceViewButtons.values.forEach(::refreshDocumentWorkspaceViewButtonStyle)
         if (supportsStructuredTasksView && effectiveView == DocumentWorkspaceView.STRUCTURED_TASKS) {
             syncStructuredTaskSelection(selectedStructuredTaskId)
         }
@@ -1175,24 +1215,84 @@ class SpecWorkflowPanel(
         documentWorkspaceViewCardPanel.repaint()
     }
 
+    private fun refreshDocumentWorkspaceViewButtonStyle(button: JButton) {
+        val view = button.getClientProperty("documentWorkspaceView") as? DocumentWorkspaceView ?: return
+        val supportsStructuredTasksView = supportsStructuredTasksDocumentWorkspaceView(currentWorkbenchState)
+        val effectiveView = if (supportsStructuredTasksView) {
+            selectedDocumentWorkspaceView
+        } else {
+            DocumentWorkspaceView.DOCUMENT
+        }
+        val selected = view == effectiveView
+        val enabled = view != DocumentWorkspaceView.STRUCTURED_TASKS || supportsStructuredTasksView
+        val hovered = enabled && button.model.isRollover && !selected
+        applyDocumentWorkspaceViewButtonStyle(
+            button = button,
+            selected = selected,
+            enabled = enabled,
+            hovered = hovered,
+        )
+    }
+
     private fun applyDocumentWorkspaceViewButtonStyle(
         button: JButton,
         selected: Boolean,
         enabled: Boolean,
+        hovered: Boolean,
     ) {
         button.isEnabled = enabled
-        button.background = if (selected) DOCUMENT_WORKSPACE_VIEW_SELECTED_BG else DOCUMENT_WORKSPACE_VIEW_IDLE_BG
+        button.background = when {
+            !enabled -> DOCUMENT_WORKSPACE_VIEW_GROUP_BG
+            selected -> DOCUMENT_WORKSPACE_VIEW_SELECTED_BG
+            hovered -> DOCUMENT_WORKSPACE_VIEW_HOVER_BG
+            else -> DOCUMENT_WORKSPACE_VIEW_IDLE_BG
+        }
         button.foreground = when {
             !enabled -> DOCUMENT_WORKSPACE_VIEW_DISABLED_FG
             selected -> DOCUMENT_WORKSPACE_VIEW_SELECTED_FG
+            hovered -> DOCUMENT_WORKSPACE_VIEW_HOVER_FG
             else -> DOCUMENT_WORKSPACE_VIEW_IDLE_FG
         }
         button.border = BorderFactory.createCompoundBorder(
-            SpecUiStyle.roundedLineBorder(
-                if (selected) DOCUMENT_WORKSPACE_VIEW_SELECTED_BORDER else DOCUMENT_WORKSPACE_VIEW_IDLE_BORDER,
-                JBUI.scale(12),
+            if (selected || hovered) {
+                SpecUiStyle.roundedLineBorder(
+                    if (selected) DOCUMENT_WORKSPACE_VIEW_SELECTED_BORDER else DOCUMENT_WORKSPACE_VIEW_HOVER_BORDER,
+                    JBUI.scale(DOCUMENT_WORKSPACE_VIEW_BUTTON_ARC),
+                )
+            } else {
+                JBUI.Borders.empty()
+            },
+            JBUI.Borders.empty(
+                DOCUMENT_WORKSPACE_VIEW_BUTTON_VERTICAL_PADDING,
+                DOCUMENT_WORKSPACE_VIEW_BUTTON_HORIZONTAL_PADDING,
             ),
-            JBUI.Borders.empty(3, 10, 3, 10),
+        )
+        button.font = JBUI.Fonts.smallFont().deriveFont(
+            if (selected) Font.BOLD else Font.PLAIN,
+            DOCUMENT_WORKSPACE_VIEW_BUTTON_FONT_SIZE,
+        )
+        val labelFont = JBUI.Fonts.smallFont().deriveFont(
+            Font.BOLD,
+            DOCUMENT_WORKSPACE_VIEW_BUTTON_FONT_SIZE,
+        )
+        val width = documentWorkspaceViewButtonTargetWidth(labelFont)
+        val size = JBUI.size(width, JBUI.scale(DOCUMENT_WORKSPACE_VIEW_BUTTON_HEIGHT))
+        button.preferredSize = size
+        button.minimumSize = size
+        button.maximumSize = size
+    }
+
+    private fun documentWorkspaceViewButtonTargetWidth(labelFont: Font): Int {
+        val scaledMinWidth = JBUI.scale(DOCUMENT_WORKSPACE_VIEW_BUTTON_MIN_WIDTH)
+        val scaledTextPadding = JBUI.scale(
+            DOCUMENT_WORKSPACE_VIEW_BUTTON_HORIZONTAL_PADDING * 2 +
+                DOCUMENT_WORKSPACE_VIEW_BUTTON_EXTRA_WIDTH_PADDING,
+        )
+        return maxOf(
+            documentWorkspaceViewButtons.values.maxOfOrNull { candidate ->
+                candidate.getFontMetrics(labelFont).stringWidth(candidate.text.orEmpty()) + scaledTextPadding
+            } ?: scaledMinWidth,
+            scaledMinWidth,
         )
     }
 
@@ -4815,23 +4915,22 @@ class SpecWorkflowPanel(
             documentsSection.refreshLocalizedTexts()
         }
         if (::documentWorkspaceViewTabsPanel.isInitialized) {
-            documentWorkspaceViewTabsPanel.components
-                .filterIsInstance<JButton>()
-                .forEach { button ->
-                    when (button.getClientProperty("documentWorkspaceView") as? DocumentWorkspaceView) {
-                        DocumentWorkspaceView.DOCUMENT -> {
-                            button.text = SpecCodingBundle.message("spec.toolwindow.documents.view.document")
-                            button.toolTipText = SpecCodingBundle.message("spec.toolwindow.documents.view.document.tooltip")
-                        }
+            if (::documentWorkspaceViewLabel.isInitialized) {
+                documentWorkspaceViewLabel.text = SpecCodingBundle.message("spec.toolwindow.documents.view.label")
+            }
+            documentWorkspaceViewButtons.forEach { (view, button) ->
+                when (view) {
+                    DocumentWorkspaceView.DOCUMENT -> {
+                        button.text = SpecCodingBundle.message("spec.toolwindow.documents.view.document")
+                        button.toolTipText = SpecCodingBundle.message("spec.toolwindow.documents.view.document.tooltip")
+                    }
 
-                        DocumentWorkspaceView.STRUCTURED_TASKS -> {
-                            button.text = SpecCodingBundle.message("spec.toolwindow.documents.view.structuredTasks")
-                            button.toolTipText = SpecCodingBundle.message("spec.toolwindow.documents.view.structuredTasks.tooltip")
-                        }
-
-                        null -> Unit
+                    DocumentWorkspaceView.STRUCTURED_TASKS -> {
+                        button.text = SpecCodingBundle.message("spec.toolwindow.documents.view.structuredTasks")
+                        button.toolTipText = SpecCodingBundle.message("spec.toolwindow.documents.view.structuredTasks.tooltip")
                     }
                 }
+            }
             updateDocumentWorkspaceViewPresentation(currentWorkbenchState)
         }
         applyToolbarButtonPresentation()
@@ -5586,11 +5685,39 @@ class SpecWorkflowPanel(
 
     internal fun clickDocumentWorkspaceViewForTest(view: String) {
         val targetView = runCatching { DocumentWorkspaceView.valueOf(view) }.getOrNull() ?: return
-        documentWorkspaceViewTabsPanel.components
-            .filterIsInstance<JButton>()
-            .firstOrNull { it.getClientProperty("documentWorkspaceView") == targetView }
-            ?.doClick()
+        documentWorkspaceViewButtons[targetView]?.doClick()
     }
+
+    internal fun documentWorkspaceViewButtonsForTest(): List<String> =
+        DocumentWorkspaceView.entries.mapNotNull { view ->
+            documentWorkspaceViewButtons[view]?.text?.takeIf(String::isNotBlank)?.let { label ->
+                "${view.name}:$label"
+            }
+        }
+
+    internal fun documentWorkspaceViewLabelForTest(): String =
+        if (::documentWorkspaceViewLabel.isInitialized) {
+            documentWorkspaceViewLabel.text.orEmpty()
+        } else {
+            ""
+        }
+
+    internal fun documentWorkspaceViewSwitcherHeightForTest(): Int =
+        if (::documentWorkspaceViewSwitcherPanel.isInitialized) {
+            documentWorkspaceViewSwitcherPanel.preferredSize.height
+        } else {
+            0
+        }
+
+    internal fun documentWorkspaceViewButtonHeightsForTest(): Map<String, Int> =
+        DocumentWorkspaceView.entries.associate { view ->
+            view.name to (documentWorkspaceViewButtons[view]?.preferredSize?.height ?: 0)
+        }
+
+    internal fun documentWorkspaceViewButtonWidthsForTest(): Map<String, Int> =
+        DocumentWorkspaceView.entries.associate { view ->
+            view.name to (documentWorkspaceViewButtons[view]?.preferredSize?.width ?: 0)
+        }
 
     internal fun selectTaskForTest(taskId: String): Boolean {
         syncStructuredTaskSelection(taskId)
@@ -5752,13 +5879,30 @@ class SpecWorkflowPanel(
         private val PHASE_SECTION_BG = JBColor(Color(240, 246, 255), Color(62, 69, 80))
         private val DETAIL_SECTION_BG = JBColor(Color(249, 252, 255), Color(50, 56, 65))
         private val DETAIL_SECTION_BORDER = JBColor(Color(204, 217, 236), Color(84, 94, 109))
+        private val DOCUMENT_WORKSPACE_VIEW_LABEL_FG = JBColor(Color(112, 124, 143), Color(172, 182, 196))
+        private val DOCUMENT_WORKSPACE_VIEW_GROUP_BG = JBColor(Color(242, 247, 255), Color(57, 63, 73))
+        private val DOCUMENT_WORKSPACE_VIEW_GROUP_BORDER = JBColor(Color(202, 215, 236), Color(89, 100, 116))
         private val DOCUMENT_WORKSPACE_VIEW_SELECTED_BG = JBColor(Color(233, 242, 255), Color(71, 80, 95))
         private val DOCUMENT_WORKSPACE_VIEW_SELECTED_BORDER = JBColor(Color(174, 196, 229), Color(112, 126, 148))
         private val DOCUMENT_WORKSPACE_VIEW_SELECTED_FG = JBColor(Color(43, 67, 105), Color(214, 224, 238))
-        private val DOCUMENT_WORKSPACE_VIEW_IDLE_BG = JBColor(Color(248, 251, 255), Color(55, 61, 70))
-        private val DOCUMENT_WORKSPACE_VIEW_IDLE_BORDER = JBColor(Color(211, 222, 239), Color(86, 96, 111))
+        private val DOCUMENT_WORKSPACE_VIEW_IDLE_BG = DOCUMENT_WORKSPACE_VIEW_GROUP_BG
         private val DOCUMENT_WORKSPACE_VIEW_IDLE_FG = JBColor(Color(89, 103, 130), Color(177, 188, 203))
+        private val DOCUMENT_WORKSPACE_VIEW_HOVER_BG = JBColor(Color(247, 250, 255), Color(63, 71, 82))
+        private val DOCUMENT_WORKSPACE_VIEW_HOVER_BORDER = JBColor(Color(198, 213, 237), Color(96, 108, 125))
+        private val DOCUMENT_WORKSPACE_VIEW_HOVER_FG = JBColor(Color(71, 89, 122), Color(192, 202, 216))
         private val DOCUMENT_WORKSPACE_VIEW_DISABLED_FG = JBColor(Color(146, 156, 171), Color(124, 132, 145))
+        private const val DOCUMENT_WORKSPACE_VIEW_LABEL_FONT_SIZE = 10.5f
+        private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_FONT_SIZE = 10.5f
+        private const val DOCUMENT_WORKSPACE_VIEW_ROW_GAP = 6
+        private const val DOCUMENT_WORKSPACE_VIEW_SWITCHER_GAP = 2
+        private const val DOCUMENT_WORKSPACE_VIEW_GROUP_INSET = 2
+        private const val DOCUMENT_WORKSPACE_VIEW_GROUP_ARC = 11
+        private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_ARC = 10
+        private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_HEIGHT = 22
+        private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_MIN_WIDTH = 52
+        private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_HORIZONTAL_PADDING = 10
+        private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_VERTICAL_PADDING = 2
+        private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_EXTRA_WIDTH_PADDING = 16
         private const val WORKSPACE_SECTION_CARD_PADDING = 12
         private val SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT = JBUI.scale(320)
         private const val WORKSPACE_SCROLL_UNIT_INCREMENT = 24

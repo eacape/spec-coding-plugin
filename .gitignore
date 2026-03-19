@@ -50,7 +50,12 @@ logs/
 /.intellijPlatform/
 /.codex/
 /.claude/
-/docs/
+/docs/*
+!/docs/marketplace/
+/docs/marketplace/*
+!/docs/marketplace/README.md
+!/docs/marketplace/listing.en.md
+!/docs/marketplace/listing.zh-CN.md
 /.gradle-user-home/
 /prompt
 /.tmp/

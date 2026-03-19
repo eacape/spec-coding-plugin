@@ -396,6 +396,23 @@ internal class SpecWorkflowTasksPanel(
         return performTaskRowPrimaryAction(taskId)
     }
 
+    internal fun taskRowRenderSnapshotForTest(
+        taskId: String,
+        listWidth: Int,
+    ): Map<String, String> {
+        val task = currentTasksById[taskId] ?: return emptyMap()
+        val index = (0 until listModel.size()).firstOrNull { candidate -> listModel[candidate].id == taskId } ?: return emptyMap()
+        tasksList.setSize(listWidth, tasksList.height.takeIf { it > 0 } ?: JBUI.scale(56))
+        taskCellRenderer.getListCellRendererComponent(
+            tasksList,
+            task,
+            index,
+            tasksList.selectedIndex == index,
+            false,
+        )
+        return taskCellRenderer.renderSnapshotForTest()
+    }
+
     internal fun triggerSecondaryActionForTest(targetStatus: TaskStatus): Boolean {
         val selectedTask = tasksList.selectedValue ?: return false
         val action = buildSecondaryActions(selectedTask).firstOrNull { it.targetStatus == targetStatus } ?: return false
@@ -1083,7 +1100,7 @@ internal class SpecWorkflowTasksPanel(
 
         init {
             panel.isOpaque = true
-            panel.border = JBUI.Borders.empty(6, 8)
+            panel.border = JBUI.Borders.empty(6, 8, 6, 12)
 
             titleLabel.font = JBUI.Fonts.label().deriveFont(12f)
             titleLabel.foreground = TITLE_FG
@@ -1130,17 +1147,42 @@ internal class SpecWorkflowTasksPanel(
                 statusChipLabel.text = ""
                 primaryActionLabel.icon = null
                 primaryActionLabel.toolTipText = null
+                titleLabel.toolTipText = null
+                metaLabel.toolTipText = null
                 primaryActionContainer.isVisible = false
                 return panel
             }
             val background = if (isSelected) SELECTED_BG else ROW_BG
             panel.background = background
-            titleLabel.text = "${value.id}: ${value.title}"
-            metaLabel.text = taskMetaText(value)
+            val fullTitleText = "${value.id}: ${value.title}"
+            val fullMetaText = taskMetaText(value)
             statusChipLabel.text = taskChipText(value)
             applyPrimaryActionStyle(value, isSelected)
             applyChipStyle(statusChipLabel, value, isSelected)
+            val availableTextWidth = availableTextWidth(list)
+            titleLabel.text = clipTextToWidth(
+                text = fullTitleText,
+                fontMetrics = titleLabel.getFontMetrics(titleLabel.font),
+                maxWidth = availableTextWidth,
+            )
+            titleLabel.toolTipText = fullTitleText.takeIf { it != titleLabel.text }
+            metaLabel.text = clipTextToWidth(
+                text = fullMetaText,
+                fontMetrics = metaLabel.getFontMetrics(metaLabel.font),
+                maxWidth = availableTextWidth,
+            )
+            metaLabel.toolTipText = fullMetaText.takeIf { it != metaLabel.text }
             return panel
+        }
+
+        fun renderSnapshotForTest(): Map<String, String> {
+            return mapOf(
+                "title" to titleLabel.text.orEmpty(),
+                "meta" to metaLabel.text.orEmpty(),
+                "titleTooltip" to titleLabel.toolTipText.orEmpty(),
+                "metaTooltip" to metaLabel.toolTipText.orEmpty(),
+                "chip" to statusChipLabel.text.orEmpty(),
+            )
         }
 
         fun resolvePrimaryActionBounds(
@@ -1199,6 +1241,40 @@ internal class SpecWorkflowTasksPanel(
             }
             component.doLayout()
             component.components.forEach(::layoutRecursively)
+        }
+
+        private fun availableTextWidth(list: JList<out StructuredTask>?): Int {
+            val listWidth = list?.width?.takeIf { it > 0 } ?: DEFAULT_RENDER_WIDTH
+            val insets = panel.insets
+            val horizontalPadding = insets.left + insets.right + JBUI.scale(10)
+            val rightWidth = rightPanel.preferredSize.width + (panel.layout as BorderLayout).hgap
+            return (listWidth - horizontalPadding - rightWidth).coerceAtLeast(MIN_TEXT_WIDTH)
+        }
+
+        private fun clipTextToWidth(
+            text: String,
+            fontMetrics: java.awt.FontMetrics,
+            maxWidth: Int,
+        ): String {
+            val normalized = text.trim()
+            if (normalized.isEmpty() || maxWidth <= 0 || fontMetrics.stringWidth(normalized) <= maxWidth) {
+                return normalized
+            }
+            if (fontMetrics.stringWidth(ELLIPSIS) >= maxWidth) {
+                return ELLIPSIS
+            }
+            var low = 0
+            var high = normalized.length
+            while (low < high) {
+                val mid = (low + high + 1) / 2
+                val candidate = normalized.take(mid).trimEnd() + ELLIPSIS
+                if (fontMetrics.stringWidth(candidate) <= maxWidth) {
+                    low = mid
+                } else {
+                    high = mid - 1
+                }
+            }
+            return normalized.take(low).trimEnd() + ELLIPSIS
         }
 
         private fun applyChipStyle(label: JBLabel, task: StructuredTask, selected: Boolean) {
@@ -1287,5 +1363,8 @@ internal class SpecWorkflowTasksPanel(
         private val WAITING_ACTION_BG = JBColor(Color(236, 246, 238), Color(57, 78, 64))
         private val WAITING_ACTION_BG_SELECTED = JBColor(Color(221, 238, 225), Color(67, 90, 73))
         private val WAITING_ACTION_BORDER = JBColor(Color(176, 219, 188), Color(83, 112, 91))
+        private const val DEFAULT_RENDER_WIDTH = 360
+        private const val MIN_TEXT_WIDTH = 72
+        private const val ELLIPSIS = "..."
     }
 }

@@ -24,6 +24,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -752,6 +753,26 @@ class SpecWorkflowPanelNavigationPlatformTest : BasePlatformTestCase() {
 
         assertFalse(panel.visibleWorkspaceSectionIdsForTest().contains(SpecWorkflowWorkspaceSectionId.TASKS))
         assertEquals("DOCUMENT", panel.documentWorkspaceViewForTest())
+        assertEquals("视图", panel.documentWorkspaceViewLabelForTest())
+        assertEquals(
+            listOf("DOCUMENT:文档", "STRUCTURED_TASKS:结构化任务"),
+            panel.documentWorkspaceViewButtonsForTest(),
+        )
+
+        assertEquals(JBUI.scale(26), panel.documentWorkspaceViewSwitcherHeightForTest())
+        assertEquals(
+            mapOf(
+                "DOCUMENT" to JBUI.scale(22),
+                "STRUCTURED_TASKS" to JBUI.scale(22),
+            ),
+            panel.documentWorkspaceViewButtonHeightsForTest(),
+        )
+        val buttonWidths = panel.documentWorkspaceViewButtonWidthsForTest()
+        assertEquals(
+            buttonWidths.getValue("DOCUMENT"),
+            buttonWidths.getValue("STRUCTURED_TASKS"),
+        )
+        assertTrue(buttonWidths.getValue("STRUCTURED_TASKS") >= JBUI.scale(80))
 
         ApplicationManager.getApplication().invokeAndWait {
             assertTrue(panel.selectTaskForTest(task.id))

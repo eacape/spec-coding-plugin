@@ -104,20 +104,21 @@ intellijPlatform {
         description = """
             Spec-driven AI coding workflow for JetBrains IDEs.
             <p>
-            Plan, implement, and audit AI-assisted changes with structured spec workflows and editor-aware context.
+            Move AI-assisted changes from requirements to archive with structured workflows, grounded context, and audit-friendly review.
             </p>
             <ul>
-              <li>Spec workflow: Specify -> Design -> Implement, with history and delta comparison.</li>
-              <li>Code graph + smart context trimming for more precise prompt grounding.</li>
+              <li>Stage-based workflows for requirements, design, tasks, implementation, verification, and archive.</li>
+              <li>Code graph, related-file discovery, source attachments, and smart context trimming for better prompt grounding.</li>
               <li>Editor gutter icons and inline hints for AI changes and Spec associations.</li>
-              <li>Hook automation, skill pipeline, and rollback-oriented change timeline.</li>
+              <li>History diff, delta comparison, changeset timeline, and rollback-oriented review.</li>
+              <li>Claude CLI / Codex CLI integration with hooks, skills, worktrees, and operation modes.</li>
             </ul>
         """.trimIndent()
         changeNotes = """
             <ul>
-              <li>Added code graph visualization and graph-aware context trimming.</li>
-              <li>Added editor gutter icons and inline hints for AI/Spec insights.</li>
-              <li>Added spec archive audit trail and improved delta/history workflows.</li>
+              <li>Added code graph visualization and graph-aware context trimming for more grounded prompts.</li>
+              <li>Added editor gutter icons and inline hints for AI changes and Spec associations.</li>
+              <li>Improved workflow delta review, history comparison, and archive audit trail coverage.</li>
             </ul>
         """.trimIndent()
 

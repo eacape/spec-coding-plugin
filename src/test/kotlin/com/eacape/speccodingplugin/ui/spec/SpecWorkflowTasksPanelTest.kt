@@ -744,6 +744,60 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
+    fun `renderer should clip long live progress text before it collides with row actions`() {
+        val panel = SpecWorkflowTasksPanel()
+        val now = Instant.now()
+
+        panel.updateTasks(
+            workflowId = "wf-renderer-clip",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-099",
+                    title = "Session Presence WS Gateway orchestration with an intentionally long title",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                    activeExecutionRun = TaskExecutionRun(
+                        runId = "run-99",
+                        taskId = "T-099",
+                        status = TaskExecutionRunStatus.RUNNING,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        startedAt = now.minusSeconds(55).toString(),
+                    ),
+                ),
+            ),
+            liveProgressByTaskId = mapOf(
+                "T-099" to TaskExecutionLiveProgress(
+                    workflowId = "wf-renderer-clip",
+                    runId = "run-99",
+                    taskId = "T-099",
+                    phase = ExecutionLivePhase.STREAMING,
+                    startedAt = now.minusSeconds(55),
+                    lastUpdatedAt = now.minusSeconds(2),
+                    lastDetail = "record-service",
+                    recentEvents = listOf(
+                        ChatStreamEvent(
+                            kind = ChatTraceKind.TASK,
+                            detail = "d------------------------------------- 2026/3/15 0:37 record-service",
+                            status = ChatTraceStatus.RUNNING,
+                        ),
+                    ),
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val rendered = panel.taskRowRenderSnapshotForTest(taskId = "T-099", listWidth = 280)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.execution.chip.running"),
+            rendered.getValue("chip"),
+        )
+        assertTrue(rendered.getValue("title").endsWith("..."))
+        assertTrue(rendered.getValue("meta").endsWith("..."))
+        assertTrue(rendered.getValue("titleTooltip").contains("Session Presence WS Gateway"))
+        assertTrue(rendered.getValue("metaTooltip").contains("record-service"))
+    }
+
+    @Test
     fun `updateLiveProgress should refresh selected task execution summary and keep selection`() {
         val panel = SpecWorkflowTasksPanel()
         val start = Instant.parse("2026-03-13T12:05:00Z")

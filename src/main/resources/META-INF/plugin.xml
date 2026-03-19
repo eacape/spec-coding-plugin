@@ -5,9 +5,8 @@
     <vendor email="team@eacape.com" url="https://eacape.com">苑勇</vendor>
 
     <description><![CDATA[
-        Spec-driven AI coding workflow for JetBrains IDEs.
+        Spec-driven AI coding workflow for JetBrains IDEs. Plan, implement, verify, and audit AI-assisted changes with structured workflows, grounded context, and reviewable history.
     ]]></description>
-
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.terminal</depends>
 

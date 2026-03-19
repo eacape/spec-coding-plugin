@@ -106,6 +106,44 @@ class WorkflowChatExecutionLaunchMessagePanelTest {
     }
 
     @Test
+    fun `system context summary should normalize markdown table previews`() {
+        val panel = runOnEdtResult {
+            WorkflowChatExecutionLaunchMessagePanel(
+                payload = WorkflowChatExecutionLaunchRestorePayload.Presentation(
+                    WorkflowChatExecutionLaunchPresentation(
+                        workflowId = "wf-table",
+                        taskId = "T-007",
+                        taskTitle = "AI Enhancer async retry module",
+                        runId = "run-table",
+                        focusedStage = StageId.TASKS,
+                        trigger = ExecutionTrigger.USER_EXECUTE,
+                        launchSurface = WorkflowChatExecutionLaunchSurface.TASK_ROW,
+                        sections = listOf(
+                            WorkflowChatExecutionPresentationSection(
+                                kind = WorkflowChatExecutionPresentationSectionKind.ARTIFACT_SUMMARIES,
+                                itemCount = 3,
+                                previewItems = listOf(
+                                    "requirements.md: | 字段 | 内容 | |----------------------------|--------------------------| | 版本 | v1.0.0.1 | 创建日期 | 2026-03-18 | 状态 | 草稿 | | 澄清结论 | No confirmed clarifications recorded. |",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                visibleContent = "## Execution Request",
+            )
+        }
+
+        val renderedText = collectDescendants(panel)
+            .filterIsInstance<JTextArea>()
+            .joinToString("\n") { it.text.orEmpty() }
+        assertTrue(renderedText.contains("requirements.md"))
+        assertTrue(renderedText.contains("版本 v1.0.0.1"))
+        assertTrue(renderedText.contains("澄清结论 No confirmed clarifications recorded."))
+        assertFalse(renderedText.contains("|----------------------------|"))
+        assertFalse(renderedText.contains("| 字段 | 内容 |"))
+    }
+
+    @Test
     fun `legacy payload should render compact fallback notice instead of raw prompt`() {
         val inspectedPrompts = mutableListOf<String>()
         val panel = runOnEdtResult {

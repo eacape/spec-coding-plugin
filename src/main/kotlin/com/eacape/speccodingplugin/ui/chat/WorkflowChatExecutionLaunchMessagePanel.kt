@@ -425,9 +425,7 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
             return listOf(SpecCodingBundle.message("chat.execution.launch.section.empty"))
         }
         return sections.map { section ->
-            val headline = section.previewItems.firstOrNull()
-                ?: section.emptyStateReason
-                ?: SpecCodingBundle.message("chat.execution.launch.section.empty")
+            val headline = sectionSummaryHeadline(section)
             val countLabel = sectionBadgeText(section)?.let { " [$it]" }.orEmpty()
             "${sectionLabel(section.kind)}$countLabel: $headline"
         }
@@ -528,16 +526,132 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
     }
 
     private fun sectionPreview(section: WorkflowChatExecutionPresentationSection): String {
-        val previewItems = section.previewItems.map { item -> "- $item" }
+        val previewItems = section.previewItems
+            .mapNotNull { item ->
+                normalizeExecutionPreview(item, SECTION_DETAIL_PREVIEW_MAX_LENGTH)
+                    .takeIf(String::isNotBlank)
+            }
+            .map { item -> "- $item" }
         val lines = if (previewItems.isNotEmpty()) {
             previewItems.toMutableList()
         } else {
-            mutableListOf(section.emptyStateReason ?: SpecCodingBundle.message("chat.execution.launch.section.empty"))
+            mutableListOf(
+                normalizeExecutionPreview(
+                    section.emptyStateReason ?: SpecCodingBundle.message("chat.execution.launch.section.empty"),
+                    SECTION_DETAIL_PREVIEW_MAX_LENGTH,
+                ),
+            )
         }
         if (section.truncated) {
             lines += SpecCodingBundle.message("chat.execution.launch.note.moreItems")
         }
         return lines.joinToString(separator = "\n")
+    }
+
+    private fun sectionSummaryHeadline(section: WorkflowChatExecutionPresentationSection): String {
+        val summary = section.previewItems
+            .asSequence()
+            .mapNotNull { item ->
+                normalizeExecutionPreview(item, SECTION_SUMMARY_PREVIEW_MAX_LENGTH)
+                    .takeIf(String::isNotBlank)
+            }
+            .firstOrNull()
+            ?: normalizeExecutionPreview(
+                section.emptyStateReason ?: SpecCodingBundle.message("chat.execution.launch.section.empty"),
+                SECTION_SUMMARY_PREVIEW_MAX_LENGTH,
+            )
+        val hiddenCount = (section.itemCount - 1).coerceAtLeast(0)
+        return if (hiddenCount > 0) {
+            "$summary (+$hiddenCount)"
+        } else {
+            summary
+        }
+    }
+
+    private fun normalizeExecutionPreview(
+        text: String,
+        maxLength: Int,
+    ): String {
+        val normalized = text.lineSequence()
+            .map(::normalizeExecutionPreviewLine)
+            .filter(String::isNotBlank)
+            .joinToString(" · ")
+            .replace(WHITESPACE_REGEX, " ")
+            .trim()
+        if (normalized.isBlank()) {
+            return ""
+        }
+        if (normalized.length <= maxLength) {
+            return normalized
+        }
+        return normalized.take(maxLength - 3).trimEnd() + "..."
+    }
+
+    private fun normalizeExecutionPreviewLine(line: String): String {
+        val trimmed = line.trim()
+        if (trimmed.isBlank() || trimmed == "```") {
+            return ""
+        }
+        val withoutListPrefix = trimmed
+            .removePrefix("- ")
+            .removePrefix("* ")
+            .replace(ORDERED_LIST_PREFIX, "")
+            .trim()
+        if (withoutListPrefix.count { it == '|' } < 2) {
+            return withoutListPrefix
+        }
+        return normalizeTableLikePreview(withoutListPrefix)
+    }
+
+    private fun normalizeTableLikePreview(value: String): String {
+        val rawCells = value.split('|')
+            .map { cell -> cell.trim().replace(WHITESPACE_REGEX, " ") }
+            .filter(String::isNotBlank)
+            .filterNot(::isTableSeparatorCell)
+        if (rawCells.isEmpty()) {
+            return ""
+        }
+        val parts = mutableListOf<String>()
+        var cells = rawCells
+        val first = cells.first()
+        if (!isGenericTableHeaderCell(first)) {
+            parts += first.removeSuffix(":")
+            cells = cells.drop(1)
+        }
+        if (cells.size >= 2 && isFieldContentHeaderPair(cells[0], cells[1])) {
+            cells = cells.drop(2)
+        }
+        if (cells.size >= 2) {
+            cells.chunked(2).forEach { chunk ->
+                if (chunk.isEmpty()) {
+                    return@forEach
+                }
+                parts += if (chunk.size == 2) {
+                    "${chunk[0]} ${chunk[1]}".trim()
+                } else {
+                    chunk[0]
+                }
+            }
+            return parts.joinToString(" · ")
+        }
+        parts += cells
+        return parts.joinToString(" · ")
+    }
+
+    private fun isTableSeparatorCell(value: String): Boolean = TABLE_SEPARATOR_CELL.matches(value)
+
+    private fun isGenericTableHeaderCell(value: String): Boolean {
+        return value.equals("field", ignoreCase = true) ||
+            value.equals("content", ignoreCase = true) ||
+            value.equals("字段", ignoreCase = true) ||
+            value.equals("内容", ignoreCase = true)
+    }
+
+    private fun isFieldContentHeaderPair(
+        first: String,
+        second: String,
+    ): Boolean {
+        return isGenericTableHeaderCell(first) && isGenericTableHeaderCell(second)
     }
 
     private fun triggerLabel(trigger: ExecutionTrigger): String {
@@ -568,5 +682,10 @@ internal class WorkflowChatExecutionLaunchMessagePanel(
         private val SUMMARY_FG = JBColor(Color(104, 118, 140), Color(159, 170, 186))
         private val BODY_FG = JBColor(Color(72, 84, 103), Color(213, 220, 231))
         private val ACTION_FG = JBColor(Color(41, 104, 174), Color(122, 181, 242))
+        private const val SECTION_SUMMARY_PREVIEW_MAX_LENGTH = 140
+        private const val SECTION_DETAIL_PREVIEW_MAX_LENGTH = 220
+        private val ORDERED_LIST_PREFIX = Regex("^\\d+[.)]\\s+")
+        private val WHITESPACE_REGEX = Regex("\\s+")
+        private val TABLE_SEPARATOR_CELL = Regex("^[\\-:]+$")
     }
 }
