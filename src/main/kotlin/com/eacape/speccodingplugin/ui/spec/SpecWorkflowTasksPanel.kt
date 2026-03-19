@@ -56,6 +56,11 @@ internal class SpecWorkflowTasksPanel(
     private val fixedViewportHeight: Int? = null,
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
+    internal enum class TaskListRefreshMode {
+        FULL_REBUILD,
+        IN_PLACE_UPDATE,
+    }
+
     private val headerTitleLabel = JBLabel().apply {
         font = JBUI.Fonts.label().deriveFont(12.5f)
         foreground = HEADER_FG
@@ -227,17 +232,14 @@ internal class SpecWorkflowTasksPanel(
         currentLiveProgressByTaskId = liveProgressByTaskId
         lastRefreshedAtMillis = refreshedAtMillis
 
-        listModel.clear()
-        tasks.forEach { listModel.addElement(it) }
-        if (previousSelection != null) {
-            val index = tasks.indexOfFirst { it.id == previousSelection }
-            if (index >= 0) {
-                tasksList.selectedIndex = index
-            }
-        }
+        val refreshMode = replaceTaskRows(tasks)
+        restoreSelection(previousSelection, tasks)
         tasksList.emptyText.text = SpecCodingBundle.message("spec.toolwindow.tasks.emptyForWorkflow")
         updateHeader()
         updateControlsForSelection()
+        if (refreshMode == TaskListRefreshMode.FULL_REBUILD) {
+            tasksList.revalidate()
+        }
     }
 
     fun updateLiveProgress(
@@ -248,18 +250,22 @@ internal class SpecWorkflowTasksPanel(
         val previousSelection = tasksList.selectedValue?.id
         currentTasksById = tasks.associateBy { it.id }
         currentLiveProgressByTaskId = liveProgressByTaskId
-        listModel.clear()
-        tasks.forEach { listModel.addElement(it) }
-        if (previousSelection != null) {
-            val index = tasks.indexOfFirst { it.id == previousSelection }
-            if (index >= 0) {
-                tasksList.selectedIndex = index
-            }
-        }
+        val refreshMode = replaceTaskRows(tasks)
+        restoreSelection(previousSelection, tasks)
         tasksList.emptyText.text = SpecCodingBundle.message("spec.toolwindow.tasks.emptyForWorkflow")
         currentWorkflowId = workflowId
         updateControlsForSelection()
+        if (refreshMode == TaskListRefreshMode.FULL_REBUILD) {
+            tasksList.revalidate()
+        }
         tasksList.repaint()
+    }
+
+    internal fun taskListRefreshModeForTest(nextTaskIds: List<String>): TaskListRefreshMode {
+        return resolveTaskListRefreshMode(
+            existingTaskIds = currentTaskIdsInView(),
+            incomingTaskIds = nextTaskIds,
+        )
     }
 
     internal fun snapshotForTest(): Map<String, String> {
@@ -441,6 +447,40 @@ internal class SpecWorkflowTasksPanel(
             return true
         }
         return false
+    }
+
+    private fun replaceTaskRows(tasks: List<StructuredTask>): TaskListRefreshMode {
+        val refreshMode = resolveTaskListRefreshMode(
+            existingTaskIds = currentTaskIdsInView(),
+            incomingTaskIds = tasks.map(StructuredTask::id),
+        )
+        if (refreshMode == TaskListRefreshMode.FULL_REBUILD) {
+            listModel.clear()
+            tasks.forEach { listModel.addElement(it) }
+            return refreshMode
+        }
+        tasks.forEachIndexed { index, task ->
+            if (listModel[index] != task) {
+                listModel[index] = task
+            }
+        }
+        return refreshMode
+    }
+
+    private fun restoreSelection(previousSelection: String?, tasks: List<StructuredTask>) {
+        if (previousSelection == null) {
+            return
+        }
+        val index = tasks.indexOfFirst { it.id == previousSelection }
+        if (index >= 0) {
+            tasksList.selectedIndex = index
+        } else {
+            tasksList.clearSelection()
+        }
+    }
+
+    private fun currentTaskIdsInView(): List<String> {
+        return (0 until listModel.size()).map { index -> listModel[index].id }
     }
 
     private fun buildHeader(): JPanel {
@@ -1366,5 +1406,16 @@ internal class SpecWorkflowTasksPanel(
         private const val DEFAULT_RENDER_WIDTH = 360
         private const val MIN_TEXT_WIDTH = 72
         private const val ELLIPSIS = "..."
+
+        internal fun resolveTaskListRefreshMode(
+            existingTaskIds: List<String>,
+            incomingTaskIds: List<String>,
+        ): TaskListRefreshMode {
+            return if (existingTaskIds == incomingTaskIds) {
+                TaskListRefreshMode.IN_PLACE_UPDATE
+            } else {
+                TaskListRefreshMode.FULL_REBUILD
+            }
+        }
     }
 }

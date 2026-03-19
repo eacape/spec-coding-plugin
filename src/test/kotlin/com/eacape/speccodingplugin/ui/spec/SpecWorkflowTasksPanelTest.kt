@@ -861,6 +861,68 @@ class SpecWorkflowTasksPanelTest {
     }
 
     @Test
+    fun `task list refresh mode should stay incremental when ids remain ordered`() {
+        val panel = SpecWorkflowTasksPanel()
+
+        panel.updateTasks(
+            workflowId = "wf-refresh-mode",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "First task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+                StructuredTask(
+                    id = "T-002",
+                    title = "Second task",
+                    status = TaskStatus.BLOCKED,
+                    priority = TaskPriority.P1,
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertEquals(
+            SpecWorkflowTasksPanel.TaskListRefreshMode.IN_PLACE_UPDATE,
+            panel.taskListRefreshModeForTest(listOf("T-001", "T-002")),
+        )
+    }
+
+    @Test
+    fun `task list refresh mode should rebuild when ids or ordering change`() {
+        val panel = SpecWorkflowTasksPanel()
+
+        panel.updateTasks(
+            workflowId = "wf-refresh-mode-rebuild",
+            tasks = listOf(
+                StructuredTask(
+                    id = "T-001",
+                    title = "First task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P0,
+                ),
+                StructuredTask(
+                    id = "T-002",
+                    title = "Second task",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                ),
+            ),
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        assertEquals(
+            SpecWorkflowTasksPanel.TaskListRefreshMode.FULL_REBUILD,
+            panel.taskListRefreshModeForTest(listOf("T-002", "T-001")),
+        )
+        assertEquals(
+            SpecWorkflowTasksPanel.TaskListRefreshMode.FULL_REBUILD,
+            panel.taskListRefreshModeForTest(listOf("T-001", "T-002", "T-003")),
+        )
+    }
+
+    @Test
     fun `cancelling task should disable primary execution action and show cancelling chip`() {
         val panel = SpecWorkflowTasksPanel()
         val now = Instant.now()

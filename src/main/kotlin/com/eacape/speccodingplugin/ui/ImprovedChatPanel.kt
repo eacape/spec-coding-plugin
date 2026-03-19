@@ -297,6 +297,14 @@ class ImprovedChatPanel(
     private var currentAssistantPanel: ChatMessagePanel? = null
     private var activeTaskExecutionPanel: ActiveTaskExecutionPanel? = null
     private val taskExecutionPanelsByRunId = mutableMapOf<String, ActiveTaskExecutionPanel>()
+    private val pendingTaskExecutionLiveProgressLock = Any()
+    private val pendingTaskExecutionLiveProgressByRunId = ConcurrentHashMap<String, TaskExecutionLiveProgress>()
+    private val taskExecutionLiveProgressDispatchQueued = AtomicBoolean(false)
+    private val taskExecutionLiveProgressFlushTimer = Timer(TASK_EXECUTION_UI_BATCH_INTERVAL_MILLIS) {
+        flushPendingTaskExecutionLiveProgress()
+    }.apply {
+        isRepeats = false
+    }
     private var latestObservedTaskLiveProgress: TaskExecutionLiveProgress? = null
     private var lastWorkflowErrorDialogSnapshot: WorkflowErrorDialogSnapshot? = null
     private var statusAutoHideTimer: Timer? = null
@@ -1009,16 +1017,62 @@ class ImprovedChatPanel(
     }
 
     private fun handleTaskExecutionLiveProgress(progress: TaskExecutionLiveProgress) {
+        synchronized(pendingTaskExecutionLiveProgressLock) {
+            pendingTaskExecutionLiveProgressByRunId.compute(progress.runId) { _, current ->
+                if (shouldReplacePendingTaskExecutionLiveProgress(current, progress)) progress else current
+            }
+        }
+        requestTaskExecutionLiveProgressFlush(
+            immediate = progress.phase == ExecutionLivePhase.WAITING_CONFIRMATION ||
+                progress.phase == ExecutionLivePhase.TERMINAL,
+        )
+    }
+
+    private fun requestTaskExecutionLiveProgressFlush(immediate: Boolean = false) {
+        if (!taskExecutionLiveProgressDispatchQueued.compareAndSet(false, true) && !immediate) {
+            return
+        }
         ApplicationManager.getApplication().invokeLater {
-            if (project.isDisposed || _isDisposed) {
+            taskExecutionLiveProgressDispatchQueued.set(false)
+            if (project.isDisposed || _isDisposed || !hasPendingTaskExecutionLiveProgress()) {
                 return@invokeLater
             }
+            if (immediate) {
+                taskExecutionLiveProgressFlushTimer.stop()
+                flushPendingTaskExecutionLiveProgress()
+            } else if (taskExecutionLiveProgressFlushTimer.isRunning) {
+                taskExecutionLiveProgressFlushTimer.restart()
+            } else {
+                taskExecutionLiveProgressFlushTimer.start()
+            }
+        }
+    }
+
+    private fun flushPendingTaskExecutionLiveProgress() {
+        val pending = synchronized(pendingTaskExecutionLiveProgressLock) {
+            orderedTaskExecutionLiveProgressBatch(pendingTaskExecutionLiveProgressByRunId.values)
+                .also { pendingTaskExecutionLiveProgressByRunId.clear() }
+        }
+        if (pending.isEmpty()) {
+            return
+        }
+        var workflowBindingDirty = false
+        pending.forEach { progress ->
             if (!isRelevantTaskExecutionLiveProgress(progress)) {
-                return@invokeLater
+                return@forEach
             }
             rememberObservedTaskLiveProgress(progress)
-            updateWorkflowBindingUi()
             syncActiveTaskExecutionPanel(progress)
+            workflowBindingDirty = true
+        }
+        if (workflowBindingDirty) {
+            updateWorkflowBindingUi()
+        }
+    }
+
+    private fun hasPendingTaskExecutionLiveProgress(): Boolean {
+        return synchronized(pendingTaskExecutionLiveProgressLock) {
+            pendingTaskExecutionLiveProgressByRunId.isNotEmpty()
         }
     }
 
@@ -4504,6 +4558,10 @@ class ImprovedChatPanel(
         currentAssistantPanel = null
         activeTaskExecutionPanel = null
         taskExecutionPanelsByRunId.clear()
+        synchronized(pendingTaskExecutionLiveProgressLock) {
+            pendingTaskExecutionLiveProgressByRunId.clear()
+        }
+        taskExecutionLiveProgressFlushTimer.stop()
         latestObservedTaskLiveProgress = null
         updateWorkflowBindingUi()
     }
@@ -4585,6 +4643,10 @@ class ImprovedChatPanel(
         currentAssistantPanel = null
         activeTaskExecutionPanel = null
         taskExecutionPanelsByRunId.clear()
+        synchronized(pendingTaskExecutionLiveProgressLock) {
+            pendingTaskExecutionLiveProgressByRunId.clear()
+        }
+        taskExecutionLiveProgressFlushTimer.stop()
         latestObservedTaskLiveProgress = null
         val interactionMode = currentInteractionMode()
         val continueHandler = continueHandlerFor(interactionMode)
@@ -7461,6 +7523,10 @@ class ImprovedChatPanel(
         userMessageRawContent.clear()
         CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
         specTaskExecutionService.removeLiveProgressListener(taskExecutionLiveProgressListener)
+        taskExecutionLiveProgressFlushTimer.stop()
+        synchronized(pendingTaskExecutionLiveProgressLock) {
+            pendingTaskExecutionLiveProgressByRunId.clear()
+        }
         activeTaskExecutionPanel = null
         latestObservedTaskLiveProgress = null
         scope.cancel()
@@ -7831,6 +7897,21 @@ class ImprovedChatPanel(
             }
         }
 
+        internal fun shouldReplacePendingTaskExecutionLiveProgress(
+            current: TaskExecutionLiveProgress?,
+            incoming: TaskExecutionLiveProgress,
+        ): Boolean {
+            return current == null || incoming.lastUpdatedAt >= current.lastUpdatedAt
+        }
+
+        internal fun orderedTaskExecutionLiveProgressBatch(
+            pending: Collection<TaskExecutionLiveProgress>,
+        ): List<TaskExecutionLiveProgress> {
+            return pending.sortedWith(
+                compareBy<TaskExecutionLiveProgress> { it.lastUpdatedAt }.thenBy { it.runId },
+            )
+        }
+
         private fun normalizeClipboardTextForCollapse(text: String): String {
             return text.replace("\r\n", "\n").replace('\r', '\n')
         }
@@ -7992,6 +8073,7 @@ class ImprovedChatPanel(
         private const val STREAM_BATCH_CHUNK_COUNT = 4
         private const val STREAM_BATCH_CHAR_COUNT = 240
         private const val STREAM_BATCH_INTERVAL_NANOS = 120_000_000L
+        private const val TASK_EXECUTION_UI_BATCH_INTERVAL_MILLIS = 180
         private const val ACTION_PASTE_IMAGE_OR_TEXT = "specCoding.pasteImageOrText"
         private const val PASTE_DIAGNOSTICS_ENABLED = true
         private const val INPUT_PASTE_COLLAPSE_MIN_LINES = 48

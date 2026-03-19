@@ -238,15 +238,21 @@ class SpecWorkflowPanel(
     private var activeGenerationJob: Job? = null
     private var activeGenerationRequest: ActiveGenerationRequest? = null
     private var pendingDocumentReloadJob: Job? = null
+    private val liveProgressRefreshDispatchQueued = AtomicBoolean(false)
+    @Volatile
+    private var liveProgressRefreshPending = false
     private val liveProgressListener = TaskExecutionLiveProgressListener { progress ->
         if (progress.workflowId == selectedWorkflowId) {
-            invokeLaterSafe {
-                refreshCurrentLiveProgressPresentation()
-            }
+            requestLiveProgressPresentationRefresh()
         }
     }
+    private val liveProgressEventCoalesceTimer = Timer(LIVE_PROGRESS_EVENT_COALESCE_MILLIS) {
+        flushPendingLiveProgressPresentationRefresh()
+    }.apply {
+        isRepeats = false
+    }
     private val liveProgressRefreshTimer = Timer(1_000) {
-        refreshCurrentLiveProgressPresentation()
+        flushPendingLiveProgressPresentationRefresh(force = true)
     }.apply {
         isRepeats = true
     }
@@ -1373,6 +1379,32 @@ class SpecWorkflowPanel(
         refreshWorkspacePresentation()
     }
 
+    private fun requestLiveProgressPresentationRefresh() {
+        liveProgressRefreshPending = true
+        if (!liveProgressRefreshDispatchQueued.compareAndSet(false, true)) {
+            return
+        }
+        invokeLaterSafe {
+            liveProgressRefreshDispatchQueued.set(false)
+            if (project.isDisposed || _isDisposed || !liveProgressRefreshPending) {
+                return@invokeLaterSafe
+            }
+            if (liveProgressEventCoalesceTimer.isRunning) {
+                liveProgressEventCoalesceTimer.restart()
+            } else {
+                liveProgressEventCoalesceTimer.start()
+            }
+        }
+    }
+
+    private fun flushPendingLiveProgressPresentationRefresh(force: Boolean = false) {
+        if (!force && !liveProgressRefreshPending) {
+            return
+        }
+        liveProgressRefreshPending = false
+        refreshCurrentLiveProgressPresentation()
+    }
+
     private fun decorateTasksWithExecutionState(
         workflow: SpecWorkflow,
         tasks: List<StructuredTask>,
@@ -1410,6 +1442,9 @@ class SpecWorkflowPanel(
                 liveProgressRefreshTimer.start()
             }
         } else {
+            liveProgressRefreshPending = false
+            liveProgressRefreshDispatchQueued.set(false)
+            liveProgressEventCoalesceTimer.stop()
             liveProgressRefreshTimer.stop()
         }
     }
@@ -5842,6 +5877,7 @@ class SpecWorkflowPanel(
         _isDisposed = true
         pendingDocumentReloadJob?.cancel()
         CliDiscoveryService.getInstance().removeDiscoveryListener(discoveryListener)
+        liveProgressEventCoalesceTimer.stop()
         liveProgressRefreshTimer.stop()
         specTaskExecutionService.removeLiveProgressListener(liveProgressListener)
         workflowSwitcherPopup?.cancel()
@@ -5903,6 +5939,7 @@ class SpecWorkflowPanel(
         private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_HORIZONTAL_PADDING = 10
         private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_VERTICAL_PADDING = 2
         private const val DOCUMENT_WORKSPACE_VIEW_BUTTON_EXTRA_WIDTH_PADDING = 16
+        private const val LIVE_PROGRESS_EVENT_COALESCE_MILLIS = 180
         private const val WORKSPACE_SECTION_CARD_PADDING = 12
         private val SCROLLABLE_WORKSPACE_SECTION_MAX_HEIGHT = JBUI.scale(320)
         private const val WORKSPACE_SCROLL_UNIT_INCREMENT = 24
