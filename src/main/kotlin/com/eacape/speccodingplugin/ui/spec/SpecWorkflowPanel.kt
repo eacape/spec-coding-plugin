@@ -169,6 +169,7 @@ class SpecWorkflowPanel(
         },
         onTaskSelected = ::onStructuredTaskSelectionChanged,
         showHeader = false,
+        fixedViewportHeight = DOCUMENT_WORKSPACE_VIEWPORT_HEIGHT,
     )
     private val verifyDeltaPanel = SpecWorkflowVerifyDeltaPanel(
         onRunVerifyRequested = ::onRunVerificationRequested,
@@ -5764,6 +5765,7 @@ class SpecWorkflowPanel(
         private const val WORKSPACE_SCROLL_BLOCK_INCREMENT = 96
         private const val DOCUMENT_WORKSPACE_CARD_DOCUMENT = "document"
         private const val DOCUMENT_WORKSPACE_CARD_STRUCTURED_TASKS = "structuredTasks"
+        private const val DOCUMENT_WORKSPACE_VIEWPORT_HEIGHT = 360
         private val COMPOSER_SOURCE_EDITABLE_STAGES = setOf(
             StageId.REQUIREMENTS,
             StageId.DESIGN,

@@ -53,6 +53,7 @@ internal class SpecWorkflowTasksPanel(
     private val suggestRelatedFiles: (taskId: String, existingRelatedFiles: List<String>) -> List<String> = { _, existing -> existing },
     private val onTaskSelected: (taskId: String?) -> Unit = {},
     private val showHeader: Boolean = true,
+    private val fixedViewportHeight: Int? = null,
 ) : JPanel(BorderLayout(0, JBUI.scale(6))) {
 
     private val headerTitleLabel = JBLabel().apply {
@@ -156,6 +157,10 @@ internal class SpecWorkflowTasksPanel(
 
     override fun getPreferredSize(): Dimension {
         val base = super.getPreferredSize()
+        val fixedHeight = fixedViewportHeight?.let(JBUI::scale)
+        if (fixedHeight != null) {
+            return Dimension(base.width, fixedHeight)
+        }
         val height = insets.top +
             insets.bottom +
             dynamicListHeight() +
@@ -163,6 +168,12 @@ internal class SpecWorkflowTasksPanel(
             preferredVerticalGaps() +
             if (showHeader) headerPanel.preferredSize.height else 0
         return Dimension(base.width, height)
+    }
+
+    override fun getMinimumSize(): Dimension {
+        val base = super.getMinimumSize()
+        val fixedHeight = fixedViewportHeight?.let(JBUI::scale) ?: return base
+        return Dimension(base.width, fixedHeight)
     }
 
     private fun dynamicListHeight(): Int {

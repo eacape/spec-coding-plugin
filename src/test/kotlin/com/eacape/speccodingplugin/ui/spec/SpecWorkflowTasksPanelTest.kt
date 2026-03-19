@@ -14,6 +14,7 @@ import com.eacape.speccodingplugin.spec.VerificationConclusion
 import com.eacape.speccodingplugin.stream.ChatStreamEvent
 import com.eacape.speccodingplugin.stream.ChatTraceKind
 import com.eacape.speccodingplugin.stream.ChatTraceStatus
+import com.intellij.util.ui.JBUI
 import java.time.Instant
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -21,6 +22,30 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class SpecWorkflowTasksPanelTest {
+
+    @Test
+    fun `panel should keep a fixed viewport height when configured for document workspace`() {
+        val panel = SpecWorkflowTasksPanel(
+            showHeader = false,
+            fixedViewportHeight = 360,
+        )
+
+        panel.updateTasks(
+            workflowId = "wf-fixed-height",
+            tasks = (1..24).map { index ->
+                StructuredTask(
+                    id = "T-${index.toString().padStart(3, '0')}",
+                    title = "Task $index",
+                    status = TaskStatus.PENDING,
+                    priority = TaskPriority.P1,
+                )
+            },
+            refreshedAtMillis = 1L,
+        )
+
+        assertEquals(JBUI.scale(360), panel.preferredSize.height)
+        assertEquals(panel.preferredSize.height, panel.minimumSize.height)
+    }
 
     @Test
     fun `updateTasks should render task list and enable controls for pending tasks`() {

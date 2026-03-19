@@ -420,8 +420,8 @@ class SpecDetailPanel(
             JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
                 isOpaque = false
-                add(previewPanel)
-                add(bottomPanelContainer)
+                add(createTopAnchoredStackItem(previewPanel))
+                add(createTopAnchoredStackItem(bottomPanelContainer))
             },
             BorderLayout.NORTH,
         )
@@ -1253,6 +1253,19 @@ class SpecDetailPanel(
         }
         updateCollapseToggleButton(toggleButton, expanded = expanded, enabled = true)
         return CollapsibleSectionWidgets(root = root, bodyContainer = body, toggleButton = toggleButton)
+    }
+
+    private fun createTopAnchoredStackItem(component: Component): JPanel {
+        return object : JPanel(BorderLayout()) {
+            override fun getMaximumSize(): Dimension {
+                val preferred = preferredSize
+                return Dimension(Int.MAX_VALUE, preferred.height)
+            }
+        }.apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            add(component, BorderLayout.CENTER)
+        }
     }
 
     private fun styleCollapsibleToggleButton(button: JButton) {
@@ -3847,6 +3860,20 @@ class SpecDetailPanel(
 
     internal fun currentValidationTextForTest(): String {
         return validationLabel.text
+    }
+
+    internal fun composerContainerPreferredHeightForTest(): Int {
+        if (!::bottomPanelContainer.isInitialized) {
+            return 0
+        }
+        return bottomPanelContainer.parent?.preferredSize?.height ?: 0
+    }
+
+    internal fun composerContainerMaximumHeightForTest(): Int {
+        if (!::bottomPanelContainer.isInitialized) {
+            return 0
+        }
+        return bottomPanelContainer.parent?.maximumSize?.height ?: 0
     }
 
     internal fun isValidationBannerVisibleForTest(): Boolean {

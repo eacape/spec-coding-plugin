@@ -583,6 +583,35 @@ class SpecDetailPanelTest {
     }
 
     @Test
+    fun `composer container wrapper should cap maximum height to preferred height`() {
+        val panel = createPanel()
+        val workflow = SpecWorkflow(
+            id = "wf-composer-height-cap",
+            currentPhase = SpecPhase.IMPLEMENT,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = "tasks content",
+                    valid = true,
+                ),
+            ),
+            status = WorkflowStatus.IN_PROGRESS,
+            title = "Composer Height",
+            description = "cap composer blank space",
+            createdAt = 1L,
+            updatedAt = 2L,
+        )
+
+        panel.updateWorkflow(workflow)
+
+        assertTrue(panel.isComposerExpandedForTest())
+        assertEquals(
+            panel.composerContainerPreferredHeightForTest(),
+            panel.composerContainerMaximumHeightForTest(),
+        )
+    }
+
+    @Test
     fun `updateWorkbenchState should switch to verification artifact preview with fallback open action`() {
         val openedArtifacts = mutableListOf<String>()
         val panel = createPanel(onOpenArtifactInEditor = openedArtifacts::add)
