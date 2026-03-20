@@ -190,6 +190,44 @@ class SpecEngineWorkflowTest {
     }
 
     @Test
+    fun `completeWorkflow should fail when implement validation is invalid`() {
+        val engine = SpecEngine(project, storage) {
+            SpecGenerationResult.Failure("not used")
+        }
+
+        val created = engine.createWorkflow(
+            title = "Invalid Implement",
+            description = "completion should surface validation failure",
+        ).getOrThrow()
+
+        val current = storage.loadWorkflow(created.id).getOrThrow()
+        storage.saveWorkflow(
+            current.copy(
+                currentPhase = SpecPhase.IMPLEMENT,
+                currentStage = StageId.ARCHIVE,
+                documents = mapOf(
+                    SpecPhase.IMPLEMENT to SpecDocument(
+                        id = "${created.id}-tasks",
+                        phase = SpecPhase.IMPLEMENT,
+                        content = "## Tasks\n\ninvalid\n",
+                        metadata = SpecMetadata(
+                            title = "tasks.md",
+                            description = "invalid implement artifact",
+                        ),
+                        validationResult = ValidationResult(valid = false),
+                    ),
+                ),
+            ),
+        ).getOrThrow()
+        engine.reloadWorkflow(created.id).getOrThrow()
+
+        val result = engine.completeWorkflow(created.id)
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("Implement phase validation failed.") == true)
+    }
+
+    @Test
     fun `cannot proceed to next phase before current phase document is generated`() {
         val engine = SpecEngine(project, storage) {
             SpecGenerationResult.Failure("not used")

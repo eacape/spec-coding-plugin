@@ -391,7 +391,7 @@ class SpecWorkflowOverviewPresenterTest {
             gateResult = gateResult,
         )
 
-        assertEquals(3, workbenchState.progress.completedCheckCount)
+        assertEquals(4, workbenchState.progress.completedCheckCount)
         assertEquals(5, workbenchState.progress.totalCheckCount)
         assertFalse(workbenchState.primaryAction?.enabled ?: true)
         assertTrue(
@@ -684,7 +684,16 @@ class SpecWorkflowOverviewPresenterTest {
 
     @Test
     fun `workbench builder should expose archive completion then archive action`() {
-        val archiveWorkflow = workflow(currentStage = StageId.ARCHIVE, verifyEnabled = true)
+        val archiveWorkflow = workflow(
+            currentStage = StageId.ARCHIVE,
+            verifyEnabled = true,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = "tasks content",
+                ),
+            ),
+        )
         val archiveOverview = SpecWorkflowOverviewPresenter.buildState(
             workflow = archiveWorkflow,
             gatePreview = null,
@@ -729,6 +738,7 @@ class SpecWorkflowOverviewPresenterTest {
             SpecCodingBundle.message("spec.toolwindow.overview.primary.archive.complete"),
             inProgressArchiveState.primaryAction?.label,
         )
+        assertTrue(inProgressArchiveState.primaryAction?.enabled == true)
         assertTrue(
             inProgressArchiveState.focusDetails.any { detail ->
                 detail == SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.completeFirst")
@@ -762,6 +772,56 @@ class SpecWorkflowOverviewPresenterTest {
         assertEquals(
             SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.ready"),
             completedArchiveState.focusDetails.first(),
+        )
+    }
+
+    @Test
+    fun `workbench builder should block archive completion when tasks artifact is invalid`() {
+        val archiveWorkflow = workflow(
+            currentStage = StageId.ARCHIVE,
+            documents = mapOf(
+                SpecPhase.IMPLEMENT to document(
+                    phase = SpecPhase.IMPLEMENT,
+                    content = "tasks content",
+                    valid = false,
+                ),
+            ),
+        )
+        val archiveOverview = SpecWorkflowOverviewPresenter.buildState(
+            workflow = archiveWorkflow,
+            gatePreview = null,
+            latestTemplateSwitch = null,
+            refreshedAtMillis = 1_710_000_000_000,
+        )
+
+        val workbenchState = SpecWorkflowStageWorkbenchBuilder.build(
+            workflow = archiveWorkflow,
+            overviewState = archiveOverview,
+            focusedStage = StageId.ARCHIVE,
+        )
+
+        assertEquals(SpecWorkflowWorkbenchActionKind.COMPLETE_WORKFLOW, workbenchState.primaryAction?.kind)
+        assertFalse(workbenchState.primaryAction?.enabled ?: true)
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.blockers.archive.implementReady"),
+            workbenchState.primaryAction?.disabledReason,
+        )
+        assertEquals(3, workbenchState.progress.completedCheckCount)
+        assertEquals(4, workbenchState.progress.totalCheckCount)
+        assertTrue(
+            workbenchState.progress.completionChecks.any { check ->
+                check.id == "archive-implement-ready" &&
+                    !check.completed &&
+                    check.blockerMessage == SpecCodingBundle.message("spec.toolwindow.overview.blockers.archive.implementReady")
+            },
+        )
+        assertEquals(
+            SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.completeBlocked"),
+            workbenchState.focusDetails.first(),
+        )
+        assertEquals(
+            listOf(SpecCodingBundle.message("spec.toolwindow.overview.blockers.archive.implementReady")),
+            workbenchState.blockers,
         )
     }
 

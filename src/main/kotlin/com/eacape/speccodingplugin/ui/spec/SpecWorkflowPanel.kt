@@ -4986,12 +4986,20 @@ class SpecWorkflowPanel(
     private fun onComplete() {
         val wfId = selectedWorkflowId ?: return
         scope.launch(Dispatchers.IO) {
-            specEngine.completeWorkflow(wfId).onSuccess {
-                invokeLaterSafe {
-                    reloadCurrentWorkflow()
-                    refreshWorkflows()
+            specEngine.completeWorkflow(wfId)
+                .onSuccess { workflow ->
+                    invokeLaterSafe {
+                        reloadCurrentWorkflow()
+                        refreshWorkflows()
+                        setStatusText(SpecCodingBundle.message("toolwindow.spec.command.completed", workflow.id))
+                    }
                 }
-            }
+                .onFailure { error ->
+                    val message = compactErrorMessage(error, SpecCodingBundle.message("common.unknown"))
+                    invokeLaterSafe {
+                        setStatusText(SpecCodingBundle.message("spec.workflow.error", message))
+                    }
+                }
         }
     }
 

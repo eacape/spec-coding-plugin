@@ -571,9 +571,14 @@ internal object SpecWorkflowStageWorkbenchBuilder {
         overviewState: SpecWorkflowOverviewState,
         verifyDeltaState: SpecWorkflowVerifyDeltaState?,
     ): List<String> {
+        val implementReadyToComplete = workflow.getDocument(SpecPhase.IMPLEMENT)?.validationResult?.valid == true
         val archiveLine = when {
             workflow.status == WorkflowStatus.COMPLETED -> {
                 SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.ready")
+            }
+
+            overviewState.currentStage == StageId.ARCHIVE && !implementReadyToComplete -> {
+                SpecCodingBundle.message("spec.toolwindow.overview.focus.detail.archive.completeBlocked")
             }
 
             overviewState.currentStage == StageId.ARCHIVE -> {
@@ -1028,6 +1033,7 @@ internal object SpecWorkflowStageWorkbenchBuilder {
 
             StageId.ARCHIVE -> {
                 val activePreArchiveStages = overviewState.activeStages.filter { stageId -> stageId != StageId.ARCHIVE }
+                val implementReadyToComplete = workflow.getDocument(SpecPhase.IMPLEMENT)?.validationResult?.valid == true
                 val verifySatisfied = verifyDeltaState?.verifyEnabled != true ||
                     verifyDeltaState.verificationDocumentAvailable ||
                     verifyDeltaState.verificationHistory.isNotEmpty()
@@ -1051,6 +1057,16 @@ internal object SpecWorkflowStageWorkbenchBuilder {
                         completed = verifySatisfied,
                         blockerMessage = if (!verifySatisfied) {
                             SpecCodingBundle.message("spec.toolwindow.overview.blockers.archive.verification")
+                        } else {
+                            null
+                        },
+                    ),
+                    SpecWorkflowStageCompletionCheck(
+                        id = "archive-implement-ready",
+                        label = SpecCodingBundle.message("spec.toolwindow.overview.check.archive.implementReady"),
+                        completed = implementReadyToComplete,
+                        blockerMessage = if (!implementReadyToComplete) {
+                            SpecCodingBundle.message("spec.toolwindow.overview.blockers.archive.implementReady")
                         } else {
                             null
                         },
